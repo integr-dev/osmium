@@ -1,8 +1,7 @@
 # ---- build stage: compile to a native executable with GraalVM ----
-FROM ghcr.io/graalvm/native-image-community:21 AS build
-
-# The base image ships without findutils, but the Gradle wrapper script shells out to xargs.
-RUN microdnf install -y findutils && microdnf clean all
+# Liberica NIK rather than ghcr.io/graalvm/*: the community GraalVM images stop at JDK 22, and
+# their JDK 21 line is frozen at 21.0.2, which is too old for the native-build-tools metadata schema.
+FROM bellsoft/liberica-native-image-kit-container:jdk-25-nik-25.0.4-glibc AS build
 
 WORKDIR /workspace
 
@@ -16,9 +15,11 @@ COPY src src
 RUN ./gradlew --no-daemon nativeCompile
 
 # ---- runtime stage ----
-FROM debian:bookworm-slim
+# Alpaquita on both sides: the binary links against the build image's glibc 2.43, which is newer
+# than Debian bookworm ships, so the runtime base has to match rather than be "some slim glibc".
+FROM bellsoft/alpaquita-linux-base:stream-glibc
 
-RUN useradd --system --create-home --shell /usr/sbin/nologin app
+RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app
 
 COPY --from=build /workspace/build/native/nativeCompile/osmium ./osmium
