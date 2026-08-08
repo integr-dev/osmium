@@ -1,6 +1,9 @@
 # ---- build stage: compile to a native executable with GraalVM ----
 FROM ghcr.io/graalvm/native-image-community:21 AS build
 
+# The base image ships without findutils, but the Gradle wrapper script shells out to xargs.
+RUN microdnf install -y findutils && microdnf clean all
+
 WORKDIR /workspace
 
 # Wrapper + build scripts first so dependency resolution is cached independently of sources.
