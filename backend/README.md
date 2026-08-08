@@ -166,6 +166,12 @@ The container cannot reach `localhost:5432`. Point it at the compose network:
 
 > The native build has not been executed yet; only the JVM build and the test suite are verified.
 
+## CI
+
+`.github/workflows/backend-image.yml` builds this image and pushes it to
+`ghcr.io/<owner>/<repo>/backend` on every push to `main` that touches `backend/`, and on manual
+dispatch. Tags come from the `version` in `build.gradle.kts`, plus `sha-<short>` and `latest`.
+
 ## Layout
 
 ```
