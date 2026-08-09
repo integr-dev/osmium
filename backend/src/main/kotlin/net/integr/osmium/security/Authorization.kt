@@ -15,6 +15,12 @@ object Nodes {
     const val USER_ROLES_WRITE = "user.roles.write"
     const val ROLE_READ = "role.read"
 
+    /** See BOT_CONNECTIVITY.md - chat and login are deliberately not folded into control. */
+    const val AGENT_READ = "agent.read"
+    const val AGENT_CONTROL = "agent.control"
+    const val AGENT_CHAT = "agent.chat"
+    const val AGENT_LOGIN = "agent.login"
+
     val ALL: Set<String> = setOf(
         USER_READ_SELF,
         USER_EDIT_SELF,
@@ -24,6 +30,10 @@ object Nodes {
         USER_DELETE,
         USER_ROLES_WRITE,
         ROLE_READ,
+        AGENT_READ,
+        AGENT_CONTROL,
+        AGENT_CHAT,
+        AGENT_LOGIN,
     )
 }
 
@@ -52,9 +62,15 @@ object RoleDefinitions {
         Nodes.ROLE_READ,
     )
 
-    // Nothing beyond viewer yet: orchestration nodes arrive with the agent module.
-    private val ORCHESTRATOR_NODES: Set<String> = VIEWER_NODES
+    /** Full authority over the fleet. The nodes stay separate so a future tier can be given less. */
+    private val ORCHESTRATOR_NODES: Set<String> = VIEWER_NODES + setOf(
+        Nodes.AGENT_READ,
+        Nodes.AGENT_CONTROL,
+        Nodes.AGENT_CHAT,
+        Nodes.AGENT_LOGIN,
+    )
 
+    /** Adds user management, which is the only thing an orchestrator cannot do. */
     private val ADMINISTRATOR_NODES: Set<String> = ORCHESTRATOR_NODES + setOf(
         Nodes.USER_READ,
         Nodes.USER_EDIT,

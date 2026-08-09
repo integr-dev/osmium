@@ -4,6 +4,7 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret
 import net.integr.osmium.config.JwtProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.annotation.Order
 import org.springframework.http.HttpMethod
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
@@ -26,7 +27,27 @@ import javax.crypto.spec.SecretKeySpec
 @EnableMethodSecurity
 class SecurityConfig(private val jwtProperties: JwtProperties) {
 
+    /**
+     * The agent socket gets its own chain, matched first and deliberately without the resource
+     * server.
+     *
+     * `permitAll` on the main chain is not enough: it governs authorization, but the bearer token
+     * filter still *authenticates* any `Authorization: Bearer …` header, and an agent's enrolment
+     * token is not a JWT - so the handshake was rejected with 401 before the interceptor ran.
+     * Leaving oauth2ResourceServer off this chain lets the token reach
+     * [net.integr.osmium.websocket.AgentHandshakeInterceptor], which is what understands it.
+     */
     @Bean
+    @Order(1)
+    fun agentSocketFilterChain(http: HttpSecurity): SecurityFilterChain = http
+        .securityMatcher("/ws/agent")
+        .csrf { it.disable() }
+        .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+        .authorizeHttpRequests { it.anyRequest().permitAll() }
+        .build()
+
+    @Bean
+    @Order(2)
     fun securityFilterChain(
         http: HttpSecurity,
         jwtAuthenticationConverter: DatabaseJwtAuthenticationConverter,

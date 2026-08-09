@@ -1,9 +1,15 @@
 package net.integr.osmium
 
 import com.jayway.jsonpath.JsonPath
+import net.integr.osmium.model.Bot
+import net.integr.osmium.model.BotState
+import net.integr.osmium.model.Host
 import net.integr.osmium.model.User
+import net.integr.osmium.repository.BotRepository
+import net.integr.osmium.repository.HostRepository
 import net.integr.osmium.repository.RoleRepository
 import net.integr.osmium.repository.UserRepository
+import java.time.Instant
 import net.integr.osmium.security.encodeRequired
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -29,6 +35,27 @@ abstract class AbstractRestTest {
     @Autowired protected lateinit var userRepository: UserRepository
     @Autowired protected lateinit var roleRepository: RoleRepository
     @Autowired protected lateinit var passwordEncoder: PasswordEncoder
+    @Autowired protected lateinit var hostRepository: HostRepository
+    @Autowired protected lateinit var botRepository: BotRepository
+
+    /** A host that heartbeated just now, so commands reach the dispatch stage instead of 503ing. */
+    protected fun reachableHost(name: String = "agent-1"): Host =
+        hostRepository.saveAndFlush(
+            Host(name = name, tokenHash = "hash", lastSeenAt = Instant.now(), address = "10.0.0.1:871"),
+        )
+
+    /** A host that has never dialled in, so every command to its bots fails fast. */
+    protected fun unreachableHost(name: String = "agent-cold"): Host =
+        hostRepository.saveAndFlush(Host(name = name, tokenHash = "hash"))
+
+    protected fun createBot(
+        label: String,
+        host: Host,
+        state: BotState = BotState.UNLINKED,
+        server: String = "mc.example.com:25565",
+    ): Bot = botRepository.saveAndFlush(
+        Bot(label = label, host = host, serverAddress = server, state = state),
+    )
 
     protected fun createUser(
         username: String,

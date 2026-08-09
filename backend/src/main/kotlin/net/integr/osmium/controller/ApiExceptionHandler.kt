@@ -1,6 +1,7 @@
 package net.integr.osmium.controller
 
 import net.integr.osmium.dto.ApiError
+import net.integr.osmium.service.HostUnreachableException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.authentication.BadCredentialsException
@@ -40,6 +41,11 @@ class ApiExceptionHandler {
     @ExceptionHandler(IllegalStateException::class)
     fun onConflict(exception: IllegalStateException): ResponseEntity<ApiError> =
         error(status = HttpStatus.CONFLICT, message = exception.message)
+
+    /** Distinct from 409: the request was valid, but there is nothing live to deliver it to. */
+    @ExceptionHandler(HostUnreachableException::class)
+    fun onHostUnreachable(exception: HostUnreachableException): ResponseEntity<ApiError> =
+        error(status = HttpStatus.SERVICE_UNAVAILABLE, message = exception.message)
 
     private fun error(status: HttpStatus, message: String?): ResponseEntity<ApiError> =
         ResponseEntity.status(status).body(ApiError(message = message ?: status.reasonPhrase))

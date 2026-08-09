@@ -39,10 +39,20 @@ class RoleControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isOk() }
-            // orchestrator holds every viewer node, administrator holds every orchestrator node.
-            // Orchestrator adds nothing of its own yet - that arrives with the agent module.
+            // orchestrator holds every viewer node plus full authority over the fleet; the only
+            // thing administrator adds on top is user management.
             jsonPath("$[?(@.name == 'orchestrator')].nodes[*]") {
-                value(contains(Nodes.ROLE_READ, Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
+                value(
+                    contains(
+                        Nodes.AGENT_CHAT,
+                        Nodes.AGENT_CONTROL,
+                        Nodes.AGENT_LOGIN,
+                        Nodes.AGENT_READ,
+                        Nodes.ROLE_READ,
+                        Nodes.USER_EDIT_SELF,
+                        Nodes.USER_READ_SELF,
+                    ),
+                )
             }
             jsonPath("$[?(@.name == 'administrator')].nodes[*]") {
                 value(contains(*Nodes.ALL.sorted().toTypedArray()))
