@@ -1,7 +1,16 @@
 # Bot connectivity and credential custody
 
-**Status:** proposed — nothing in this document is implemented yet. The bot views in the frontend
-run on mock data (`frontend/src/stores/bots.ts`).
+**Status:** partly implemented.
+
+| Section | State |
+|---|---|
+| Phases 0–1, command routing, liveness, wire protocol, permission nodes | **Built** in `backend/`, covered by tests |
+| Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `agent/` is a placeholder |
+| Live updates (SSE), chat scoping and listener election, work assignment | **Not built** |
+
+Telemetry, chat and build progress in the frontend are still mock
+(`frontend/src/stores/bots.ts`), because nothing reports them until an agent connects. Sections not
+marked built are design, not description.
 
 **Scope:** where Minecraft bots authenticate, who holds their credentials, and how an operator brings
 a new bot online. *How* a host authenticates is explicitly out of scope — that is the point of the

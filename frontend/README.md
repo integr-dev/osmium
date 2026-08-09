@@ -1,0 +1,106 @@
+# Osmium frontend
+
+Vue 3 / Vite single-page app: the operator dashboard for the bot fleet.
+
+Not a meta-framework. The backend is a standalone JWT API, so there is no SEO need and no
+server-side session to render against — a static bundle behind nginx does the job and deploys as
+files rather than a Node process.
+
+## Running it
+
+Needs **Node 24** and a backend on `:8080`.
+
+```bash
+npm install
+npm run dev        # :5173, proxies /api to the backend
+```
+
+The dev proxy keeps things same-origin, which is why the backend needs no CORS configuration.
+
+| Script | Does |
+|---|---|
+| `npm run dev` | dev server with HMR |
+| `npm run build` | type-check with `vue-tsc`, then bundle |
+| `npm run lint` | ESLint |
+| `npm run api:generate` | regenerate `src/api/schema.d.ts` from `openapi.json` |
+
+## Talking to the backend
+
+API types are **generated from the backend's OpenAPI document**, so `UserResponse`, `BotState` and
+the rest come straight from the Kotlin. Rename a field in the backend and this fails to compile.
+
+```bash
+curl -s localhost:8080/v3/api-docs -o openapi.json
+npm run api:generate
+```
+
+`openapi.json` is committed so codegen works without a running backend — but it is only as current
+as the last time someone refreshed it. Re-run both commands after changing the API.
+
+One wrinkle worth knowing: springdoc marks every property optional, because it does not derive
+`required` from Kotlin's non-null types. `src/api/client.ts` asserts them with `Required<…>` at the
+boundary rather than sprinkling `?.` through every component. That is an assertion, not a guarantee
+the document makes.
+
+### What is real and what is mock
+
+Hosts, bots, their lifecycle states and all commands are **real API calls**. Telemetry, chat and
+build progress are **mock**, and marked as such in `src/stores/bots.ts` — nothing reports them until
+an agent connects. They are what the SSE stream will replace.
+
+## Authorization in the UI
+
+`GET /api/auth/me` returns the account's flattened permission nodes, and the UI gates on the same
+strings the backend checks:
+
+```ts
+v-if="auth.can('agent.chat')"      // hides what @PreAuthorize would reject
+```
+
+Same source of truth, so there is no duplicated role logic. Route guards use `meta.node`.
+
+## Security posture
+
+The access token lives in **`localStorage`**. That is a deliberate trade: it survives a reload, but
+an XSS would expose a token valid for its full TTL. There are no refresh tokens, so the alternative
+was re-authenticating on every reload.
+
+Two mitigations carry that decision, and both matter more once real bot credentials are in play:
+
+- **A strict CSP** is served by nginx in production — `script-src 'self'` with no `unsafe-inline`,
+  so an injected script simply does not execute. See `nginx.conf.template`.
+- **`vue/no-v-html` is an error**, not a warning. `v-html` is the main XSS vector in a Vue app.
+
+## Theme
+
+daisyUI 5 on Tailwind 4, configured CSS-first in `src/style.css`. The base ramp is evenly spaced and
+tinted toward the primary green; `--depth: 0` means borders, not shadows, do the separating.
+
+## Docker
+
+Two-stage: Node builds the bundle, nginx serves it.
+
+```bash
+docker build -t osmium-frontend .
+docker run -p 8080:80 -e BACKEND_URL=http://backend:8080 osmium-frontend
+```
+
+`BACKEND_URL` is a **runtime** variable — the nginx config is a template that gets substituted at
+start-up, so one image works across environments. `/api` is proxied there, keeping the SPA
+same-origin, and unknown paths fall through to `index.html` for `createWebHistory`.
+
+The upstream is resolved per request through a configurable `DNS_RESOLVER` rather than at boot. A
+literal `proxy_pass` makes nginx resolve the host on start-up, so the container crash-looped when it
+started before the backend; now it boots and returns 502 until the backend appears.
+
+## Layout
+
+```
+src/api/         generated schema, typed client, token storage
+src/components/  FormField, the add-host and add-bot modals
+src/layouts/     AppLayout: sidebar, nav, drawer
+src/lib/         presentation maps for bot state, roles and node labels
+src/router/      routes and node-based guards
+src/stores/      auth and fleet state (Pinia)
+src/views/       dashboard, hosts, bot detail, accounts, settings, login
+```
