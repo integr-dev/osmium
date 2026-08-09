@@ -309,6 +309,296 @@ change but a **fresh setup** (Phase 2) on the new host, requiring whatever human
 login mechanism involves. Worth knowing before building any drag-to-rebalance interface: the UI
 would imply an operation the credential model does not support.
 
+## Wire protocol
+
+Every message on the backend↔agent WebSocket shares one envelope. The payload is **nested, not
+spread across the top level**.
+
+```jsonc
+// backend → agent
+{ "id": "cmd-7f3a", "kind": "command", "type": "setup_bot", "botId": 42,
+  "payload": { "label": "Mason_04", "serverAddress": "mc.example.com:25565",
+               "method": "device_code" } }
+
+// agent → backend, answering it
+{ "id": "cmd-7f3a", "kind": "result", "type": "setup_bot", "botId": 42,
+  "ok": true, "payload": { "mcUsername": "Mason_04", "mcUuid": "…" } }
+
+// agent → backend, unsolicited: no id, nothing is waiting on it
+{ "kind": "event", "type": "bot_status", "botId": 42,
+  "payload": { "state": "ONLINE", "health": 20, "position": { "x": 128, "y": 71, "z": -344 } } }
+
+// host-scoped, so no botId
+{ "kind": "event", "type": "heartbeat", "payload": { "agentVersion": "0.3.1" } }
+```
+
+### There is no destination field
+
+The connection *is* the host. The backend selected that socket by resolving `bot.hostId`, so encoding
+the host again in the message would create a second source of truth that can disagree with the socket
+being written to. Only `botId` is carried, and only to route **within** a host.
+
+`botId` is therefore **optional**: heartbeats, the version handshake and host-level errors are not
+bot-scoped, and forcing a sentinel value on them would leak that sentinel through every handler.
+
+### Why the payload is nested
+
+- **Spread fields collide.** A payload containing its own `type` or `id` would be unrepresentable.
+- **The envelope must parse without knowing the type.** Routing, correlating and logging a message
+  should not require understanding its contents.
+- **Forward compatibility depends on it.** The agent and backend deploy independently and will
+  routinely run different versions. With a nested payload an unrecognised message still parses far
+  enough to be logged and ignored; a flat discriminated union fails the whole parse.
+
+For the same reason the backend should model this as a concrete envelope with the payload left as a
+raw JSON node, decoded only after switching on `type` — rather than a fully sealed hierarchy with
+polymorphic deserialisation, which is more elegant right up until an unknown `type` takes the
+connection down.
+
+### `kind` separates three different lifecycles
+
+| kind | Direction | Correlated | Semantics |
+|---|---|---|---|
+| `command` | backend → agent | carries `id` | expects exactly one result |
+| `result` | agent → backend | echoes `id` | resolves a pending command |
+| `event` | agent → backend | no `id` | unsolicited; never awaited |
+
+Inferring this from `type` would mean classifying every new message type in code. Declaring it makes
+each message self-describing.
+
+### `method` is a mechanism, never an account
+
+`setup_bot` carries the login method the operator chose in the frontend — `device_code`,
+`token_file`, and so on — which the backend relays without interpreting.
+
+The line this must not cross: **a mechanism selector is fine, an account hint is not.** Relaying
+"use the device code flow" says nothing about which credential results. Relaying an email address, a
+profile name or a preferred account would make the backend an authority on *which* identity to
+acquire, which is precisely the role this design removes from it. The same field could hold either,
+so the rule has to be written down rather than inferred.
+
+The frontend presents the choice; the backend is a courier.
+
+### Version handshake
+
+The agent sends `agentVersion` in its hello and the backend records it — there is already a column
+for it — and logs a warning when it does not match what the backend expects.
+
+It is **a signal, not a gate.** A hard version check causes the outage it is meant to prevent: bump
+the backend and every agent in the fleet is locked out simultaneously. Tolerating unknown messages
+already covers the realistic drift. The version's value is diagnostic: "why is agent-eu-3 behaving
+strangely" is answered instantly by seeing it report 0.2.9.
+
+A hard minimum is reserved for a deliberately breaking protocol change.
+
+### Unknown messages must not be fatal
+
+- An unknown **event** is logged and ignored. Never a disconnect: a newer agent emitting a field the
+  backend has not learned about yet is normal, not an error.
+- An unknown **command** gets `ok: false` with a reason, never silence. The backend has a pending
+  request either way; a reply fails it fast, whereas silence hangs it until timeout.
+
+## Live updates to the frontend
+
+The browser channel is **receive-only**. Commands already travel over REST, where they are node-gated
+and audited; the frontend only needs to be told what changed.
+
+```
+agent ──WS──▶ backend ──SSE──▶ browser
+                  ▲
+                  └── REST (commands, node-gated)
+```
+
+Server-sent events rather than a second WebSocket: the traffic is genuinely one-way, reconnection
+with `Last-Event-ID` is part of the protocol rather than something to write, and there is no
+ping/pong or close-code handling to maintain.
+
+### Streams are scoped to the view
+
+| Endpoint | Sends | Node |
+|---|---|---|
+| `GET /api/stream/fleet` | state changes, heartbeats, aggregate counters | `agent.read` |
+| `GET /api/stream/bots/{id}` | that bot's chat, telemetry and state | `agent.read` |
+
+Fanning everything to everyone wastes the wire and leaks activity across views that an operator is
+not looking at.
+
+### Four things that will bite
+
+**`EventSource` cannot set an `Authorization` header.** The access token is held in `localStorage`
+and sent as a Bearer header, which the browser's native SSE API has no way to do. Putting the token
+in the query string lands it in access logs and referrers; switching to cookies reintroduces CSRF.
+The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer pattern unchanged.
+A browser WebSocket has the same limitation and solves it differently, by authenticating in the first
+frame.
+
+**A long-lived stream breaks instant revocation.** Authorities resolve from the database on every
+REST request, so a demotion takes effect immediately — but a stream authorises once at subscribe and
+then runs for hours. This is the one place that guarantee leaks. The stream must **re-check its nodes
+periodically** (~30s) and close on failure, and should not outlive the token that opened it.
+
+**The nginx config in `frontend/nginx.conf.template` currently breaks both options.** It proxies
+`/api/` without the `Upgrade`/`Connection` headers a WebSocket needs, and with default buffering plus
+a 60s `proxy_read_timeout`, which severs an idle SSE stream. Streaming needs `proxy_buffering off`
+and a raised read timeout on the stream paths.
+
+**Telemetry needs coalescing, not forwarding.** Chat lines and state transitions are human-paced and
+can go out immediately. Position and health are not: forwarding every sample from a fleet of bots
+floods both the wire and the UI. Telemetry should be throttled to a fixed tick (~1s) carrying the
+latest snapshot.
+
+### Designed for, not built yet: more than one backend instance
+
+With two backend instances the agent's WebSocket lands on one while a browser's SSE sits on the
+other, and that browser never sees the event. Solving it needs a shared broker (Redis pub/sub) or
+sticky routing. Not worth building now, but worth keeping the fan-out behind a small internal
+interface so that later becomes one implementation rather than a rewrite.
+
+## Chat
+
+"Chat" is several different things, and only some of them are per-bot. Rendering a server's global
+chat on every bot's page shows the same message once per bot and drowns the signal.
+
+**Classification happens at the agent**, which is the only place the raw packet types are visible;
+the backend cannot reliably infer scope from message text.
+
+**Chat and activity are two different feeds.** Conversation goes to chat; anything that happened *to*
+a bot goes to activity. Mixing them buries a kick between two lines of small talk.
+
+| Scope | Example | Feed | Per-bot |
+|---|---|---|---|
+| `outbound` | an operator made the bot speak | **chat**, and the audit log | yes |
+| `direct` | a player whispers the bot | **chat** | yes |
+| `local` | proximity chat, where the server has it | **chat** | mostly |
+| `global` | ordinary player chat everyone sees | **chat**, one fleet-wide feed | **no** |
+| `system` | kicked, banned, died, warned | **activity** | yes |
+| `lifecycle` | connected, disconnected, setup failed, relink needed | **activity** | yes |
+
+So the bot page shows only conversation that is **to or about that bot**, with its incidents in a
+separate activity panel. Global chat goes to a single fleet feed on the dashboard, attributed to the
+server rather than to any bot.
+
+### Activity is incidents, not chat
+
+`kicked`, `banned`, `died`, and connectivity transitions are not conversation. They belong in
+activity, and the actionable subset also raises an entry in **Needs attention** alongside low health
+and unreachable hosts.
+
+A bot silently kicked at 03:00 is exactly the failure the dashboard exists to surface, and a line
+scrolling past in a chat panel nobody has open does not surface it.
+
+### Electing a chat listener
+
+Global chat is identical for every bot on a server, so exactly one bot per **server** forwards it and
+the rest suppress it. Election is **automatic and backend-side**: only the backend sees the whole
+fleet, and bots on one server may be spread across several hosts, so no agent can tell whether
+another host already has a listener.
+
+```
+backend → agent   { "kind": "command", "type": "set_chat_listener", "botId": 42,
+                    "payload": { "enabled": true } }
+```
+
+Rules:
+
+- Scope is the **server address**, not the host. Two hosts with bots on the same server share one
+  listener between them.
+- The incumbent is chosen for **stability, not fairness** — the longest-running `ONLINE` bot on that
+  server. Rotating the role would churn the feed for no benefit.
+- **Re-election only when the incumbent is lost** — it goes offline, its host becomes unreachable, or
+  the bot is removed. A new bot joining a server never displaces a working listener.
+- The backend waits out the existing `STALE` grace window before re-electing, so a brief network blip
+  does not hand the role around.
+- If no bot on a server is `ONLINE`, that server has no global feed. That is honest: nothing is
+  listening.
+
+The tradeoff accepted: **a short gap in global chat during re-election**, and global chat is only
+available while at least one bot is connected. The alternative — every bot forwarding globals and
+the backend deduplicating on `(server, text, time bucket)` — needs no failover but multiplies wire
+traffic by the fleet size. Election was chosen; deduplication remains the fallback if the failover
+logic proves fiddly.
+
+### Persistence
+
+- **Outbound is persisted permanently**, with the message text, in the audit log. Recording that
+  operator X made bot Y speak without recording what it said is close to useless.
+- **Everything else is a small per-bot ring buffer** (~50 lines), enough that a page reload is not
+  blank. Inbound chat is other people's messages: not retaining it is a privacy improvement as well
+  as a storage one.
+
+### Rate limiting
+
+Outbound chat is limited **per bot** — roughly ten messages a minute with a small burst — enforced
+backend-side before dispatch.
+
+Two concrete reasons: a stolen operator session holding `agent.chat` can otherwise spam under
+accounts you own, and chat spam is the fastest route to a Minecraft ban. It is the one control here
+whose in-game consequence is permanent and unrecoverable.
+
+## Servers
+
+A fleet can span several Minecraft servers, and **the server is a scope, not merely a field on a
+bot**. Everything below hangs off it:
+
+- the elected chat listener — **one per server**, never one per fleet
+- the global chat feed
+- a build: its schematic, sector assignments and progress aggregates
+
+Blocks placed, throughput and ETA are meaningless averaged across servers, and a bot on one server
+cannot help with a sector on another. Anything fleet-wide that is really build-wide has to be
+grouped by server before it is shown.
+
+The address stays a plain string on `Bot` for now; a `Server` entity earns its place the moment
+schematics land, because a build needs somewhere to live and "which server" stops being incidental.
+
+### Normalising the address
+
+`mc.example.com` and `mc.example.com:25565` are the same server. Grouping on the raw string silently
+produces two of them — two elected listeners, two chat feeds, two half-populated dashboards — and
+the symptom appears far from the cause. The address is therefore lowercased and given the default
+port at write time.
+
+### One bot is one session, not one account
+
+A `Bot` connects to exactly one server. A Minecraft account can technically hold sessions on two
+servers at once, but modelling that on a single bot breaks it at every level: `ONLINE` would have to
+mean online on one server and disconnected from another, and health, position, nearby players, chat
+and sector assignment are all per-connection, so one bot would carry two contradictory sets.
+
+Treating a bot as a **session** rather than an account resolves this instead of special-casing it.
+
+Running the same account on two servers therefore means **two bot records** — and exposes a real
+wrinkle worth stating before someone hits it: the host caches credentials per `botId`, so the second
+bot would need its own setup for the same account. Supporting that properly means keying the host's
+cache by **account** rather than by bot. Deferred, not designed for.
+
+## Work assignment
+
+Sector assignment lives in the **backend**. It is the orchestrator, and sector state is fleet-wide:
+which sectors are claimed, blocked or queued is only knowable where the whole fleet is visible. Two
+agents scheduling independently would claim the same sector.
+
+The flow: an operator uploads a schematic and picks the bots to work it, the backend splits it into
+segments, and **each bot receives only its own segment**.
+
+That last part is deliberate. A bot never holds the full build, which keeps the payload small and
+means a compromised host learns only its slice rather than the entire schematic.
+
+The agent stays deliberately dumb about work: it receives a segment, builds it, and reports progress.
+Anything more and it becomes a distributed scheduler without a coordinator — a much harder problem
+than the one being solved.
+
+## Agent process model
+
+One agent process runs **all** of that host's bots, rather than a process per bot.
+
+The `botId` map is then a plain in-memory lookup, and crash recovery is already cheap: a restarted
+agent reconnects and reports its bots as `LINKED`, because the token cache survives on disk and no
+fresh setup is needed. Process isolation would be a heavy tool for a class of bug that is simply
+fixable.
+
+Worth revisiting only if per-bot memory growth turns out to be uncontainable within one process.
+
 ## Data ownership
 
 | Data | Backend / Postgres | Agent host |
@@ -330,22 +620,27 @@ into an image.
 
 New nodes, following the existing convention of authorizing routes on nodes and never on roles:
 
-| Node | Grants | Suggested tier |
+| Node | Grants | Tier |
 |---|---|---|
 | `agent.read` | View bots, telemetry, nearby players | orchestrator |
 | `agent.control` | Create bots, connect, disconnect, assign work | orchestrator |
-| `agent.chat` | **Speak in-game as a bot** | administrator |
-| `agent.login` | Enrol agents, trigger `setup_bot` on a host | administrator |
+| `agent.chat` | **Speak in-game as a bot** | orchestrator |
+| `agent.login` | Enrol agents, trigger `setup_bot` on a host | orchestrator |
 
-Two of these are deliberately not folded into `agent.control`:
+**`orchestrator` holds full authority over the fleet.** The only thing `administrator` adds is user
+management, so the tiers divide along "runs the bots" versus "runs the people".
 
-- **`agent.chat` is impersonation.** It permits saying anything in-game under an account you own —
-  a griefing and social-engineering vector, and the action most likely to get an account banned.
+The four nodes stay **separate anyway**, even though one tier currently holds them all, because two
+of them are meaningfully more dangerous than the others and a future tier may need less:
+
+- **`agent.chat` is impersonation.** It permits saying anything in-game under an account you own — a
+  griefing and social-engineering vector, and the action most likely to get an account banned.
 - **`agent.login` is credential acquisition.** It decides which Microsoft account becomes linked to
   your infrastructure.
 
-`orchestrator` currently grants nothing beyond `viewer`. `agent.read` and `agent.control` are what
-that tier exists for.
+Collapsing them into `agent.control` would make that distinction unrecoverable; keeping them apart
+costs nothing today and leaves room for, say, a build-only tier that can connect bots but not speak
+as them.
 
 ## Audit
 
@@ -408,12 +703,15 @@ real accounts we can provision and afford to lose), not a token-format one.
 
 ## Open questions
 
-- Does one agent host run many bots in one process, or one process per bot? Affects crash blast
-  radius and memory.
-- Where does sector assignment live — backend as orchestrator, or agent as scheduler?
-- Do we need per-bot rate limits on chat to contain a compromised operator session?
-- Does `setup_bot` carry any hints the host may act on (a preferred account, a profile name), or is
-  it a bare "set up a bot for this slot"? Every field added is a small step back toward the backend
-  having an opinion about credentials.
-- How does an operator discover that a host is waiting on them? `SETUP_PENDING` is visible in Osmium,
-  but the prompt itself lives on the host, so something has to bridge that gap operationally.
+- What schematic formats are accepted, and how does the backend split one into segments? Segment
+  shape drives whether bots collide, queue behind each other, or work independently.
+- How long is the audit log retained, and does it need exporting? It now holds chat text, which makes
+  retention a policy question rather than only a storage one.
+- Do login methods need per-host capability advertisement? The frontend offers a chooser, but nothing
+  currently stops an operator picking a method the target host cannot perform. The host would reject
+  it in `setup_result`, which works but is a late and unhelpful failure.
+- Which login methods are offered in the first place?
+
+Answered elsewhere in this document, kept here as a pointer: the process model, sector assignment,
+chat scoping and listener election, chat persistence and rate limits, the `setup_bot` method field,
+and the version handshake.
