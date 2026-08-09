@@ -7,7 +7,7 @@ of nodes, so adding a role never requires touching a route annotation.
 
 ## Requirements
 
-- JDK 21 (the Gradle toolchain pins `languageVersion = 21`)
+- JDK 25 (the Gradle toolchain pins `languageVersion = 25`)
 - Docker — needed to run Postgres, and also to run the test suite
 
 ## Running it
@@ -145,18 +145,14 @@ validation failures. They run against a real Postgres 18 through Testcontainers 
 `@ServiceConnection`, so **Docker must be running**. Each test runs in a transaction that is rolled
 back, so the suite leaves no state behind.
 
-## Native image
+## Docker image
 
-`Dockerfile` is a two-stage build: GraalVM compiles a native executable via the
-`org.graalvm.buildtools.native` Gradle plugin, and the result is copied onto a slim Debian runtime.
+`Dockerfile` is a two-stage JVM build: `eclipse-temurin:25-jdk` produces the boot jar, which is
+copied onto `eclipse-temurin:25-jre` and run as a non-root user.
 
 ```bash
 docker build -t osmium-backend .
 ```
-
-Expect 5–15 minutes and roughly 8 GB of RAM; raise Docker's memory limit or `native-image` will be
-killed mid-build. The runtime stage is glibc-based to match the build image — an Alpine/musl runtime
-would not run the binary.
 
 The container cannot reach `localhost:5432`. Point it at the compose network:
 
@@ -164,7 +160,8 @@ The container cannot reach `localhost:5432`. Point it at the compose network:
 -e SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/osmium
 ```
 
-> The native build has not been executed yet; only the JVM build and the test suite are verified.
+A GraalVM native image was tried and dropped: it built and produced a working 311 MB image, but cost
+roughly 20 minutes per CI run, which is not worth it here.
 
 ## CI
 
