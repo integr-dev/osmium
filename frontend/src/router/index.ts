@@ -13,7 +13,17 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: AppLayout,
     children: [
-      { path: '', redirect: { name: 'account' } },
+      { path: '', redirect: { name: 'dashboard' } },
+      {
+        path: 'dashboard',
+        name: 'dashboard',
+        component: () => import('../views/DashboardView.vue'),
+      },
+      {
+        path: 'bots/:id',
+        name: 'bot',
+        component: () => import('../views/BotDetailView.vue'),
+      },
       {
         path: 'account',
         name: 'account',
@@ -32,7 +42,7 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
-  { path: '/:pathMatch(.*)*', redirect: { name: 'account' } },
+  { path: '/:pathMatch(.*)*', redirect: { name: 'dashboard' } },
 ]
 
 export const router = createRouter({
@@ -44,7 +54,7 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
   if (to.meta.public) {
-    return auth.isAuthenticated ? { name: 'account' } : true
+    return auth.isAuthenticated ? { name: 'dashboard' } : true
   }
   if (!auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
@@ -52,6 +62,7 @@ router.beforeEach(async (to) => {
 
   await auth.ensureLoaded()
 
+  // Dashboard needs no node, so it is the safe landing spot when one is missing.
   const node = to.meta.node as string | undefined
-  return node && !auth.can(node) ? { name: 'account' } : true
+  return node && !auth.can(node) ? { name: 'dashboard' } : true
 })

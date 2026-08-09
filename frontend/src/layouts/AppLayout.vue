@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { LogOut, Menu, Settings, User, Users } from 'lucide-vue-next'
+import { Bot, LayoutDashboard, LogOut, Menu, Settings, User, Users } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
+import { useBotStore } from '../stores/bots'
 
 const auth = useAuthStore()
+const botStore = useBotStore()
 const router = useRouter()
 
 function logout() {
@@ -40,8 +42,37 @@ function logout() {
           <span class="text-lg font-semibold tracking-tight">Osmium</span>
         </div>
 
-        <!-- Intentionally blank until there is something to navigate to. -->
-        <div class="flex-1"></div>
+        <div class="flex-1 overflow-y-auto px-3">
+          <ul class="menu w-full gap-0.5 p-0">
+            <li>
+              <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
+                <LayoutDashboard class="size-4 shrink-0" />
+                Dashboard
+              </RouterLink>
+            </li>
+            <li>
+              <details open>
+                <summary class="gap-3">
+                  <Bot class="size-4 shrink-0" />
+                  Bots
+                  <span class="badge badge-xs ml-auto">{{ botStore.online.length }}/{{ botStore.bots.length }}</span>
+                </summary>
+                <ul class="gap-0.5">
+                  <li v-for="bot in botStore.bots" :key="bot.id">
+                    <RouterLink :to="{ name: 'bot', params: { id: bot.id } }" class="gap-2.5">
+                      <span
+                        class="size-2 shrink-0 rounded-full"
+                        :class="bot.online ? 'bg-success' : 'bg-error'"
+                        :title="bot.online ? 'Online' : 'Offline'"
+                      ></span>
+                      <span class="truncate">{{ bot.name }}</span>
+                    </RouterLink>
+                  </li>
+                </ul>
+              </details>
+            </li>
+          </ul>
+        </div>
 
         <div class="border-base-300 border-t p-3">
           <ul class="menu w-full gap-0.5 p-0">

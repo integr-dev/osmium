@@ -20,7 +20,7 @@ async function submit() {
   try {
     await auth.login(username.value, password.value)
     const redirect = route.query.redirect
-    await router.push(typeof redirect === 'string' ? redirect : { name: 'account' })
+    await router.push(typeof redirect === 'string' ? redirect : { name: 'dashboard' })
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : 'Login failed'
   } finally {
