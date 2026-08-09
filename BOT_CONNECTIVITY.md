@@ -154,15 +154,132 @@ stateDiagram-v2
     NEEDS_RELINK --> LINKED: device code login
     ONLINE --> CONNECT_FAILED: server refused
     CONNECT_FAILED --> LINKED: retry
-    ONLINE --> UNKNOWN: agent connection lost
-    LINKED --> UNKNOWN: agent connection lost
-    UNKNOWN --> ONLINE: agent reconnects, bot still in game
-    UNKNOWN --> LINKED: agent reconnects, bot not in game
+    ONLINE --> STALE: agent unreachable
+    LINKED --> STALE: agent unreachable
+    STALE --> ONLINE: agent reconnects, bot still in game
+    STALE --> LINKED: agent reconnects, bot not in game
 ```
 
 `NEEDS_RELINK` is the state most easily forgotten. MSA refresh tokens expire — password changes,
 revoked sessions, prolonged inactivity. A bot in that state cannot self-heal and the UI has to
 prompt a human, so it must be distinguishable from a generic failure.
+
+`STALE` is covered in its own section below, because a bot enters it for a reason external to the
+bot: its agent went unreachable.
+
+## Agent liveness vs bot liveness
+
+A host going down is a different failure from a bot disconnecting, and the two must not be collapsed
+into one "offline" state. There are two independent liveness axes:
+
+- **Agent reachability** — the backend↔agent WebSocket heartbeat. The backend observes this
+  **directly**.
+- **Bot in-game status** — the agent↔Minecraft connection. **Only the agent observes this.** The
+  backend knows only what the agent last reported.
+
+The backend therefore never directly knows whether a bot is in-game. It knows the last reported
+status plus whether the agent is currently reachable.
+
+### Why a lost agent is ambiguous
+
+When an agent stops heartbeating, three causes are indistinguishable from the backend's vantage:
+
+| Cause | Are the bots still in-game? |
+|---|---|
+| Host fully dead | No — gone from the server |
+| Only the backend↔agent link dropped | Yes — still building |
+| Agent process crashed, host fine | No — mineflayer died with the process |
+
+Because the backend cannot tell these apart, all of that agent's bots become **`STALE`**, not
+`OFFLINE`: last-known telemetry shown with an "as of Xs ago" marker and a distinct greyed-out
+treatment. Rendering them red would assert knowledge the system does not have.
+
+### The diagnostic pattern
+
+The distinction is visible in the shape of the failure, and the UI should preserve it:
+
+- **One bot disconnects** → a single red dot while its siblings stay green.
+- **A host goes down** → *every* bot under that agent goes grey **at once**.
+
+That difference is what tells an operator "this is a host problem, not a bot problem" before they
+open anything.
+
+### Rules that follow
+
+1. **Never auto-act on agent loss.** No auto-reconnect, no marking bots dead. The cause is unknown,
+   and acting on a wrong guess can double-connect an account — two mineflayer clients with the same
+   identity, which the server kicks. Recovery is operator-initiated.
+2. **The agent is the source of truth on reconnect.** When the WebSocket returns, the agent
+   re-enumerates its actual live clients and reports the real set. The backend reconciles to that
+   view — bots still in-game return to `ONLINE`, the rest fall to `LINKED` — and never asserts state
+   back onto the agent.
+3. **An agent restart is not a bot restart.** mineflayer clients die with the agent process, so
+   after the agent (or its host) restarts, its bots are genuinely offline and must be reconnected
+   via Phase 3. The agent reports them `LINKED` on reconnect; the token cache survives, so no
+   re-link is needed.
+
+### Heartbeat and grace
+
+The agent heartbeats on a short interval (~10s). The backend flips it to `UNREACHABLE` only after a
+grace window (~30s, three missed beats) so a brief network blip does not flap the whole fleet grey.
+Bots transition to `STALE` at that same moment.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ONLINE
+    ONLINE --> UNREACHABLE: grace window of missed heartbeats
+    UNREACHABLE --> ONLINE: heartbeat resumes, bots reconciled
+```
+
+## Command routing
+
+The backend never addresses a bot directly. There is one WebSocket **per host**, multiplexing every
+bot that host owns, so reaching a bot is two lookups:
+
+```
+operator clicks Disconnect on Mason_01
+  │
+  ▼
+backend   bot.hostId → host-1 → that host's open WS session
+          sends { id: "cmd-7f3a", type: "disconnect", botId: "bot-1" }
+  │
+  ▼  (the single connection the agent dialled in on)
+agent     botId → its local map of mineflayer clients
+          client.quit()
+  │
+  ▼
+agent  → backend    { id: "cmd-7f3a", ok: true } + status update
+backend → frontend
+```
+
+Telemetry travels the same path in reverse. Because the channel belongs to the host rather than the
+bot, `botId` is present in every message.
+
+### Correlation ids
+
+Every command carries an id echoed in its response. On a multiplexed channel there is otherwise no
+way to map a failure back to the request that caused it, or to surface "disconnect failed" against
+the control the operator actually pressed.
+
+### Undeliverable commands fail fast
+
+If a host's WebSocket is gone, its bots are `STALE` and commands to them are undeliverable. They must
+be **rejected immediately**, not queued. Silent queueing means a command can fire twenty minutes
+later when the agent reconnects — long after an operator has resolved the situation by hand — and
+disconnect a bot that is deliberately running.
+
+### Authorization is backend-side only
+
+The agent authenticated once with its enrolment token and trusts what the backend sends; it performs
+no permission checks of its own. `agent.control`, `agent.chat` and the rest are therefore enforced
+**before dispatch**. The consequence is that a compromised backend can drive every bot — accepted in
+exchange for the backend never holding credentials, which keeps the accounts themselves out of reach.
+
+### Bots are not portable between hosts
+
+A bot's token cache lives on its host's disk. Moving a bot to another host is therefore not a routing
+change but a **re-link** (Phase 2) on the new host. Worth knowing before building any
+drag-to-rebalance interface: the UI would imply an operation the credential model does not support.
 
 ## Data ownership
 
