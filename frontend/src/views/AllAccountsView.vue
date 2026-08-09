@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   CircleAlert,
+  CircleSlash2,
   Plus,
   Search,
-  ShieldCheck,
+  SquarePen,
   Trash2,
   UserPlus,
   UserRoundCog,
   Users,
 } from 'lucide-vue-next'
 import { api, errorMessage, type RoleResponse, type UserResponse } from '../api/client'
+import { roleIcon } from '../lib/roleIcon'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -21,8 +23,36 @@ const error = ref<string | null>(null)
 const loading = ref(true)
 const query = ref('')
 
-const draft = ref({ username: '', password: '', roles: [] as string[] })
-const editing = ref<{ user: UserResponse; roles: string[] } | null>(null)
+const draft = ref({ username: '', password: '', role: null as string | null })
+const editing = ref<{ user: UserResponse; role: string | null } | null>(null)
+const editingUser = ref<{ user: UserResponse; username: string; password: string } | null>(null)
+
+const visible = computed(() => {
+  const needle = query.value.trim().toLowerCase()
+  if (!needle) return users.value
+  return users.value.filter((user) => user.username.toLowerCase().includes(needle))
+})
+
+/**
+ * Per-role headcount. Ordered by the seniority ladder when role.read is available, otherwise by
+ * whatever roles actually appear on the accounts.
+ */
+const breakdown = computed(() => {
+  const counts = new Map<string, number>()
+  for (const user of users.value) {
+    const key = user.role ?? ''
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+
+  const names = roles.value.length
+    ? [...roles.value].sort((a, b) => a.nodes.length - b.nodes.length).map((role) => role.name)
+    : [...counts.keys()].filter(Boolean).sort()
+
+  return {
+    roles: names.map((name) => ({ name, count: counts.get(name) ?? 0 })),
+    none: counts.get('') ?? 0,
+  }
+})
 
 onMounted(async () => {
   await Promise.all([loadUsers(), loadRoles()])
@@ -31,12 +61,6 @@ onMounted(async () => {
 
 function dialog(id: string): HTMLDialogElement | null {
   return document.getElementById(id) as HTMLDialogElement | null
-}
-
-function visible(): UserResponse[] {
-  const needle = query.value.trim().toLowerCase()
-  if (!needle) return users.value
-  return users.value.filter((user) => user.username.toLowerCase().includes(needle))
 }
 
 async function loadUsers() {
@@ -61,24 +85,43 @@ async function createUser() {
     error.value = errorMessage(failure, 'Could not create the account')
     return
   }
-  draft.value = { username: '', password: '', roles: [] }
+  draft.value = { username: '', password: '', role: null }
   dialog('create-user')?.close()
   await loadUsers()
 }
 
-async function saveRoles() {
+async function saveRole() {
   if (!editing.value) return
   error.value = null
-  const { error: failure } = await api.PUT('/api/users/{id}/roles', {
+  const { error: failure } = await api.PUT('/api/users/{id}/role', {
     params: { path: { id: editing.value.user.id } },
-    body: { roles: editing.value.roles },
+    body: { role: editing.value.role },
   })
   if (failure) {
-    error.value = errorMessage(failure, 'Could not update roles')
+    error.value = errorMessage(failure, 'Could not update the role')
     return
   }
   editing.value = null
-  dialog('edit-roles')?.close()
+  dialog('edit-role')?.close()
+  await loadUsers()
+}
+
+async function saveUser() {
+  if (!editingUser.value) return
+  error.value = null
+
+  const password = editingUser.value.password.trim()
+  const { error: failure } = await api.PATCH('/api/users/{id}', {
+    params: { path: { id: editingUser.value.user.id } },
+    // Omitting the password leaves the existing one untouched.
+    body: { username: editingUser.value.username, password: password || undefined },
+  })
+  if (failure) {
+    error.value = errorMessage(failure, 'Could not update the account')
+    return
+  }
+  editingUser.value = null
+  dialog('edit-user')?.close()
   await loadUsers()
 }
 
@@ -94,9 +137,14 @@ async function remove(user: UserResponse) {
   await loadUsers()
 }
 
-function openRoles(user: UserResponse) {
-  editing.value = { user, roles: [...user.roles] }
-  dialog('edit-roles')?.showModal()
+function openRole(user: UserResponse) {
+  editing.value = { user, role: user.role }
+  dialog('edit-role')?.showModal()
+}
+
+function openEdit(user: UserResponse) {
+  editingUser.value = { user, username: user.username, password: '' }
+  dialog('edit-user')?.showModal()
 }
 </script>
 
@@ -105,10 +153,7 @@ function openRoles(user: UserResponse) {
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">All accounts</h1>
-        <p class="text-sm opacity-60">
-          {{ users.length }} account{{ users.length === 1 ? '' : 's' }}. Registration is
-          administrator-only.
-        </p>
+        <p class="text-sm opacity-60">Registration is administrator-only.</p>
       </div>
       <div class="flex items-center gap-2">
         <label class="input input-sm w-56">
@@ -126,6 +171,26 @@ function openRoles(user: UserResponse) {
       </div>
     </header>
 
+    <div class="stats border-base-300 bg-base-200 w-full border">
+      <div class="stat">
+        <div class="stat-figure opacity-60"><Users class="size-7" /></div>
+        <div class="stat-title">Accounts</div>
+        <div class="stat-value text-3xl">{{ users.length }}</div>
+      </div>
+      <div v-for="entry in breakdown.roles" :key="entry.name" class="stat">
+        <div class="stat-figure text-primary">
+          <component :is="roleIcon(entry.name)" class="size-7" />
+        </div>
+        <div class="stat-title capitalize">{{ entry.name }}</div>
+        <div class="stat-value text-3xl">{{ entry.count }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-figure opacity-40"><CircleSlash2 class="size-7" /></div>
+        <div class="stat-title">No role</div>
+        <div class="stat-value text-3xl">{{ breakdown.none }}</div>
+      </div>
+    </div>
+
     <div v-if="error" role="alert" class="alert alert-error alert-soft">
       <CircleAlert class="size-4" />
       <span>{{ error }}</span>
@@ -141,12 +206,12 @@ function openRoles(user: UserResponse) {
           <thead>
             <tr>
               <th>Account</th>
-              <th>Roles</th>
+              <th>Role</th>
               <th class="text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="user in visible()" :key="user.id" class="hover:bg-base-300/40">
+            <tr v-for="user in visible" :key="user.id" class="hover:bg-base-300/40">
               <td>
                 <div class="flex items-center gap-3">
                   <div class="avatar avatar-placeholder">
@@ -161,27 +226,35 @@ function openRoles(user: UserResponse) {
                 </div>
               </td>
               <td>
-                <div class="flex flex-wrap gap-1">
-                  <span
-                    v-for="role in user.roles"
-                    :key="role"
-                    class="badge badge-primary badge-soft badge-sm gap-1"
-                  >
-                    <ShieldCheck class="size-3" />
-                    {{ role }}
-                  </span>
-                  <span v-if="user.roles.length === 0" class="text-sm opacity-50">none</span>
-                </div>
+                <span
+                  v-if="user.role"
+                  class="badge badge-primary badge-soft badge-sm gap-1 capitalize"
+                >
+                  <component :is="roleIcon(user.role)" class="size-3" />
+                  {{ user.role }}
+                </span>
+                <span v-else class="flex items-center gap-1 text-sm opacity-50">
+                  <CircleSlash2 class="size-3.5" />
+                  none
+                </span>
               </td>
               <td>
                 <div class="flex justify-end gap-1">
                   <button
-                    v-if="auth.can('user.roles.write')"
+                    v-if="auth.can('user.edit') && user.username !== auth.user?.username"
                     class="btn btn-ghost btn-xs gap-1"
-                    @click="openRoles(user)"
+                    @click="openEdit(user)"
+                  >
+                    <SquarePen class="size-3.5" />
+                    Edit
+                  </button>
+                  <button
+                    v-if="auth.can('user.roles.write') && user.username !== auth.user?.username"
+                    class="btn btn-ghost btn-xs gap-1"
+                    @click="openRole(user)"
                   >
                     <UserRoundCog class="size-3.5" />
-                    Roles
+                    Role
                   </button>
                   <button
                     v-if="auth.can('user.delete') && user.username !== auth.user?.username"
@@ -194,7 +267,7 @@ function openRoles(user: UserResponse) {
                 </div>
               </td>
             </tr>
-            <tr v-if="visible().length === 0">
+            <tr v-if="visible.length === 0">
               <td colspan="3">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Users class="size-6" />
@@ -231,17 +304,12 @@ function openRoles(user: UserResponse) {
             maxlength="72"
             required
           />
-          <div class="flex flex-wrap gap-4 pt-1">
-            <label v-for="role in roles" :key="role.id" class="label cursor-pointer gap-2">
-              <input
-                v-model="draft.roles"
-                type="checkbox"
-                class="checkbox checkbox-sm checkbox-primary"
-                :value="role.name"
-              />
-              <span class="label-text capitalize">{{ role.name }}</span>
-            </label>
-          </div>
+          <select v-model="draft.role" class="select w-full">
+            <option :value="null">No role — no permissions</option>
+            <option v-for="role in roles" :key="role.id" :value="role.name" class="capitalize">
+              {{ role.name }}
+            </option>
+          </select>
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('create-user')?.close()">
               Cancel
@@ -253,31 +321,103 @@ function openRoles(user: UserResponse) {
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
 
-    <dialog id="edit-roles" class="modal">
+    <dialog id="edit-user" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <SquarePen class="text-primary size-5" />
+          Edit {{ editingUser?.user.username }}
+        </h3>
+        <p class="mt-1 text-sm opacity-60">
+          Renaming ends that account's sessions, since its token identifies it by username.
+        </p>
+        <form v-if="editingUser" class="mt-4 flex flex-col gap-3" @submit.prevent="saveUser">
+          <label class="floating-label">
+            <span>Username</span>
+            <input
+              v-model="editingUser.username"
+              class="input w-full"
+              type="text"
+              placeholder="Username"
+              maxlength="64"
+              required
+            />
+          </label>
+          <label class="floating-label">
+            <span>New password</span>
+            <input
+              v-model="editingUser.password"
+              class="input w-full"
+              type="password"
+              placeholder="Leave blank to keep the current password"
+              autocomplete="new-password"
+              minlength="4"
+              maxlength="72"
+            />
+          </label>
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-user')?.close()">
+              Cancel
+            </button>
+            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <dialog id="edit-role" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <UserRoundCog class="text-primary size-5" />
-          Roles for {{ editing?.user.username }}
+          Role for {{ editing?.user.username }}
         </h3>
-        <form class="mt-4 flex flex-col gap-3" @submit.prevent="saveRoles">
-          <ul v-if="editing" class="list">
-            <li v-for="role in roles" :key="role.id" class="list-row px-0">
-              <div>
+        <p class="mt-1 text-sm opacity-60">
+          Roles are nested levels, so exactly one applies. Each includes the tiers below it.
+        </p>
+        <form class="mt-4 flex flex-col gap-3" @submit.prevent="saveRole">
+          <ul v-if="editing" class="flex flex-col gap-1">
+            <li v-for="role in roles" :key="role.id">
+              <label
+                class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+              >
                 <input
-                  v-model="editing.roles"
-                  type="checkbox"
-                  class="checkbox checkbox-sm checkbox-primary"
+                  v-model="editing.role"
+                  type="radio"
+                  name="role"
+                  class="radio radio-sm radio-primary mt-0.5 shrink-0"
                   :value="role.name"
                 />
-              </div>
-              <div>
-                <div class="font-medium capitalize">{{ role.name }}</div>
-                <div class="text-xs opacity-60">{{ role.nodes.join(', ') }}</div>
-              </div>
+                <component
+                  :is="roleIcon(role.name)"
+                  class="text-primary mt-0.5 size-5 shrink-0"
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="block font-medium capitalize">{{ role.name }}</span>
+                  <span class="block text-xs opacity-60">{{ role.nodes.join(', ') }}</span>
+                </span>
+              </label>
+            </li>
+            <li>
+              <label
+                class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+              >
+                <input
+                  v-model="editing.role"
+                  type="radio"
+                  name="role"
+                  class="radio radio-sm mt-0.5 shrink-0"
+                  :value="null"
+                />
+                <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
+                <span class="min-w-0 flex-1">
+                  <span class="block font-medium">No role</span>
+                  <span class="block text-xs opacity-60">Removes every permission</span>
+                </span>
+              </label>
             </li>
           </ul>
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-roles')?.close()">
+            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-role')?.close()">
               Cancel
             </button>
             <button class="btn btn-primary btn-sm" type="submit">Save</button>

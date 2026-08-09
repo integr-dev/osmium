@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/api/users/{id}/roles": {
+    "/api/users/{id}/role": {
         parameters: {
             query?: never;
             header?: never;
@@ -12,8 +12,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Replace the full role set of an account. */
-        put: operations["replaceRoles"];
+        /**
+         * Replace the role of an account.
+         * @description Roles are nested seniority levels, so an account holds exactly one or none.
+         */
+        put: operations["replaceRole"];
         post?: never;
         delete?: never;
         options?: never;
@@ -158,9 +161,9 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description Replaces the full role set of an account. */
-        UpdateRolesRequest: {
-            roles?: string[];
+        /** @description Replaces the role of an account. Null clears it, leaving no permissions. */
+        UpdateRoleRequest: {
+            role?: string | null;
         };
         /** @description A user account. Passwords are never returned. */
         UserResponse: {
@@ -168,21 +171,19 @@ export interface components {
             id?: number;
             username?: string;
             /**
-             * @description Assigned role names.
-             * @example [
-             *       "administrator"
-             *     ]
+             * @description Assigned role, or null when the account has none.
+             * @example administrator
              */
-            roles?: string[];
-            /** @description Effective permission nodes, flattened across all assigned roles. */
+            role?: string | null;
+            /** @description Permission nodes granted by the assigned role. */
             nodes?: string[];
         };
         /** @description Creates an account with an administrator-chosen username and password. */
         CreateUserRequest: {
             username: string;
             password?: string;
-            /** @description Role names to assign. Every name must already exist. */
-            roles?: string[];
+            /** @description Role name to assign. Must already exist. Omit for no permissions. */
+            role?: string | null;
         };
         /** @description Rotates the password of the authenticated account. */
         PasswordChangeRequest: {
@@ -209,7 +210,7 @@ export interface components {
             /** @description Omit to leave the password untouched. */
             password?: string | null;
         };
-        /** @description Edits the authenticated account. Roles are deliberately not editable here. */
+        /** @description Edits the authenticated account. The role is deliberately not editable here. */
         UpdateSelfRequest: {
             username: string;
         };
@@ -229,7 +230,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    replaceRoles: {
+    replaceRole: {
         parameters: {
             query?: never;
             header?: never;
@@ -240,7 +241,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateRolesRequest"];
+                "application/json": components["schemas"]["UpdateRoleRequest"];
             };
         };
         responses: {
