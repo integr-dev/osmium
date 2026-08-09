@@ -1,22 +1,86 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Bot, Plus, Server, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { onMounted, ref } from 'vue'
+import { Bot, Copy, KeyRound, Plus, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
 import AddHostModal from '../components/AddHostModal.vue'
-import { useBotStore, type Host } from '../stores/bots'
+import FormField from '../components/FormField.vue'
+import type { HostResponse } from '../api/client'
+import { useBotStore } from '../stores/bots'
 
 const botStore = useBotStore()
 
 const addOpen = ref(false)
-const pendingRemove = ref<Host | null>(null)
+const pendingRemove = ref<HostResponse | null>(null)
 const removeDialog = ref<HTMLDialogElement | null>(null)
+const error = ref<string | null>(null)
 
-function askRemove(host: Host) {
+const renameDialog = ref<HTMLDialogElement | null>(null)
+const renaming = ref<HostResponse | null>(null)
+const renameDraft = ref('')
+const renameError = ref<string | null>(null)
+
+const rotateDialog = ref<HTMLDialogElement | null>(null)
+const rotating = ref<HostResponse | null>(null)
+const rotatedToken = ref<string | null>(null)
+const rotateError = ref<string | null>(null)
+const copied = ref(false)
+
+onMounted(() => void botStore.refresh())
+
+function openRename(host: HostResponse) {
+  renaming.value = host
+  renameDraft.value = host.name
+  renameError.value = null
+  renameDialog.value?.showModal()
+}
+
+async function saveRename() {
+  if (!renaming.value) return
+  renameError.value = null
+  try {
+    await botStore.renameHost(renaming.value.id, renameDraft.value)
+    renameDialog.value?.close()
+  } catch (failure) {
+    renameError.value = failure instanceof Error ? failure.message : 'Could not rename the host'
+  }
+}
+
+function openRotate(host: HostResponse) {
+  rotating.value = host
+  rotatedToken.value = null
+  rotateError.value = null
+  copied.value = false
+  rotateDialog.value?.showModal()
+}
+
+async function confirmRotate() {
+  if (!rotating.value) return
+  rotateError.value = null
+  try {
+    rotatedToken.value = await botStore.rotateHostToken(rotating.value.id)
+  } catch (failure) {
+    rotateError.value = failure instanceof Error ? failure.message : 'Could not rotate the token'
+  }
+}
+
+async function copyToken() {
+  if (!rotatedToken.value) return
+  await navigator.clipboard.writeText(rotatedToken.value)
+  copied.value = true
+}
+
+function askRemove(host: HostResponse) {
   pendingRemove.value = host
   removeDialog.value?.showModal()
 }
 
-function confirmRemove() {
-  if (pendingRemove.value) botStore.removeHost(pendingRemove.value.id)
+async function confirmRemove() {
+  if (!pendingRemove.value) return
+  error.value = null
+  try {
+    await botStore.removeHost(pendingRemove.value.id)
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : 'Could not remove the host'
+  }
   pendingRemove.value = null
   removeDialog.value?.close()
 }
@@ -28,8 +92,8 @@ function confirmRemove() {
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">Hosts</h1>
         <p class="text-sm opacity-60">
-          Agent machines that run the bots.
-          {{ botStore.hosts.filter((host) => host.online).length }} of
+          Machines that run your bots.
+          {{ botStore.hosts.filter((host) => host.reachable).length }} of
           {{ botStore.hosts.length }} online.
         </p>
       </div>
@@ -38,6 +102,11 @@ function confirmRemove() {
         Enrol host
       </button>
     </header>
+
+    <div v-if="error || botStore.error" role="alert" class="alert alert-error alert-soft">
+      <TriangleAlert class="size-4" />
+      <span>{{ error ?? botStore.error }}</span>
+    </div>
 
     <div class="card border-base-300 bg-base-200 border">
       <div class="overflow-x-auto">
@@ -69,21 +138,29 @@ function confirmRemove() {
               <td>
                 <span
                   class="badge badge-sm gap-1"
-                  :class="host.online ? 'badge-success badge-soft' : 'badge-error badge-soft'"
+                  :class="host.reachable ? 'badge-success badge-soft' : 'badge-error badge-soft'"
                 >
-                  <span class="size-1.5 rounded-full" :class="host.online ? 'bg-success' : 'bg-error'"></span>
-                  {{ host.online ? 'Online' : 'Unreachable' }}
+                  <span class="size-1.5 rounded-full" :class="host.reachable ? 'bg-success' : 'bg-error'"></span>
+                  {{ host.reachable ? 'Online' : 'Unreachable' }}
                 </span>
               </td>
-              <td class="font-mono text-sm opacity-70">{{ host.agentVersion }}</td>
+              <td class="font-mono text-sm opacity-70">{{ host.agentVersion ?? '—' }}</td>
               <td>
                 <span class="badge badge-ghost badge-sm gap-1">
                   <Bot class="size-3" />
-                  {{ botStore.botsOnHost(host.id).length }}
+                  {{ host.botCount }}
                 </span>
               </td>
               <td>
-                <div class="flex justify-end">
+                <div class="flex justify-end gap-1">
+                  <button class="btn btn-ghost btn-xs gap-1" @click="openRename(host)">
+                    <SquarePen class="size-3.5" />
+                    Rename
+                  </button>
+                  <button class="btn btn-ghost btn-xs gap-1" @click="openRotate(host)">
+                    <KeyRound class="size-3.5" />
+                    Rotate token
+                  </button>
                   <button class="btn btn-ghost btn-xs text-error gap-1" @click="askRemove(host)">
                     <Trash2 class="size-3.5" />
                     Remove
@@ -106,6 +183,81 @@ function confirmRemove() {
 
     <AddHostModal v-model:open="addOpen" />
 
+    <dialog ref="renameDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <SquarePen class="text-primary size-5" />
+          Rename host
+        </h3>
+        <p class="mt-1 text-sm opacity-60">
+          Only the name is yours to set — address, version and reachability are observed when the
+          host connects.
+        </p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveRename">
+          <FormField
+            v-model="renameDraft"
+            label="Host name"
+            :icon="Server"
+            type="text"
+            maxlength="64"
+            required
+          />
+          <div v-if="renameError" role="alert" class="alert alert-error alert-soft">
+            <TriangleAlert class="size-4" />
+            <span>{{ renameError }}</span>
+          </div>
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">Cancel</button>
+            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <dialog ref="rotateDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <KeyRound class="text-primary size-5" />
+          Rotate token for {{ rotating?.name }}
+        </h3>
+
+        <div v-if="!rotatedToken" class="mt-4 flex flex-col gap-4">
+          <p class="text-sm opacity-70">
+            Issues a new token and invalidates the current one. The host is disconnected and has to
+            reconnect with the replacement — its bots are kept.
+          </p>
+          <div v-if="rotateError" role="alert" class="alert alert-error alert-soft">
+            <TriangleAlert class="size-4" />
+            <span>{{ rotateError }}</span>
+          </div>
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="rotateDialog?.close()">Cancel</button>
+            <button class="btn btn-primary btn-sm" type="button" @click="confirmRotate">Rotate</button>
+          </div>
+        </div>
+
+        <div v-else class="mt-4 flex flex-col gap-4">
+          <div role="alert" class="alert alert-warning alert-soft">
+            <TriangleAlert class="size-4" />
+            <span>Copy this now — it is shown once and cannot be recovered.</span>
+          </div>
+          <label class="input w-full">
+            <KeyRound class="size-4 opacity-60" />
+            <input class="font-mono text-sm" :value="rotatedToken" readonly />
+            <button type="button" class="btn btn-ghost btn-xs gap-1" @click="copyToken">
+              <Copy class="size-3.5" />
+              {{ copied ? 'Copied' : 'Copy' }}
+            </button>
+          </label>
+          <div class="modal-action">
+            <button class="btn btn-primary btn-sm" type="button" @click="rotateDialog?.close()">Done</button>
+          </div>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
     <dialog ref="removeDialog" class="modal" @close="pendingRemove = null">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
@@ -121,7 +273,7 @@ function confirmRemove() {
             , which will be removed with it.
           </template>
           <template v-else>This host has no bots.</template>
-          The agent token is invalidated.
+          Its token stops working.
         </p>
         <div class="modal-action">
           <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">Cancel</button>

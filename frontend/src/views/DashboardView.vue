@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
+  Activity,
   Blocks,
   Bot,
   CircleAlert,
@@ -10,18 +11,29 @@ import {
   Hammer,
   Layers,
   Map,
+  MessagesSquare,
   TriangleAlert,
 } from 'lucide-vue-next'
+import { onMounted } from 'vue'
+import { STATE_DOT } from '../lib/botState'
 import type { Sector } from '../stores/bots'
 import { useBotStore } from '../stores/bots'
 
 const botStore = useBotStore()
+
+onMounted(() => void botStore.refresh())
 
 const SECTOR_BADGE: Record<Sector['status'], string> = {
   done: 'badge-success badge-soft',
   active: 'badge-primary badge-soft',
   blocked: 'badge-error badge-soft',
   queued: 'badge-ghost',
+}
+
+const SEVERITY_DOT: Record<'info' | 'warning' | 'error', string> = {
+  info: 'bg-base-content/30',
+  warning: 'bg-warning',
+  error: 'bg-error',
 }
 
 const SECTOR_PROGRESS: Record<Sector['status'], string> = {
@@ -40,11 +52,13 @@ const eta = computed(() => {
 
 /** Builders only, ranked by contribution, for the leaderboard bars. */
 const contributors = computed(() =>
-  [...botStore.bots].filter((bot) => bot.blocksPlaced > 0).sort((a, b) => b.blocksPlaced - a.blocksPlaced),
+  [...botStore.bots]
+    .filter((bot) => bot.telemetry.blocksPlaced > 0)
+    .sort((a, b) => b.telemetry.blocksPlaced - a.telemetry.blocksPlaced),
 )
 
 const topContribution = computed(() =>
-  Math.max(1, ...contributors.value.map((bot) => bot.blocksPlaced)),
+  Math.max(1, ...contributors.value.map((bot) => bot.telemetry.blocksPlaced)),
 )
 
 function percent(part: number, whole: number): number {
@@ -143,7 +157,7 @@ function percent(part: number, whole: number): number {
                 class="size-4 shrink-0"
                 :class="item.severity === 'error' ? 'text-error' : 'text-warning'"
               />
-              <span class="flex-1 truncate text-sm font-medium">{{ item.bot.name }}</span>
+              <span class="flex-1 truncate text-sm font-medium">{{ item.bot.label }}</span>
               <span
                 class="badge badge-xs"
                 :class="item.severity === 'error' ? 'badge-error badge-soft' : 'badge-warning badge-soft'"
@@ -215,15 +229,15 @@ function percent(part: number, whole: number): number {
                 >
                   <span
                     class="size-1.5 rounded-full"
-                    :class="bot.online ? 'bg-success' : 'bg-error'"
+                    :class="STATE_DOT[bot.state] ?? 'bg-base-content/30'"
                   ></span>
-                  {{ bot.name }}
+                  {{ bot.label }}
                 </RouterLink>
-                <span class="tabular-nums opacity-60">{{ bot.blocksPlaced.toLocaleString() }}</span>
+                <span class="tabular-nums opacity-60">{{ bot.telemetry.blocksPlaced.toLocaleString() }}</span>
               </div>
               <progress
                 class="progress progress-primary mt-1 w-full"
-                :value="percent(bot.blocksPlaced, topContribution)"
+                :value="percent(bot.telemetry.blocksPlaced, topContribution)"
                 max="100"
               ></progress>
             </li>
@@ -233,22 +247,79 @@ function percent(part: number, whole: number): number {
 
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <Clock class="text-primary size-4" />
-            Recent activity
-          </h2>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <MessagesSquare class="text-primary size-4" />
+              Server chat
+            </h2>
+          </div>
+          <p class="text-xs opacity-50">
+            One elected bot forwards each server's chat, so it is not duplicated per bot.
+          </p>
 
-          <div v-if="botStore.activity.length" class="flex max-h-72 flex-col gap-1 overflow-y-auto">
+          <!-- A fleet can span servers, so this is grouped by server rather than shown as one feed. -->
+          <div v-if="botStore.servers.length" class="flex max-h-72 flex-col gap-4 overflow-y-auto">
+            <div v-for="server in botStore.servers" :key="server">
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <span class="truncate font-mono text-xs opacity-60">{{ server }}</span>
+                <span v-if="botStore.chatListeners[server]" class="shrink-0 text-xs opacity-50">
+                  via
+                  <span class="font-medium">{{ botStore.chatListeners[server]?.label }}</span>
+                </span>
+                <span v-else class="badge badge-warning badge-soft badge-xs shrink-0 gap-1">
+                  <TriangleAlert class="size-3" />
+                  no listener
+                </span>
+              </div>
+
+              <div v-if="botStore.chatListeners[server]" class="flex flex-col gap-1">
+                <p
+                  v-for="(line, index) in botStore.globalChatFor(server)"
+                  :key="index"
+                  class="flex gap-2 text-sm"
+                >
+                  <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
+                  <span class="font-medium">{{ line.from }}</span>
+                  <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
+                </p>
+                <p v-if="!botStore.globalChatFor(server).length" class="text-sm opacity-50">
+                  Nothing yet.
+                </p>
+              </div>
+
+              <p v-else class="text-sm opacity-50">
+                No bot online here, so nothing is listening.
+              </p>
+            </div>
+          </div>
+
+          <p v-else class="py-8 text-center text-sm opacity-50">No bots on any server yet.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      <div class="card border-base-300 bg-base-200 border">
+        <div class="card-body gap-3">
+          <h2 class="card-title flex items-center gap-2 text-base">
+            <Activity class="text-primary size-4" />
+            Bot activity
+          </h2>
+          <p class="text-xs opacity-50">Incidents and connectivity — not conversation.</p>
+
+          <div v-if="botStore.activity.length" class="flex max-h-64 flex-col gap-1 overflow-y-auto">
             <RouterLink
               v-for="(line, index) in botStore.activity"
               :key="index"
               :to="{ name: 'bot', params: { id: line.bot.id } }"
-              class="rounded-field hover:bg-base-300/50 flex gap-2 px-2 py-1.5 text-sm"
+              class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
             >
               <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
-              <span class="font-medium" :class="line.from === 'system' ? 'opacity-50' : ''">
-                {{ line.from }}
-              </span>
+              <span
+                class="size-1.5 shrink-0 rounded-full"
+                :class="SEVERITY_DOT[line.severity]"
+              ></span>
+              <span class="font-medium">{{ line.bot.label }}</span>
               <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
             </RouterLink>
           </div>

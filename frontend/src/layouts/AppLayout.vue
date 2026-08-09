@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Bot, LayoutDashboard, LogOut, Menu, Plus, Server, Settings, User, Users } from 'lucide-vue-next'
 import AddBotModal from '../components/AddBotModal.vue'
 import { useAuthStore } from '../stores/auth'
+import { STATE_DOT } from '../lib/botState'
 import { useBotStore } from '../stores/bots'
 
 const auth = useAuthStore()
@@ -11,6 +12,11 @@ const botStore = useBotStore()
 const router = useRouter()
 
 const addBotOpen = ref(false)
+
+// The sidebar is present on every authenticated page, so it is the natural place to load the fleet.
+onMounted(() => {
+  if (auth.can('agent.read')) void botStore.refresh()
+})
 
 function logout() {
   auth.logout()
@@ -61,7 +67,7 @@ function logout() {
                 <Server class="size-4 shrink-0" />
                 Hosts
                 <span class="badge badge-xs ml-auto">
-                  {{ botStore.hosts.filter((host) => host.online).length }}/{{ botStore.hosts.length }}
+                  {{ botStore.hosts.filter((host) => host.reachable).length }}/{{ botStore.hosts.length }}
                 </span>
               </RouterLink>
             </li>
@@ -77,10 +83,10 @@ function logout() {
                     <RouterLink :to="{ name: 'bot', params: { id: bot.id } }" class="gap-2.5">
                       <span
                         class="size-2 shrink-0 rounded-full"
-                        :class="bot.online ? 'bg-success' : 'bg-error'"
-                        :title="bot.online ? 'Online' : 'Offline'"
+                        :class="STATE_DOT[bot.state] ?? 'bg-base-content/30'"
+                        :title="bot.state"
                       ></span>
-                      <span class="truncate">{{ bot.name }}</span>
+                      <span class="truncate">{{ bot.label }}</span>
                     </RouterLink>
                   </li>
                   <li>

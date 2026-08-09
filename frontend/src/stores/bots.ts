@@ -1,10 +1,13 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { api, errorMessage, type BotResponse, type HostResponse } from '../api/client'
 
 /**
- * Mock bot state. Everything here is local and invented - there is no orchestration API yet, so
- * this exists to shape the UI. Swap the seed data and the actions for real calls when the agent
- * module lands.
+ * Fleet state.
+ *
+ * Hosts, bots and their lifecycle states are **real** and come from the backend. Telemetry, chat and
+ * build progress are still **mock**: the backend has no agent connected yet, so nothing reports
+ * health, position or chat. Those parts are marked below and are what the SSE stream will replace.
  */
 
 export interface NearbyPlayer {
@@ -19,11 +22,18 @@ export interface ChatLine {
   text: string
 }
 
-export interface Bot {
-  id: string
-  name: string
-  hostId: string
-  online: boolean
+/**
+ * Something that happened *to* a bot: kicks, deaths, warnings, connectivity transitions. Kept out
+ * of chat so an incident is not buried between two lines of small talk.
+ */
+export interface ActivityLine {
+  at: string
+  severity: 'info' | 'warning' | 'error'
+  text: string
+}
+
+/** MOCK. Replaced by the telemetry stream once an agent reports. */
+export interface BotTelemetry {
   uptimeSeconds: number
   health: number
   food: number
@@ -34,141 +44,10 @@ export interface Bot {
   blocksPlaced: number
   nearby: NearbyPlayer[]
   chat: ChatLine[]
+  activity: ActivityLine[]
 }
 
-/**
- * An agent host - the machine running the agent process that owns bots. Mirrors the Agent concept
- * in BOT_CONNECTIVITY.md; credentials never live here, only status and identity.
- *
- * `address` is *observed* when the agent dials in, not entered at enrolment: the agent connects to
- * Osmium, so the backend never needs to reach it. It stays null until the first connection.
- */
-export interface Host {
-  id: string
-  name: string
-  address: string | null
-  online: boolean
-  agentVersion: string
-}
-
-function seedHosts(): Host[] {
-  return [
-    { id: 'host-1', name: 'agent-eu-1', address: '10.0.4.11:871', online: true, agentVersion: '0.3.1' },
-    { id: 'host-2', name: 'agent-eu-2', address: '10.0.4.12:871', online: true, agentVersion: '0.3.1' },
-    { id: 'host-3', name: 'agent-us-1', address: '10.0.9.20:871', online: false, agentVersion: '0.3.0' },
-  ]
-}
-
-function seed(): Bot[] {
-  return [
-    {
-      id: 'bot-1',
-      name: 'Mason_01',
-      hostId: 'host-1',
-      online: true,
-      uptimeSeconds: 8_412,
-      health: 20,
-      food: 17,
-      position: { x: 128, y: 71, z: -344 },
-      dimension: 'overworld',
-      pingMs: 42,
-      task: 'Placing layer 14 · sector A',
-      blocksPlaced: 12_480,
-      nearby: [
-        { name: 'Mason_02', distance: 6.2, isBot: true },
-        { name: 'Hauler_01', distance: 18.9, isBot: true },
-        { name: 'Notch', distance: 41.3, isBot: false },
-      ],
-      chat: [
-        { at: '14:02', from: 'Mason_02', text: 'sector A almost done' },
-        { at: '14:04', from: 'Mason_01', text: 'starting layer 14' },
-      ],
-    },
-    {
-      id: 'bot-2',
-      name: 'Mason_02',
-      hostId: 'host-1',
-      online: true,
-      uptimeSeconds: 8_390,
-      health: 16,
-      food: 12,
-      position: { x: 134, y: 71, z: -338 },
-      dimension: 'overworld',
-      pingMs: 55,
-      task: 'Placing layer 14 · sector B',
-      blocksPlaced: 11_902,
-      nearby: [
-        { name: 'Mason_01', distance: 6.2, isBot: true },
-        { name: 'Hauler_01', distance: 14.1, isBot: true },
-      ],
-      chat: [{ at: '14:02', from: 'Mason_02', text: 'sector A almost done' }],
-    },
-    {
-      id: 'bot-3',
-      name: 'Hauler_01',
-      hostId: 'host-2',
-      online: true,
-      uptimeSeconds: 7_120,
-      health: 20,
-      food: 20,
-      position: { x: 96, y: 68, z: -310 },
-      dimension: 'overworld',
-      pingMs: 38,
-      task: 'Ferrying stone from depot 2',
-      blocksPlaced: 0,
-      nearby: [{ name: 'Mason_02', distance: 14.1, isBot: true }],
-      chat: [{ at: '13:58', from: 'Hauler_01', text: 'depot 2 running low on stone' }],
-    },
-    {
-      id: 'bot-4',
-      name: 'Scout_01',
-      hostId: 'host-2',
-      online: true,
-      uptimeSeconds: 2_045,
-      health: 9,
-      food: 6,
-      position: { x: -12, y: 94, z: -502 },
-      dimension: 'overworld',
-      pingMs: 121,
-      task: 'Surveying build perimeter',
-      blocksPlaced: 0,
-      nearby: [],
-      chat: [{ at: '14:01', from: 'Scout_01', text: 'hostile mobs north ridge' }],
-    },
-    {
-      id: 'bot-5',
-      name: 'Mason_03',
-      hostId: 'host-1',
-      online: false,
-      uptimeSeconds: 0,
-      health: 0,
-      food: 0,
-      position: { x: 131, y: 71, z: -341 },
-      dimension: 'overworld',
-      pingMs: 0,
-      task: 'Disconnected',
-      blocksPlaced: 9_140,
-      nearby: [],
-      chat: [{ at: '13:44', from: 'system', text: 'connection reset by peer' }],
-    },
-    {
-      id: 'bot-6',
-      name: 'Miner_01',
-      hostId: 'host-3',
-      online: false,
-      uptimeSeconds: 0,
-      health: 0,
-      food: 0,
-      position: { x: 210, y: 12, z: -418 },
-      dimension: 'overworld',
-      pingMs: 0,
-      task: 'Disconnected',
-      blocksPlaced: 0,
-      nearby: [],
-      chat: [],
-    },
-  ]
-}
+export type FleetBot = BotResponse & { telemetry: BotTelemetry }
 
 export interface Sector {
   id: string
@@ -180,21 +59,31 @@ export interface Sector {
 }
 
 export interface Attention {
-  bot: Bot
+  bot: FleetBot
   reason: string
   severity: 'error' | 'warning'
 }
 
-export interface CreateBotInput {
-  name: string
+/** A line of ordinary server chat, forwarded by exactly one elected bot per server. */
+export interface GlobalChatLine {
+  at: string
   server: string
-  hostId: string
+  from: string
+  text: string
+}
+
+/** States in which a bot is genuinely in game. */
+export function isOnline(bot: BotResponse): boolean {
+  return bot.state === 'ONLINE'
 }
 
 export const useBotStore = defineStore('bots', () => {
-  const bots = ref<Bot[]>(seed())
-  const hosts = ref<Host[]>(seedHosts())
-  const startedAt = ref(new Date().toISOString())
+  const hosts = ref<HostResponse[]>([])
+  const bots = ref<FleetBot[]>([])
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+
+  // ---- mock, pending a connected agent -------------------------------------------------------
 
   const schematic = ref({
     name: 'Cathedral of Osmium',
@@ -204,58 +93,68 @@ export const useBotStore = defineStore('bots', () => {
   })
 
   const sectors = ref<Sector[]>([
-    {
-      id: 'sector-c',
-      name: 'Crypt · sector C',
-      blocksPlaced: 21_400,
-      totalBlocks: 21_400,
-      assigned: [],
-      status: 'done',
-    },
-    {
-      id: 'sector-a',
-      name: 'Nave · sector A',
-      blocksPlaced: 12_480,
-      totalBlocks: 48_200,
-      assigned: ['Mason_01'],
-      status: 'active',
-    },
-    {
-      id: 'sector-b',
-      name: 'Transept · sector B',
-      blocksPlaced: 11_902,
-      totalBlocks: 39_600,
-      assigned: ['Mason_02'],
-      status: 'active',
-    },
-    {
-      id: 'sector-e',
-      name: 'North wing · sector E',
-      blocksPlaced: 9_140,
-      totalBlocks: 34_800,
-      assigned: ['Mason_03'],
-      status: 'blocked',
-    },
-    {
-      id: 'sector-d',
-      name: 'Spire · sector D',
-      blocksPlaced: 0,
-      totalBlocks: 40_000,
-      assigned: [],
-      status: 'queued',
-    },
+    { id: 'sector-c', name: 'Crypt · sector C', blocksPlaced: 21_400, totalBlocks: 21_400, assigned: [], status: 'done' },
+    { id: 'sector-a', name: 'Nave · sector A', blocksPlaced: 12_480, totalBlocks: 48_200, assigned: ['Mason_01'], status: 'active' },
+    { id: 'sector-b', name: 'Transept · sector B', blocksPlaced: 11_902, totalBlocks: 39_600, assigned: ['Mason_02'], status: 'active' },
+    { id: 'sector-e', name: 'North wing · sector E', blocksPlaced: 9_140, totalBlocks: 34_800, assigned: ['Mason_03'], status: 'blocked' },
+    { id: 'sector-d', name: 'Spire · sector D', blocksPlaced: 0, totalBlocks: 40_000, assigned: [], status: 'queued' },
   ])
 
-  const online = computed(() => bots.value.filter((bot) => bot.online))
-  const blocksPlaced = computed(() => bots.value.reduce((sum, bot) => sum + bot.blocksPlaced, 0))
+  const globalChat = ref<GlobalChatLine[]>([
+    { at: '14:06', server: 'mc.example.com:25565', from: 'Notch', text: 'that cathedral is getting huge' },
+    { at: '14:05', server: 'mc.example.com:25565', from: 'Dinnerbone', text: 'who is running all these bots' },
+    { at: '14:03', server: 'mc.example.com:25565', from: 'jeb_', text: 'anyone got spare deepslate?' },
+  ])
+
+  // ---- loading -------------------------------------------------------------------------------
+
+  async function refresh(): Promise<void> {
+    loading.value = true
+    error.value = null
+    try {
+      await Promise.all([loadHosts(), loadBots()])
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadHosts(): Promise<void> {
+    const { data, error: failure } = await api.GET('/api/hosts')
+    if (failure) {
+      error.value = errorMessage(failure, 'Could not load hosts')
+      return
+    }
+    hosts.value = (data ?? []) as HostResponse[]
+  }
+
+  async function loadBots(): Promise<void> {
+    const { data, error: failure } = await api.GET('/api/bots')
+    if (failure) {
+      error.value = errorMessage(failure, 'Could not load bots')
+      return
+    }
+    // Telemetry is preserved across refreshes so the mock does not reset on every poll.
+    const previous = new Map(bots.value.map((bot) => [bot.id, bot.telemetry]))
+    bots.value = ((data ?? []) as BotResponse[]).map((bot) => ({
+      ...bot,
+      telemetry: previous.get(bot.id) ?? mockTelemetry(bot),
+    }))
+  }
+
+  // ---- derived -------------------------------------------------------------------------------
+
+  const online = computed(() => bots.value.filter(isOnline))
+
+  const blocksPlaced = computed(() =>
+    bots.value.reduce((sum, bot) => sum + bot.telemetry.blocksPlaced, 0),
+  )
 
   const progressPercent = computed(() =>
     Math.min(100, (blocksPlaced.value / schematic.value.totalBlocks) * 100),
   )
 
-  /** Only builders contribute to throughput; haulers and scouts place nothing. */
   const blocksPerMinute = computed(
-    () => online.value.filter((bot) => bot.blocksPlaced > 0).length * 38,
+    () => online.value.filter((bot) => bot.telemetry.blocksPlaced > 0).length * 38,
   )
 
   const etaMinutes = computed(() => {
@@ -264,167 +163,246 @@ export const useBotStore = defineStore('bots', () => {
     return Math.max(0, Math.round(remaining / blocksPerMinute.value))
   })
 
-  /** Anything an operator would want to act on, worst first. */
+  /** Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it. */
+  const servers = computed(() => [...new Set(bots.value.map((bot) => bot.serverAddress))].sort())
+
+  /**
+   * One elected listener **per server**, not per fleet. Chosen for stability - the longest running
+   * online bot - so a new bot joining never displaces a working listener.
+   */
+  const chatListeners = computed<Record<string, FleetBot | undefined>>(() => {
+    const byServer: Record<string, FleetBot | undefined> = {}
+    for (const server of servers.value) {
+      byServer[server] = online.value
+        .filter((bot) => bot.serverAddress === server)
+        .sort((a, b) => b.telemetry.uptimeSeconds - a.telemetry.uptimeSeconds)[0]
+    }
+    return byServer
+  })
+
+  function globalChatFor(server: string): GlobalChatLine[] {
+    return globalChat.value.filter((line) => line.server === server)
+  }
+
   const attention = computed<Attention[]>(() => {
     const found: Attention[] = []
     for (const bot of bots.value) {
-      if (!bot.online) {
-        found.push({ bot, reason: 'Disconnected', severity: 'error' })
+      if (bot.state === 'STALE') {
+        found.push({ bot, reason: 'Host unreachable', severity: 'error' })
         continue
       }
-      if (bot.health <= 10) found.push({ bot, reason: `Health ${bot.health}/20`, severity: 'error' })
-      if (bot.food <= 8) found.push({ bot, reason: `Food ${bot.food}/20`, severity: 'warning' })
-      if (bot.pingMs >= 100) found.push({ bot, reason: `Ping ${bot.pingMs} ms`, severity: 'warning' })
+      if (bot.state === 'NEEDS_RELINK') {
+        found.push({ bot, reason: 'Needs relink', severity: 'error' })
+        continue
+      }
+      if (!isOnline(bot)) continue
+
+      if (bot.telemetry.health <= 10) {
+        found.push({ bot, reason: `Health ${bot.telemetry.health}/20`, severity: 'error' })
+      }
+      if (bot.telemetry.food <= 8) {
+        found.push({ bot, reason: `Food ${bot.telemetry.food}/20`, severity: 'warning' })
+      }
+      if (bot.telemetry.pingMs >= 100) {
+        found.push({ bot, reason: `Ping ${bot.telemetry.pingMs} ms`, severity: 'warning' })
+      }
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))
   })
 
-  /** Every bot's chat merged into one feed, newest first. */
+  /** Every bot's incidents merged into one feed, newest first. Conversation is not included. */
   const activity = computed(() =>
     bots.value
-      .flatMap((bot) => bot.chat.map((line) => ({ ...line, bot })))
+      .flatMap((bot) => bot.telemetry.activity.map((line) => ({ ...line, bot })))
       .sort((a, b) => b.at.localeCompare(a.at))
       .slice(0, 12),
   )
 
-  function byId(id: string): Bot | undefined {
+  function byId(id: number): FleetBot | undefined {
     return bots.value.find((bot) => bot.id === id)
   }
 
-  function disconnect(id: string) {
-    const bot = byId(id)
-    if (!bot) return
-    bot.online = false
-    bot.uptimeSeconds = 0
-    bot.health = 0
-    bot.food = 0
-    bot.pingMs = 0
-    bot.task = 'Disconnected'
-    bot.nearby = []
-    bot.chat.push({ at: stamp(), from: 'system', text: 'disconnected by operator' })
-  }
-
-  function reconnect(id: string) {
-    const bot = byId(id)
-    if (!bot) return
-    bot.online = true
-    bot.health = 20
-    bot.food = 20
-    bot.pingMs = 45
-    bot.task = 'Awaiting assignment'
-    bot.chat.push({ at: stamp(), from: 'system', text: 'reconnected' })
-  }
-
-  function say(id: string, text: string) {
-    const bot = byId(id)
-    if (!bot || !text.trim()) return
-    bot.chat.push({ at: stamp(), from: bot.name, text: text.trim() })
-  }
-
-  function botsOnHost(hostId: string): Bot[] {
-    return bots.value.filter((bot) => bot.hostId === hostId)
-  }
-
-  /** Adds an offline, unlinked bot assigned to a host. Real linking is Phase 2 in the design. */
-  function addBot(input: CreateBotInput): Bot {
-    const bot: Bot = {
-      id: `bot-${randomId()}`,
-      name: input.name,
-      hostId: input.hostId,
-      online: false,
-      uptimeSeconds: 0,
-      health: 0,
-      food: 0,
-      position: { x: 0, y: 0, z: 0 },
-      dimension: 'overworld',
-      pingMs: 0,
-      task: 'Awaiting connection',
-      blocksPlaced: 0,
-      nearby: [],
-      chat: [{ at: stamp(), from: 'system', text: `created on ${server(input.server)}` }],
-    }
-    bots.value.push(bot)
-    return bot
-  }
-
-  function removeBot(id: string) {
-    bots.value = bots.value.filter((bot) => bot.id !== id)
-  }
-
-  function hostById(id: string): Host | undefined {
+  function hostById(id: number): HostResponse | undefined {
     return hosts.value.find((host) => host.id === id)
   }
 
-  /**
-   * Enrols a host and returns a one-time agent token, mirroring Phase 0. The token is mock and shown
-   * once; nothing here is a real credential.
-   */
-  function addHost(name: string): { host: Host; token: string } {
-    const host: Host = {
-      id: `host-${randomId()}`,
-      name,
-      // Learned when the agent dials in; unknown until then.
-      address: null,
-      online: false,
-      agentVersion: '—',
-    }
-    hosts.value.push(host)
-    return { host, token: `osm_ag_${randomToken()}` }
+  function botsOnHost(hostId: number): FleetBot[] {
+    return bots.value.filter((bot) => bot.hostId === hostId)
   }
 
-  /** Removing a host cascades to its bots, since they cannot run without it. */
-  function removeHost(id: string) {
-    bots.value = bots.value.filter((bot) => bot.hostId !== id)
-    hosts.value = hosts.value.filter((host) => host.id !== id)
+  // ---- commands ------------------------------------------------------------------------------
+
+  /** Every command can legitimately fail with 503 while no agent is connected. */
+  async function enrolHost(name: string): Promise<string> {
+    const { data, error: failure } = await api.POST('/api/hosts', { body: { name } })
+    if (failure || !data?.token) throw new Error(errorMessage(failure, 'Could not enrol the host'))
+    await refresh()
+    return data.token
   }
 
-  /** Drives the uptime counters so the mock does not look frozen. */
-  setInterval(() => {
-    for (const bot of bots.value) if (bot.online) bot.uptimeSeconds += 1
-  }, 1000)
+  async function renameHost(id: number, name: string): Promise<void> {
+    const { error: failure } = await api.PATCH('/api/hosts/{id}', {
+      params: { path: { id } },
+      body: { name },
+    })
+    if (failure) throw new Error(errorMessage(failure, 'Could not rename the host'))
+    await refresh()
+  }
+
+  /** Returns the replacement token, shown once. The host's current connection is closed. */
+  async function rotateHostToken(id: number): Promise<string> {
+    const { data, error: failure } = await api.POST('/api/hosts/{id}/rotate-token', {
+      params: { path: { id } },
+    })
+    if (failure || !data?.token) throw new Error(errorMessage(failure, 'Could not rotate the token'))
+    await refresh()
+    return data.token
+  }
+
+  async function removeHost(id: number): Promise<void> {
+    const { error: failure } = await api.DELETE('/api/hosts/{id}', { params: { path: { id } } })
+    if (failure) throw new Error(errorMessage(failure, 'Could not remove the host'))
+    await refresh()
+  }
+
+  async function addBot(input: {
+    label: string
+    hostId: number
+    serverAddress: string
+  }): Promise<BotResponse> {
+    const { data, error: failure } = await api.POST('/api/bots', { body: input })
+    if (failure || !data) throw new Error(errorMessage(failure, 'Could not create the bot'))
+    await refresh()
+    return data as BotResponse
+  }
+
+  /** Rename and/or move to another server. Omitted fields are left alone by the backend. */
+  async function updateBot(
+    id: number,
+    changes: { label?: string; serverAddress?: string },
+  ): Promise<void> {
+    const { error: failure } = await api.PATCH('/api/bots/{id}', {
+      params: { path: { id } },
+      body: changes,
+    })
+    if (failure) throw new Error(errorMessage(failure, 'Could not update the bot'))
+    await refresh()
+  }
+
+  async function removeBot(id: number): Promise<void> {
+    const { error: failure } = await api.DELETE('/api/bots/{id}', { params: { path: { id } } })
+    if (failure) throw new Error(errorMessage(failure, 'Could not remove the bot'))
+    await refresh()
+  }
+
+  async function setupBot(id: number, method: string): Promise<void> {
+    const { error: failure } = await api.POST('/api/bots/{id}/setup', {
+      params: { path: { id } },
+      body: { method },
+    })
+    if (failure) throw new Error(errorMessage(failure, 'Could not start setup'))
+    await refresh()
+  }
+
+  async function connect(id: number): Promise<void> {
+    const { error: failure } = await api.POST('/api/bots/{id}/connect', { params: { path: { id } } })
+    if (failure) throw new Error(errorMessage(failure, 'Could not connect'))
+    await refresh()
+  }
+
+  async function disconnect(id: number): Promise<void> {
+    const { error: failure } = await api.POST('/api/bots/{id}/disconnect', {
+      params: { path: { id } },
+    })
+    if (failure) throw new Error(errorMessage(failure, 'Could not disconnect'))
+    await refresh()
+  }
+
+  async function say(id: number, message: string): Promise<void> {
+    if (!message.trim()) return
+    const { error: failure } = await api.POST('/api/bots/{id}/chat', {
+      params: { path: { id } },
+      body: { message: message.trim() },
+    })
+    if (failure) throw new Error(errorMessage(failure, 'Could not send the message'))
+  }
 
   return {
-    bots,
     hosts,
-    startedAt,
+    bots,
+    loading,
+    error,
     schematic,
     sectors,
+    globalChat,
     online,
+    servers,
+    chatListeners,
+    globalChatFor,
     blocksPlaced,
     progressPercent,
     blocksPerMinute,
     etaMinutes,
     attention,
     activity,
+    refresh,
     byId,
-    disconnect,
-    reconnect,
-    say,
-    botsOnHost,
-    addBot,
-    removeBot,
     hostById,
-    addHost,
+    botsOnHost,
+    enrolHost,
+    renameHost,
+    rotateHostToken,
     removeHost,
+    addBot,
+    updateBot,
+    removeBot,
+    setupBot,
+    connect,
+    disconnect,
+    say,
   }
 })
 
-function randomId(): string {
-  return Math.random().toString(36).slice(2, 8)
+/**
+ * MOCK. Stable per bot id so the UI does not shuffle on refresh, and only populated for bots the
+ * backend reports as online - an UNLINKED bot genuinely has no telemetry.
+ */
+function mockTelemetry(bot: BotResponse): BotTelemetry {
+  const seed = bot.id
+  const live = isOnline(bot)
+
+  return {
+    uptimeSeconds: live ? 1_800 + seed * 917 : 0,
+    health: live ? 20 - (seed % 3) * 5 : 0,
+    food: live ? 20 - (seed % 4) * 4 : 0,
+    position: { x: 100 + seed * 7, y: 71, z: -340 - seed * 5 },
+    dimension: 'overworld',
+    pingMs: live ? 35 + (seed % 5) * 22 : 0,
+    task: live ? 'Awaiting assignment' : describe(bot.state),
+    blocksPlaced: live ? seed * 1_240 : 0,
+    nearby: [],
+    chat: [],
+    activity: [],
+  }
 }
 
-function randomToken(): string {
-  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
-}
-
-/** Strips a port for the "created on" chat line, purely cosmetic. */
-function server(value: string): string {
-  return value.split(':')[0] || value
-}
-
-function stamp(): string {
-  const now = new Date()
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+function describe(state: BotResponse['state']): string {
+  switch (state) {
+    case 'UNLINKED':
+      return 'Not set up yet'
+    case 'SETUP_PENDING':
+      return 'Awaiting setup on host'
+    case 'LINKED':
+      return 'Ready to connect'
+    case 'NEEDS_RELINK':
+      return 'Credentials rejected'
+    case 'CONNECT_FAILED':
+      return 'Server refused the connection'
+    case 'STALE':
+      return 'Host unreachable'
+    default:
+      return 'Idle'
+  }
 }
 
 export function formatUptime(seconds: number): string {

@@ -12,22 +12,32 @@ const dialogEl = ref<HTMLDialogElement | null>(null)
 const name = ref('')
 const token = ref<string | null>(null)
 const copied = ref(false)
+const error = ref<string | null>(null)
+const busy = ref(false)
 
 watch(open, (isOpen) => {
   if (isOpen) {
     name.value = ''
     token.value = null
     copied.value = false
+    error.value = null
     dialogEl.value?.showModal()
   } else {
     dialogEl.value?.close()
   }
 })
 
-function enrol() {
-  const result = botStore.addHost(name.value)
-  // Reveal the one-time token in place rather than closing, mirroring Phase 0 in the design.
-  token.value = result.token
+async function enrol() {
+  busy.value = true
+  error.value = null
+  try {
+    // Reveal the one-time token in place rather than closing, mirroring Phase 0 in the design.
+    token.value = await botStore.enrolHost(name.value)
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : 'Could not enrol the host'
+  } finally {
+    busy.value = false
+  }
 }
 
 async function copy() {
@@ -47,7 +57,7 @@ async function copy() {
 
       <form v-if="!token" class="mt-5 flex flex-col gap-4" @submit.prevent="enrol">
         <p class="text-sm opacity-60">
-          Name the host and hand its token to the agent. The agent dials in to Osmium, so there is no
+          Name the host and give it the token below. The host connects to Osmium, so there is no
           address to enter — its location is recorded when it connects.
         </p>
         <FormField
@@ -59,9 +69,14 @@ async function copy() {
           maxlength="64"
           required
         />
+        <div v-if="error" role="alert" class="alert alert-error alert-soft">
+          <TriangleAlert class="size-4" />
+          <span>{{ error }}</span>
+        </div>
+
         <div class="modal-action">
           <button class="btn btn-ghost btn-sm" type="button" @click="open = false">Cancel</button>
-          <button class="btn btn-primary btn-sm" type="submit">Enrol</button>
+          <button class="btn btn-primary btn-sm" type="submit" :disabled="busy">Enrol</button>
         </div>
       </form>
 
@@ -79,8 +94,8 @@ async function copy() {
           </button>
         </label>
         <p class="text-xs opacity-60">
-          Put it in the agent's config as <span class="font-mono">OSMIUM_AGENT_TOKEN</span>. The host
-          appears offline until the agent connects.
+          Set it as <span class="font-mono">OSMIUM_AGENT_TOKEN</span> on that machine. The host stays
+          unreachable here until it connects.
         </p>
         <div class="modal-action">
           <button class="btn btn-primary btn-sm" type="button" @click="open = false">Done</button>

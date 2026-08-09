@@ -14,7 +14,7 @@ export interface paths {
         get?: never;
         /**
          * Replace the role of an account.
-         * @description Roles are nested seniority levels, so an account holds exactly one or none.
+         * @description Roles are nested seniority levels, so an account holds exactly one or none. An account cannot change its own role, so an administrator cannot demote themselves.
          */
         put: operations["replaceRole"];
         post?: never;
@@ -36,6 +36,142 @@ export interface paths {
         put?: never;
         /** Create an account with a chosen username and password. */
         post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List hosts. */
+        get: operations["list_1"];
+        put?: never;
+        /**
+         * Enrol a host.
+         * @description Returns the enrolment token once. Only its hash is stored, so it cannot be retrieved later - a lost token is replaced by re-enrolling. No address is taken: the host connects to Osmium, so its location is observed on connect.
+         */
+        post: operations["enrol"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hosts/{id}/rotate-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a new enrolment token.
+         * @description Invalidates the previous token and closes the host's current connection, so it must reconnect with the new one. Use this instead of deleting a host when a token leaks - the host keeps its bots.
+         */
+        post: operations["rotateToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every bot. */
+        get: operations["list_2"];
+        put?: never;
+        /**
+         * Create a bot slot.
+         * @description Nothing has touched Minecraft at this point; the bot starts UNLINKED.
+         */
+        post: operations["create_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bots/{id}/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask the host to set this bot up.
+         * @description Sends `setup_bot` and moves the bot to SETUP_PENDING. Osmium does not perform or observe the login - the host reports back a verdict.
+         */
+        post: operations["setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bots/{id}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disconnect the bot from its Minecraft server. */
+        post: operations["disconnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bots/{id}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connect the bot to its Minecraft server. */
+        post: operations["connect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bots/{id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Speak in game as this bot.
+         * @description Impersonation: this says something under an account you own, so it is gated separately from agent.control.
+         */
+        post: operations["chat"];
         delete?: never;
         options?: never;
         head?: never;
@@ -97,8 +233,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Edit any account.
-         * @description Supplying a password resets it without knowing the current one.
+         * Edit another account.
+         * @description Supplying a password resets it without knowing the current one. An account cannot target itself here - use PATCH /api/users/me and POST /api/auth/password - so changing your own password always requires the current one.
          */
         patch: operations["update"];
         trace?: never;
@@ -123,6 +259,52 @@ export interface paths {
         patch: operations["updateSelf"];
         trace?: never;
     };
+    "/api/hosts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a host.
+         * @description Cascades to its bots, which cannot run without it. Invalidates the token.
+         */
+        delete: operations["delete_1"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a host.
+         * @description Only the name is editable; address, version and reachability are observed from the connection rather than configured.
+         */
+        patch: operations["rename"];
+        trace?: never;
+    };
+    "/api/bots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one bot. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /** Delete a bot. */
+        delete: operations["delete_2"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a bot or move it to another server.
+         * @description Omitted fields are left alone. Moving does not affect credentials - the account is the same wherever it joins - but the bot must be offline first.
+         */
+        patch: operations["update_1"];
+        trace?: never;
+    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -131,7 +313,7 @@ export interface paths {
             cookie?: never;
         };
         /** List every role with its permission nodes. */
-        get: operations["list_1"];
+        get: operations["list_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -185,6 +367,64 @@ export interface components {
             /** @description Role name to assign. Must already exist. Omit for no permissions. */
             role?: string | null;
         };
+        /** @description Enrols an agent host. No address: the agent dials in, so its location is observed. */
+        CreateHostRequest: {
+            name: string;
+        };
+        /** @description A freshly enrolled host, with its enrolment token shown exactly once. */
+        HostEnrolledResponse: {
+            host?: components["schemas"]["HostResponse"];
+            /** @description Give this to the agent. It is hashed on the server and never shown again. */
+            token?: string;
+        };
+        /** @description An agent host. Reachability is derived from the heartbeat, not stored. */
+        HostResponse: {
+            /** Format: int64 */
+            id?: number;
+            name?: string;
+            /** @description Observed when the agent connects. Null until it first dials in. */
+            address?: string | null;
+            agentVersion?: string | null;
+            /** Format: date-time */
+            lastSeenAt?: string | null;
+            reachable?: boolean;
+            /** Format: int64 */
+            botCount?: number;
+        };
+        /** @description Creates a bot slot. Nothing has touched Minecraft at this point. */
+        CreateBotRequest: {
+            label: string;
+            /** Format: int64 */
+            hostId?: number;
+            /** @example mc.example.com:25565 */
+            serverAddress: string;
+        };
+        /** @description A bot. Only its Minecraft identity is stored, never a credential. */
+        BotResponse: {
+            /** Format: int64 */
+            id?: number;
+            label?: string;
+            /** Format: int64 */
+            hostId?: number;
+            hostName?: string;
+            serverAddress?: string;
+            /**
+             * @description Stored state, adjusted to STALE when the owning host is unreachable.
+             * @enum {string}
+             */
+            state?: "UNLINKED" | "SETUP_PENDING" | "LINKED" | "ONLINE" | "NEEDS_RELINK" | "CONNECT_FAILED" | "STALE";
+            mcUsername?: string | null;
+            mcUuid?: string | null;
+        };
+        /** @description Asks the host to set the bot up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
+        SetupBotRequest: {
+            /** @example device_code */
+            method: string;
+        };
+        /** @description Sends a chat message as a bot. This is impersonation - gated on agent.chat. */
+        ChatRequest: {
+            message: string;
+        };
         /** @description Rotates the password of the authenticated account. */
         PasswordChangeRequest: {
             currentPassword: string;
@@ -213,6 +453,16 @@ export interface components {
         /** @description Edits the authenticated account. The role is deliberately not editable here. */
         UpdateSelfRequest: {
             username: string;
+        };
+        /** @description Renames a host. Everything else about a host is observed, not configured. */
+        UpdateHostRequest: {
+            name: string;
+        };
+        /** @description Edits a bot. Omitted fields are left alone. Moving a bot to another Minecraft server does not affect its credentials - the account is the account, whichever server it joins - but it must not be connected at the time. */
+        UpdateBotRequest: {
+            label?: string | null;
+            /** @description Move the bot to this server. Only while it is not online. */
+            serverAddress?: string | null;
         };
         /** @description A role and the permission nodes it grants. */
         RoleResponse: {
@@ -274,6 +524,15 @@ export interface operations {
             };
             /** @description No such account. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["UserResponse"];
+                };
+            };
+            /** @description The account is the caller's own. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -359,6 +618,455 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    list_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All hosts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"][];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"][];
+                };
+            };
+        };
+    };
+    enrol: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateHostRequest"];
+            };
+        };
+        responses: {
+            /** @description Host enrolled; token returned once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+            /** @description Blank or over-long name. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+            /** @description Missing node `agent.login`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+            /** @description Name already enrolled. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+        };
+    };
+    rotateToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New token, returned once. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+            /** @description Missing node `agent.login`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+            /** @description No such host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+        };
+    };
+    list_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All bots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"][];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"][];
+                };
+            };
+        };
+    };
+    create_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBotRequest"];
+            };
+        };
+        responses: {
+            /** @description Bot created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Invalid fields, or unknown host. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.control`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Label already in use. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+        };
+    };
+    setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupBotRequest"];
+            };
+        };
+        responses: {
+            /** @description Command accepted; bot is SETUP_PENDING. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.login`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Setup already running, or the bot is online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+        };
+    };
+    disconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.control`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The bot is not online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+        };
+    };
+    connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.control`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The bot has not been set up. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+        };
+    };
+    chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Blank or over-long message. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.chat`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The bot is not online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
                 };
             };
         };
@@ -524,7 +1232,7 @@ export interface operations {
                     "*/*": components["schemas"]["UserResponse"];
                 };
             };
-            /** @description Username already taken. */
+            /** @description Username already taken, or the account is the caller's own. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -586,7 +1294,239 @@ export interface operations {
             };
         };
     };
-    list_1: {
+    delete_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Host and its bots removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `agent.login`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rename: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateHostRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated host. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"];
+                };
+            };
+            /** @description Blank or over-long name. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"];
+                };
+            };
+            /** @description Missing node `agent.login`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"];
+                };
+            };
+            /** @description No such host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"];
+                };
+            };
+            /** @description Name already enrolled. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["HostResponse"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+        };
+    };
+    delete_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bot deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `agent.control`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBotRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated bot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Blank or over-long field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Missing node `agent.control`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description No such bot. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+            /** @description Label taken, or the bot is online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BotResponse"];
+                };
+            };
+        };
+    };
+    list_3: {
         parameters: {
             query?: never;
             header?: never;

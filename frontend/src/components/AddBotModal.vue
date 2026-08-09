@@ -12,12 +12,13 @@ const router = useRouter()
 
 const dialogEl = ref<HTMLDialogElement | null>(null)
 const step = ref<1 | 2>(1)
-const draft = ref({ name: '', server: '', hostId: '' as string })
+const draft = ref({ label: '', serverAddress: '', hostId: null as number | null })
 const error = ref<string | null>(null)
+const busy = ref(false)
 
 watch(open, (isOpen) => {
   if (isOpen) {
-    draft.value = { name: '', server: '', hostId: botStore.hosts[0]?.id ?? '' }
+    draft.value = { label: '', serverAddress: '', hostId: botStore.hosts[0]?.id ?? null }
     step.value = 1
     error.value = null
     dialogEl.value?.showModal()
@@ -26,22 +27,33 @@ watch(open, (isOpen) => {
   }
 })
 
-function submit() {
+async function submit() {
   if (step.value === 1) {
     step.value = 2
     return
   }
-  if (!draft.value.hostId) {
+  if (draft.value.hostId === null) {
     error.value = 'Pick a host to run this bot'
     return
   }
-  const bot = botStore.addBot({
-    name: draft.value.name,
-    server: draft.value.server,
-    hostId: draft.value.hostId,
-  })
-  open.value = false
-  void router.push({ name: 'bot', params: { id: bot.id } })
+
+  busy.value = true
+  error.value = null
+  try {
+    const bot = await botStore.addBot({
+      label: draft.value.label,
+      serverAddress: draft.value.serverAddress,
+      hostId: draft.value.hostId,
+    })
+    open.value = false
+    void router.push({ name: 'bot', params: { id: bot.id } })
+  } catch (failure) {
+    // Conflicts and validation errors are all step 1 fields, so send the operator back.
+    step.value = 1
+    error.value = failure instanceof Error ? failure.message : 'Could not create the bot'
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -61,7 +73,7 @@ function submit() {
       <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
         <template v-if="step === 1">
           <FormField
-            v-model="draft.name"
+            v-model="draft.label"
             label="Bot name"
             placeholder="e.g. Mason_04"
             :icon="UserPlus"
@@ -70,7 +82,7 @@ function submit() {
             required
           />
           <FormField
-            v-model="draft.server"
+            v-model="draft.serverAddress"
             label="Target server"
             placeholder="mc.example.com:25565"
             :icon="Server"
@@ -93,7 +105,7 @@ function submit() {
                 />
                 <span
                   class="size-2 shrink-0 rounded-full"
-                  :class="host.online ? 'bg-success' : 'bg-error'"
+                  :class="host.reachable ? 'bg-success' : 'bg-error'"
                 ></span>
                 <span class="min-w-0 flex-1">
                   <span class="block font-medium">{{ host.name }}</span>
@@ -101,7 +113,7 @@ function submit() {
                     {{ host.address ?? 'not yet connected' }}
                   </span>
                 </span>
-                <span class="text-xs opacity-50">{{ botStore.botsOnHost(host.id).length }} bots</span>
+                <span class="text-xs opacity-50">{{ host.botCount }} bots</span>
               </label>
             </li>
           </ul>
@@ -120,7 +132,7 @@ function submit() {
             Back
           </button>
           <button v-else class="btn btn-ghost btn-sm" type="button" @click="open = false">Cancel</button>
-          <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="step === 2 && !botStore.hosts.length">
+          <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="busy || (step === 2 && !botStore.hosts.length)">
             {{ step === 1 ? 'Next' : 'Create' }}
             <ChevronRight v-if="step === 1" class="size-4" />
           </button>
