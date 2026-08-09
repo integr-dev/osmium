@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   CircleSlash2,
+  KeyRound,
   Plus,
   Search,
   SquarePen,
   Trash2,
   UserPlus,
+  UserRound,
   UserRoundCog,
   Users,
 } from 'lucide-vue-next'
 import { api, errorMessage, type RoleResponse, type UserResponse } from '../api/client'
+import FormField from '../components/FormField.vue'
+import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
 import { useAuthStore } from '../stores/auth'
 
@@ -23,9 +30,21 @@ const error = ref<string | null>(null)
 const loading = ref(true)
 const query = ref('')
 
-const draft = ref({ username: '', password: '', role: null as string | null })
+const draft = ref({
+  username: '',
+  password: '',
+  confirmPassword: '',
+  role: null as string | null,
+})
 const editing = ref<{ user: UserResponse; role: string | null } | null>(null)
-const editingUser = ref<{ user: UserResponse; username: string; password: string } | null>(null)
+const createStep = ref<1 | 2>(1)
+const createError = ref<string | null>(null)
+const editingUser = ref<{
+  user: UserResponse
+  username: string
+  password: string
+  confirmPassword: string
+} | null>(null)
 
 const visible = computed(() => {
   const needle = query.value.trim().toLowerCase()
@@ -78,14 +97,43 @@ async function loadRoles() {
   roles.value = (data ?? []) as RoleResponse[]
 }
 
-async function createUser() {
-  error.value = null
-  const { error: failure } = await api.POST('/api/users', { body: draft.value })
-  if (failure) {
-    error.value = errorMessage(failure, 'Could not create the account')
+function openCreate() {
+  draft.value = { username: '', password: '', confirmPassword: '', role: null }
+  createStep.value = 1
+  createError.value = null
+  dialog('create-user')?.showModal()
+}
+
+/** Step 1 collects credentials, step 2 the role, so one form handles both submits. */
+function submitCreate() {
+  if (createStep.value === 1) {
+    if (draft.value.password !== draft.value.confirmPassword) {
+      createError.value = 'The passwords do not match'
+      return
+    }
+    createError.value = null
+    createStep.value = 2
     return
   }
-  draft.value = { username: '', password: '', role: null }
+  void createUser()
+}
+
+async function createUser() {
+  createError.value = null
+
+  const { error: failure } = await api.POST('/api/users', {
+    body: {
+      username: draft.value.username,
+      password: draft.value.password,
+      role: draft.value.role,
+    },
+  })
+  if (failure) {
+    // Conflicts and validation errors come from the step 1 fields, so send the user back.
+    createStep.value = 1
+    createError.value = errorMessage(failure, 'Could not create the account')
+    return
+  }
   dialog('create-user')?.close()
   await loadUsers()
 }
@@ -110,7 +158,13 @@ async function saveUser() {
   if (!editingUser.value) return
   error.value = null
 
-  const password = editingUser.value.password.trim()
+  // Not trimmed: leading and trailing spaces are legitimate password characters.
+  const password = editingUser.value.password
+  if (password && password !== editingUser.value.confirmPassword) {
+    error.value = 'The new passwords do not match'
+    return
+  }
+
   const { error: failure } = await api.PATCH('/api/users/{id}', {
     params: { path: { id: editingUser.value.user.id } },
     // Omitting the password leaves the existing one untouched.
@@ -143,7 +197,7 @@ function openRole(user: UserResponse) {
 }
 
 function openEdit(user: UserResponse) {
-  editingUser.value = { user, username: user.username, password: '' }
+  editingUser.value = { user, username: user.username, password: '', confirmPassword: '' }
   dialog('edit-user')?.showModal()
 }
 </script>
@@ -160,11 +214,7 @@ function openEdit(user: UserResponse) {
           <Search class="size-4 opacity-60" />
           <input v-model="query" type="search" placeholder="Filter by username" />
         </label>
-        <button
-          v-if="auth.can('user.create')"
-          class="btn btn-primary btn-sm gap-2"
-          @click="dialog('create-user')?.showModal()"
-        >
+        <button v-if="auth.can('user.create')" class="btn btn-primary btn-sm gap-2" @click="openCreate">
           <Plus class="size-4" />
           New account
         </button>
@@ -233,8 +283,8 @@ function openEdit(user: UserResponse) {
                   <component :is="roleIcon(user.role)" class="size-3" />
                   {{ user.role }}
                 </span>
-                <span v-else class="flex items-center gap-1 text-sm opacity-50">
-                  <CircleSlash2 class="size-3.5" />
+                <span v-else class="badge badge-ghost badge-sm gap-1 opacity-70">
+                  <CircleSlash2 class="size-3" />
                   none
                 </span>
               </td>
@@ -286,35 +336,117 @@ function openEdit(user: UserResponse) {
           <UserPlus class="text-primary size-5" />
           New account
         </h3>
-        <form class="mt-4 flex flex-col gap-3" @submit.prevent="createUser">
-          <input
-            v-model="draft.username"
-            class="input w-full"
-            type="text"
-            placeholder="Username"
-            maxlength="64"
-            required
-          />
-          <input
-            v-model="draft.password"
-            class="input w-full"
-            type="password"
-            placeholder="Password (4–72 characters)"
-            minlength="4"
-            maxlength="72"
-            required
-          />
-          <select v-model="draft.role" class="select w-full">
-            <option :value="null">No role — no permissions</option>
-            <option v-for="role in roles" :key="role.id" :value="role.name" class="capitalize">
-              {{ role.name }}
-            </option>
-          </select>
+        <ul class="steps mt-4 w-full">
+          <li class="step step-primary text-xs">Account</li>
+          <li class="step text-xs" :class="createStep === 2 ? 'step-primary' : ''">Role</li>
+        </ul>
+
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="submitCreate">
+          <template v-if="createStep === 1">
+            <FormField
+              v-model="draft.username"
+              label="Username"
+              :icon="UserRound"
+              type="text"
+              maxlength="64"
+              required
+            />
+            <FormField
+              v-model="draft.password"
+              label="Password"
+              placeholder="4–72 characters"
+              :icon="KeyRound"
+              type="password"
+              autocomplete="new-password"
+              minlength="4"
+              maxlength="72"
+              required
+            />
+            <FormField
+              v-model="draft.confirmPassword"
+              label="Confirm password"
+              placeholder="Repeat the password"
+              :icon="CheckCheck"
+              :invalid="Boolean(draft.confirmPassword) && draft.confirmPassword !== draft.password"
+              type="password"
+              autocomplete="new-password"
+              required
+            />
+          </template>
+
+          <template v-else>
+            <p class="text-sm opacity-60">
+              Roles are nested levels, so exactly one applies. Each includes the tiers below it.
+            </p>
+            <ul class="flex flex-col gap-1">
+              <li v-for="role in roles" :key="role.id">
+                <label
+                  class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+                >
+                  <input
+                    v-model="draft.role"
+                    type="radio"
+                    name="create-role"
+                    class="radio radio-sm radio-primary mt-0.5 shrink-0"
+                    :value="role.name"
+                  />
+                  <component :is="roleIcon(role.name)" class="text-primary mt-0.5 size-5 shrink-0" />
+                  <span class="min-w-0 flex-1">
+                    <span class="block font-medium capitalize">{{ role.name }}</span>
+                    <span class="block text-xs opacity-60">
+                      {{ role.nodes.map(nodeLabel).join(', ') }}
+                    </span>
+                  </span>
+                </label>
+              </li>
+              <li>
+                <label
+                  class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+                >
+                  <input
+                    v-model="draft.role"
+                    type="radio"
+                    name="create-role"
+                    class="radio radio-sm mt-0.5 shrink-0"
+                    :value="null"
+                  />
+                  <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
+                  <span class="min-w-0 flex-1">
+                    <span class="block font-medium">No role</span>
+                    <span class="block text-xs opacity-60">Creates the account with no permissions</span>
+                  </span>
+                </label>
+              </li>
+            </ul>
+          </template>
+
+          <div v-if="createError" role="alert" class="alert alert-error alert-soft">
+            <CircleAlert class="size-4" />
+            <span>{{ createError }}</span>
+          </div>
+
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('create-user')?.close()">
+            <button
+              v-if="createStep === 2"
+              class="btn btn-ghost btn-sm gap-1"
+              type="button"
+              @click="createStep = 1"
+            >
+              <ChevronLeft class="size-4" />
+              Back
+            </button>
+            <button
+              v-else
+              class="btn btn-ghost btn-sm"
+              type="button"
+              @click="dialog('create-user')?.close()"
+            >
               Cancel
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">Create</button>
+            <button class="btn btn-primary btn-sm gap-1" type="submit">
+              {{ createStep === 1 ? 'Next' : 'Create' }}
+              <ChevronRight v-if="createStep === 1" class="size-4" />
+            </button>
           </div>
         </form>
       </div>
@@ -330,30 +462,35 @@ function openEdit(user: UserResponse) {
         <p class="mt-1 text-sm opacity-60">
           Renaming ends that account's sessions, since its token identifies it by username.
         </p>
-        <form v-if="editingUser" class="mt-4 flex flex-col gap-3" @submit.prevent="saveUser">
-          <label class="floating-label">
-            <span>Username</span>
-            <input
-              v-model="editingUser.username"
-              class="input w-full"
-              type="text"
-              placeholder="Username"
-              maxlength="64"
-              required
-            />
-          </label>
-          <label class="floating-label">
-            <span>New password</span>
-            <input
-              v-model="editingUser.password"
-              class="input w-full"
-              type="password"
-              placeholder="Leave blank to keep the current password"
-              autocomplete="new-password"
-              minlength="4"
-              maxlength="72"
-            />
-          </label>
+        <form v-if="editingUser" class="mt-5 flex flex-col gap-4" @submit.prevent="saveUser">
+          <FormField
+            v-model="editingUser.username"
+            label="Username"
+            :icon="UserRound"
+            type="text"
+            maxlength="64"
+            required
+          />
+          <FormField
+            v-model="editingUser.password"
+            label="New password"
+            placeholder="Leave blank to keep the current one"
+            :icon="KeyRound"
+            type="password"
+            autocomplete="new-password"
+            minlength="4"
+            maxlength="72"
+          />
+          <FormField
+            v-model="editingUser.confirmPassword"
+            label="Confirm new password"
+            placeholder="Repeat the new password"
+            :icon="CheckCheck"
+            :invalid="editingUser.confirmPassword !== editingUser.password"
+            type="password"
+            autocomplete="new-password"
+            :disabled="!editingUser.password"
+          />
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-user')?.close()">
               Cancel
@@ -393,7 +530,9 @@ function openEdit(user: UserResponse) {
                 />
                 <span class="min-w-0 flex-1">
                   <span class="block font-medium capitalize">{{ role.name }}</span>
-                  <span class="block text-xs opacity-60">{{ role.nodes.join(', ') }}</span>
+                  <span class="block text-xs opacity-60">
+                    {{ role.nodes.map(nodeLabel).join(', ') }}
+                  </span>
                 </span>
               </label>
             </li>

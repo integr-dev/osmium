@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  CheckCheck,
   CircleAlert,
   CircleCheck,
   KeyRound,
   PencilLine,
   ShieldCheck,
   TriangleAlert,
+  UserRound,
 } from 'lucide-vue-next'
 import { api, errorMessage, type RoleResponse } from '../api/client'
+import FormField from '../components/FormField.vue'
+import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
 import { useAuthStore } from '../stores/auth'
 
@@ -19,6 +23,7 @@ const renameState = ref<{ error?: string; done?: boolean }>({})
 
 const currentPassword = ref('')
 const newPassword = ref('')
+const confirmPassword = ref('')
 const passwordState = ref<{ error?: string; done?: boolean }>({})
 
 /** Only readable with role.read, so the node breakdown is a bonus, not a requirement. */
@@ -67,6 +72,7 @@ function openRename() {
 function openPassword() {
   currentPassword.value = ''
   newPassword.value = ''
+  confirmPassword.value = ''
   passwordState.value = {}
   dialog('change-password')?.showModal()
 }
@@ -84,6 +90,12 @@ async function rename() {
 
 async function changePassword() {
   passwordState.value = {}
+
+  if (newPassword.value !== confirmPassword.value) {
+    passwordState.value = { error: 'The new passwords do not match' }
+    return
+  }
+
   const { error } = await api.POST('/api/auth/password', {
     body: { currentPassword: currentPassword.value, newPassword: newPassword.value },
   })
@@ -93,6 +105,7 @@ async function changePassword() {
   }
   currentPassword.value = ''
   newPassword.value = ''
+  confirmPassword.value = ''
   passwordState.value = { done: true }
 }
 </script>
@@ -128,28 +141,17 @@ async function changePassword() {
             </div>
           </div>
 
-          <div class="stats stats-horizontal border-base-300 bg-base-300/25 w-full border">
-            <div class="stat place-items-center gap-1 px-2 py-4">
-              <div class="stat-title text-xs">Nodes</div>
-              <div class="stat-value text-2xl">{{ auth.user?.nodes?.length ?? 0 }}</div>
-            </div>
-            <div class="stat place-items-center gap-1 px-2 py-4">
-              <div class="stat-title text-xs">Tiers held</div>
-              <div class="stat-value text-2xl">{{ tiers.filter((tier) => tier.held).length }}</div>
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-2 pt-4">
+          <div class="border-base-300 flex flex-col gap-2 border-t pt-4">
             <button
               v-if="auth.can('user.edit.self')"
-              class="btn btn-outline btn-sm w-full justify-start gap-3"
+              class="btn btn-soft btn-sm w-full justify-start gap-3"
               @click="openRename"
             >
-              <PencilLine class="size-4" />
+              <PencilLine class="size-4 opacity-70" />
               Rename account
             </button>
-            <button class="btn btn-outline btn-sm w-full justify-start gap-3" @click="openPassword">
-              <KeyRound class="size-4" />
+            <button class="btn btn-soft btn-sm w-full justify-start gap-3" @click="openPassword">
+              <KeyRound class="size-4 opacity-70" />
               Change password
             </button>
           </div>
@@ -196,9 +198,10 @@ async function changePassword() {
                   <span
                     v-for="node in tier.nodes"
                     :key="node"
-                    class="badge badge-ghost badge-xs font-mono"
+                    class="badge badge-ghost badge-sm"
+                    :title="node"
                   >
-                    {{ node }}
+                    {{ nodeLabel(node) }}
                   </span>
                 </div>
                 <div v-else class="mt-1 text-xs opacity-50">Node breakdown needs role.read</div>
@@ -222,17 +225,19 @@ async function changePassword() {
           <span class="badge badge-ghost badge-sm">{{ auth.user?.nodes?.length ?? 0 }}</span>
         </h2>
         <p class="text-sm opacity-60">
-          The exact strings the API authorizes against. Everything your role and the tiers below it
-          grant, flattened.
+          Everything your role and the tiers below it grant, flattened.
         </p>
-        <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
           <div
             v-for="node in auth.user?.nodes ?? []"
             :key="node"
-            class="rounded-field bg-base-300/30 flex items-center gap-2 px-2.5 py-1.5"
+            class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2"
           >
             <KeyRound class="text-primary size-3.5 shrink-0 opacity-70" />
-            <span class="truncate font-mono text-xs">{{ node }}</span>
+            <span class="min-w-0">
+              <span class="block truncate text-sm">{{ nodeLabel(node) }}</span>
+              <span class="block truncate font-mono text-[0.7rem] opacity-40">{{ node }}</span>
+            </span>
           </div>
           <span v-if="!auth.user?.nodes?.length" class="text-sm opacity-60">None.</span>
         </div>
@@ -248,8 +253,15 @@ async function changePassword() {
         <p class="mt-1 text-sm opacity-60">
           Renaming ends the current session, because the token identifies you by username.
         </p>
-        <form class="mt-4 flex flex-col gap-3" @submit.prevent="rename">
-          <input v-model="username" class="input w-full" type="text" maxlength="64" required />
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="rename">
+          <FormField
+            v-model="username"
+            label="Username"
+            :icon="UserRound"
+            type="text"
+            maxlength="64"
+            required
+          />
 
           <div v-if="renameState.error" role="alert" class="alert alert-error alert-soft">
             <CircleAlert class="size-4" />
@@ -278,23 +290,33 @@ async function changePassword() {
           Change password
         </h3>
         <p class="mt-1 text-sm opacity-60">Requires your current password. 4–72 characters.</p>
-        <form class="mt-4 flex flex-col gap-3" @submit.prevent="changePassword">
-          <input
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="changePassword">
+          <FormField
             v-model="currentPassword"
-            class="input w-full"
+            label="Current password"
+            :icon="KeyRound"
             type="password"
-            placeholder="Current password"
             autocomplete="current-password"
             required
           />
-          <input
+          <FormField
             v-model="newPassword"
-            class="input w-full"
+            label="New password"
+            :icon="KeyRound"
             type="password"
-            placeholder="New password"
             autocomplete="new-password"
             minlength="4"
             maxlength="72"
+            required
+          />
+          <FormField
+            v-model="confirmPassword"
+            label="Confirm new password"
+            placeholder="Repeat the new password"
+            :icon="CheckCheck"
+            :invalid="Boolean(confirmPassword) && confirmPassword !== newPassword"
+            type="password"
+            autocomplete="new-password"
             required
           />
 
