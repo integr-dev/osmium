@@ -5,25 +5,61 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # Vite emits content-hashed filenames, so these can be cached indefinitely.
+    # --- Security headers, applied to every response (`always` = on errors too) ---
+    #
+    # CSP is strict on scripts: the Vite production build emits external, content-hashed JS, so no
+    # inline script is needed and `script-src 'self'` blocks any injected <script> or inline handler.
+    # That is the layer that actually contains an XSS given the token lives in localStorage.
+    #
+    # style-src keeps 'unsafe-inline' because Vue :style bindings and Tailwind emit inline styles;
+    # inline styles are a far weaker vector than inline scripts, which stay locked to 'self'.
+    #
+    # connect-src 'self' is enough while the API is proxied same-origin below. Widen it only if the
+    # frontend ever calls a different host directly.
+    #
+    # These are set at the server level and inherited by the locations below, which deliberately use
+    # `expires` (not `add_header`) for caching, since an `add_header` in a location would drop this
+    # inherited set.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Permissions-Policy "geolocation=(), camera=(), microphone=()" always;
+
+    # Content-hashed filenames, so they can be cached indefinitely.
     location /assets/ {
         expires 1y;
-        add_header Cache-Control "public, immutable";
     }
 
     # Keeps the SPA same-origin with the API, so no CORS configuration is needed.
-    # Only ${BACKEND_URL} is substituted at start-up; nginx's own $variables have no braces.
+    # Only ${BACKEND_URL} and ${DNS_RESOLVER} are substituted at start-up; nginx's own $variables
+    # have no braces. proxy_set_header sets request headers, so it leaves the inherited response
+    # headers alone.
+    #
+    # The upstream is passed through a variable on purpose: with a literal proxy_pass, nginx resolves
+    # the host at boot and refuses to start if the backend isn't up yet - a crash loop when the
+    # frontend container starts first. Routing through $backend defers resolution to request time via
+    # the resolver below, so nginx boots regardless and returns a per-request 502 until the backend
+    # appears. DNS_RESOLVER is environment-specific: 127.0.0.11 for Docker/Compose, the cluster DNS
+    # for Kubernetes.
     location /api/ {
-        proxy_pass ${BACKEND_URL};
+        # ipv6=off: resolve to A records only. Without it the resolver may hand back an AAAA record
+        # for a backend that only listens on IPv4, which fails as a 502. Matches how the old literal
+        # proxy_pass behaved. Drop it only in an IPv6-native deployment.
+        resolver ${DNS_RESOLVER} valid=10s ipv6=off;
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # vue-router uses createWebHistory, so unknown paths must fall through to the entry point.
+    # vue-router uses createWebHistory, so unknown paths fall through to the entry point.
+    # `expires epoch` sets Cache-Control: no-cache without an add_header, so index.html is never
+    # stale after a deploy while the security headers above still apply.
     location / {
         try_files $uri $uri/ /index.html;
-        add_header Cache-Control "no-cache";
+        expires epoch;
     }
 }
