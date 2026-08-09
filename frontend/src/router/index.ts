@@ -20,6 +20,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/DashboardView.vue'),
       },
       {
+        path: 'hosts',
+        name: 'hosts',
+        component: () => import('../views/HostsView.vue'),
+      },
+      {
         path: 'bots/:id',
         name: 'bot',
         component: () => import('../views/BotDetailView.vue'),

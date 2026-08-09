@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { Bot, LayoutDashboard, LogOut, Menu, Settings, User, Users } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { Bot, LayoutDashboard, LogOut, Menu, Plus, Server, Settings, User, Users } from 'lucide-vue-next'
+import AddBotModal from '../components/AddBotModal.vue'
 import { useAuthStore } from '../stores/auth'
 import { useBotStore } from '../stores/bots'
 
 const auth = useAuthStore()
 const botStore = useBotStore()
 const router = useRouter()
+
+const addBotOpen = ref(false)
 
 function logout() {
   auth.logout()
@@ -33,6 +37,8 @@ function logout() {
       </main>
     </div>
 
+    <AddBotModal v-model:open="addBotOpen" />
+
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" aria-label="Close navigation"></label>
 
@@ -48,6 +54,15 @@ function logout() {
               <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
                 <LayoutDashboard class="size-4 shrink-0" />
                 Dashboard
+              </RouterLink>
+            </li>
+            <li>
+              <RouterLink :to="{ name: 'hosts' }" class="gap-3">
+                <Server class="size-4 shrink-0" />
+                Hosts
+                <span class="badge badge-xs ml-auto">
+                  {{ botStore.hosts.filter((host) => host.online).length }}/{{ botStore.hosts.length }}
+                </span>
               </RouterLink>
             </li>
             <li>
@@ -67,6 +82,12 @@ function logout() {
                       ></span>
                       <span class="truncate">{{ bot.name }}</span>
                     </RouterLink>
+                  </li>
+                  <li>
+                    <button type="button" class="gap-2.5 opacity-70" @click="addBotOpen = true">
+                      <Plus class="size-4 shrink-0" />
+                      Add bot
+                    </button>
                   </li>
                 </ul>
               </details>

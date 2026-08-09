@@ -22,6 +22,7 @@ export interface ChatLine {
 export interface Bot {
   id: string
   name: string
+  hostId: string
   online: boolean
   uptimeSeconds: number
   health: number
@@ -35,11 +36,35 @@ export interface Bot {
   chat: ChatLine[]
 }
 
+/**
+ * An agent host - the machine running the agent process that owns bots. Mirrors the Agent concept
+ * in BOT_CONNECTIVITY.md; credentials never live here, only status and identity.
+ *
+ * `address` is *observed* when the agent dials in, not entered at enrolment: the agent connects to
+ * Osmium, so the backend never needs to reach it. It stays null until the first connection.
+ */
+export interface Host {
+  id: string
+  name: string
+  address: string | null
+  online: boolean
+  agentVersion: string
+}
+
+function seedHosts(): Host[] {
+  return [
+    { id: 'host-1', name: 'agent-eu-1', address: '10.0.4.11:871', online: true, agentVersion: '0.3.1' },
+    { id: 'host-2', name: 'agent-eu-2', address: '10.0.4.12:871', online: true, agentVersion: '0.3.1' },
+    { id: 'host-3', name: 'agent-us-1', address: '10.0.9.20:871', online: false, agentVersion: '0.3.0' },
+  ]
+}
+
 function seed(): Bot[] {
   return [
     {
       id: 'bot-1',
       name: 'Mason_01',
+      hostId: 'host-1',
       online: true,
       uptimeSeconds: 8_412,
       health: 20,
@@ -62,6 +87,7 @@ function seed(): Bot[] {
     {
       id: 'bot-2',
       name: 'Mason_02',
+      hostId: 'host-1',
       online: true,
       uptimeSeconds: 8_390,
       health: 16,
@@ -80,6 +106,7 @@ function seed(): Bot[] {
     {
       id: 'bot-3',
       name: 'Hauler_01',
+      hostId: 'host-2',
       online: true,
       uptimeSeconds: 7_120,
       health: 20,
@@ -95,6 +122,7 @@ function seed(): Bot[] {
     {
       id: 'bot-4',
       name: 'Scout_01',
+      hostId: 'host-2',
       online: true,
       uptimeSeconds: 2_045,
       health: 9,
@@ -110,6 +138,7 @@ function seed(): Bot[] {
     {
       id: 'bot-5',
       name: 'Mason_03',
+      hostId: 'host-1',
       online: false,
       uptimeSeconds: 0,
       health: 0,
@@ -125,6 +154,7 @@ function seed(): Bot[] {
     {
       id: 'bot-6',
       name: 'Miner_01',
+      hostId: 'host-3',
       online: false,
       uptimeSeconds: 0,
       health: 0,
@@ -155,8 +185,15 @@ export interface Attention {
   severity: 'error' | 'warning'
 }
 
+export interface CreateBotInput {
+  name: string
+  server: string
+  hostId: string
+}
+
 export const useBotStore = defineStore('bots', () => {
   const bots = ref<Bot[]>(seed())
+  const hosts = ref<Host[]>(seedHosts())
   const startedAt = ref(new Date().toISOString())
 
   const schematic = ref({
@@ -284,6 +321,63 @@ export const useBotStore = defineStore('bots', () => {
     bot.chat.push({ at: stamp(), from: bot.name, text: text.trim() })
   }
 
+  function botsOnHost(hostId: string): Bot[] {
+    return bots.value.filter((bot) => bot.hostId === hostId)
+  }
+
+  /** Adds an offline, unlinked bot assigned to a host. Real linking is Phase 2 in the design. */
+  function addBot(input: CreateBotInput): Bot {
+    const bot: Bot = {
+      id: `bot-${randomId()}`,
+      name: input.name,
+      hostId: input.hostId,
+      online: false,
+      uptimeSeconds: 0,
+      health: 0,
+      food: 0,
+      position: { x: 0, y: 0, z: 0 },
+      dimension: 'overworld',
+      pingMs: 0,
+      task: 'Awaiting connection',
+      blocksPlaced: 0,
+      nearby: [],
+      chat: [{ at: stamp(), from: 'system', text: `created on ${server(input.server)}` }],
+    }
+    bots.value.push(bot)
+    return bot
+  }
+
+  function removeBot(id: string) {
+    bots.value = bots.value.filter((bot) => bot.id !== id)
+  }
+
+  function hostById(id: string): Host | undefined {
+    return hosts.value.find((host) => host.id === id)
+  }
+
+  /**
+   * Enrols a host and returns a one-time agent token, mirroring Phase 0. The token is mock and shown
+   * once; nothing here is a real credential.
+   */
+  function addHost(name: string): { host: Host; token: string } {
+    const host: Host = {
+      id: `host-${randomId()}`,
+      name,
+      // Learned when the agent dials in; unknown until then.
+      address: null,
+      online: false,
+      agentVersion: '—',
+    }
+    hosts.value.push(host)
+    return { host, token: `osm_ag_${randomToken()}` }
+  }
+
+  /** Removing a host cascades to its bots, since they cannot run without it. */
+  function removeHost(id: string) {
+    bots.value = bots.value.filter((bot) => bot.hostId !== id)
+    hosts.value = hosts.value.filter((host) => host.id !== id)
+  }
+
   /** Drives the uptime counters so the mock does not look frozen. */
   setInterval(() => {
     for (const bot of bots.value) if (bot.online) bot.uptimeSeconds += 1
@@ -291,6 +385,7 @@ export const useBotStore = defineStore('bots', () => {
 
   return {
     bots,
+    hosts,
     startedAt,
     schematic,
     sectors,
@@ -305,8 +400,27 @@ export const useBotStore = defineStore('bots', () => {
     disconnect,
     reconnect,
     say,
+    botsOnHost,
+    addBot,
+    removeBot,
+    hostById,
+    addHost,
+    removeHost,
   }
 })
+
+function randomId(): string {
+  return Math.random().toString(36).slice(2, 8)
+}
+
+function randomToken(): string {
+  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+}
+
+/** Strips a port for the "created on" chat line, purely cosmetic. */
+function server(value: string): string {
+  return value.split(':')[0] || value
+}
 
 function stamp(): string {
   const now = new Date()
