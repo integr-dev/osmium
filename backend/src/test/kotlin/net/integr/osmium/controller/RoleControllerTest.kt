@@ -23,7 +23,7 @@ class RoleControllerTest : AbstractRestTest() {
                 value(contains(RoleNames.ADMINISTRATOR, RoleNames.ORCHESTRATOR, RoleNames.VIEWER))
             }
             jsonPath("$[?(@.name == 'viewer')].nodes[*]") {
-                value(contains(Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
+                value(contains(Nodes.ROLE_READ, Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
             }
             jsonPath("$[?(@.name == 'administrator')].nodes[*]") {
                 value(contains(*Nodes.ALL.sorted().toTypedArray()))
@@ -39,9 +39,10 @@ class RoleControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isOk() }
-            // orchestrator holds both viewer nodes, administrator holds all three orchestrator nodes.
+            // orchestrator holds every viewer node, administrator holds every orchestrator node.
+            // Orchestrator adds nothing of its own yet - that arrives with the agent module.
             jsonPath("$[?(@.name == 'orchestrator')].nodes[*]") {
-                value(contains(Nodes.USER_EDIT_SELF, Nodes.USER_READ, Nodes.USER_READ_SELF))
+                value(contains(Nodes.ROLE_READ, Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
             }
             jsonPath("$[?(@.name == 'administrator')].nodes[*]") {
                 value(contains(*Nodes.ALL.sorted().toTypedArray()))
@@ -50,19 +51,20 @@ class RoleControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `orchestrator cannot list roles`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+    fun `viewer can list roles, so every account can see the ladder`() {
+        val auth = authAs("ada", RoleNames.VIEWER)
 
         mockMvc.get("/api/roles") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
-            status { isForbidden() }
+            status { isOk() }
+            jsonPath("$.length()") { value(3) }
         }
     }
 
     @Test
-    fun `viewer cannot list roles`() {
-        val auth = authAs("ada", RoleNames.VIEWER)
+    fun `an account with no role cannot list roles`() {
+        val auth = authAs("ghost")
 
         mockMvc.get("/api/roles") {
             header(HttpHeaders.AUTHORIZATION, auth)

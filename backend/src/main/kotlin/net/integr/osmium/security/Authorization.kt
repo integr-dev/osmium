@@ -47,18 +47,20 @@ object RoleDefinitions {
     private val VIEWER_NODES: Set<String> = setOf(
         Nodes.USER_READ_SELF,
         Nodes.USER_EDIT_SELF,
+        // Role definitions are not sensitive, and every account needs them to see where its own
+        // tier sits in the ladder.
+        Nodes.ROLE_READ,
     )
 
-    private val ORCHESTRATOR_NODES: Set<String> = VIEWER_NODES + setOf(
-        Nodes.USER_READ,
-    )
+    // Nothing beyond viewer yet: orchestration nodes arrive with the agent module.
+    private val ORCHESTRATOR_NODES: Set<String> = VIEWER_NODES
 
     private val ADMINISTRATOR_NODES: Set<String> = ORCHESTRATOR_NODES + setOf(
+        Nodes.USER_READ,
         Nodes.USER_EDIT,
         Nodes.USER_CREATE,
         Nodes.USER_DELETE,
         Nodes.USER_ROLES_WRITE,
-        Nodes.ROLE_READ,
     )
 
     val ALL: List<RoleDefinition> = listOf(
