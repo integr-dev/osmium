@@ -74,7 +74,7 @@ class DataInitializer(
         val user = User(
             username = bootstrapProperties.username,
             passwordHash = passwordEncoder.encodeRequired(bootstrapProperties.password),
-            roles = mutableSetOf(administrator),
+            role = administrator,
         )
         userRepository.save(user)
 

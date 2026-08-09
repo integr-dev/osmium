@@ -6,7 +6,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import net.integr.osmium.dto.CreateUserRequest
-import net.integr.osmium.dto.UpdateRolesRequest
+import net.integr.osmium.dto.UpdateRoleRequest
 import net.integr.osmium.dto.UpdateSelfRequest
 import net.integr.osmium.dto.UpdateUserRequest
 import net.integr.osmium.dto.UserResponse
@@ -72,20 +72,27 @@ class UserController(private val userService: UserService) {
     @PatchMapping("/{id}")
     @PreAuthorize("hasAuthority('user.edit')")
     @Operation(
-        summary = "Edit any account.",
-        description = "Supplying a password resets it without knowing the current one.",
+        summary = "Edit another account.",
+        description = "Supplying a password resets it without knowing the current one. An account " +
+            "cannot target itself here - use PATCH /api/users/me and POST /api/auth/password - so " +
+            "changing your own password always requires the current one.",
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated account."),
         ApiResponse(responseCode = "400", description = "Blank username or password outside the allowed length."),
         ApiResponse(responseCode = "403", description = "Missing node `user.edit`."),
         ApiResponse(responseCode = "404", description = "No such account."),
-        ApiResponse(responseCode = "409", description = "Username already taken."),
+        ApiResponse(responseCode = "409", description = "Username already taken, or the account is the caller's own."),
     )
     fun update(
         @PathVariable id: Long,
         @Valid @RequestBody request: UpdateUserRequest,
-    ): UserResponse = userService.update(id = id, request = request)
+        authentication: Authentication,
+    ): UserResponse = userService.update(
+        id = id,
+        request = request,
+        actorUsername = authentication.name,
+    )
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -105,17 +112,27 @@ class UserController(private val userService: UserService) {
         authentication: Authentication,
     ) = userService.delete(id = id, actorUsername = authentication.name)
 
-    @PutMapping("/{id}/roles")
+    @PutMapping("/{id}/role")
     @PreAuthorize("hasAuthority('user.roles.write')")
-    @Operation(summary = "Replace the full role set of an account.")
+    @Operation(
+        summary = "Replace the role of an account.",
+        description = "Roles are nested seniority levels, so an account holds exactly one or none. " +
+            "An account cannot change its own role, so an administrator cannot demote themselves.",
+    )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated account."),
         ApiResponse(responseCode = "400", description = "Unknown role name."),
         ApiResponse(responseCode = "403", description = "Missing node `user.roles.write`."),
         ApiResponse(responseCode = "404", description = "No such account."),
+        ApiResponse(responseCode = "409", description = "The account is the caller's own."),
     )
-    fun replaceRoles(
+    fun replaceRole(
         @PathVariable id: Long,
-        @Valid @RequestBody request: UpdateRolesRequest,
-    ): UserResponse = userService.replaceRoles(id = id, request = request)
+        @Valid @RequestBody request: UpdateRoleRequest,
+        authentication: Authentication,
+    ): UserResponse = userService.replaceRole(
+        id = id,
+        request = request,
+        actorUsername = authentication.name,
+    )
 }

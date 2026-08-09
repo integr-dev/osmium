@@ -7,8 +7,7 @@ import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.JoinColumn
-import jakarta.persistence.JoinTable
-import jakarta.persistence.ManyToMany
+import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
 
 @Entity
@@ -25,14 +24,15 @@ class User(
     @Column(name = "password_hash", nullable = false)
     var passwordHash: String = "",
 
-    @ManyToMany(fetch = FetchType.EAGER)
-    @JoinTable(
-        name = "user_roles",
-        joinColumns = [JoinColumn(name = "user_id")],
-        inverseJoinColumns = [JoinColumn(name = "role_id")],
-    )
-    var roles: MutableSet<Role> = mutableSetOf(),
+    /**
+     * The account's seniority level. Roles are strictly nested - each tier contains the one below
+     * it - so holding more than one could never grant more than the highest, and a single
+     * assignment keeps the model honest. Null means the account has no permissions at all.
+     */
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "role_id")
+    var role: Role? = null,
 ) {
-    /** Flattened node ids across every assigned role. */
-    fun nodes(): Set<String> = roles.flatMapTo(mutableSetOf()) { role -> role.nodes.map { it.id } }
+    /** Node ids granted by the assigned role. */
+    fun nodes(): Set<String> = role?.nodes?.mapTo(mutableSetOf()) { it.id } ?: emptySet()
 }

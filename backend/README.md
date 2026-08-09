@@ -47,9 +47,12 @@ set to `osmium`.
 
 ## Authorization model
 
-Fully normalized across five tables: `users`, `roles`, `permission_nodes`, and the join tables
-`user_roles` and `role_nodes`. A node's string *is* its primary key, so there is no surrogate id to
-keep in sync.
+Normalized across four tables: `users`, `roles`, `permission_nodes`, and the join table
+`role_nodes`. A node's string *is* its primary key, so there is no surrogate id to keep in sync.
+
+An account holds **at most one role**, via `users.role_id`. Roles are strictly nested seniority
+levels, so a set of them could never grant more than the highest one — a single assignment keeps the
+model honest. A null role means no permissions at all.
 
 ### Nodes
 
@@ -61,7 +64,7 @@ keep in sync.
 | `user.edit` | edit any account, including resetting its password |
 | `user.create` | create accounts |
 | `user.delete` | delete accounts |
-| `user.roles.write` | change the roles of an account |
+| `user.roles.write` | change the role of an account |
 | `role.read` | list roles and their nodes |
 
 ### Roles
@@ -92,7 +95,7 @@ changes automatically.
 | `PATCH` | `/api/users/me` | `user.edit.self` |
 | `PATCH` | `/api/users/{id}` | `user.edit` |
 | `DELETE` | `/api/users/{id}` | `user.delete` |
-| `PUT` | `/api/users/{id}/roles` | `user.roles.write` |
+| `PUT` | `/api/users/{id}/role` | `user.roles.write` |
 | `GET` | `/api/roles` | `role.read` |
 
 There is no self-registration — administrators create accounts, choosing the username and password.

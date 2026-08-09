@@ -6,7 +6,7 @@ import net.integr.osmium.model.User
 fun User.toResponse(): UserResponse = UserResponse(
     id = checkNotNull(id) { "User has not been persisted yet" },
     username = username,
-    roles = roles.map { it.name }.sorted(),
+    role = role?.name,
     nodes = nodes().sorted(),
 )
 

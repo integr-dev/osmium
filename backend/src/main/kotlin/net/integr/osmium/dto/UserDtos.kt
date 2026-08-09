@@ -8,9 +8,9 @@ import jakarta.validation.constraints.Size
 data class UserResponse(
     val id: Long,
     val username: String,
-    @field:Schema(description = "Assigned role names.", example = "[\"administrator\"]")
-    val roles: List<String>,
-    @field:Schema(description = "Effective permission nodes, flattened across all assigned roles.")
+    @field:Schema(description = "Assigned role, or null when the account has none.", example = "administrator")
+    val role: String?,
+    @field:Schema(description = "Permission nodes granted by the assigned role.")
     val nodes: List<String>,
 )
 
@@ -23,11 +23,11 @@ data class CreateUserRequest(
     @field:Size(min = PASSWORD_MIN_LENGTH, max = PASSWORD_MAX_LENGTH)
     val password: String,
 
-    @field:Schema(description = "Role names to assign. Every name must already exist.")
-    val roles: Set<String> = emptySet(),
+    @field:Schema(description = "Role name to assign. Must already exist. Omit for no permissions.")
+    val role: String? = null,
 )
 
-@Schema(description = "Edits the authenticated account. Roles are deliberately not editable here.")
+@Schema(description = "Edits the authenticated account. The role is deliberately not editable here.")
 data class UpdateSelfRequest(
     @field:NotBlank
     @field:Size(max = USERNAME_MAX_LENGTH)
@@ -45,9 +45,9 @@ data class UpdateUserRequest(
     val password: String? = null,
 )
 
-@Schema(description = "Replaces the full role set of an account.")
-data class UpdateRolesRequest(
-    val roles: Set<String>,
+@Schema(description = "Replaces the role of an account. Null clears it, leaving no permissions.")
+data class UpdateRoleRequest(
+    val role: String?,
 )
 
 /** Matches the `users.username` column length. */

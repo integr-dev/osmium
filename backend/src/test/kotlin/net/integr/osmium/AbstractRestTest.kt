@@ -33,12 +33,12 @@ abstract class AbstractRestTest {
     protected fun createUser(
         username: String,
         password: String = DEFAULT_PASSWORD,
-        roles: Set<String> = emptySet(),
+        role: String? = null,
     ): User = userRepository.saveAndFlush(
         User(
             username = username,
             passwordHash = passwordEncoder.encodeRequired(password),
-            roles = roleRepository.findAllByNameIn(roles).toMutableSet(),
+            role = role?.let { roleRepository.findByName(it) },
         ),
     )
 
@@ -53,9 +53,9 @@ abstract class AbstractRestTest {
 
     protected fun bearer(token: String): String = "Bearer $token"
 
-    /** Convenience: create an account with [roles] and return its bearer header value. */
-    protected fun authAs(username: String, vararg roles: String): String {
-        createUser(username = username, roles = roles.toSet())
+    /** Convenience: create an account holding [role] and return its bearer header value. */
+    protected fun authAs(username: String, role: String? = null): String {
+        createUser(username = username, role = role)
         return bearer(tokenFor(username = username))
     }
 

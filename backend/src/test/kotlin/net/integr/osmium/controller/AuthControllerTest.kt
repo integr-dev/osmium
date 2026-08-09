@@ -14,7 +14,7 @@ class AuthControllerTest : AbstractRestTest() {
 
     @Test
     fun `login issues a token for valid credentials`() {
-        createUser(username = "ada", roles = setOf(RoleNames.VIEWER))
+        createUser(username = "ada", role = RoleNames.VIEWER)
 
         mockMvc.post("/api/auth/login") {
             contentType = MediaType.APPLICATION_JSON
@@ -57,7 +57,7 @@ class AuthControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isOk() }
             jsonPath("$.username") { value("ada") }
-            jsonPath("$.roles") { value(RoleNames.ORCHESTRATOR) }
+            jsonPath("$.role") { value(RoleNames.ORCHESTRATOR) }
             jsonPath("$.nodes") { value(contains("user.edit.self", "user.read", "user.read.self")) }
         }
     }
@@ -79,7 +79,7 @@ class AuthControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `an account with no roles is forbidden, not unauthenticated`() {
+    fun `an account with no role is forbidden, not unauthenticated`() {
         val auth = authAs("ada")
 
         mockMvc.get("/api/auth/me") {
@@ -91,7 +91,7 @@ class AuthControllerTest : AbstractRestTest() {
 
     @Test
     fun `a deleted account's token stops authenticating`() {
-        val user = createUser(username = "ada", roles = setOf(RoleNames.VIEWER))
+        val user = createUser(username = "ada", role = RoleNames.VIEWER)
         val auth = bearer(tokenFor(username = "ada"))
 
         userRepository.delete(user)
@@ -195,7 +195,7 @@ class AuthControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isOk() }
             jsonPath("$.username") { value(BOOTSTRAP_USERNAME) }
-            jsonPath("$.roles") { value(RoleNames.ADMINISTRATOR) }
+            jsonPath("$.role") { value(RoleNames.ADMINISTRATOR) }
             jsonPath("$.nodes") { value(contains(*Nodes.ALL.sorted().toTypedArray())) }
         }
     }

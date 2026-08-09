@@ -1,7 +1,7 @@
 package net.integr.osmium.service
 
 import net.integr.osmium.dto.CreateUserRequest
-import net.integr.osmium.dto.UpdateRolesRequest
+import net.integr.osmium.dto.UpdateRoleRequest
 import net.integr.osmium.dto.UpdateSelfRequest
 import net.integr.osmium.dto.UpdateUserRequest
 import net.integr.osmium.dto.UserResponse
@@ -38,12 +38,12 @@ class UserService(
         val user = User(
             username = request.username,
             passwordHash = passwordEncoder.encodeRequired(request.password),
-            roles = resolveRoles(names = request.roles),
+            role = resolveRole(name = request.role),
         )
         return userRepository.save(user).toResponse()
     }
 
-    /** Self-service edit. Cannot touch roles or the password. */
+    /** Self-service edit. Cannot touch the role or the password. */
     @Transactional
     fun updateSelf(actorUsername: String, request: UpdateSelfRequest): UserResponse {
         val user = userRepository.findByUsername(actorUsername)
@@ -52,10 +52,18 @@ class UserService(
         return user.toResponse()
     }
 
-    /** Administrative edit of any account, including resetting the password without the old one. */
+    /**
+     * Administrative edit of *another* account, including resetting its password without knowing the
+     * old one. Self-edits are refused here: they belong on `PATCH /api/users/me` for the username
+     * and `POST /api/auth/password` for the password, so an administrator can never change their own
+     * password without proving they know the current one.
+     */
     @Transactional
-    fun update(id: Long, request: UpdateUserRequest): UserResponse {
+    fun update(id: Long, request: UpdateUserRequest, actorUsername: String): UserResponse {
         val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
+        check(user.username != actorUsername) {
+            "An account cannot edit itself here; use PATCH /api/users/me or POST /api/auth/password"
+        }
         rename(user = user, username = request.username)
         request.password?.let { user.passwordHash = passwordEncoder.encodeRequired(it) }
         return user.toResponse()
@@ -69,9 +77,11 @@ class UserService(
     }
 
     @Transactional
-    fun replaceRoles(id: Long, request: UpdateRolesRequest): UserResponse {
+    fun replaceRole(id: Long, request: UpdateRoleRequest, actorUsername: String): UserResponse {
         val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
-        user.roles = resolveRoles(names = request.roles)
+        // Blocks self-demotion, which would strip user.roles.write and leave nobody able to undo it.
+        check(user.username != actorUsername) { "An account cannot change its own role" }
+        user.role = resolveRole(name = request.role)
         return user.toResponse()
     }
 
@@ -81,13 +91,8 @@ class UserService(
         user.username = username
     }
 
-    private fun resolveRoles(names: Set<String>): MutableSet<Role> {
-        if (names.isEmpty()) return mutableSetOf()
-
-        val roles = roleRepository.findAllByNameIn(names)
-        val missing = names - roles.mapTo(mutableSetOf()) { it.name }
-        require(missing.isEmpty()) { "Unknown roles: ${missing.sorted().joinToString()}" }
-
-        return roles.toMutableSet()
+    private fun resolveRole(name: String?): Role? {
+        if (name == null) return null
+        return roleRepository.findByName(name) ?: throw IllegalArgumentException("Unknown role: $name")
     }
 }

@@ -54,11 +54,11 @@ class UserControllerTest : AbstractRestTest() {
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"grace","password":"hopper-1906","roles":["viewer"]}"""
+            content = """{"username":"grace","password":"hopper-1906","role":"viewer"}"""
         }.andExpect {
             status { isCreated() }
             jsonPath("$.username") { value("grace") }
-            jsonPath("$.roles") { value(RoleNames.VIEWER) }
+            jsonPath("$.role") { value(RoleNames.VIEWER) }
         }
 
         mockMvc.post("/api/auth/login") {
@@ -77,7 +77,7 @@ class UserControllerTest : AbstractRestTest() {
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"grace","password":"hopper-1906","roles":[]}"""
+            content = """{"username":"grace","password":"hopper-1906"}"""
         }.andExpect {
             status { isConflict() }
         }
@@ -90,7 +90,7 @@ class UserControllerTest : AbstractRestTest() {
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"grace","password":"hopper-1906","roles":["wizard"]}"""
+            content = """{"username":"grace","password":"hopper-1906","role":"wizard"}"""
         }.andExpect {
             status { isBadRequest() }
         }
@@ -103,7 +103,7 @@ class UserControllerTest : AbstractRestTest() {
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"grace","password":"x","roles":[]}"""
+            content = """{"username":"grace","password":"x"}"""
         }.andExpect {
             status { isBadRequest() }
         }
@@ -116,7 +116,7 @@ class UserControllerTest : AbstractRestTest() {
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"   ","password":"hopper-1906","roles":[]}"""
+            content = """{"username":"   ","password":"hopper-1906"}"""
         }.andExpect {
             status { isBadRequest() }
             jsonPath("$.message") { value(containsString("username")) }
@@ -130,7 +130,7 @@ class UserControllerTest : AbstractRestTest() {
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"grace","password":"hopper-1906","roles":[]}"""
+            content = """{"username":"grace","password":"hopper-1906"}"""
         }.andExpect {
             status { isForbidden() }
         }
@@ -216,7 +216,7 @@ class UserControllerTest : AbstractRestTest() {
     @Test
     fun `administrator renames another account`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val target = createUser(username = "grace", roles = setOf(RoleNames.VIEWER))
+        val target = createUser(username = "grace", role = RoleNames.VIEWER)
 
         mockMvc.patch("/api/users/${target.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -225,7 +225,7 @@ class UserControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isOk() }
             jsonPath("$.username") { value("grace-hopper") }
-            jsonPath("$.roles") { value(RoleNames.VIEWER) }
+            jsonPath("$.role") { value(RoleNames.VIEWER) }
         }
     }
 
@@ -279,6 +279,35 @@ class UserControllerTest : AbstractRestTest() {
     }
 
     @Test
+    fun `administrator cannot edit their own account through the admin route`() {
+        val actor = createUser(username = "root", role = RoleNames.ADMINISTRATOR)
+        val auth = bearer(tokenFor(username = "root"))
+
+        mockMvc.patch("/api/users/${actor.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"username":"root","password":"bypassed-the-check"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+
+        // The password must be unchanged: the admin route is not a way around /api/auth/password.
+        mockMvc.post("/api/auth/login") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"username":"root","password":"bypassed-the-check"}"""
+        }.andExpect {
+            status { isUnauthorized() }
+        }
+
+        mockMvc.post("/api/auth/login") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"username":"root","password":"$DEFAULT_PASSWORD"}"""
+        }.andExpect {
+            status { isOk() }
+        }
+    }
+
+    @Test
     fun `editing an unknown account returns not found`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
 
@@ -307,7 +336,7 @@ class UserControllerTest : AbstractRestTest() {
 
     @Test
     fun `administrator cannot delete their own account`() {
-        val actor = createUser(username = "root", roles = setOf(RoleNames.ADMINISTRATOR))
+        val actor = createUser(username = "root", role = RoleNames.ADMINISTRATOR)
         val auth = bearer(tokenFor(username = "root"))
 
         mockMvc.delete("/api/users/${actor.id}") {
@@ -345,73 +374,93 @@ class UserControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `administrator replaces the role set of an account`() {
+    fun `administrator replaces the role of an account`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val target = createUser(username = "grace", roles = setOf(RoleNames.VIEWER))
+        val target = createUser(username = "grace", role = RoleNames.VIEWER)
 
-        mockMvc.put("/api/users/${target.id}/roles") {
+        mockMvc.put("/api/users/${target.id}/role") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"roles":["orchestrator"]}"""
+            content = """{"role":"orchestrator"}"""
         }.andExpect {
             status { isOk() }
-            jsonPath("$.roles") { value(RoleNames.ORCHESTRATOR) }
+            jsonPath("$.role") { value(RoleNames.ORCHESTRATOR) }
             jsonPath("$.nodes") { value(contains("user.edit.self", "user.read", "user.read.self")) }
         }
     }
 
     @Test
-    fun `replacing roles with an empty set strips every node`() {
+    fun `clearing the role strips every node`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val target = createUser(username = "grace", roles = setOf(RoleNames.ADMINISTRATOR))
+        val target = createUser(username = "grace", role = RoleNames.ADMINISTRATOR)
 
-        mockMvc.put("/api/users/${target.id}/roles") {
+        mockMvc.put("/api/users/${target.id}/role") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"roles":[]}"""
+            content = """{"role":null}"""
         }.andExpect {
             status { isOk() }
-            jsonPath("$.roles") { isEmpty() }
+            jsonPath("$.role") { value(null) }
             jsonPath("$.nodes") { isEmpty() }
         }
     }
 
     @Test
-    fun `replacing roles rejects an unknown role`() {
+    fun `administrator cannot change their own role`() {
+        val actor = createUser(username = "root", role = RoleNames.ADMINISTRATOR)
+        val auth = bearer(tokenFor(username = "root"))
+
+        mockMvc.put("/api/users/${actor.id}/role") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"role":"viewer"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+
+        mockMvc.get("/api/auth/me") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            jsonPath("$.role") { value(RoleNames.ADMINISTRATOR) }
+        }
+    }
+
+    @Test
+    fun `replacing the role rejects an unknown role`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
         val target = createUser(username = "grace")
 
-        mockMvc.put("/api/users/${target.id}/roles") {
+        mockMvc.put("/api/users/${target.id}/role") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"roles":["wizard"]}"""
+            content = """{"role":"wizard"}"""
         }.andExpect {
             status { isBadRequest() }
         }
     }
 
     @Test
-    fun `replacing roles on an unknown account returns not found`() {
+    fun `replacing the role on an unknown account returns not found`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
 
-        mockMvc.put("/api/users/999999/roles") {
+        mockMvc.put("/api/users/999999/role") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"roles":["viewer"]}"""
+            content = """{"role":"viewer"}"""
         }.andExpect {
             status { isNotFound() }
         }
     }
 
     @Test
-    fun `orchestrator cannot replace roles`() {
+    fun `orchestrator cannot replace a role`() {
         val auth = authAs("bot", RoleNames.ORCHESTRATOR)
         val target = createUser(username = "grace")
 
-        mockMvc.put("/api/users/${target.id}/roles") {
+        mockMvc.put("/api/users/${target.id}/role") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"roles":["administrator"]}"""
+            content = """{"role":"administrator"}"""
         }.andExpect {
             status { isForbidden() }
         }
