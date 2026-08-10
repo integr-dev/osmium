@@ -14,6 +14,10 @@ const LABELS: Record<string, string> = {
   'user.delete': 'Delete accounts',
   'user.roles.write': 'Assign roles',
   'role.read': 'View roles',
+  'agent.read': 'View hosts and bots',
+  'agent.control': 'Manage and control bots',
+  'agent.chat': 'Speak in game as a bot',
+  'agent.login': 'Enrol hosts and set up bots',
 }
 
 export function nodeLabel(node: string): string {
