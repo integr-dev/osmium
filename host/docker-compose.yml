@@ -1,0 +1,15 @@
+services:
+  osmium-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: osmium-agent:latest
+    container_name: osmium-agent
+    restart: unless-stopped
+    environment:
+      OSMIUM_AGENT_TOKEN: osm_ag_1_121b3c649b9fbc19ced2773b0059851e
+      OSMIUM_WS_URL: wss://localhost/ws/agent
+    volumes:
+      - agent:/agent
+volumes:
+  agent:
