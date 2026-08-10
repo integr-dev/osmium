@@ -14,8 +14,8 @@ needs attention, and what is being said in game.
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 108 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 39 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 116 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 45 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. | **Not started** |
 
 ## The one idea worth knowing
@@ -68,8 +68,8 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 108 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 39 tests
+cd backend && ./gradlew test     # 116 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 45 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 503s — plus a real client

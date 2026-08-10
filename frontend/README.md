@@ -46,9 +46,23 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, agents, their lifecycle states, all commands and the **audit log** are real API calls.
+Hosts, agents, their lifecycle states, all commands, the **audit log** and **live updates** are real.
 Telemetry, chat and build progress are **mock**, and marked as such in `src/stores/agents.ts` —
-nothing reports them until a host connects. They are what the SSE stream will replace.
+nothing reports them until a host connects.
+
+## Live updates
+
+`src/api/stream.ts` is a small fetch-based SSE client. The browser's native `EventSource` cannot set
+an `Authorization` header, and the token is a Bearer token — putting it in the query string would
+land it in access logs and referrers, and cookies would reintroduce CSRF. Reading the stream from a
+`fetch` body keeps the Bearer pattern unchanged. The cost is that reconnection is ours to write, so
+it backs off from 1s to 30s and gives up entirely on 401 or 403, which retrying cannot fix.
+
+`AppLayout` holds one stream open for the session. Events land in the store's `applyEvent`, which is
+the seam between transport and state — exported so the ingest is testable without a socket.
+
+**Commands no longer refetch.** Anything that changes stored state publishes an event that arrives
+before the response is written, so a refetch would only re-read what the stream already applied.
 
 The audit log filters client-side. That is a deliberate limit, not an oversight: with a 30-day
 retention and a row per command rather than per event, the whole window fits in memory. Server-side
@@ -71,7 +85,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-39 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+45 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
 fleet store's derived state.
 
@@ -133,7 +147,7 @@ suite runs once instead of twice.
 ## Layout
 
 ```
-src/api/         generated schema, typed client, token storage
+src/api/         generated schema, typed client, token storage, SSE client
 src/components/  FormField, the add-host and add-agent modals
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/lib/         presentation maps for agent state, roles, node labels and login methods

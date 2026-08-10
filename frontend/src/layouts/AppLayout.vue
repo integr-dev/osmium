@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { Bot as Agent, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
 import { useAuthStore } from '../stores/auth'
@@ -13,12 +13,19 @@ const router = useRouter()
 
 const addAgentOpen = ref(false)
 
-// The sidebar is present on every authenticated page, so it is the natural place to load the fleet.
+// The sidebar is present on every authenticated page, so it is the natural place to load the fleet
+// and to hold the live stream open: one connection for the whole session rather than one per view.
 onMounted(() => {
-  if (auth.can('fleet.read')) void agentStore.refresh()
+  if (!auth.can('fleet.read')) return
+  void agentStore.refresh()
+  agentStore.connectStream()
 })
 
+onUnmounted(() => agentStore.disconnectStream())
+
 function logout() {
+  // Closed before the token is dropped, so the stream does not reconnect with a dead credential.
+  agentStore.disconnectStream()
   auth.logout()
   void router.push({ name: 'login' })
 }

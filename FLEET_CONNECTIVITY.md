@@ -7,7 +7,8 @@
 | Phases 0–1, command routing, liveness, wire protocol, permission nodes | **Built** in `backend/`, covered by tests |
 | The operator audit trail and its retention purge | **Built** in `backend/`, read through the frontend's Audit log page |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
-| Live updates (SSE), chat scoping and listener election, work assignment | **Not built** |
+| Live updates over SSE | **Built**, for hosts and agents; telemetry coalescing waits on telemetry |
+| Chat scoping and listener election, work assignment | **Not built** |
 
 Telemetry, chat and build progress in the frontend are still mock
 (`frontend/src/stores/agents.ts`), because nothing reports them until a host connects. Sections not
@@ -421,6 +422,9 @@ A hard minimum is reserved for a deliberately breaking protocol change.
 
 ## Live updates to the frontend
 
+> **Built**, except telemetry coalescing. Hosts and agents stream; there is no telemetry to throttle
+> until a host reports some, so that part stays design.
+
 The browser channel is **receive-only**. Commands already travel over REST, where they are node-gated
 and audited; the frontend only needs to be told what changed.
 
@@ -458,10 +462,11 @@ REST request, so a demotion takes effect immediately — but a stream authorises
 then runs for hours. This is the one place that guarantee leaks. The stream must **re-check its nodes
 periodically** (~30s) and close on failure, and should not outlive the token that opened it.
 
-**The nginx config in `frontend/nginx.conf.template` currently breaks both options.** It proxies
-`/api/` without the `Upgrade`/`Connection` headers a WebSocket needs, and with default buffering plus
-a 60s `proxy_read_timeout`, which severs an idle SSE stream. Streaming needs `proxy_buffering off`
-and a raised read timeout on the stream paths.
+**The nginx config would otherwise break it.** Default buffering holds events until a buffer fills,
+and the default 60s `proxy_read_timeout` severs a stream that has merely been quiet. Fixed with a
+dedicated `location /api/stream/` carrying `proxy_buffering off` and a one-hour read timeout — and
+deliberately *no* `add_header`, since inside a location that replaces the inherited set and would
+drop the security headers for that path.
 
 **Telemetry needs coalescing, not forwarding.** Chat lines and state transitions are human-paced and
 can go out immediately. Position and health are not: forwarding every sample from a fleet of agents

@@ -166,6 +166,73 @@ describe('fleet store', () => {
   })
 })
 
+describe('live updates', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('replaces an agent in place when the backend reports a state change', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('agent', { ...agent({ id: 6, state: 'STALE', serverAddress: 'alpha.example:25565' }) })
+
+    expect(store.byId(6)!.state).toBe('STALE')
+    expect(store.agents).toHaveLength(AGENTS.length)
+  })
+
+  // The mock telemetry is stable per id, so losing it on every event would reshuffle the UI.
+  it('keeps telemetry when an agent is updated by an event', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+    store.byId(6)!.telemetry.blocksPlaced = 4242
+
+    store.applyEvent('agent', { ...agent({ id: 6, state: 'ONLINE', serverAddress: 'alpha.example:25565' }) })
+
+    expect(store.byId(6)!.telemetry.blocksPlaced).toBe(4242)
+  })
+
+  it('adds an agent it has never seen', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('agent', agent({ id: 99, state: 'UNLINKED', serverAddress: 'gamma.example:25565' }))
+
+    expect(store.byId(99)).toBeDefined()
+  })
+
+  it('drops an agent that was removed', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('agent-removed', { id: 6 })
+
+    expect(store.byId(6)).toBeUndefined()
+  })
+
+  it('drops a host that was removed', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('host-removed', { id: 1 })
+
+    expect(store.hostById(1)).toBeUndefined()
+  })
+
+  // A newer backend may send event types this build has never heard of; that must not throw.
+  it('ignores an unknown event type', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    expect(() => store.applyEvent('something-new', { whatever: true })).not.toThrow()
+    expect(store.agents).toHaveLength(AGENTS.length)
+  })
+})
+
 describe('formatUptime', () => {
   it('shows a dash rather than a zero for an agent that was never up', () => {
     expect(formatUptime(0)).toBe('—')

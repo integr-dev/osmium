@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, errorMessage, type AgentResponse, type HostResponse } from '../api/client'
+import { openStream, type StreamHandle } from '../api/stream'
 
 /**
  * Fleet state.
@@ -112,7 +113,7 @@ export const useAgentStore = defineStore('agents', () => {
     loading.value = true
     error.value = null
     try {
-      await Promise.all([loadHosts(), loadBots()])
+      await Promise.all([loadHosts(), loadAgents()])
     } finally {
       loading.value = false
     }
@@ -127,7 +128,7 @@ export const useAgentStore = defineStore('agents', () => {
     hosts.value = (data ?? []) as HostResponse[]
   }
 
-  async function loadBots(): Promise<void> {
+  async function loadAgents(): Promise<void> {
     const { data, error: failure } = await api.GET('/api/agents')
     if (failure) {
       error.value = errorMessage(failure, 'Could not load agents')
@@ -139,6 +140,75 @@ export const useAgentStore = defineStore('agents', () => {
       ...agent,
       telemetry: previous.get(agent.id) ?? mockTelemetry(agent),
     }))
+  }
+
+  // ---- live updates --------------------------------------------------------------------------
+
+  /**
+   * The stream carries the same shapes the REST endpoints return, so an event is applied in place
+   * rather than triggering a refetch. That is what makes a change another operator made — or one a
+   * host reported with nobody watching — appear without polling.
+   */
+  let stream: StreamHandle | null = null
+  const streamConnected = ref(false)
+
+  function connectStream(): void {
+    if (stream) return
+    stream = openStream('/api/stream/fleet', {
+      onEvent(name, data) {
+        streamConnected.value = true
+        applyEvent(name, data)
+      },
+      onDisconnect() {
+        streamConnected.value = false
+      },
+    })
+  }
+
+  function disconnectStream(): void {
+    stream?.close()
+    stream = null
+    streamConnected.value = false
+  }
+
+  /**
+   * The seam between transport and state: everything the stream delivers lands here. Exported so
+   * the ingest can be exercised without standing up a socket, and so a future transport swap is one
+   * call site rather than a rewrite.
+   */
+  function applyEvent(name: string, data: unknown): void {
+    switch (name) {
+      case 'agent':
+        upsertAgent(data as AgentResponse)
+        break
+      case 'agent-removed':
+        agents.value = agents.value.filter((agent) => agent.id !== (data as { id: number }).id)
+        break
+      case 'host':
+        upsertHost(data as HostResponse)
+        break
+      case 'host-removed':
+        hosts.value = hosts.value.filter((host) => host.id !== (data as { id: number }).id)
+        break
+      // 'ready' and anything this build does not know about are ignored, so a newer backend
+      // sending a new event type never breaks an older tab.
+    }
+  }
+
+  /** Telemetry is kept across the update, exactly as `loadAgents` does, so the mock does not reset. */
+  function upsertAgent(incoming: AgentResponse): void {
+    const index = agents.value.findIndex((agent) => agent.id === incoming.id)
+    if (index === -1) {
+      agents.value = [...agents.value, { ...incoming, telemetry: mockTelemetry(incoming) }]
+      return
+    }
+    agents.value[index] = { ...incoming, telemetry: agents.value[index]!.telemetry }
+  }
+
+  function upsertHost(incoming: HostResponse): void {
+    const index = hosts.value.findIndex((host) => host.id === incoming.id)
+    if (index === -1) hosts.value = [...hosts.value, incoming]
+    else hosts.value[index] = incoming
   }
 
   // ---- derived -------------------------------------------------------------------------------
@@ -232,11 +302,17 @@ export const useAgentStore = defineStore('agents', () => {
 
   // ---- commands ------------------------------------------------------------------------------
 
-  /** Every command can legitimately fail with 503 while no agent is connected. */
+  /**
+   * Every command can legitimately fail with 503 while no host is connected.
+   *
+   * None of these refetch afterwards. Anything that changes stored state publishes an event, which
+   * arrives before the response is written, so a refetch would only re-read what the stream has
+   * already applied. Connect, disconnect and chat change nothing stored at all — the state moves
+   * when the host reports back.
+   */
   async function enrolHost(name: string): Promise<string> {
     const { data, error: failure } = await api.POST('/api/hosts', { body: { name } })
     if (failure || !data?.token) throw new Error(errorMessage(failure, 'Could not enrol the host'))
-    await refresh()
     return data.token
   }
 
@@ -246,7 +322,6 @@ export const useAgentStore = defineStore('agents', () => {
       body: { name },
     })
     if (failure) throw new Error(errorMessage(failure, 'Could not rename the host'))
-    await refresh()
   }
 
   /** Returns the replacement token, shown once. The host's current connection is closed. */
@@ -255,14 +330,12 @@ export const useAgentStore = defineStore('agents', () => {
       params: { path: { id } },
     })
     if (failure || !data?.token) throw new Error(errorMessage(failure, 'Could not rotate the token'))
-    await refresh()
     return data.token
   }
 
   async function removeHost(id: number): Promise<void> {
     const { error: failure } = await api.DELETE('/api/hosts/{id}', { params: { path: { id } } })
     if (failure) throw new Error(errorMessage(failure, 'Could not remove the host'))
-    await refresh()
   }
 
   async function addAgent(input: {
@@ -272,7 +345,6 @@ export const useAgentStore = defineStore('agents', () => {
   }): Promise<AgentResponse> {
     const { data, error: failure } = await api.POST('/api/agents', { body: input })
     if (failure || !data) throw new Error(errorMessage(failure, 'Could not create the agent'))
-    await refresh()
     return data as AgentResponse
   }
 
@@ -286,13 +358,11 @@ export const useAgentStore = defineStore('agents', () => {
       body: changes,
     })
     if (failure) throw new Error(errorMessage(failure, 'Could not update the agent'))
-    await refresh()
   }
 
   async function removeAgent(id: number): Promise<void> {
     const { error: failure } = await api.DELETE('/api/agents/{id}', { params: { path: { id } } })
     if (failure) throw new Error(errorMessage(failure, 'Could not remove the agent'))
-    await refresh()
   }
 
   async function setupAgent(id: number, method: string): Promise<void> {
@@ -301,13 +371,11 @@ export const useAgentStore = defineStore('agents', () => {
       body: { method },
     })
     if (failure) throw new Error(errorMessage(failure, 'Could not start setup'))
-    await refresh()
   }
 
   async function connect(id: number): Promise<void> {
     const { error: failure } = await api.POST('/api/agents/{id}/connect', { params: { path: { id } } })
     if (failure) throw new Error(errorMessage(failure, 'Could not connect'))
-    await refresh()
   }
 
   async function disconnect(id: number): Promise<void> {
@@ -315,7 +383,6 @@ export const useAgentStore = defineStore('agents', () => {
       params: { path: { id } },
     })
     if (failure) throw new Error(errorMessage(failure, 'Could not disconnect'))
-    await refresh()
   }
 
   async function say(id: number, message: string): Promise<void> {
@@ -332,6 +399,10 @@ export const useAgentStore = defineStore('agents', () => {
     agents,
     loading,
     error,
+    streamConnected,
+    connectStream,
+    applyEvent,
+    disconnectStream,
     schematic,
     sectors,
     globalChat,
