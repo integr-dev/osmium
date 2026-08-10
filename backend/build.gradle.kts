@@ -11,6 +11,12 @@ group = "net.integr"
 version = "0.2.0"
 description = "backend"
 
+// Emits META-INF/build-info.properties, which is what lets the OpenAPI document report the real
+// version rather than a hand-typed one. The hand-typed one had drifted two releases behind.
+springBoot {
+    buildInfo()
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
