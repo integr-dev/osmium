@@ -15,7 +15,7 @@ needs attention, and what is being said in game.
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, bots, and the WebSocket agents dial into. | Built, 88 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 37 tests |
 | [`agent/`](agent/) | Runs on a machine you control, holds the Minecraft credentials, drives the bots. | **Not started** |
 
 ## The one idea worth knowing
@@ -65,13 +65,31 @@ nodes, arranged as nested tiers:
 So the split is "runs the bots" versus "runs the people". Details in
 [`backend/README.md`](backend/README.md).
 
-## Images
+## Tests
 
-Both modules publish to GHCR on pushes to `main` that touch them, tagged from the version in
-`build.gradle.kts` and `package.json` respectively:
+```bash
+cd backend && ./gradlew test     # 88 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 37 tests
+```
 
-- `ghcr.io/integr-dev/osmium/backend`
-- `ghcr.io/integr-dev/osmium/frontend`
+The backend covers every route — happy paths, 401s, per-role 403s, 409s, 503s — plus a real client
+over a real agent socket. The frontend covers the route guard, the auth store, the API client
+middleware and the fleet store's derived state.
+
+## CI
+
+Four workflows, all path-filtered so a change to one module does not run the other's jobs.
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `backend-tests.yml` | push to `main`, pull request | `./gradlew test`, annotates failures, uploads reports |
+| `frontend-tests.yml` | push to `main`, pull request | Vitest, ESLint and the `vue-tsc` build, all three under `if: always()` |
+| `backend-image.yml` | push to `main` | publishes `ghcr.io/integr-dev/osmium/backend` |
+| `frontend-image.yml` | push to `main` | publishes `ghcr.io/integr-dev/osmium/frontend` |
+
+Image tags come from the version in `build.gradle.kts` and `package.json` respectively, plus
+`sha-<short>` and `latest`. Failing tests become inline annotations and a job summary table, built
+from JUnit XML by [`.github/scripts/junit-summary.mjs`](.github/scripts/junit-summary.mjs).
 
 ## Licence
 
