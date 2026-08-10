@@ -6,7 +6,7 @@ import org.springframework.boot.runApplication
 import org.springframework.scheduling.annotation.EnableScheduling
 import net.integr.osmium.audit.service.AuditService
 
-/** Scheduling drives one job: the daily audit-retention purge in `AuditService`. */
+/** Scheduling drives the three daily retention purges: audit, activity and chat. */
 @SpringBootApplication
 @ConfigurationPropertiesScan
 @EnableScheduling

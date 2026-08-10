@@ -3,7 +3,12 @@ package net.integr.osmium.hostlink
 import net.integr.osmium.agent.dto.toResponse
 import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.agent.model.AgentState
+import net.integr.osmium.activity.model.ActivityScope
+import net.integr.osmium.activity.model.ActivitySeverity
+import net.integr.osmium.activity.service.ActivityService
 import net.integr.osmium.agent.repository.AgentRepository
+import net.integr.osmium.chat.model.ChatScope
+import net.integr.osmium.chat.service.ChatService
 import net.integr.osmium.liveupdates.FleetEvent
 import net.integr.osmium.liveupdates.FleetEventBroker
 import net.integr.osmium.liveupdates.FleetEventType
@@ -24,6 +29,8 @@ import net.integr.osmium.host.service.HostService
 class HostReportService(
     private val agentRepository: AgentRepository,
     private val hostService: HostService,
+    private val chatService: ChatService,
+    private val activityService: ActivityService,
     private val broker: FleetEventBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -52,6 +59,10 @@ class HostReportService(
             )
 
             EventType.AGENT_STATUS -> applyState(hostId, envelope)
+
+            EventType.CHAT -> recordChat(hostId, envelope)
+
+            EventType.ACTIVITY -> recordActivity(hostId, envelope)
 
             // Forward compatible by design: a newer host reporting something this backend has not
             // learned about yet is normal, so it is logged and dropped rather than fatal.
@@ -108,6 +119,57 @@ class HostReportService(
             publish(agent)
         }
     }
+
+    /**
+     * A line the host classified. An unrecognised scope is dropped rather than guessed at: filing
+     * chat into the wrong feed is worse than losing it, since the whole point of the split is that
+     * an incident is not buried in conversation.
+     */
+    private fun recordChat(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val payload = envelope.payload ?: return
+
+        val scope = enumOrNull<ChatScope>(payload.get("scope")?.asString())
+        val text = payload.get("text")?.asString()
+        if (scope == null || text.isNullOrBlank()) {
+            log.debug("Ignoring malformed chat event from host {}", hostId)
+            return
+        }
+
+        chatService.record(
+            agent = agent,
+            scope = scope,
+            // Falls back to the agent's own name, which is who said it when the scope is outbound.
+            from = payload.get("from")?.asString() ?: agent.label,
+            text = text,
+        )
+    }
+
+    private fun recordActivity(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val payload = envelope.payload ?: return
+
+        val scope = enumOrNull<ActivityScope>(payload.get("scope")?.asString())
+        val text = payload.get("text")?.asString()
+        if (scope == null || text.isNullOrBlank()) {
+            log.debug("Ignoring malformed activity event from host {}", hostId)
+            return
+        }
+
+        activityService.record(
+            agent = agent,
+            scope = scope,
+            // Optional on the wire: a host that reports what happened without rating it still gets
+            // the line recorded, and INFO is the reading that claims least.
+            severity = enumOrNull<ActivitySeverity>(payload.get("severity")?.asString())
+                ?: ActivitySeverity.INFO,
+            text = text,
+        )
+    }
+
+    /** Wire values are lower case; an unknown one is null rather than an exception. */
+    private inline fun <reified T : Enum<T>> enumOrNull(raw: String?): T? =
+        raw?.let { value -> enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) } }
 
     private fun publish(agent: Agent) = broker.publish(
         FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(), agentId = agent.id),

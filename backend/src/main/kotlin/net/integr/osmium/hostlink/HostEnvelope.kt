@@ -53,4 +53,28 @@ object EventType {
     const val HEARTBEAT = "heartbeat"
     const val AGENT_STATUS = "agent_status"
     const val SETUP_RESULT = "setup_result"
+
+    /**
+     * A line of Minecraft chat: `{ "scope": "global", "from": "Notch", "text": "…" }`.
+     *
+     * `scope` is one of `outbound`, `direct`, `local`, `global` and is **classified by the host** -
+     * only it can see the raw packet types, and the backend cannot infer scope from message text.
+     * A scope it does not recognise is dropped rather than guessed at.
+     *
+     * Includes the agent's own outbound messages, echoed back after they are actually said. The
+     * backend does not record them on dispatch: what reached the server is what belongs in the feed.
+     */
+    const val CHAT = "chat"
+
+    /**
+     * Something that happened to an agent:
+     * `{ "scope": "system", "severity": "warning", "text": "Kicked: flying is not enabled" }`.
+     *
+     * `scope` is `system` (the server acted on the agent) or `lifecycle` (the session changed).
+     * `severity` is `info`, `warning` or `error`, and defaults to `info` when absent.
+     *
+     * Separate from [CHAT] on purpose: a kick between two lines of small talk is a kick nobody
+     * sees. See the Chat section of FLEET_CONNECTIVITY.md.
+     */
+    const val ACTIVITY = "activity"
 }

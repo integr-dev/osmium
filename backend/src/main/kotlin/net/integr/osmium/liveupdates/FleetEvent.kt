@@ -12,6 +12,14 @@ enum class FleetEventType(val eventName: String) {
     AGENT_REMOVED("agent-removed"),
     HOST_CHANGED("host"),
     HOST_REMOVED("host-removed"),
+
+    /**
+     * Appended to a feed rather than replacing a resource. Both carry `agentId`, so the per-agent
+     * stream gets them too - including the server's global chat, which arrives under whichever
+     * agent currently forwards it. A client showing one agent's conversation filters on `scope`.
+     */
+    CHAT_MESSAGE("chat"),
+    ACTIVITY_ENTRY("activity"),
 }
 
 /**
