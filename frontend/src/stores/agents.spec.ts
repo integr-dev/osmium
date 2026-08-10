@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { formatUptime, useAgentStore } from './agents'
-import type { AgentResponse, HostResponse } from '../api/client'
+import type { AgentResponse, AgentTelemetryResponse, HostResponse } from '../api/client'
 import { respondWith } from '../test/http'
 
 const HOSTS: HostResponse[] = [
@@ -14,15 +14,36 @@ const HOSTS: HostResponse[] = [
  * online agents on one server, plus one agent that trips a health alert.
  */
 const AGENTS: AgentResponse[] = [
-  agent({ id: 6, state: 'ONLINE', serverAddress: 'alpha.example:25565' }),
-  agent({ id: 12, state: 'ONLINE', serverAddress: 'alpha.example:25565', chatListener: true }),
+  agent({ id: 6, state: 'ONLINE', serverAddress: 'alpha.example:25565', telemetry: vitals({ health: 4 }) }),
+  agent({
+    id: 12,
+    state: 'ONLINE',
+    serverAddress: 'alpha.example:25565',
+    chatListener: true,
+    telemetry: vitals(),
+  }),
   agent({ id: 7, state: 'STALE', serverAddress: 'alpha.example:25565' }),
   agent({ id: 3, state: 'LINKED', serverAddress: 'beta.example:25565' }),
   agent({ id: 5, state: 'ONLINE', serverAddress: 'beta.example:25565' }),
 ]
 
+function vitals(overrides: Partial<AgentTelemetryResponse> = {}): AgentTelemetryResponse {
+  return {
+    health: 20,
+    food: 20,
+    position: { x: 0, y: 64, z: 0 },
+    dimension: 'overworld',
+    pingMs: 30,
+    nearby: [],
+    ...overrides,
+  }
+}
+
 function agent(
-  fields: Pick<AgentResponse, 'id' | 'state' | 'serverAddress'> & { chatListener?: boolean },
+  fields: Pick<AgentResponse, 'id' | 'state' | 'serverAddress'> & {
+    chatListener?: boolean
+    telemetry?: AgentTelemetryResponse
+  },
 ): AgentResponse {
   return {
     label: `Mason_${fields.id}`,
@@ -31,6 +52,8 @@ function agent(
     mcUsername: null,
     mcUuid: null,
     chatListener: false,
+    onlineSince: null,
+    telemetry: null,
     ...fields,
   }
 }
@@ -123,16 +146,24 @@ describe('fleet store', () => {
 
       await store.refresh()
 
-      expect(store.attention.find((item) => item.agent.id === 5)?.reason).toBe('Health 10/20')
+      expect(store.attention.find((item) => item.agent.id === 6)?.reason).toBe('Health 4/20')
     })
 
     it('ignores telemetry thresholds for agents that are not in game', async () => {
-      fleet()
+      fleet([
+        agent({
+          id: 3,
+          state: 'LINKED',
+          serverAddress: 'beta.example:25565',
+          telemetry: vitals({ health: 1, food: 1 }),
+        }),
+      ])
       const store = useAgentStore()
 
       await store.refresh()
 
-      // Agent 3 is LINKED, so its zeroed telemetry must not read as starving on 0 health.
+      // Vitals left over from before it disconnected must not raise an alert about a session that
+      // is not running.
       expect(store.attention.some((item) => item.agent.id === 3)).toBe(false)
     })
 
@@ -147,15 +178,52 @@ describe('fleet store', () => {
     })
   })
 
-  it('keeps telemetry across a refresh so the view does not reset on every poll', async () => {
+  it('keeps mock build progress across a refresh so the view does not reset on every poll', async () => {
     fleet()
     const store = useAgentStore()
     await store.refresh()
-    store.byId(6)!.telemetry.blocksPlaced = 999
+    store.byId(6)!.build.blocksPlaced = 999
 
     await store.refresh()
 
-    expect(store.byId(6)!.telemetry.blocksPlaced).toBe(999)
+    expect(store.byId(6)!.build.blocksPlaced).toBe(999)
+  })
+
+  /**
+   * Vitals arrive on their own event several times a minute, so they are merged in place rather than
+   * resending the agent. Anything else about the agent has to survive that merge.
+   */
+  it('applies a telemetry event without disturbing the rest of the agent', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('telemetry', {
+      agentId: 6,
+      telemetry: { ...vitals(), health: 11, pingMs: 250 },
+    })
+
+    expect(store.byId(6)!.telemetry?.health).toBe(11)
+    expect(store.byId(6)!.label).toBe('Mason_6')
+    expect(store.byId(6)!.build.blocksPlaced).toBeGreaterThan(0)
+  })
+
+  it('ignores telemetry for an agent it does not know', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    expect(() => store.applyEvent('telemetry', { agentId: 404, telemetry: vitals() })).not.toThrow()
+  })
+
+  /** Silence is not a low reading. Inventing an alert from missing data is how a dashboard cries wolf. */
+  it('raises no health alert for an agent that has not reported', async () => {
+    fleet([agent({ id: 8, state: 'ONLINE', serverAddress: 'alpha.example:25565' })])
+    const store = useAgentStore()
+
+    await store.refresh()
+
+    expect(store.attention).toEqual([])
   })
 
   it('surfaces a load failure instead of throwing', async () => {
@@ -191,16 +259,16 @@ describe('live updates', () => {
     expect(store.agents).toHaveLength(AGENTS.length)
   })
 
-  // The mock telemetry is stable per id, so losing it on every event would reshuffle the UI.
-  it('keeps telemetry when an agent is updated by an event', async () => {
+  // Mock build progress is stable per id, so losing it on every event would reshuffle the UI.
+  it('keeps mock build progress when an agent is updated by an event', async () => {
     fleet()
     const store = useAgentStore()
     await store.refresh()
-    store.byId(6)!.telemetry.blocksPlaced = 4242
+    store.byId(6)!.build.blocksPlaced = 4242
 
     store.applyEvent('agent', { ...agent({ id: 6, state: 'ONLINE', serverAddress: 'alpha.example:25565' }) })
 
-    expect(store.byId(6)!.telemetry.blocksPlaced).toBe(4242)
+    expect(store.byId(6)!.build.blocksPlaced).toBe(4242)
   })
 
   it('adds an agent it has never seen', async () => {

@@ -4,6 +4,7 @@ import net.integr.osmium.agent.dto.toResponse
 import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.agent.repository.AgentRepository
+import net.integr.osmium.agent.service.AgentTelemetryStore
 import net.integr.osmium.hostlink.CommandType
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.HostEnvelope
@@ -31,6 +32,7 @@ import java.util.UUID
 class ChatListenerService(
     private val agentRepository: AgentRepository,
     private val connections: HostConnections,
+    private val telemetryStore: AgentTelemetryStore,
     private val objectMapper: ObjectMapper,
     private val broker: FleetEventBroker,
 ) {
@@ -110,7 +112,13 @@ class ChatListenerService(
         agent.chatListener = listening
         agentRepository.save(agent)
         broker.publish(
-            FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(), agentId = agent.id),
+            // Looked up rather than left null: this event replaces the agent in the browser, so
+            // omitting telemetry would blank an agent's vitals every time the listener role moved.
+            FleetEvent(
+                type = FleetEventType.AGENT_CHANGED,
+                data = agent.toResponse(telemetryStore.find(agent.id)),
+                agentId = agent.id,
+            ),
         )
     }
 

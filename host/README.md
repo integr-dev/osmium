@@ -193,12 +193,48 @@ lock out the entire fleet the moment the backend is bumped.
 
 ### 4.2 `agent_status`
 
+Carries two things with very different lifetimes, and **either half may be sent alone**.
+
 ```jsonc
-{ "kind": "event", "type": "agent_status", "agentId": 42, "payload": { "state": "ONLINE" } }
+// both halves: a state change that also reports vitals
+{ "kind": "event", "type": "agent_status", "agentId": 42,
+  "payload": { "state": "ONLINE",
+               "health": 18, "food": 17, "pingMs": 42, "dimension": "overworld",
+               "position": { "x": 128.5, "y": 71.0, "z": -344.25 },
+               "nearby": [ { "name": "Notch", "distance": 12.4 } ] } }
+
+// state only, when nothing else is worth reporting
+{ "kind": "event", "type": "agent_status", "agentId": 42, "payload": { "state": "CONNECT_FAILED" } }
+
+// vitals only — the ordinary case while an agent is just playing
+{ "kind": "event", "type": "agent_status", "agentId": 42,
+  "payload": { "health": 20, "food": 19, "pingMs": 38,
+               "position": { "x": 130.0, "y": 71.0, "z": -344.0 } } }
 ```
 
-`state` is the only field currently read. Report a state whenever it changes; sending it unchanged
-is harmless and ignored.
+**The state** is a rare, durable fact. Report it whenever it changes; repeating it unchanged is
+harmless and ignored.
+
+**The vitals** are a continuous sample, held in memory and never stored. Send them roughly **every
+5 seconds** while an agent is `ONLINE`. There is no need to send them at all otherwise — an agent
+that is not in game has no vitals, and Osmium shows that as "not reporting" rather than as zeroes.
+
+| Field | Required | Notes |
+|---|---|---|
+| `state` | no | omit when nothing changed |
+| `health` | for vitals | out of 20. **Its presence is what marks a tick as carrying vitals** |
+| `food` | no | out of 20; defaults to 0 |
+| `position` | no | `{x, y, z}`, doubles; defaults to the origin |
+| `dimension` | no | defaults to `overworld` |
+| `pingMs` | no | round trip to the Minecraft server; defaults to 0 |
+| `nearby` | no | `[{ "name", "distance" }]` — **names and distances only** |
+
+**Do not send `isAgent` on nearby players.** Osmium decides that, because a host sees only its own
+agents and a server's fleet can span several hosts — no host can tell one of ours from a stranger.
+
+**Vitals go stale after 30 seconds**, matching the heartbeat grace. Stop reporting and Osmium shows
+the agent as not reporting rather than holding the last numbers on screen as though they were
+current. Nothing needs to be sent to clear them.
 
 | State | Meaning | Reported by |
 |---|---|---|
@@ -213,8 +249,9 @@ is harmless and ignored.
 `STALE` is derived from the heartbeat, because a host that can talk to the backend is by definition
 not stale.
 
-> Telemetry — health, food, position, ping, blocks placed — is **not consumed yet**. Extra payload
-> keys are accepted and ignored, so sending them early is harmless but does nothing.
+> **Blocks placed and the current task are not consumed yet** — they belong with work assignment,
+> which does not exist. Extra payload keys are accepted and ignored, so sending them early is
+> harmless but does nothing.
 
 ### 4.3 `chat`
 
@@ -317,6 +354,7 @@ failure.
 3. Run every agent this host owns in **one process**, mapping `agentId` to a client internally.
 4. Handle `setup_agent` → reply `ok` with `mcUsername` + `mcUuid`, or `ok: false` with `reason`.
 5. Handle `connect` / `disconnect` → no result; report `agent_status` when the state actually moves.
+   Report vitals in `agent_status` every ~5s while an agent is `ONLINE`.
 6. Handle `chat` → say it, then echo it as a `chat` event with scope `outbound`.
 7. Handle `set_chat_listener` → toggle `global` forwarding for that agent; default off.
 8. Classify inbound chat into the six scopes and emit `chat` / `activity`.

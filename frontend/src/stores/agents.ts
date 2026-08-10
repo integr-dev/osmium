@@ -7,34 +7,32 @@ import { t } from '../i18n'
 /**
  * Fleet state.
  *
- * Hosts, agents and their lifecycle states are **real** and come from the backend, as are chat and
- * activity — though nothing fills those until a host connects. Telemetry and build progress are
- * still **mock**: nothing reports health, position or blocks placed yet. Those parts are marked.
+ * Hosts, agents, their lifecycle states, chat, activity and **telemetry** are real and come from the
+ * backend — though nothing fills them until a host connects. Only **build progress** is still mock:
+ * blocks placed, sectors and the schematic. Those parts are marked.
  *
  * Chat and activity are not held here. They are cursor-paged feeds owned by whichever view shows
  * one; the store only hands on the live lines as they arrive. See `src/lib/feed.ts`.
  */
 
-export interface NearbyPlayer {
-  name: string
-  distance: number
-  isAgent: boolean
-}
+/**
+ * Telemetry is **absent, not zeroed**, when an agent has not reported recently. Zeroes would render
+ * as an agent on 0 health standing at the origin, which is a very convincing way to describe an
+ * agent nobody has heard from.
+ */
+export type AgentTelemetry = NonNullable<AgentResponse['telemetry']>
+export type NearbyPlayer = AgentTelemetry['nearby'][number]
 
-/** MOCK. Replaced by the telemetry stream once an agent reports. */
-export interface AgentTelemetry {
-  uptimeSeconds: number
-  health: number
-  food: number
-  position: { x: number; y: number; z: number }
-  dimension: string
-  pingMs: number
-  task: string
+/**
+ * MOCK, pending the schematic pipeline. Kept off `telemetry` so the real and the invented are not
+ * mixed in one object — the host reports vitals, and nothing reports build progress yet.
+ */
+export interface BuildProgress {
   blocksPlaced: number
-  nearby: NearbyPlayer[]
+  task: string
 }
 
-export type FleetAgent = AgentResponse & { telemetry: AgentTelemetry }
+export type FleetAgent = AgentResponse & { build: BuildProgress }
 
 export interface Sector {
   id: string
@@ -115,11 +113,11 @@ export const useAgentStore = defineStore('agents', () => {
       error.value = errorMessage(failure, t('errors.loadAgents'))
       return
     }
-    // Telemetry is preserved across refreshes so the mock does not reset on every poll.
-    const previous = new Map(agents.value.map((agent) => [agent.id, agent.telemetry]))
+    // Build progress is mock, so it is kept across refreshes rather than reshuffling on every poll.
+    const previous = new Map(agents.value.map((agent) => [agent.id, agent.build]))
     agents.value = ((data ?? []) as AgentResponse[]).map((agent) => ({
       ...agent,
-      telemetry: previous.get(agent.id) ?? mockTelemetry(agent),
+      build: previous.get(agent.id) ?? mockBuild(agent),
     }))
   }
 
@@ -171,6 +169,9 @@ export const useAgentStore = defineStore('agents', () => {
       case 'host-removed':
         hosts.value = hosts.value.filter((host) => host.id !== (data as { id: number }).id)
         break
+      case 'telemetry':
+        applyTelemetry(data as { agentId: number; telemetry: AgentTelemetry })
+        break
       case 'chat':
       case 'activity':
         // Feeds are paged and owned by whichever view is showing one, so these are handed on rather
@@ -196,14 +197,25 @@ export const useAgentStore = defineStore('agents', () => {
     return () => feedListeners.delete(listener)
   }
 
-  /** Telemetry is kept across the update, exactly as `loadAgents` does, so the mock does not reset. */
+  /** Mock build progress is kept across the update, exactly as `loadAgents` does. */
   function upsertAgent(incoming: AgentResponse): void {
     const index = agents.value.findIndex((agent) => agent.id === incoming.id)
     if (index === -1) {
-      agents.value = [...agents.value, { ...incoming, telemetry: mockTelemetry(incoming) }]
+      agents.value = [...agents.value, { ...incoming, build: mockBuild(incoming) }]
       return
     }
-    agents.value[index] = { ...incoming, telemetry: agents.value[index]!.telemetry }
+    agents.value[index] = { ...incoming, build: agents.value[index]!.build }
+  }
+
+  /**
+   * Vitals arrive on their own event, several times a minute per agent, so they are merged into the
+   * agent in place. The alternative — resending the whole agent each tick — is what the split event
+   * exists to avoid.
+   */
+  function applyTelemetry(incoming: { agentId: number; telemetry: AgentTelemetry }): void {
+    const index = agents.value.findIndex((agent) => agent.id === incoming.agentId)
+    if (index === -1) return
+    agents.value[index] = { ...agents.value[index]!, telemetry: incoming.telemetry }
   }
 
   function upsertHost(incoming: HostResponse): void {
@@ -217,7 +229,7 @@ export const useAgentStore = defineStore('agents', () => {
   const online = computed(() => agents.value.filter(isOnline))
 
   const blocksPlaced = computed(() =>
-    agents.value.reduce((sum, agent) => sum + agent.telemetry.blocksPlaced, 0),
+    agents.value.reduce((sum, agent) => sum + agent.build.blocksPlaced, 0),
   )
 
   const progressPercent = computed(() =>
@@ -225,7 +237,7 @@ export const useAgentStore = defineStore('agents', () => {
   )
 
   const blocksPerMinute = computed(
-    () => online.value.filter((agent) => agent.telemetry.blocksPlaced > 0).length * 38,
+    () => online.value.filter((agent) => agent.build.blocksPlaced > 0).length * 38,
   )
 
   const etaMinutes = computed(() => {
@@ -271,14 +283,19 @@ export const useAgentStore = defineStore('agents', () => {
       }
       if (!isOnline(agent)) continue
 
-      if (agent.telemetry.health <= 10) {
-        found.push({ agent, reason: `Health ${agent.telemetry.health}/20`, severity: 'error' })
+      // An agent that has not reported raises nothing. Silence is not a healthy reading, but it is
+      // not a low one either — inventing an alert from missing data is how a dashboard cries wolf.
+      const vitals = agent.telemetry
+      if (!vitals) continue
+
+      if (vitals.health <= 10) {
+        found.push({ agent, reason: `Health ${vitals.health}/20`, severity: 'error' })
       }
-      if (agent.telemetry.food <= 8) {
-        found.push({ agent, reason: `Food ${agent.telemetry.food}/20`, severity: 'warning' })
+      if (vitals.food <= 8) {
+        found.push({ agent, reason: `Food ${vitals.food}/20`, severity: 'warning' })
       }
-      if (agent.telemetry.pingMs >= 100) {
-        found.push({ agent, reason: `Ping ${agent.telemetry.pingMs} ms`, severity: 'warning' })
+      if (vitals.pingMs >= 100) {
+        found.push({ agent, reason: `Ping ${vitals.pingMs} ms`, severity: 'warning' })
       }
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))
@@ -429,23 +446,14 @@ export const useAgentStore = defineStore('agents', () => {
 })
 
 /**
- * MOCK. Stable per agent id so the UI does not shuffle on refresh, and only populated for agents the
- * backend reports as online - an UNLINKED agent genuinely has no telemetry.
+ * MOCK, pending the schematic pipeline. Stable per agent id so the UI does not shuffle on refresh,
+ * and only populated for agents the backend reports as online.
  */
-function mockTelemetry(agent: AgentResponse): AgentTelemetry {
-  const seed = agent.id
+function mockBuild(agent: AgentResponse): BuildProgress {
   const live = isOnline(agent)
-
   return {
-    uptimeSeconds: live ? 1_800 + seed * 917 : 0,
-    health: live ? 20 - (seed % 3) * 5 : 0,
-    food: live ? 20 - (seed % 4) * 4 : 0,
-    position: { x: 100 + seed * 7, y: 71, z: -340 - seed * 5 },
-    dimension: 'overworld',
-    pingMs: live ? 35 + (seed % 5) * 22 : 0,
+    blocksPlaced: live ? agent.id * 1_240 : 0,
     task: live ? 'Awaiting assignment' : describe(agent.state),
-    blocksPlaced: live ? seed * 1_240 : 0,
-    nearby: [],
   }
 }
 
@@ -466,6 +474,16 @@ function describe(state: AgentResponse['state']): string {
     default:
       return 'Idle'
   }
+}
+
+/**
+ * How long the agent has been in game, from `onlineSince`. Derived rather than reported: the backend
+ * already stamps the moment an agent enters the game, for chat listener election, so a second
+ * uptime counter on the wire would be one more thing that could disagree with it.
+ */
+export function uptimeOf(agent: AgentResponse): string {
+  if (!agent.onlineSince) return '—'
+  return formatUptime(Math.floor((Date.now() - new Date(agent.onlineSince).getTime()) / 1000))
 }
 
 export function formatUptime(seconds: number): string {

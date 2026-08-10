@@ -349,6 +349,55 @@ Sub-second receive latency is the accepted cost.
 Both are also published on the live stream as `chat` and `activity` events, so an open feed grows
 without polling.
 
+## Telemetry
+
+Health, food, position, dimension, ping and nearby players ride **inside `agent_status`**, alongside
+the state. `HostReportService` splits the two halves on receipt, because they behave nothing alike:
+
+- **State** is rare and durable. Written and published only when it actually changes, so a host
+  repeating `ONLINE` every few seconds costs nothing.
+- **Telemetry** is a continuous sample. Taken from every report, kept in `AgentTelemetryStore`, and
+  published on its own lightweight `telemetry` event rather than re-sending the whole agent.
+
+Treating them alike would give either an `agent` event per report — the whole resource, several
+times a minute per agent, to carry a few numbers — or vitals that only update when an agent
+connects.
+
+**Telemetry is coalesced onto a 1 second tick**, not forwarded as it arrives.
+`AgentTelemetryPublisher` marks agent **ids** rather than queuing samples, and looks the reading up
+at publish time, so a burst collapses into the newest value instead of a backlog the browser would
+render and immediately overwrite. Without it a fleet of 200 reporting every 5s would put 40 events a
+second on every open stream. The pending set is cleared *before* publishing, so a sample arriving
+mid-flush goes out on the next tick rather than being dropped; a tick with nothing new publishes
+nothing at all.
+
+The scheduler pool is raised to 4 (`spring.task.scheduling.pool.size`) because of this. The default
+is a single thread, and the nightly retention purges are bulk deletes — on one thread a purge would
+visibly stall live vitals once a night.
+
+**Nothing is stored.** Telemetry is the only thing here with no historical value and by far the
+highest write volume, and keeping it out of Postgres also means a restart cannot resurrect an
+hour-old position and render it as current.
+
+**Samples go stale rather than being cleared**, on a 30 second window matching the heartbeat grace.
+Nothing pushes an event when a host falls silent — `STALE` is itself derived — so any design that
+waited to be *told* to forget would leave last-known vitals on screen indefinitely, presented as
+now. Ageing out needs no notification and no cleanup path, and it is the same pattern
+`Host.isReachable` already uses.
+
+Two consequences worth knowing:
+
+- **Absent, not zeroed.** `AgentResponse.telemetry` is null when an agent has not reported. Zeroes
+  would render as an agent on no health standing at the world origin, which is a very convincing way
+  to describe an agent nobody has heard from. **Needs attention** raises nothing for a silent agent
+  for the same reason.
+- **`isAgent` on nearby players is decided here, not by the host.** A host sees only its own agents
+  and a server's fleet can span several hosts, so it cannot tell one of ours from a stranger. The
+  host reports names and distances; the backend knows the fleet.
+
+Uptime is **not** reported. It is derived from `onlineSince`, which the backend already stamps for
+chat listener election — a second counter on the wire would be one more thing that could disagree.
+
 ### Outbound chat is rate limited
 
 30 messages a minute, **per agent**, refused with a 429 before the command is dispatched.

@@ -46,10 +46,18 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**, **activity** and
-**live updates** are real. Chat and activity stay empty until a host connects and starts forwarding
-them, but nothing about them is faked. Telemetry and build progress are **mock**, and marked as such
-in `src/stores/agents.ts`.
+Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**, **activity**,
+**telemetry** and **live updates** are real. They stay empty until a host connects and starts
+reporting, but nothing about them is faked.
+
+Only **build progress** is still mock — blocks placed, sectors, throughput, the schematic. It hangs
+off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not mixed in
+one object. Marked in `src/stores/agents.ts`.
+
+Telemetry is **absent rather than zeroed** when an agent has not reported: `agent.telemetry` is
+null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes would render as an
+agent on no health standing at the world origin, which is a much more convincing lie than an empty
+panel.
 
 ## Live updates
 

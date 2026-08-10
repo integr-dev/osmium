@@ -94,15 +94,15 @@ const eta = computed(() => {
   return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
 })
 
-/** Builders only, ranked by contribution, for the leaderboard bars. */
+/** Builders only, ranked by contribution, for the leaderboard bars. Still mock — see the store. */
 const contributors = computed(() =>
   [...agentStore.agents]
-    .filter((agent) => agent.telemetry.blocksPlaced > 0)
-    .sort((a, b) => b.telemetry.blocksPlaced - a.telemetry.blocksPlaced),
+    .filter((agent) => agent.build.blocksPlaced > 0)
+    .sort((a, b) => b.build.blocksPlaced - a.build.blocksPlaced),
 )
 
 const topContribution = computed(() =>
-  Math.max(1, ...contributors.value.map((agent) => agent.telemetry.blocksPlaced)),
+  Math.max(1, ...contributors.value.map((agent) => agent.build.blocksPlaced)),
 )
 
 function percent(part: number, whole: number): number {
@@ -277,11 +277,11 @@ function percent(part: number, whole: number): number {
                   ></span>
                   {{ agent.label }}
                 </RouterLink>
-                <span class="tabular-nums opacity-60">{{ agent.telemetry.blocksPlaced.toLocaleString() }}</span>
+                <span class="tabular-nums opacity-60">{{ agent.build.blocksPlaced.toLocaleString() }}</span>
               </div>
               <progress
                 class="progress progress-primary mt-1 w-full"
-                :value="percent(agent.telemetry.blocksPlaced, topContribution)"
+                :value="percent(agent.build.blocksPlaced, topContribution)"
                 max="100"
               ></progress>
             </li>

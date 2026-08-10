@@ -33,14 +33,16 @@ class AgentService(
     private val hostRepository: HostRepository,
     private val registry: HostConnections,
     private val chatRateLimiter: ChatRateLimiter,
+    private val telemetryStore: AgentTelemetryStore,
+    private val telemetryPublisher: AgentTelemetryPublisher,
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
     private val broker: FleetEventBroker,
 ) {
     fun findAll(): List<AgentResponse> =
-        agentRepository.findAll().sortedBy { it.label }.map { it.toResponse() }
+        agentRepository.findAll().sortedBy { it.label }.map { it.toResponse(telemetryStore.find(it.id)) }
 
-    fun findById(id: Long): AgentResponse = require(id).toResponse()
+    fun findById(id: Long): AgentResponse = require(id).let { it.toResponse(telemetryStore.find(it.id)) }
 
     @Transactional
     fun create(request: CreateAgentRequest): AgentResponse {
@@ -63,7 +65,7 @@ class AgentService(
             detail = "On ${host.name}, for ${saved.serverAddress}",
         )
         publish(saved)
-        return saved.toResponse()
+        return saved.toResponse(telemetryStore.find(saved.id))
     }
 
     /**
@@ -110,7 +112,7 @@ class AgentService(
             publish(agent)
         }
 
-        return agent.toResponse()
+        return agent.toResponse(telemetryStore.find(agent.id))
     }
 
     @Transactional
@@ -123,6 +125,8 @@ class AgentService(
         agentRepository.delete(agent)
         // Otherwise the limiter's map keeps a bucket per agent that has ever existed in this process.
         chatRateLimiter.forget(id)
+        telemetryStore.forget(id)
+        telemetryPublisher.forget(id)
         auditService.record(
             action = AuditAction.AGENT_DELETE,
             target = label,
@@ -163,7 +167,7 @@ class AgentService(
             detail = "Method '${request.method}' on ${agent.host.name}",
         )
         publish(agent)
-        return agent.toResponse()
+        return agent.toResponse(telemetryStore.find(agent.id))
     }
 
     @Transactional
@@ -178,7 +182,7 @@ class AgentService(
             target = agent.label,
             detail = agent.serverAddress,
         )
-        return agent.toResponse()
+        return agent.toResponse(telemetryStore.find(agent.id))
     }
 
     @Transactional
@@ -191,7 +195,7 @@ class AgentService(
             target = agent.label,
             detail = agent.serverAddress,
         )
-        return agent.toResponse()
+        return agent.toResponse(telemetryStore.find(agent.id))
     }
 
     @Transactional
@@ -217,7 +221,7 @@ class AgentService(
             target = agent.label,
             detail = request.message,
         )
-        return agent.toResponse()
+        return agent.toResponse(telemetryStore.find(agent.id))
     }
 
     /**
@@ -250,7 +254,7 @@ class AgentService(
      * is what the browser is told about.
      */
     private fun publish(agent: Agent) = broker.publish(
-        FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(), agentId = agent.id),
+        FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(telemetryStore.find(agent.id)), agentId = agent.id),
     )
 
     /**

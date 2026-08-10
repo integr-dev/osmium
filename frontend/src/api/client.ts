@@ -12,7 +12,21 @@ import { token } from './token'
 export type UserResponse = Required<components['schemas']['UserResponse']>
 export type RoleResponse = Required<components['schemas']['RoleResponse']>
 export type HostResponse = Required<components['schemas']['HostResponse']>
-export type AgentResponse = Required<components['schemas']['AgentResponse']>
+export type NearbyPlayerResponse = Required<components['schemas']['NearbyPlayerResponse']>
+
+/** Nested objects need asserting too — `Required` only reaches the top level. */
+export type AgentTelemetryResponse = Required<components['schemas']['AgentTelemetryResponse']> & {
+  position: Required<components['schemas']['PositionResponse']>
+  nearby: NearbyPlayerResponse[]
+}
+
+/**
+ * `telemetry` is the one field that is genuinely nullable rather than merely undocumented: null is
+ * the backend saying this agent has not reported recently, which is different from zero.
+ */
+export type AgentResponse = Required<components['schemas']['AgentResponse']> & {
+  telemetry: AgentTelemetryResponse | null
+}
 export type AuditEntryResponse = Required<components['schemas']['AuditEntryResponse']>
 export type ChatMessageResponse = Required<components['schemas']['ChatMessageResponse']>
 export type ActivityEntryResponse = Required<components['schemas']['ActivityEntryResponse']>

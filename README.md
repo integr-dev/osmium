@@ -6,10 +6,10 @@ An operator uploads a schematic, picks the agents to work it, and Osmium splits 
 hands each agent its own slice. The dashboard shows what the fleet is doing: progress, throughput,
 what needs attention, and what is being said in game.
 
-> **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity, live
-> updates and the host transport are built and tested. The host program itself lives outside this
-> repository — Rust on azalea, see [`host/`](host/). Chat and activity stay empty until a host
-> connects and starts forwarding them; telemetry and build progress in the UI are still mock.
+> **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
+> telemetry, live updates and the host transport are built and tested. The host program itself lives
+> outside this repository — Rust on azalea, see [`host/`](host/). Those feeds stay empty until a host
+> connects and starts reporting; only build progress in the UI is still mock.
 
 ## Modules
 

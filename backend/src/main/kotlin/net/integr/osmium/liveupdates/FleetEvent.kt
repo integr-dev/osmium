@@ -20,6 +20,15 @@ enum class FleetEventType(val eventName: String) {
      */
     CHAT_MESSAGE("chat"),
     ACTIVITY_ENTRY("activity"),
+
+    /**
+     * An agent's vitals, on its own event rather than inside `agent`.
+     *
+     * Telemetry arrives every few seconds per agent while `agent` fires only when something
+     * actually changes. Folding it in would turn a rare, meaningful event into a firehose, and send
+     * the whole agent each time to carry a few numbers that moved.
+     */
+    AGENT_TELEMETRY("telemetry"),
 }
 
 /**

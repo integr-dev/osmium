@@ -166,6 +166,8 @@ export const en = {
     food: 'Food',
     position: 'Position',
     task: 'Task',
+    dimension: 'Dimension',
+    noTelemetry: 'This agent has not reported recently.',
     ping: 'Ping',
     blocksPlaced: 'Blocks placed',
     nearby: 'Nearby',

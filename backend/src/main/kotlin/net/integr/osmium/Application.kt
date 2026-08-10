@@ -7,8 +7,10 @@ import org.springframework.scheduling.annotation.EnableScheduling
 import net.integr.osmium.audit.service.AuditService
 
 /**
- * Scheduling drives the three daily retention purges - audit, activity and chat - and the chat
- * listener election, which reconciles on a timer because a host going silent fires no event.
+ * Scheduling drives five jobs: the three daily retention purges (audit, activity, chat), the chat
+ * listener election, which reconciles on a timer because a host going silent fires no event, and the
+ * telemetry tick, which coalesces vitals so the browser is fed at a fixed rate rather than at
+ * whatever rate hosts happen to report.
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan

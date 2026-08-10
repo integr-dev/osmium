@@ -6,13 +6,16 @@
 |---|---|
 | Phases 0–1, command routing, liveness, wire protocol, permission nodes | **Built** in `backend/`, covered by tests |
 | The operator audit trail and its retention purge | **Built** in `backend/`, read through the frontend's Audit log page |
+| Chat and activity: scoping, storage, retention, paging | **Built** in `backend/`, read through the frontend |
+| Chat listener election and outbound rate limiting | **Built** in `backend/`, covered by tests |
+| Telemetry: ingest, in-memory store, staleness, coalesced live event | **Built** in `backend/`, covered by tests |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
-| Live updates over SSE | **Built**, for hosts and agents; telemetry coalescing waits on telemetry |
-| Chat scoping and listener election, work assignment | **Not built** |
+| Live updates over SSE | **Built**, for hosts, agents, chat, activity and telemetry |
+| Work assignment and the schematic pipeline | **Not built** |
 
-Telemetry, chat and build progress in the frontend are still mock (`frontend/src/stores/agents.ts`),
-because nothing reports them until a host connects. Sections not marked built are design, not
-description.
+Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
+sectors, throughput and the schematic. Everything else is real but empty until a host connects.
+Sections not marked built are design, not description.
 
 **Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator
 brings a new agent online. *How* a host authenticates is explicitly out of scope — that is the point
@@ -474,8 +477,8 @@ A hard minimum is reserved for a deliberately breaking protocol change.
 
 ## Live updates to the frontend
 
-> **Built**, except telemetry coalescing. Hosts and agents stream; there is no telemetry to throttle
-> until a host reports some, so that part stays design.
+> **Built.** Hosts, agents, chat, activity and telemetry all stream, and telemetry is coalesced onto
+> a fixed tick rather than forwarded sample by sample.
 
 The browser channel is **receive-only**. Commands already travel over REST, where they are
 node-gated and audited; the frontend only needs to be told what changed.
@@ -520,10 +523,26 @@ dedicated `location /api/stream/` carrying `proxy_buffering off` and a one-hour 
 deliberately *no* `add_header`, since inside a location that replaces the inherited set and would
 drop the security headers for that path.
 
-**Telemetry needs coalescing, not forwarding.** Chat lines and state transitions are human-paced and
-can go out immediately. Position and health are not: forwarding every sample from a fleet of agents
-floods both the wire and the UI. Telemetry should be throttled to a fixed tick (~1s) carrying the
-latest snapshot.
+**Telemetry is coalesced, not forwarded.** Chat lines and state transitions are human-paced and go
+out as they arrive. Position and health do not: forwarding every sample means a fleet of 200
+reporting every five seconds puts 40 events a second on every open stream, each re-rendering a row
+because someone moved by a block.
+
+`AgentTelemetryPublisher` holds a set of agent **ids** with something new to say and publishes one
+event per agent on a **1 second tick**, looking the reading up at publish time. Ids rather than
+samples is what makes it coalescing rather than buffering: a burst collapses into the newest
+reading, instead of a backlog the browser would render and immediately overwrite. It costs nothing
+extra because the store already keeps only the latest value.
+
+Two details that matter:
+
+- **The pending set is cleared before publishing, not after.** A sample arriving mid-flush re-marks
+  its agent and goes out on the next tick; clearing afterwards would drop it silently.
+- **A tick with nothing new publishes nothing.** An idle fleet must not put an empty event on every
+  stream once a second.
+
+The tick length is the one number here trading responsiveness against event volume, and is worth
+revisiting against real host traffic.
 
 ### Designed for, not built yet: more than one backend instance
 

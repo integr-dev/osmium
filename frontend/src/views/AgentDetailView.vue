@@ -10,6 +10,7 @@ import {
   Hammer,
   Heart,
   KeyRound,
+  Layers,
   MapPin,
   MessageSquare,
   Power,
@@ -18,7 +19,6 @@ import {
   Server,
   Signal,
   SquarePen,
-  Target,
   Trash2,
   TriangleAlert,
   Users,
@@ -29,7 +29,7 @@ import { fetchActivityPage, fetchChatPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_BADGE, stateLabel } from '../lib/agentState'
 import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
-import { formatUptime, isOnline, useAgentStore } from '../stores/agents'
+import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
 const { t } = useI18n()
@@ -58,8 +58,14 @@ const agent = computed(() => agentStore.byId(Number(route.params.id)))
 const host = computed(() => (agent.value ? agentStore.hostById(agent.value.hostId) : undefined))
 const hostReachable = computed(() => host.value?.reachable === true)
 
-const healthPercent = computed(() => ((agent.value?.telemetry.health ?? 0) / 20) * 100)
-const foodPercent = computed(() => ((agent.value?.telemetry.food ?? 0) / 20) * 100)
+/**
+ * Null until the agent reports, and after it stops. The whole panel is hidden in that case rather
+ * than shown as zeroes, which would read as an agent on no health standing at the world origin.
+ */
+const vitals = computed(() => agent.value?.telemetry ?? null)
+
+const healthPercent = computed(() => ((vitals.value?.health ?? 0) / 20) * 100)
+const foodPercent = computed(() => ((vitals.value?.food ?? 0) / 20) * 100)
 
 const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
   INFO: 'bg-base-content/30',
@@ -232,7 +238,7 @@ async function confirmRemove() {
           <div class="text-xs uppercase opacity-50">{{ t('agents.uptime') }}</div>
           <div class="flex items-center gap-1 font-medium tabular-nums">
             <Clock class="size-3.5 opacity-50" />
-            {{ formatUptime(agent.telemetry.uptimeSeconds) }}
+            {{ uptimeOf(agent) }}
           </div>
         </div>
         <div v-if="auth.can('fleet.control')" class="flex gap-1">
@@ -269,7 +275,10 @@ async function confirmRemove() {
       </span>
     </div>
 
-    <!-- Stats: mock until an agent reports telemetry -->
+    <!--
+      Vitals are the host's, and absent until it reports. Nothing is invented in their place: an
+      agent showing 0/20 health at 0,0,0 is a much more convincing lie than an empty panel.
+    -->
     <div class="card border-base-300 bg-base-200 border">
       <div class="card-body gap-4">
         <h2 class="card-title flex items-center gap-2 text-base">
@@ -277,13 +286,16 @@ async function confirmRemove() {
           {{ t('agents.stats') }}
         </h2>
 
+        <p v-if="!vitals" class="py-6 text-center text-sm opacity-50">{{ t('agents.noTelemetry') }}</p>
+
+        <template v-else>
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="flex items-center gap-3">
             <Heart class="text-error size-4 shrink-0" />
             <div class="min-w-0 flex-1">
               <div class="flex justify-between text-xs opacity-60">
                 <span>{{ t('agents.health') }}</span>
-                <span class="tabular-nums">{{ agent.telemetry.health }} / 20</span>
+                <span class="tabular-nums">{{ vitals.health }} / 20</span>
               </div>
               <progress class="progress progress-error mt-1 w-full" :value="healthPercent" max="100"></progress>
             </div>
@@ -294,7 +306,7 @@ async function confirmRemove() {
             <div class="min-w-0 flex-1">
               <div class="flex justify-between text-xs opacity-60">
                 <span>{{ t('agents.food') }}</span>
-                <span class="tabular-nums">{{ agent.telemetry.food }} / 20</span>
+                <span class="tabular-nums">{{ vitals.food }} / 20</span>
               </div>
               <progress class="progress progress-warning mt-1 w-full" :value="foodPercent" max="100"></progress>
             </div>
@@ -307,35 +319,37 @@ async function confirmRemove() {
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.position') }}</span>
               <span class="block truncate font-mono text-sm tabular-nums">
-                {{ agent.telemetry.position.x }}, {{ agent.telemetry.position.y }},
-                {{ agent.telemetry.position.z }}
+                {{ Math.round(vitals.position.x) }}, {{ Math.round(vitals.position.y) }},
+                {{ Math.round(vitals.position.z) }}
               </span>
             </span>
           </div>
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-            <Target class="text-primary size-3.5 shrink-0 opacity-70" />
+            <Layers class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
-              <span class="block text-xs opacity-50">{{ t('agents.task') }}</span>
-              <span class="block truncate text-sm">{{ agent.telemetry.task }}</span>
+              <span class="block text-xs opacity-50">{{ t('agents.dimension') }}</span>
+              <span class="block truncate text-sm">{{ vitals.dimension }}</span>
             </span>
           </div>
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
             <Signal class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.ping') }}</span>
-              <span class="block truncate text-sm tabular-nums">{{ agent.telemetry.pingMs }} ms</span>
+              <span class="block truncate text-sm tabular-nums">{{ vitals.pingMs }} ms</span>
             </span>
           </div>
+          <!-- Still mock: nothing reports build progress until the schematic pipeline lands. -->
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
             <Hammer class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
               <span class="block truncate text-sm tabular-nums">
-                {{ agent.telemetry.blocksPlaced.toLocaleString() }}
+                {{ agent.build.blocksPlaced.toLocaleString() }}
               </span>
             </span>
           </div>
         </div>
+        </template>
       </div>
     </div>
 
@@ -345,12 +359,12 @@ async function confirmRemove() {
         <h2 class="card-title flex items-center gap-2 text-base">
           <Users class="text-primary size-4" />
           {{ t('agents.nearbyPlayers') }}
-          <span class="badge badge-ghost badge-sm">{{ agent.telemetry.nearby.length }}</span>
+          <span class="badge badge-ghost badge-sm">{{ vitals?.nearby.length ?? 0 }}</span>
         </h2>
 
-        <ul v-if="agent.telemetry.nearby.length" class="flex flex-col gap-1">
+        <ul v-if="vitals?.nearby.length" class="flex flex-col gap-1">
           <li
-            v-for="player in agent.telemetry.nearby"
+            v-for="player in vitals.nearby"
             :key="player.name"
             class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
           >

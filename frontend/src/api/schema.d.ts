@@ -546,8 +546,60 @@ export interface components {
             state?: "UNLINKED" | "SETUP_PENDING" | "LINKED" | "ONLINE" | "NEEDS_RELINK" | "CONNECT_FAILED" | "STALE";
             mcUsername?: string | null;
             mcUuid?: string | null;
+            /**
+             * Format: date-time
+             * @description When the agent last entered the game. Null while it is not online.
+             */
+            onlineSince?: string | null;
+            /** @description Latest vitals, or null when the agent has not reported recently. */
+            telemetry?: components["schemas"]["AgentTelemetryResponse"] | null;
             /** @description True when this agent forwards its server's global chat. One per server, elected by the backend - a server with none has no global feed. */
             chatListener?: boolean;
+        };
+        /** @description An agent's latest reported vitals. Never stored - if an agent has not reported recently this is null, rather than showing something an hour old as though it were now. */
+        AgentTelemetryResponse: {
+            /**
+             * Format: int32
+             * @description Out of 20.
+             * @example 18
+             */
+            health?: number;
+            /**
+             * Format: int32
+             * @description Out of 20.
+             * @example 17
+             */
+            food?: number;
+            position?: components["schemas"]["PositionResponse"];
+            /** @example overworld */
+            dimension?: string;
+            /**
+             * Format: int32
+             * @description Round trip to the Minecraft server.
+             * @example 42
+             */
+            pingMs?: number;
+            nearby?: components["schemas"]["NearbyPlayerResponse"][];
+        };
+        /** @description A player standing near an agent in game. */
+        NearbyPlayerResponse: {
+            name?: string;
+            /**
+             * Format: double
+             * @description Blocks away.
+             * @example 12.4
+             */
+            distance?: number;
+            isAgent?: boolean;
+        };
+        /** @description A position in the world. */
+        PositionResponse: {
+            /** Format: double */
+            x?: number;
+            /** Format: double */
+            y?: number;
+            /** Format: double */
+            z?: number;
         };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
