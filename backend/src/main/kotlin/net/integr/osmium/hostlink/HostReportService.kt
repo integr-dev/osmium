@@ -152,24 +152,50 @@ class HostReportService(
         }
     }
 
+    /**
+     * Reads the vitals half, which is present only on some ticks.
+     *
+     * **All four core readings are required together.** Defaulting a missing one would be inventing
+     * a measurement: an absent `food` becoming `0` renders as a starving agent and raises an alert
+     * about an agent that is fine, and an absent `position` becoming the origin puts it somewhere it
+     * has never been. That is the same fabrication `telemetry = null` exists to prevent, so a
+     * partial tick is dropped whole and logged rather than patched up.
+     *
+     * `dimension` and `nearby` do default, because "overworld" and "nobody nearby" are cheap to be
+     * wrong about and neither drives an alert.
+     */
     private fun applyTelemetry(agent: Agent, envelope: HostEnvelope) {
         val payload = envelope.payload ?: return
-        // Vitals arrive together or not at all; health is the marker for "this tick carries them".
-        val health = payload.get("health")?.asInt() ?: return
         val agentId = agent.id ?: return
+
+        val health = payload.get("health")?.asInt()
+        val food = payload.get("food")?.asInt()
+        val pingMs = payload.get("pingMs")?.asInt()
+        val position = payload.get("position")?.let { at ->
+            val x = at.get("x")?.asDouble()
+            val y = at.get("y")?.asDouble()
+            val z = at.get("z")?.asDouble()
+            if (x == null || y == null || z == null) null else PositionResponse(x, y, z)
+        }
+
+        // No vitals at all is the ordinary case: this was a state report.
+        if (health == null && food == null && pingMs == null && position == null) return
+
+        if (health == null || food == null || pingMs == null || position == null) {
+            log.warn(
+                "Dropping a partial telemetry sample for agent {}: health, food, pingMs and position " +
+                    "are required together",
+                agent.label,
+            )
+            return
+        }
 
         val telemetry = AgentTelemetryResponse(
             health = health,
-            food = payload.get("food")?.asInt() ?: 0,
-            position = payload.get("position").let {
-                PositionResponse(
-                    x = it?.get("x")?.asDouble() ?: 0.0,
-                    y = it?.get("y")?.asDouble() ?: 0.0,
-                    z = it?.get("z")?.asDouble() ?: 0.0,
-                )
-            },
+            food = food,
+            position = position,
             dimension = payload.get("dimension")?.asString() ?: "overworld",
-            pingMs = payload.get("pingMs")?.asInt() ?: 0,
+            pingMs = pingMs,
             nearby = nearbyFrom(payload),
         )
 

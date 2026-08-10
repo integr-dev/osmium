@@ -111,7 +111,11 @@ class AgentTelemetryTest : AbstractRestTest() {
         hostReports.onMessage(checkNotNull(host.id), status(agent, vitals))
         hostReports.onMessage(
             checkNotNull(host.id),
-            status(agent, """{"state":"ONLINE","health":6,"food":3,"pingMs":180}"""),
+            status(
+                agent,
+                """{"state":"ONLINE","health":6,"food":3,"pingMs":180,
+                    "position":{"x":1.0,"y":2.0,"z":3.0}}""",
+            ),
         )
 
         assertEquals(6, telemetryStore.find(agent.id)?.health)
@@ -133,6 +137,69 @@ class AgentTelemetryTest : AbstractRestTest() {
     }
 
     /**
+     * The four core readings are required together. Defaulting a missing one invents a measurement:
+     * an absent food becoming 0 renders as a starving agent and raises an alert about an agent that
+     * is fine, which is exactly what null telemetry exists to prevent.
+     */
+    @Test
+    fun `a partial sample is dropped rather than defaulted`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+
+        // Health and ping, but no food and no position.
+        hostReports.onMessage(
+            checkNotNull(host.id),
+            status(agent, """{"state":"ONLINE","health":18,"pingMs":40}"""),
+        )
+
+        assertNull(telemetryStore.find(agent.id))
+    }
+
+    @Test
+    fun `a position missing a coordinate is not half read`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+
+        hostReports.onMessage(
+            checkNotNull(host.id),
+            status(
+                agent,
+                """{"health":18,"food":17,"pingMs":40,"position":{"x":1.0,"z":3.0}}""",
+            ),
+        )
+
+        assertNull(telemetryStore.find(agent.id))
+    }
+
+    /** A partial tick must not overwrite a good sample with a worse one, or clear it. */
+    @Test
+    fun `a partial sample leaves an earlier good one intact`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+        hostReports.onMessage(checkNotNull(host.id), status(agent, vitals))
+
+        hostReports.onMessage(checkNotNull(host.id), status(agent, """{"health":1}"""))
+
+        assertEquals(18, telemetryStore.find(agent.id)?.health)
+    }
+
+    /** Cheap to be wrong about, and neither drives an alert, so these two still default. */
+    @Test
+    fun `dimension and nearby default when the core readings are all present`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+
+        hostReports.onMessage(
+            checkNotNull(host.id),
+            status(agent, """{"health":20,"food":20,"pingMs":30,"position":{"x":0.0,"y":64.0,"z":0.0}}"""),
+        )
+
+        val telemetry = assertNotNull(telemetryStore.find(agent.id))
+        assertEquals("overworld", telemetry.dimension)
+        assertTrue(telemetry.nearby.isEmpty())
+    }
+
+    /**
      * Decided by the backend, because a host sees only its own agents — and a server's fleet can
      * span several hosts, so no host can tell one of ours from a stranger.
      */
@@ -148,7 +215,8 @@ class AgentTelemetryTest : AbstractRestTest() {
             checkNotNull(host.id),
             status(
                 agent,
-                """{"state":"ONLINE","health":20,
+                """{"state":"ONLINE","health":20,"food":20,"pingMs":30,
+                    "position":{"x":0.0,"y":64.0,"z":0.0},
                     "nearby":[{"name":"Mason_02","distance":4.5},{"name":"Notch","distance":19.0}]}""",
             ),
         )

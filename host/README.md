@@ -222,12 +222,19 @@ that is not in game has no vitals, and Osmium shows that as "not reporting" rath
 | Field | Required | Notes |
 |---|---|---|
 | `state` | no | omit when nothing changed |
-| `health` | for vitals | out of 20. **Its presence is what marks a tick as carrying vitals** |
-| `food` | no | out of 20; defaults to 0 |
-| `position` | no | `{x, y, z}`, doubles; defaults to the origin |
+| `health` | **with the other three** | out of 20 |
+| `food` | **with the other three** | out of 20 |
+| `pingMs` | **with the other three** | round trip to the Minecraft server |
+| `position` | **with the other three** | `{x, y, z}`, doubles — all three coordinates |
 | `dimension` | no | defaults to `overworld` |
-| `pingMs` | no | round trip to the Minecraft server; defaults to 0 |
-| `nearby` | no | `[{ "name", "distance" }]` — **names and distances only** |
+| `nearby` | no | `[{ "name", "distance" }]` — **names and distances only**; defaults to empty |
+
+**`health`, `food`, `pingMs` and `position` are all-or-nothing.** Send all four or none of them.
+A tick carrying only some is **dropped whole** and logged, rather than having the rest filled in with
+defaults — a missing `food` defaulting to 0 would render as a starving agent and raise an alert about
+one that is fine, and a missing `position` would place it at the world origin. Osmium would rather
+show nothing than something it made up. Sending none of the four is not an error; that is simply a
+state report.
 
 **Do not send `isAgent` on nearby players.** Osmium decides that, because a host sees only its own
 agents and a server's fleet can span several hosts — no host can tell one of ours from a stranger.

@@ -391,6 +391,11 @@ Two consequences worth knowing:
   would render as an agent on no health standing at the world origin, which is a very convincing way
   to describe an agent nobody has heard from. **Needs attention** raises nothing for a silent agent
   for the same reason.
+- **`health`, `food`, `pingMs` and `position` are required together**, and a tick carrying only some
+  of them is dropped whole and logged. The same rule one level down: defaulting a missing `food` to
+  0 raises a starvation alert about an agent that is fine, and a missing `position` puts it at the
+  origin. `dimension` and `nearby` still default, because "overworld" and "nobody nearby" are cheap
+  to be wrong about and neither drives an alert.
 - **`isAgent` on nearby players is decided here, not by the host.** A host sees only its own agents
   and a server's fleet can span several hosts, so it cannot tell one of ours from a stranger. The
   host reports names and distances; the backend knows the fleet.
