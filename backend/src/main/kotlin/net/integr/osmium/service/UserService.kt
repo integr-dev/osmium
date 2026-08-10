@@ -6,6 +6,7 @@ import net.integr.osmium.dto.UpdateSelfRequest
 import net.integr.osmium.dto.UpdateUserRequest
 import net.integr.osmium.dto.UserResponse
 import net.integr.osmium.dto.toResponse
+import net.integr.osmium.model.AuditAction
 import net.integr.osmium.model.Role
 import net.integr.osmium.model.User
 import net.integr.osmium.repository.RoleRepository
@@ -21,6 +22,7 @@ class UserService(
     private val userRepository: UserRepository,
     private val roleRepository: RoleRepository,
     private val passwordEncoder: PasswordEncoder,
+    private val auditService: AuditService,
 ) {
     fun findAll(): List<UserResponse> =
         userRepository.findAll().sortedBy { it.username }.map { it.toResponse() }
@@ -40,7 +42,14 @@ class UserService(
             passwordHash = passwordEncoder.encodeRequired(request.password),
             role = resolveRole(name = request.role),
         )
-        return userRepository.save(user).toResponse()
+        val saved = userRepository.save(user)
+        // The chosen password is never recorded, here or anywhere else in this trail.
+        auditService.record(
+            action = AuditAction.USER_CREATE,
+            target = saved.username,
+            detail = "Created with role ${saved.role?.name ?: "none"}",
+        )
+        return saved.toResponse()
     }
 
     /** Self-service edit. Cannot touch the role or the password. */
@@ -48,7 +57,18 @@ class UserService(
     fun updateSelf(actorUsername: String, request: UpdateSelfRequest): UserResponse {
         val user = userRepository.findByUsername(actorUsername)
             ?: throw NoSuchElementException("No user named '$actorUsername'")
+
+        val previous = user.username
         rename(user = user, username = request.username)
+        // A rename changes the name every earlier entry was recorded under, so the trail needs the
+        // link between them or it reads as two unrelated accounts.
+        if (user.username != previous) {
+            auditService.record(
+                action = AuditAction.USER_UPDATE,
+                target = user.username,
+                detail = "Renamed themselves from $previous",
+            )
+        }
         return user.toResponse()
     }
 
@@ -64,8 +84,22 @@ class UserService(
         check(user.username != actorUsername) {
             "An account cannot edit itself here; use PATCH /api/users/me or POST /api/auth/password"
         }
+        val previous = user.username
         rename(user = user, username = request.username)
         request.password?.let { user.passwordHash = passwordEncoder.encodeRequired(it) }
+
+        val changes = buildList {
+            if (user.username != previous) add("renamed from $previous")
+            // That a password was reset, never what it was set to.
+            if (request.password != null) add("password reset by an administrator")
+        }
+        if (changes.isNotEmpty()) {
+            auditService.record(
+                action = AuditAction.USER_UPDATE,
+                target = user.username,
+                detail = changes.joinToString("; "),
+            )
+        }
         return user.toResponse()
     }
 
@@ -73,7 +107,15 @@ class UserService(
     fun delete(id: Long, actorUsername: String) {
         val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
         check(user.username != actorUsername) { "An account cannot delete itself" }
+
+        val username = user.username
+        val role = user.role?.name ?: "none"
         userRepository.delete(user)
+        auditService.record(
+            action = AuditAction.USER_DELETE,
+            target = username,
+            detail = "Held role $role",
+        )
     }
 
     @Transactional
@@ -81,7 +123,15 @@ class UserService(
         val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
         // Blocks self-demotion, which would strip user.role.write and leave nobody able to undo it.
         check(user.username != actorUsername) { "An account cannot change its own role" }
+
+        val previous = user.role?.name ?: "none"
         user.role = resolveRole(name = request.role)
+        // The single most consequential entry in the trail: it is how authority is granted.
+        auditService.record(
+            action = AuditAction.USER_ROLE_CHANGE,
+            target = user.username,
+            detail = "$previous → ${user.role?.name ?: "none"}",
+        )
         return user.toResponse()
     }
 

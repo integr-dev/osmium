@@ -45,6 +45,7 @@ set to `osmium`.
 | `osmium.bootstrap.username` | `OSMIUM_BOOTSTRAP_USERNAME` | `admin` | seeded account |
 | `osmium.bootstrap.password` | `OSMIUM_BOOTSTRAP_PASSWORD` | `admin` | seeded account |
 | `osmium.cors.origins` | `OSMIUM_CORS_ORIGINS` | empty | comma-separated exact origins for `/api/**` |
+| `osmium.audit.retention` | `OSMIUM_AUDIT_RETENTION` | `30d` | how long audit entries are kept |
 
 CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
 therefore same-origin. `*` is rejected outright: the configuration allows credentials, and no
@@ -123,6 +124,7 @@ changes automatically.
 | `DELETE` | `/api/users/{id}` | `user.delete` |
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
+| `GET` | `/api/audit` | `audit.read` (newest first, `limit` clamped to 1..1000) |
 | `GET` | `/api/hosts` | `fleet.read` |
 | `POST` | `/api/hosts` | `fleet.login` (returns the enrolment token once) |
 | `PATCH` | `/api/hosts/{id}` | `fleet.login` (rename) |
@@ -205,13 +207,81 @@ Reachability is **derived** from the heartbeat rather than stored, so a backend 
 a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
 the state is genuinely unknown at that point.
 
+## Audit log
+
+Anything that changes state, acts in game, or grants and revokes access is recorded. Reads are not —
+a trail of who listed the agents is noise that buries the entries that matter.
+
+| Group | Actions |
+|---|---|
+| Agents | `AGENT_CREATE`, `AGENT_UPDATE`, `AGENT_DELETE`, `AGENT_SETUP`, `AGENT_CONNECT`, `AGENT_DISCONNECT`, `AGENT_CHAT` |
+| Hosts | `HOST_ENROL`, `HOST_RENAME`, `HOST_ROTATE_TOKEN`, `HOST_DELETE` |
+| Accounts | `USER_CREATE`, `USER_UPDATE`, `USER_DELETE`, `USER_ROLE_CHANGE`, `USER_PASSWORD_CHANGE` |
+
+The groups answer different questions. Agent and host entries answer "why is the fleet in this
+shape"; account entries answer "who was given what, and by whom", which is the one an incident
+usually turns on — `USER_ROLE_CHANGE` records both sides of the change, because that is how
+authority is granted.
+
+**No entry ever carries password material**, chosen, reset or current. `USER_PASSWORD_CHANGE` and a
+password reset under `USER_UPDATE` record that it happened and who did it, nothing more. Outbound
+chat text *is* recorded, because logging that an operator made an agent speak without logging what
+it said is close to useless.
+
+Two renames are recorded specifically because they break the trail otherwise: renaming a host or an
+account changes the name every earlier entry was filed under, so without the link the history reads
+as two unrelated things.
+
+### Adding a new action needs a manual migration
+
+Hibernate maps `AuditAction` with a `CHECK` constraint listing every enum name, and `ddl-auto=update`
+writes that constraint **once and never alters it**. Adding a value therefore succeeds at boot and
+then fails at insert time against the stale list:
+
+```
+ERROR: new row for relation "audit_entries" violates check constraint "audit_entries_action_check"
+```
+
+Run this against any existing database when the enum changes:
+
+```sql
+ALTER TABLE audit_entries DROP CONSTRAINT audit_entries_action_check;
+ALTER TABLE audit_entries ADD CONSTRAINT audit_entries_action_check
+  CHECK (action IN ('AGENT_CREATE', /* … every current value … */));
+```
+
+Both `columnDefinition` and an `AttributeConverter` were tried against a real Postgres to suppress
+the constraint; Hibernate 7.4 generates it either way. The tests never catch this, because
+Testcontainers builds a fresh schema from the current enum on every run — it only bites a database
+that already exists.
+
+That is the second symptom of the same root cause: **`ddl-auto=update` is not a migration tool.** It
+adds tables and columns and does nothing else. Flyway or Liquibase is the real answer before this
+runs anywhere that cannot be dropped and recreated.
+
+Two properties are worth knowing before relying on it:
+
+- **An entry exists only if the command committed.** Recording happens inside the command's own
+  transaction, so one rejected with 503 because no host was connected leaves no trace. Nothing
+  happened, so there is nothing to hold anyone to.
+- **The target is a name, not a foreign key.** An entry has to outlive its subject: "admin deleted
+  host eu-2" is precisely the record you want once eu-2 is gone, and a cascade would delete the
+  evidence along with it.
+
+The acting account comes from the security context rather than a threaded-through parameter.
+Authorization decisions are passed explicitly — `UserService` takes an `actorUsername` — because
+those change behaviour and must be visible at the call site; this only observes.
+
+Entries are kept for 30 days and purged by a daily job, which is why `@EnableScheduling` is on
+`Application`. See the retention table in [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md).
+
 ## Tests
 
 ```bash
 ./gradlew test
 ```
 
-88 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
+108 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
 **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 503s and

@@ -3,6 +3,7 @@ package net.integr.osmium.service
 import net.integr.osmium.dto.LoginRequest
 import net.integr.osmium.dto.LoginResponse
 import net.integr.osmium.dto.PasswordChangeRequest
+import net.integr.osmium.model.AuditAction
 import net.integr.osmium.repository.UserRepository
 import net.integr.osmium.security.JwtService
 import net.integr.osmium.security.encodeRequired
@@ -17,6 +18,7 @@ class AuthService(
     private val userRepository: UserRepository,
     private val passwordEncoder: PasswordEncoder,
     private val jwtService: JwtService,
+    private val auditService: AuditService,
 ) {
     fun login(request: LoginRequest): LoginResponse {
         val user = userRepository.findByUsername(request.username)
@@ -43,6 +45,12 @@ class AuthService(
         }
 
         user.passwordHash = passwordEncoder.encodeRequired(request.newPassword)
+        // That it happened, and by whom. Neither password reaches the entry.
+        auditService.record(
+            action = AuditAction.USER_PASSWORD_CHANGE,
+            target = user.username,
+            detail = "Changed their own password",
+        )
     }
 
     private companion object {

@@ -47,7 +47,13 @@ class AgentService(
             serverAddress = normalizeServer(request.serverAddress),
             state = AgentState.UNLINKED,
         )
-        return agentRepository.save(agent).toResponse()
+        val saved = agentRepository.save(agent)
+        auditService.record(
+            action = AuditAction.AGENT_CREATE,
+            target = saved.label,
+            detail = "On ${host.name}, for ${saved.serverAddress}",
+        )
+        return saved.toResponse()
     }
 
     /**
@@ -60,11 +66,13 @@ class AgentService(
     @Transactional
     fun update(id: Long, request: UpdateAgentRequest): AgentResponse {
         val agent = require(id)
+        val changes = mutableListOf<String>()
 
         request.label?.let { label ->
             require(label.isNotBlank()) { "Label must not be blank" }
             if (label != agent.label) {
                 check(!agentRepository.existsByLabel(label)) { "Agent '$label' already exists" }
+                changes += "renamed from ${agent.label}"
                 agent.label = label
             }
         }
@@ -76,8 +84,19 @@ class AgentService(
                 check(agent.state != AgentState.ONLINE) {
                     "Disconnect '${agent.label}' before moving it to another server"
                 }
+                changes += "moved from ${agent.serverAddress} to $moved"
                 agent.serverAddress = moved
             }
+        }
+
+        // A request that changes nothing records nothing: an entry saying an agent was edited into
+        // exactly its previous shape is noise, and the endpoint accepts no-op patches.
+        if (changes.isNotEmpty()) {
+            auditService.record(
+                action = AuditAction.AGENT_UPDATE,
+                target = agent.label,
+                detail = changes.joinToString("; "),
+            )
         }
 
         return agent.toResponse()
@@ -85,7 +104,17 @@ class AgentService(
 
     @Transactional
     fun delete(id: Long) {
-        agentRepository.delete(require(id))
+        val agent = require(id)
+        // Read the label before the delete: it is the only thing that makes the entry legible after.
+        val label = agent.label
+        val hostName = agent.host.name
+
+        agentRepository.delete(agent)
+        auditService.record(
+            action = AuditAction.AGENT_DELETE,
+            target = label,
+            detail = "Was on $hostName; credentials cached there are not removed by this",
+        )
     }
 
     /**

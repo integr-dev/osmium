@@ -5,6 +5,7 @@
 | Section | State |
 |---|---|
 | Phases 0–1, command routing, liveness, wire protocol, permission nodes | **Built** in `backend/`, covered by tests |
+| The operator audit trail and its retention purge | **Built** in `backend/`, read through the frontend's Audit log page |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
 | Live updates (SSE), chat scoping and listener election, work assignment | **Not built** |
 
@@ -701,13 +702,30 @@ as them.
 
 ## Audit
 
-> **Not built.** This section is the design, not a description of the code — there is no audit
-> entity, table or service yet. Every other mention of the audit trail in this document, including
-> the threat model and the chat table, is intent rather than fact.
+> **Built**, in `backend/` and the frontend's Audit log page. The chat and activity streams described
+> elsewhere in this document remain design, since nothing reports them until a host connects.
 
 Every `setup`, `connect`, `disconnect` and `chat` records the acting Osmium account, the target agent,
 and a timestamp. Actions are taken under a real Minecraft identity; when something goes wrong
 in-game, "the agent did it" is not an answer.
+
+Host enrolment, renaming, token rotation and deletion are recorded too, as are agent creation,
+editing and deletion. They change what the fleet is or mint and destroy credentials, which is
+exactly what an audit trail exists for.
+
+**Account management is recorded as well** — creation, editing, deletion, role changes and password
+changes — and in practice it is the group an incident turns on. `USER_ROLE_CHANGE` records both the
+old and the new role, because that is the moment authority is granted.
+
+Reads are not recorded: a trail of who listed the agents is noise that buries the entries that
+matter. Neither is password material, in any form — those entries record that a password changed and
+who changed it, never what it became. Outbound chat text is the deliberate exception, for the reason
+above.
+
+**An entry exists only if the command committed.** Recording happens inside the command's own
+transaction, so one rejected with 503 because no host was connected leaves no trace — nothing
+happened, so there is nothing to hold anyone to. The consequence worth stating: this log answers
+"what was done", not "what was attempted".
 
 The audit trail records *that* a setup was triggered and what the host reported back — never how the
 host authenticated, which Osmium does not know.

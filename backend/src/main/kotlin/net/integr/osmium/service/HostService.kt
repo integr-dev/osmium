@@ -86,7 +86,15 @@ class HostService(
             check(!hostRepository.existsByName(request.name)) {
                 "Host '${request.name}' is already enrolled"
             }
+            val previous = host.name
             host.name = request.name
+            // Worth recording because earlier entries name the old host: without this the trail
+            // reads as two different machines.
+            auditService.record(
+                action = AuditAction.HOST_RENAME,
+                target = host.name,
+                detail = "Renamed from $previous",
+            )
         }
         return host.toResponse()
     }

@@ -46,9 +46,13 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, agents, their lifecycle states and all commands are **real API calls**. Telemetry, chat and
-build progress are **mock**, and marked as such in `src/stores/agents.ts` — nothing reports them until
-a host connects. They are what the SSE stream will replace.
+Hosts, agents, their lifecycle states, all commands and the **audit log** are real API calls.
+Telemetry, chat and build progress are **mock**, and marked as such in `src/stores/agents.ts` —
+nothing reports them until a host connects. They are what the SSE stream will replace.
+
+The audit log filters client-side. That is a deliberate limit, not an oversight: with a 30-day
+retention and a row per command rather than per event, the whole window fits in memory. Server-side
+search becomes worth building when that stops being true.
 
 ## Authorization in the UI
 
@@ -67,7 +71,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-37 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+39 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
 fleet store's derived state.
 
