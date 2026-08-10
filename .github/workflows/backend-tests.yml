@@ -38,10 +38,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # The wrapper is committed without the executable bit, so mode 100644 arrives here unusable.
-      - name: Make the wrapper executable
-        run: chmod +x gradlew
-
       - name: Tests
         run: ./gradlew test
 
