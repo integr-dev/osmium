@@ -55,6 +55,24 @@ describe('auth store', () => {
     expect(auth.user).toBeNull()
   })
 
+  /**
+   * An unreachable backend says nothing about the account. Clearing it blanked the username and
+   * role on My Account whenever the backend was merely down.
+   */
+  it('keeps the cached account when the backend is unreachable', async () => {
+    backend()
+    const auth = useAuthStore()
+    await auth.login('admin', 'admin')
+
+    respondWith(() => {
+      throw new TypeError('Failed to fetch')
+    })
+    await auth.loadUser()
+
+    expect(auth.user?.username).toBe('admin')
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
   it('mirrors the granted nodes in can()', async () => {
     backend()
     const auth = useAuthStore()

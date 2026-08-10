@@ -1,8 +1,23 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { onMounted, onUnmounted, ref } from 'vue'
-import { Bot as Agent, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users, WifiOff } from 'lucide-vue-next'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import {
+  Bot as Agent,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Plus,
+  RotateCw,
+  ScrollText,
+  Server,
+  ServerOff,
+  TriangleAlert,
+  User,
+  Users,
+  WifiOff,
+} from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { STATE_DOT } from '../lib/agentState'
 import { useAgentStore } from '../stores/agents'
@@ -12,6 +27,36 @@ const agentStore = useAgentStore()
 const router = useRouter()
 
 const addAgentOpen = ref(false)
+const retrying = ref(false)
+
+/**
+ * Two different failures, two different treatments.
+ *
+ * Never reached the backend this session: there is nothing on screen worth keeping, and a dashboard
+ * of zeroes reads as "no agents configured" rather than "nothing loaded". So the app is withheld.
+ *
+ * Reached it and then lost it: the data on screen is real, just stale. Withholding it would throw
+ * away information the operator can still use, so it stays and the sidebar says why it is frozen.
+ */
+const blocked = computed(() => !backendEverReached.value && !backendReachable.value)
+const degraded = computed(() => backendEverReached.value && !backendReachable.value)
+
+const backendTip = computed(() =>
+  retrying.value
+    ? 'Retrying…'
+    : 'Cannot reach the backend — showing the last data loaded. Click to retry.',
+)
+
+async function retry() {
+  retrying.value = true
+  try {
+    await auth.loadUser()
+    if (auth.can('fleet.read')) await agentStore.refresh()
+    if (backendReachable.value) agentStore.connectLiveUpdates()
+  } finally {
+    retrying.value = false
+  }
+}
 
 // The sidebar is present on every authenticated page, so it is the natural place to load the fleet
 // and to hold the live stream open: one connection for the whole session rather than one per view.
@@ -32,7 +77,31 @@ function logout() {
 </script>
 
 <template>
-  <div class="drawer lg:drawer-open">
+  <!--
+    Shown instead of the app, not over it. A dashboard of zeroes behind a warning still reads as a
+    fleet with nothing in it, and an operator glancing at it would draw the wrong conclusion.
+  -->
+  <div v-if="blocked" class="flex min-h-screen items-center justify-center px-6">
+    <div class="card border-base-300 bg-base-200 w-full max-w-md border">
+      <div class="card-body items-center gap-4 text-center">
+        <div class="rounded-field bg-warning/10 flex size-12 items-center justify-center">
+          <TriangleAlert class="text-warning size-6" />
+        </div>
+        <h1 class="text-lg font-semibold">Cannot reach the backend</h1>
+        <p class="text-sm opacity-70">
+          Osmium is signed in but has not been able to load anything. Nothing is shown rather than an
+          empty fleet, because the two look identical and mean very different things.
+        </p>
+        <button class="btn btn-primary btn-sm gap-2" :disabled="retrying" @click="retry">
+          <RotateCw class="size-4" :class="retrying ? 'animate-spin' : ''" />
+          {{ retrying ? 'Retrying…' : 'Try again' }}
+        </button>
+        <button class="btn btn-ghost btn-xs" type="button" @click="logout">Log out</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="drawer lg:drawer-open">
     <input id="app-drawer" type="checkbox" class="drawer-toggle" />
 
     <div class="drawer-content flex min-h-screen flex-col">
@@ -61,17 +130,29 @@ function logout() {
           <span class="text-lg font-semibold tracking-tight">Osmium</span>
 
           <!--
-            Without this a dropped stream is indistinguishable from a quiet one: the fleet simply
-            stops changing, which looks identical to nothing happening. Only shown while
-            disconnected — a permanent green dot is decoration nobody reads.
+            Two failures, two icons, never both: the stream one is conditioned on the backend being
+            reachable, because a dead backend takes the stream with it and showing both would say
+            the same thing twice.
+
+            Only shown while something is wrong. A permanent green dot is decoration nobody reads.
           -->
-          <span
-            v-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
-            class="tooltip tooltip-bottom ml-auto"
-            data-tip="Live updates disconnected — reconnecting"
-          >
-            <WifiOff class="text-warning size-4" />
-          </span>
+          <div class="ml-auto flex items-center gap-1.5">
+            <!-- The more severe of the two: nothing is loading at all, so the screen is frozen. -->
+            <span v-if="degraded" class="tooltip tooltip-bottom" :data-tip="backendTip">
+              <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="retrying" @click="retry">
+                <ServerOff class="text-error size-4" :class="retrying ? 'animate-pulse' : ''" />
+              </button>
+            </span>
+
+            <!-- The narrow case: the backend answers, but events are not arriving. -->
+            <span
+              v-else-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
+              class="tooltip tooltip-bottom"
+              data-tip="Live updates disconnected — reconnecting"
+            >
+              <WifiOff class="text-warning size-4" />
+            </span>
+          </div>
         </div>
 
         <div class="flex-1 overflow-y-auto px-3">

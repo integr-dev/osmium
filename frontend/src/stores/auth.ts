@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, errorMessage, type UserResponse } from '../api/client'
+import { api, errorMessage, isUnreachable, type UserResponse } from '../api/client'
 import { token } from '../api/token'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -28,6 +28,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function loadUser(): Promise<void> {
     const { data, error } = await api.GET('/api/auth/me')
     if (error || !data) {
+      // An unreachable backend says nothing about the account, so the cached one is kept: wiping it
+      // blanked the username and role on My Account whenever the backend was merely down.
+      if (isUnreachable(error)) return
       // A valid token without user.read.self still counts as signed in; leave the session alone.
       user.value = null
       return

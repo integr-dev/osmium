@@ -75,6 +75,36 @@ The audit log filters client-side. That is a deliberate limit, not an oversight:
 retention and a row per command rather than per event, the whole window fits in memory. Server-side
 search becomes worth building when that stops being true.
 
+## When the backend is unreachable
+
+Two failures that look identical on screen are treated differently.
+
+**Never reached it this session** — the app is withheld and a retry card shown instead. A dashboard
+of zeroes reads as "no agents configured", which is the wrong conclusion to invite.
+
+**Reached it and then lost it** — the app stays, with a sidebar icon saying so and offering a retry.
+The data was really loaded, so it is still worth something; only its freshness is in doubt.
+
+Two icons, never both. `ServerOff` means the backend is unreachable and nothing is updating;
+`WifiOff` means the backend answers but the event stream does not. The second is conditioned on the
+first being fine, because a dead backend takes the stream with it — and when both fired they said
+the same thing twice, with the stream noticing up to 45s later than the first failed request.
+
+`backendReachable` and `backendEverReached` live in `src/api/client.ts` rather than a store, so every
+call updates them — including the account lookup a viewer makes without ever touching the fleet.
+
+Two things make this work that are easy to get wrong:
+
+- **openapi-fetch throws on a transport failure** rather than returning `{ error }`. An `onError`
+  middleware turns that into an ordinary error result, so call sites have one failure path, not two.
+- **A dead backend usually arrives as a 502, not a transport error**, because both dev and
+  production proxy `/api`. Handling only the transport case misses what actually happens. 503 is
+  deliberately excluded — the API returns it when an agent's host is offline, which is a real answer
+  from a healthy backend.
+
+Unreachable never clears the session. It says nothing about whether the token is valid, and dropping
+it over a blip would cost the operator their session.
+
 ## Authorization in the UI
 
 `GET /api/auth/me` returns the account's flattened permission nodes, and the UI gates on the same
@@ -92,7 +122,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-52 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+60 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
 fleet store's derived state.
 
