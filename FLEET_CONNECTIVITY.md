@@ -344,6 +344,57 @@ across the top level**.
 { "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
 ```
 
+### Chat and activity events
+
+The two feeds arrive as two event types, not one type with a discriminator. The host is the side
+that classifies, so sending the wrong type is an obvious mistake rather than a subtle one.
+
+```jsonc
+{ "kind": "event", "type": "chat", "agentId": 42,
+  "payload": { "scope": "global", "from": "Notch", "text": "that cathedral is getting huge" } }
+
+{ "kind": "event", "type": "activity", "agentId": 42,
+  "payload": { "scope": "system", "severity": "warning",
+               "text": "Kicked: flying is not enabled on this server" } }
+```
+
+| Field | Required | Values |
+|---|---|---|
+| `chat.scope` | yes | `outbound`, `direct`, `local`, `global` |
+| `chat.from` | no | who said it; defaults to the agent's own label, which is who says an `outbound` line |
+| `chat.text` | yes | truncated at 512 characters; a blank line is dropped |
+| `activity.scope` | yes | `system`, `lifecycle` |
+| `activity.severity` | no | `info`, `warning`, `error`; defaults to `info` |
+| `activity.text` | yes | truncated at 512 characters |
+
+Three rules that are easy to get wrong:
+
+- **An unrecognised scope is dropped, not guessed at.** Filing a kick into chat is worse than losing
+  it, since the whole reason the feeds are split is that an incident must not be buried in
+  conversation.
+- **Outbound chat is echoed after it is actually said**, as a `chat` event with scope `outbound`.
+  The backend does not record it when it dispatches the command — what reached the server is what
+  belongs in the feed, and a message that never made it should not appear as though it did.
+- **There is no timestamp field.** The backend stamps the line when it receives it. Host clocks are
+  not synchronised with each other, and a skewed one would file its chat into the middle of the feed
+  or into the future — which in a newest-first feed means either invisible or permanently pinned to
+  the top. Sub-second receive latency is the accepted cost; ordering within a reconnect replay is
+  preserved by the row id.
+
+### Reading the feeds back
+
+All three stored streams — audit, activity, chat — are read the same way: `?limit=&cursor=`,
+answering `{ items, nextCursor }`, newest first, with `nextCursor` null at the end.
+
+**Keyset, not offset.** They are append-only and read newest-first, so `offset 200` moves by one
+every time something is recorded, and a reader scrolling would see rows repeat or vanish underneath
+them. The cursor is `<instant>|<id>`, where the id breaks ties on the instant — two rows in the same
+instant are ordinary in a chat burst, and without the tiebreak one of them falls into the gap at a
+page boundary.
+
+`/api/chat` takes **exactly one** of `agentId` or `server`, which is the scoping rule above
+expressed as a parameter: the server feed is the global chat, the agent feed is everything else.
+
 ### There is no destination field
 
 The connection *is* the host. The backend selected that socket by resolving `agent.hostId`, so
@@ -824,3 +875,5 @@ handshake.
 | Per-host method advertisement? | **Rejected.** The backend stays uninterested in what a method means; an unsupported one fails in `setup_result` |
 | Audit retention? | Operator audit 30 days, activity 10 days, chat 3 days |
 | Where is the audit log read? | An administrator-only page in the frontend, gated on a new `audit.read` node |
+| How are chat and activity carried? | Two host event types, `chat` and `activity`, scoped by the host — see *Wire protocol → Chat and activity events* |
+| How are the three streams paged? | Keyset cursor `<instant>\|<id>`, newest first, scrolled rather than clicked; searching is server-side |

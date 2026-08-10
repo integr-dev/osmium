@@ -46,6 +46,8 @@ set to `osmium`.
 | `osmium.bootstrap.password` | `OSMIUM_BOOTSTRAP_PASSWORD` | `admin` | seeded account |
 | `osmium.cors.origins` | `OSMIUM_CORS_ORIGINS` | empty | comma-separated exact origins for `/api/**` |
 | `osmium.audit.retention` | `OSMIUM_AUDIT_RETENTION` | `30d` | how long audit entries are kept |
+| `osmium.activity.retention` | `OSMIUM_ACTIVITY_RETENTION` | `10d` | how long agent incidents are kept |
+| `osmium.chat.retention` | `OSMIUM_CHAT_RETENTION` | `3d` | how long chat is kept |
 
 CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
 therefore same-origin. `*` is rejected outright: the configuration allows credentials, and no
@@ -269,6 +271,14 @@ Two renames are recorded specifically because they break the trail otherwise: re
 account changes the name every earlier entry was filed under, so without the link the history reads
 as two unrelated things.
 
+### Reading it
+
+`GET /api/audit` returns **one page, newest first**, with an opaque `nextCursor` to continue from.
+Searching is server-side too: `?query=` matches the account, the target, the detail or the name of
+the action. Both exist for the same reason — a filter that only saw the rows already fetched would
+search the newest hundred of a thirty-day trail and report "nothing matches", which reads as an
+answer rather than as a limit. See [Paged feeds](#paged-feeds).
+
 ### Adding a new action needs a manual migration
 
 Hibernate maps `AuditAction` with a `CHECK` constraint listing every enum name, and
@@ -311,6 +321,58 @@ those change behaviour and must be visible at the call site; this only observes.
 
 Entries are kept for 30 days and purged by a daily job, which is why `@EnableScheduling` is on
 `Application`. See the retention table in [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md).
+
+## Chat and activity
+
+The other two streams. They record what happened *in game*, as opposed to what an operator did.
+
+| Stream | Endpoint | Holds | Retention |
+|---|---|---|---|
+| Audit | `GET /api/audit` | who triggered which command, and any outbound text | 30 days |
+| Activity | `GET /api/activity` | died, kicked, connected, relink needed | 10 days |
+| Chat | `GET /api/chat` | everything said, inbound and outbound | 3 days |
+
+The ladder encodes how long each stays *useful*. Audit outlives the rest because it is the only one
+about people; activity is diagnostic and diagnostics go stale; chat is the largest and the only one
+full of other people's words, so it gets the shortest life.
+
+Both arrive as host events (`chat` and `activity`) and are **classified by the host** — only it sees
+the raw packet types, and the backend cannot infer scope from message text. A scope the backend does
+not recognise is dropped rather than guessed at: filing a kick into chat is worse than losing it.
+
+`/api/chat` takes **exactly one** of `agentId` or `server`, and that is the whole design in one
+parameter. A server's global chat is identical for every agent on it, so it is forwarded once by an
+elected listener and read per *server*; an agent's feed is only what was said to or about that
+agent. Serving both from one endpoint would put the same message on every agent page.
+
+Rows reference the agent by **id and label as plain columns, not a relation**, like audit entries.
+The listener role moves between agents, so a server's history must not disappear with whichever one
+happened to forward it — and "Mason_04 was banned" is exactly the line you want after Mason_04 is
+gone.
+
+`at` is when the **backend received** the event, not when the host observed it. Host clocks are not
+synchronised, and a skewed one would file its chat into the middle of the feed or into the future —
+which for a cursor read newest-first means either invisible or permanently pinned at the top.
+Sub-second receive latency is the accepted cost.
+
+Both are also published on the live stream as `chat` and `activity` events, so an open feed grows
+without polling.
+
+## Paged feeds
+
+All three read the same way: `?limit=&cursor=`, answering `{ items, nextCursor }`, newest first.
+`nextCursor` is null when there is nothing older.
+
+**Keyset, not offset.** These are append-only feeds read newest-first, so `offset 200` shifts by one
+every time something is recorded: a reader scrolling would see rows repeat or vanish underneath
+them. A cursor names the last row already delivered, which nothing arriving later can move.
+
+The cursor is `<instant>|<id>`, unencoded — it carries a timestamp and a row id the same response
+already returned in full, so obscuring it would protect nothing. `id` breaks ties on the instant;
+without it, two rows recorded in the same instant lose one at a page boundary. Each feed has a
+composite index in that order, so paging deep costs the same as the first page.
+
+`PageCursor` is the shared piece. A malformed cursor is a 400, not a silent restart from the top.
 
 ## Tests
 
@@ -375,6 +437,8 @@ account/      users, roles, permission nodes, login, password rotation, seeding
 host/         the machines that run agents
 agent/        Minecraft sessions and the commands that drive them
 audit/        the operator trail and its retention purge
+activity/     what happened to agents: kicks, deaths, lifecycle changes
+chat/         what was said in game, per agent and per server
 
 hostlink/     the backend<->host channel: envelope, handshake auth, connections, reports
 liveupdates/  the backend->browser channel: events, broker, subscriptions, SSE endpoint
@@ -382,7 +446,7 @@ security/     node/role definitions, JWT issuing, Spring Security wiring
 web/          cross-cutting HTTP: exception handling, OpenAPI setup
 ```
 
-The four feature packages each contain `controller/`, `service/`, `repository/`, `model/` and
+The six feature packages each contain `controller/`, `service/`, `repository/`, `model/` and
 `dto/`. The four below the gap are not features and stay flat: two are channels, one is framework
 wiring, one is cross-cutting HTTP.
 

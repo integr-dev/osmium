@@ -46,9 +46,10 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, agents, their lifecycle states, all commands, the **audit log** and **live updates** are
-real. Telemetry, chat and build progress are **mock**, and marked as such in `src/stores/agents.ts`
-— nothing reports them until a host connects.
+Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**, **activity** and
+**live updates** are real. Chat and activity stay empty until a host connects and starts forwarding
+them, but nothing about them is faked. Telemetry and build progress are **mock**, and marked as such
+in `src/stores/agents.ts`.
 
 ## Live updates
 
@@ -71,9 +72,28 @@ Vite proxy can be never.
 **Commands no longer refetch.** Anything that changes stored state publishes an event that arrives
 before the response is written, so a refetch would only re-read what the stream already applied.
 
-The audit log filters client-side. That is a deliberate limit, not an oversight: with a 30-day
-retention and a row per command rather than per event, the whole window fits in memory. Server-side
-search becomes worth building when that stops being true.
+## Paged feeds
+
+The audit log, activity and chat are all long enough that no view holds one. They page by **cursor
+and scroll**: `src/lib/feed.ts` has `useFeed`, which owns the items and the cursor, and
+`useInfiniteScroll`, which watches a sentinel element and asks for the next page when it comes into
+view. `src/api/feeds.ts` is the three requests behind them.
+
+Two things there exist because of a real failure mode:
+
+- **A short page leaves the sentinel still on screen**, and an IntersectionObserver does not fire
+  again for an element that never left. `rearm` re-observes it, which asks for the current state.
+- **A failed request marks the feed exhausted.** Otherwise the observer retries against a backend
+  that is not answering, on every scroll event. Scrolling away and back re-arms it, which is the
+  retry.
+
+Search is **server-side**, which came with paging rather than as a separate improvement: a filter
+over only the rows already fetched would search the newest hundred of a thirty-day trail and report
+"nothing matches", which reads as an answer rather than as a limit.
+
+Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
+store hands `chat` and `activity` events to whichever view is showing a feed, via `onFeedEvent`, and
+that view prepends them.
 
 ## When the backend is unreachable
 
@@ -144,9 +164,10 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-66 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
-locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
-fleet store's derived state.
+76 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
+fleet store's derived state, and the cursor paging in `useFeed` — where a cursor that is not carried
+forward silently re-reads page one.
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
@@ -206,11 +227,11 @@ suite runs once instead of twice.
 ## Layout
 
 ```
-src/api/         generated schema, typed client, token storage, live-update client
-src/components/  FormField, the add-host and add-agent modals
+src/api/         generated schema, typed client, token storage, live-update and feed clients
+src/components/  FormField, the add-host and add-agent modals, the server chat modal
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string
-src/lib/         presentation maps for agent state, roles and permission labels
+src/lib/         cursor-paged feeds, presentation maps for agent state, roles and permissions
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub
