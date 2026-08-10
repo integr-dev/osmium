@@ -494,7 +494,7 @@ export interface components {
         };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
-            /** @example device_code */
+            /** @example method_a */
             method: string;
         };
         /** @description Sends a chat message as an agent. This is impersonation - gated on fleet.chat. */

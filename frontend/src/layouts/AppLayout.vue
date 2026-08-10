@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { onMounted, onUnmounted, ref } from 'vue'
-import { Bot as Agent, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users } from 'lucide-vue-next'
+import { Bot as Agent, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users, WifiOff } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
 import { useAuthStore } from '../stores/auth'
 import { STATE_DOT } from '../lib/agentState'
@@ -18,14 +18,14 @@ const addAgentOpen = ref(false)
 onMounted(() => {
   if (!auth.can('fleet.read')) return
   void agentStore.refresh()
-  agentStore.connectStream()
+  agentStore.connectLiveUpdates()
 })
 
-onUnmounted(() => agentStore.disconnectStream())
+onUnmounted(() => agentStore.disconnectLiveUpdates())
 
 function logout() {
   // Closed before the token is dropped, so the stream does not reconnect with a dead credential.
-  agentStore.disconnectStream()
+  agentStore.disconnectLiveUpdates()
   auth.logout()
   void router.push({ name: 'login' })
 }
@@ -59,6 +59,19 @@ function logout() {
         <div class="flex items-center gap-3 px-5 py-6">
           <img src="/logo.svg" alt="" class="size-8" />
           <span class="text-lg font-semibold tracking-tight">Osmium</span>
+
+          <!--
+            Without this a dropped stream is indistinguishable from a quiet one: the fleet simply
+            stops changing, which looks identical to nothing happening. Only shown while
+            disconnected — a permanent green dot is decoration nobody reads.
+          -->
+          <span
+            v-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
+            class="tooltip tooltip-bottom ml-auto"
+            data-tip="Live updates disconnected — reconnecting"
+          >
+            <WifiOff class="text-warning size-4" />
+          </span>
         </div>
 
         <div class="flex-1 overflow-y-auto px-3">

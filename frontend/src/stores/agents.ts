@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, errorMessage, type AgentResponse, type HostResponse } from '../api/client'
-import { openStream, type StreamHandle } from '../api/stream'
+import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
 
 /**
  * Fleet state.
@@ -14,7 +14,7 @@ import { openStream, type StreamHandle } from '../api/stream'
 export interface NearbyPlayer {
   name: string
   distance: number
-  isBot: boolean
+  isAgent: boolean
 }
 
 export interface ChatLine {
@@ -149,26 +149,26 @@ export const useAgentStore = defineStore('agents', () => {
    * rather than triggering a refetch. That is what makes a change another operator made — or one a
    * host reported with nobody watching — appear without polling.
    */
-  let stream: StreamHandle | null = null
-  const streamConnected = ref(false)
+  let connection: LiveUpdateHandle | null = null
+  const liveUpdatesConnected = ref(false)
 
-  function connectStream(): void {
-    if (stream) return
-    stream = openStream('/api/stream/fleet', {
-      onEvent(name, data) {
-        streamConnected.value = true
-        applyEvent(name, data)
+  function connectLiveUpdates(): void {
+    if (connection) return
+    connection = openLiveUpdates('/api/stream/fleet', {
+      onEvent: applyEvent,
+      onConnect() {
+        liveUpdatesConnected.value = true
       },
       onDisconnect() {
-        streamConnected.value = false
+        liveUpdatesConnected.value = false
       },
     })
   }
 
-  function disconnectStream(): void {
-    stream?.close()
-    stream = null
-    streamConnected.value = false
+  function disconnectLiveUpdates(): void {
+    connection?.close()
+    connection = null
+    liveUpdatesConnected.value = false
   }
 
   /**
@@ -399,10 +399,10 @@ export const useAgentStore = defineStore('agents', () => {
     agents,
     loading,
     error,
-    streamConnected,
-    connectStream,
+    liveUpdatesConnected,
+    connectLiveUpdates,
     applyEvent,
-    disconnectStream,
+    disconnectLiveUpdates,
     schematic,
     sectors,
     globalChat,

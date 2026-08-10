@@ -46,14 +46,14 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, agents, their lifecycle states, all commands, the **audit log** and **live updates** are real.
-Telemetry, chat and build progress are **mock**, and marked as such in `src/stores/agents.ts` —
-nothing reports them until a host connects.
+Hosts, agents, their lifecycle states, all commands, the **audit log** and **live updates** are
+real. Telemetry, chat and build progress are **mock**, and marked as such in `src/stores/agents.ts`
+— nothing reports them until a host connects.
 
 ## Live updates
 
-`src/api/stream.ts` is a small fetch-based SSE client. The browser's native `EventSource` cannot set
-an `Authorization` header, and the token is a Bearer token — putting it in the query string would
+`src/api/liveUpdates.ts` is a small fetch-based SSE client. The browser's native `EventSource`
+cannot set an `Authorization` header, and the token is a Bearer token — putting it in the query string would
 land it in access logs and referrers, and cookies would reintroduce CSRF. Reading the stream from a
 `fetch` body keeps the Bearer pattern unchanged. The cost is that reconnection is ours to write, so
 it backs off from 1s to 30s and gives up entirely on 401 or 403, which retrying cannot fix.
@@ -147,7 +147,7 @@ suite runs once instead of twice.
 ## Layout
 
 ```
-src/api/         generated schema, typed client, token storage, SSE client
+src/api/         generated schema, typed client, token storage, live-update client
 src/components/  FormField, the add-host and add-agent modals
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/lib/         presentation maps for agent state, roles, node labels and login methods

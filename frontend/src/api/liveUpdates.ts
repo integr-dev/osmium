@@ -8,14 +8,20 @@ import { token } from './token'
  * moving to cookies would reintroduce CSRF — so the stream is read from a `fetch` body instead,
  * which keeps the Bearer pattern unchanged. See FLEET_CONNECTIVITY.md.
  */
-export interface StreamHandlers {
+export interface LiveUpdateHandlers {
   /** Called per event, with the SSE `event:` name and the parsed `data:` payload. */
   onEvent: (name: string, data: unknown) => void
+  /**
+   * Called once the response is established, before any event arrives. Separate from `onEvent` so a
+   * connected-but-quiet stream is distinguishable from one that has not connected at all — the
+   * whole point of showing a connection indicator.
+   */
+  onConnect?: () => void
   /** Called when the stream drops and a reconnect is scheduled. */
   onDisconnect?: () => void
 }
 
-export interface StreamHandle {
+export interface LiveUpdateHandle {
   close: () => void
 }
 
@@ -29,7 +35,7 @@ const MAX_RETRY_MS = 30_000
  * that up is the cost of being able to authenticate. Backoff is capped so a backend that is down
  * does not get hammered by every open tab.
  */
-export function openStream(path: string, handlers: StreamHandlers): StreamHandle {
+export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): LiveUpdateHandle {
   const controller = new AbortController()
   let closed = false
   let retryMs = BASE_RETRY_MS
@@ -53,6 +59,7 @@ export function openStream(path: string, handlers: StreamHandlers): StreamHandle
       if (!response.ok || !response.body) throw new Error(`Stream failed: ${response.status}`)
 
       retryMs = BASE_RETRY_MS
+      handlers.onConnect?.()
       await read(response.body)
     } catch (failure) {
       if (closed || (failure instanceof DOMException && failure.name === 'AbortError')) return

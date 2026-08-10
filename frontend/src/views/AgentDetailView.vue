@@ -291,7 +291,7 @@ async function confirmRemove() {
             class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
           >
             <span class="flex-1 truncate text-sm font-medium">{{ player.name }}</span>
-            <span v-if="player.isBot" class="badge badge-primary badge-soft badge-xs">agent</span>
+            <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">agent</span>
             <span class="text-xs tabular-nums opacity-50">{{ player.distance.toFixed(1) }} m</span>
           </li>
         </ul>
