@@ -206,7 +206,7 @@ export interface paths {
         put?: never;
         /**
          * Speak in game as this agent.
-         * @description Impersonation: this says something under an account you own, so it is gated separately from fleet.control.
+         * @description Impersonation: this says something under an account you own, so it is gated separately from fleet.control. Rate limited per agent, because chat spam is the fastest route to a Minecraft ban and the ban lands on the account, not the operator.
          */
         post: operations["chat"];
         delete?: never;
@@ -1297,6 +1297,15 @@ export interface operations {
             };
             /** @description The agent is not online. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description This agent has been made to speak too often. */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

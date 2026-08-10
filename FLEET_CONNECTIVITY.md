@@ -655,12 +655,27 @@ third-party conversation rather than no store at all.
 
 ### Rate limiting
 
-Outbound chat is limited **per agent** — roughly ten messages a minute with a small burst — enforced
-backend-side before dispatch.
+Outbound chat is limited **per agent** — 30 messages a minute — enforced backend-side before
+dispatch, and refused with a 429.
 
 Two concrete reasons: a stolen operator session holding `fleet.chat` can otherwise spam under
 accounts you own, and chat spam is the fastest route to a Minecraft ban. It is the one control here
 whose in-game consequence is permanent and unrecoverable.
+
+**Per agent, not per operator**, because the ban lands on the account. Two operators sharing an
+agent share its budget; one operator driving ten agents is not throttled across all of them.
+
+A **token bucket** rather than a count per calendar minute. A fixed window allows the whole
+allowance at 11:59:59 and the whole allowance again a second later — exactly the burst being
+prevented — whereas a bucket refills continuously, so the sustained rate is the limit wherever the
+messages happen to fall.
+
+The budget lives in memory, outside the transaction, and two things follow. An **undeliverable
+message is refunded**, because a rollback does not return a spent token and an operator retrying a
+dead host would otherwise exhaust themselves on messages nobody saw — the same rule as the audit
+trail, where nothing that failed to happen is recorded. And a **restart forgives what was spent**,
+which is the right way round: being briefly too lenient is a better failure than locking an operator
+out of a fleet they need to control.
 
 ## Servers
 

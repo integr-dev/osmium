@@ -141,7 +141,8 @@ class AgentController(private val agentService: AgentService) {
     @Operation(
         summary = "Speak in game as this agent.",
         description = "Impersonation: this says something under an account you own, so it is gated " +
-            "separately from fleet.control.",
+            "separately from fleet.control. Rate limited per agent, because chat spam is the " +
+            "fastest route to a Minecraft ban and the ban lands on the account, not the operator.",
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
@@ -149,6 +150,7 @@ class AgentController(private val agentService: AgentService) {
         ApiResponse(responseCode = "403", description = "Missing node `fleet.chat`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(responseCode = "409", description = "The agent is not online."),
+        ApiResponse(responseCode = "429", description = "This agent has been made to speak too often."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )
     fun chat(@PathVariable id: Long, @Valid @RequestBody request: ChatRequest): AgentResponse =

@@ -10,6 +10,7 @@ import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.agent.repository.AgentRepository
+import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.host.repository.HostRepository
 import net.integr.osmium.liveupdates.FleetEvent
 import net.integr.osmium.liveupdates.FleetEventBroker
@@ -31,6 +32,7 @@ class AgentService(
     private val agentRepository: AgentRepository,
     private val hostRepository: HostRepository,
     private val registry: HostConnections,
+    private val chatRateLimiter: ChatRateLimiter,
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
     private val broker: FleetEventBroker,
@@ -119,6 +121,8 @@ class AgentService(
         val hostName = agent.host.name
 
         agentRepository.delete(agent)
+        // Otherwise the limiter's map keeps a bucket per agent that has ever existed in this process.
+        chatRateLimiter.forget(id)
         auditService.record(
             action = AuditAction.AGENT_DELETE,
             target = label,
@@ -194,7 +198,18 @@ class AgentService(
     fun chat(id: Long, request: ChatRequest): AgentResponse {
         val agent = require(id)
         check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
-        dispatch(agent, CommandType.CHAT, mapOf("message" to request.message))
+        // Before dispatch: a refused message never reaches Minecraft, and because the audit entry
+        // is written in the same transaction, it leaves no trace of having been said.
+        chatRateLimiter.check(agentId = id, agentLabel = agent.label)
+        try {
+            dispatch(agent, CommandType.CHAT, mapOf("message" to request.message))
+        } catch (failure: Exception) {
+            // Nothing was said, so nothing is spent. The budget is not transactional, so an
+            // undeliverable message would otherwise count against a limit it never reached - and an
+            // operator retrying a dead host would talk themselves out of chatting once it returned.
+            chatRateLimiter.refund(id)
+            throw failure
+        }
         // The text is the point: recording that an operator made an agent speak without recording
         // what it said is close to useless. See the Audit section of FLEET_CONNECTIVITY.md.
         auditService.record(

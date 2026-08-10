@@ -2,16 +2,23 @@ package net.integr.osmium.agent.controller
 
 import net.integr.osmium.AbstractRestTest
 import net.integr.osmium.agent.model.AgentState
+import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.security.RoleNames
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
+import kotlin.test.assertEquals
 
 class AgentControllerTest : AbstractRestTest() {
+
+    @Autowired private lateinit var chatRateLimiter: ChatRateLimiter
+    @Autowired private lateinit var auditEntryRepository: AuditEntryRepository
 
     @Test
     fun `orchestrator creates an agent, which starts unlinked`() {
@@ -206,6 +213,58 @@ class AgentControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isForbidden() }
         }
+    }
+
+    /**
+     * 429, not 403 or 409: the request was valid and the operator was allowed to make it. It is
+     * refused on the *agent's* behalf, because chat spam is what gets a Minecraft account banned.
+     */
+    @Test
+    fun `chat is refused once the agent has spoken too often`() {
+        val auth = authAs("chatty", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
+        val id = checkNotNull(agent.id)
+
+        // Drained directly rather than over 30 requests: this is about the endpoint honouring the
+        // limiter, and ChatRateLimiterTest already covers the counting.
+        repeat(30) { chatRateLimiter.check(id, agent.label) }
+
+        mockMvc.post("/api/agents/$id/chat") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"hello"}"""
+        }.andExpect {
+            status { isTooManyRequests() }
+        }
+
+        // Same rule as an undeliverable command: nothing was said, so there is nothing to record.
+        assertEquals(0, auditEntryRepository.count())
+
+        chatRateLimiter.forget(id)
+    }
+
+    /**
+     * The budget lives outside the transaction, so a rolled-back command would otherwise keep what
+     * it spent — and an operator retrying a dead host would talk themselves out of chatting.
+     */
+    @Test
+    fun `an undeliverable message does not count against the limit`() {
+        val auth = authAs("hopeful", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_02", host = unreachableHost(), state = AgentState.ONLINE)
+        val id = checkNotNull(agent.id)
+
+        repeat(3) {
+            mockMvc.post("/api/agents/$id/chat") {
+                header(HttpHeaders.AUTHORIZATION, auth)
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"message":"anyone there"}"""
+            }.andExpect { status { isServiceUnavailable() } }
+        }
+
+        // All three were refunded, so the full allowance is still there.
+        repeat(30) { chatRateLimiter.check(id, agent.label) }
+
+        chatRateLimiter.forget(id)
     }
 
     @Test

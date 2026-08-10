@@ -49,6 +49,7 @@ set to `osmium`.
 | `osmium.audit.retention` | `OSMIUM_AUDIT_RETENTION` | `30d` | how long audit entries are kept |
 | `osmium.activity.retention` | `OSMIUM_ACTIVITY_RETENTION` | `10d` | how long agent incidents are kept |
 | `osmium.chat.retention` | `OSMIUM_CHAT_RETENTION` | `3d` | how long chat is kept |
+| `osmium.chat.messages-per-minute` | `OSMIUM_CHAT_MESSAGES_PER_MINUTE` | `30` | outbound chat allowance, per agent |
 
 CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
 therefore same-origin. `*` is rejected outright: the configuration allows credentials, and no
@@ -347,6 +348,32 @@ Sub-second receive latency is the accepted cost.
 
 Both are also published on the live stream as `chat` and `activity` events, so an open feed grows
 without polling.
+
+### Outbound chat is rate limited
+
+30 messages a minute, **per agent**, refused with a 429 before the command is dispatched.
+
+Per agent rather than per operator, because the consequence lands on the account: two operators
+sharing an agent share its budget, and one operator driving ten agents is not throttled across all
+of them. It is also what contains a stolen session holding `fleet.chat` — it can speak, but it
+cannot spam, and chat spam is the one consequence in this system that is permanent and
+unrecoverable.
+
+A **token bucket**, not a count per calendar minute. A fixed window lets an operator send the whole
+allowance at 11:59:59 and the whole allowance again a second later, which is precisely the burst
+that gets an account banned; a bucket refills continuously, so the sustained rate is the limit
+wherever the messages fall.
+
+Two properties that follow from where the budget lives — in memory, outside the transaction:
+
+- **An undeliverable message is refunded.** A rollback does not give back a spent token, so without
+  this an operator retrying against a disconnected host would talk themselves out of chatting by the
+  time it came back. Same rule as the audit trail: nothing was said, so nothing is spent.
+- **A restart forgives whatever was spent.** That is the right way round — the failure mode is being
+  briefly too lenient, never locking an operator out of a fleet they need to control.
+
+With several backend instances a fleet could exceed the limit by the number of instances, which is
+the same single-instance assumption the event broker already carries.
 
 ### Chat listener election
 
