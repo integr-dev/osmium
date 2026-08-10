@@ -37,6 +37,7 @@ class DataInitializer(
     override fun run(args: ApplicationArguments) {
         val nodes = syncNodes()
         syncRoles(nodes = nodes)
+        pruneRemovedNodes()
         createBootstrapAccountIfNoUsersExist()
     }
 
@@ -63,6 +64,22 @@ class DataInitializer(
                 log.info("Synced role '{}' with nodes {}", definition.name, definition.nodes.sorted())
             }
         }
+    }
+
+    /**
+     * Drops nodes that no longer appear in [Nodes]. Without this a renamed node leaves its old row
+     * behind forever, granting nothing but implying it still exists.
+     *
+     * Runs after [syncRoles] and flushes first, so the `role_nodes` rows that referenced it are
+     * already gone by the time the node itself is deleted.
+     */
+    private fun pruneRemovedNodes() {
+        val removed = permissionNodeRepository.findAll().filter { it.id !in Nodes.ALL }
+        if (removed.isEmpty()) return
+
+        permissionNodeRepository.flush()
+        permissionNodeRepository.deleteAll(removed)
+        log.info("Removed permission nodes no longer defined in code: {}", removed.map { it.id }.sorted())
     }
 
     private fun createBootstrapAccountIfNoUsersExist() {

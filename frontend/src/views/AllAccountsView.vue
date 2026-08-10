@@ -299,7 +299,7 @@ function openEdit(user: UserResponse) {
                     Edit
                   </button>
                   <button
-                    v-if="auth.can('user.roles.write') && user.username !== auth.user?.username"
+                    v-if="auth.can('user.role.write') && user.username !== auth.user?.username"
                     class="btn btn-ghost btn-xs gap-1"
                     @click="openRole(user)"
                   >

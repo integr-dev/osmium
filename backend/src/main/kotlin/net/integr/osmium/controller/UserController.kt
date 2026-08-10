@@ -113,7 +113,7 @@ class UserController(private val userService: UserService) {
     ) = userService.delete(id = id, actorUsername = authentication.name)
 
     @PutMapping("/{id}/role")
-    @PreAuthorize("hasAuthority('user.roles.write')")
+    @PreAuthorize("hasAuthority('user.role.write')")
     @Operation(
         summary = "Replace the role of an account.",
         description = "Roles are nested seniority levels, so an account holds exactly one or none. " +
@@ -122,7 +122,7 @@ class UserController(private val userService: UserService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated account."),
         ApiResponse(responseCode = "400", description = "Unknown role name."),
-        ApiResponse(responseCode = "403", description = "Missing node `user.roles.write`."),
+        ApiResponse(responseCode = "403", description = "Missing node `user.role.write`."),
         ApiResponse(responseCode = "404", description = "No such account."),
         ApiResponse(responseCode = "409", description = "The account is the caller's own."),
     )

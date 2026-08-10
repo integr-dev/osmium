@@ -513,7 +513,7 @@ export interface operations {
                     "*/*": components["schemas"]["UserResponse"];
                 };
             };
-            /** @description Missing node `user.roles.write`. */
+            /** @description Missing node `user.role.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;

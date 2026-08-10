@@ -12,8 +12,15 @@ object Nodes {
     const val USER_EDIT = "user.edit"
     const val USER_CREATE = "user.create"
     const val USER_DELETE = "user.delete"
-    const val USER_ROLES_WRITE = "user.roles.write"
+    const val USER_ROLE_WRITE = "user.role.write"
     const val ROLE_READ = "role.read"
+
+    /**
+     * Read the operator audit trail: who triggered which command, and the text of anything a bot was
+     * made to say. Deliberately outside the `agent.*` tier - an orchestrator running the fleet does
+     * not automatically get to read every other operator's actions.
+     */
+    const val AUDIT_READ = "audit.read"
 
     /** See BOT_CONNECTIVITY.md - chat and login are deliberately not folded into control. */
     const val AGENT_READ = "agent.read"
@@ -28,8 +35,9 @@ object Nodes {
         USER_EDIT,
         USER_CREATE,
         USER_DELETE,
-        USER_ROLES_WRITE,
+        USER_ROLE_WRITE,
         ROLE_READ,
+        AUDIT_READ,
         AGENT_READ,
         AGENT_CONTROL,
         AGENT_CHAT,
@@ -70,13 +78,14 @@ object RoleDefinitions {
         Nodes.AGENT_LOGIN,
     )
 
-    /** Adds user management, which is the only thing an orchestrator cannot do. */
+    /** Adds user management and the audit trail — what an orchestrator cannot do. */
     private val ADMINISTRATOR_NODES: Set<String> = ORCHESTRATOR_NODES + setOf(
         Nodes.USER_READ,
         Nodes.USER_EDIT,
         Nodes.USER_CREATE,
         Nodes.USER_DELETE,
-        Nodes.USER_ROLES_WRITE,
+        Nodes.USER_ROLE_WRITE,
+        Nodes.AUDIT_READ,
     )
 
     val ALL: List<RoleDefinition> = listOf(

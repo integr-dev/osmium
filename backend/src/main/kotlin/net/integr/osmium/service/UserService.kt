@@ -79,7 +79,7 @@ class UserService(
     @Transactional
     fun replaceRole(id: Long, request: UpdateRoleRequest, actorUsername: String): UserResponse {
         val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
-        // Blocks self-demotion, which would strip user.roles.write and leave nobody able to undo it.
+        // Blocks self-demotion, which would strip user.role.write and leave nobody able to undo it.
         check(user.username != actorUsername) { "An account cannot change its own role" }
         user.role = resolveRole(name = request.role)
         return user.toResponse()
