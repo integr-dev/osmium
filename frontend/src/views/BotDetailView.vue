@@ -24,6 +24,7 @@ import {
 } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
 import { STATE_BADGE, STATE_LABEL } from '../lib/botState'
+import { LOGIN_METHODS } from '../lib/loginMethods'
 import { formatUptime, isOnline, useBotStore } from '../stores/bots'
 import { useAuthStore } from '../stores/auth'
 
@@ -38,8 +39,10 @@ const busy = ref(false)
 
 const editDialog = ref<HTMLDialogElement | null>(null)
 const removeDialog = ref<HTMLDialogElement | null>(null)
+const setupDialog = ref<HTMLDialogElement | null>(null)
 const draft = ref({ label: '', serverAddress: '' })
 const editError = ref<string | null>(null)
+const setupMethod = ref(LOGIN_METHODS[0]!.id)
 
 const bot = computed(() => botStore.byId(Number(route.params.id)))
 
@@ -81,6 +84,21 @@ async function send() {
   const text = message.value
   await run(() => botStore.say(bot.value!.id, text))
   if (!error.value) message.value = ''
+}
+
+/**
+ * The method is chosen per setup rather than remembered: nothing on the host advertises what it can
+ * perform, so the operator is the only one who knows which mechanism will work there.
+ */
+function openSetup() {
+  setupMethod.value = LOGIN_METHODS[0]!.id
+  setupDialog.value?.showModal()
+}
+
+async function confirmSetup() {
+  if (!bot.value) return
+  setupDialog.value?.close()
+  await run(() => botStore.setupBot(bot.value!.id, setupMethod.value))
 }
 
 function openEdit() {
@@ -319,7 +337,7 @@ async function confirmRemove() {
             v-if="auth.can('agent.login')"
             class="btn btn-soft btn-sm gap-2"
             :disabled="busy || !hostReachable || bot.state === 'SETUP_PENDING' || isOnline(bot)"
-            @click="run(() => botStore.setupBot(bot!.id, 'device_code'))"
+            @click="openSetup"
           >
             <KeyRound class="size-4" />
             Set up on host
@@ -427,6 +445,41 @@ async function confirmRemove() {
             <button class="btn btn-primary btn-sm" type="submit">Save</button>
           </div>
         </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <dialog ref="setupDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <KeyRound class="text-primary size-5" />
+          Set up {{ bot.label }}
+        </h3>
+        <p class="mt-3 text-sm opacity-70">
+          The login runs on <span class="font-medium">{{ bot.hostName }}</span>, not here. Osmium
+          relays your choice and never sees the credentials — finish the sign-in on the host, then
+          the bot reports back as ready.
+        </p>
+
+        <ul class="list bg-base-100 border-base-300 mt-4 rounded-box border">
+          <li v-for="method in LOGIN_METHODS" :key="method.id" class="list-row items-center">
+            <label class="flex w-full cursor-pointer items-center gap-3">
+              <input v-model="setupMethod" type="radio" :value="method.id" class="radio radio-sm radio-primary" />
+              <span class="min-w-0 flex-1">
+                <span class="block text-sm font-medium">{{ method.label }}</span>
+                <span class="block text-xs opacity-60">{{ method.description }}</span>
+              </span>
+            </label>
+          </li>
+        </ul>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">Cancel</button>
+          <button class="btn btn-primary btn-sm gap-2" type="button" @click="confirmSetup">
+            <KeyRound class="size-4" />
+            Start setup
+          </button>
+        </div>
       </div>
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
