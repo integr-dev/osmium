@@ -23,7 +23,8 @@ class RoleControllerTest : AbstractRestTest() {
                 value(contains(RoleNames.ADMINISTRATOR, RoleNames.ORCHESTRATOR, RoleNames.VIEWER))
             }
             jsonPath("$[?(@.name == 'viewer')].nodes[*]") {
-                value(contains(Nodes.ROLE_READ, Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
+                // A viewer sees the fleet as well as its own account; every node here is a read.
+                value(contains(Nodes.FLEET_READ, Nodes.ROLE_READ, Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
             }
             jsonPath("$[?(@.name == 'administrator')].nodes[*]") {
                 value(contains(*Nodes.ALL.sorted().toTypedArray()))

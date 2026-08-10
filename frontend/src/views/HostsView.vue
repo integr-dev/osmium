@@ -6,9 +6,11 @@ import AddHostModal from '../components/AddHostModal.vue'
 import FormField from '../components/FormField.vue'
 import type { HostResponse } from '../api/client'
 import { useAgentStore } from '../stores/agents'
+import { useAuthStore } from '../stores/auth'
 
 const { t } = useI18n()
 const agentStore = useAgentStore()
+const auth = useAuthStore()
 
 const addOpen = ref(false)
 const pendingRemove = ref<HostResponse | null>(null)
@@ -99,7 +101,7 @@ async function confirmRemove() {
           {{ agentStore.hosts.length }} online.
         </p>
       </div>
-      <button class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
+      <button v-if="auth.can('fleet.login')" class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
         <Plus class="size-4" />
         {{ t('hosts.enrol') }}
       </button>
@@ -154,7 +156,7 @@ async function confirmRemove() {
                 </span>
               </td>
               <td>
-                <div class="flex justify-end gap-1">
+                <div v-if="auth.can('fleet.login')" class="flex justify-end gap-1">
                   <button class="btn btn-ghost btn-xs gap-1" @click="openRename(host)">
                     <SquarePen class="size-3.5" />
                     {{ t('hosts.rename') }}

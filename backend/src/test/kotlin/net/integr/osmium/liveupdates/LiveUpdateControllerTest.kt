@@ -29,9 +29,17 @@ class LiveUpdateControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `a viewer cannot open the fleet stream`() {
+    fun `a viewer can open the fleet stream`() {
+        // Receive-only, so it is a read like any other and a viewer is entitled to it.
         mockMvc.get("/api/stream/fleet") {
             header(HttpHeaders.AUTHORIZATION, authAs("watcher", "viewer"))
+        }.andExpect { status { isOk() } }
+    }
+
+    @Test
+    fun `an account with no role cannot open the fleet stream`() {
+        mockMvc.get("/api/stream/fleet") {
+            header(HttpHeaders.AUTHORIZATION, authAs("nobody"))
         }.andExpect { status { isForbidden() } }
     }
 
@@ -46,12 +54,12 @@ class LiveUpdateControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `a viewer cannot open a per-agent stream either`() {
+    fun `a viewer can open a per-agent stream`() {
         val agent = createAgent("Mason_30", reachableHost("host-stream-1"))
 
         mockMvc.get("/api/stream/agents/${agent.id}") {
             header(HttpHeaders.AUTHORIZATION, authAs("watcher2", "viewer"))
-        }.andExpect { status { isForbidden() } }
+        }.andExpect { status { isOk() } }
     }
 
     // ---- delivery ------------------------------------------------------------------------------

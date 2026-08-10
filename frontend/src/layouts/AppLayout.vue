@@ -191,7 +191,7 @@ function logout() {
                       <span class="truncate">{{ agent.label }}</span>
                     </RouterLink>
                   </li>
-                  <li>
+                  <li v-if="auth.can('fleet.control')">
                     <button type="button" class="gap-2.5 opacity-70" @click="addAgentOpen = true">
                       <Plus class="size-4 shrink-0" />
                       {{ t('nav.addAgent') }}

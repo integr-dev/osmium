@@ -96,12 +96,16 @@ single flat set lookup and the table is self-describing.
 
 | Role | Nodes |
 |---|---|
-| `viewer` | `user.read.self`, `user.edit.self`, `role.read` |
-| `orchestrator` | *viewer* + `fleet.read`, `fleet.control`, `fleet.chat`, `fleet.login` |
+| `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `fleet.read` |
+| `orchestrator` | *viewer* + `fleet.control`, `fleet.chat`, `fleet.login` |
 | `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read` |
 
-The division is "runs the agents" versus "runs the people": an orchestrator has full authority over
-the fleet, and what an administrator adds is user management plus the audit trail.
+A viewer is read-only throughout: `fleet.read` gates listing hosts and agents and the live streams,
+and nothing else, so it can watch the fleet without being able to touch it. Every way to change the
+fleet is a separate node, which is what makes that tier possible without a second set of routes.
+
+Above that the division is "runs the agents" versus "runs the people": an orchestrator adds acting
+on the fleet, and what an administrator adds is user management plus the audit trail.
 
 `audit.read` sits outside the `fleet.*` tier deliberately. Running the fleet is not the same as
 being entitled to read every other operator's actions and the text they had an agent speak.
@@ -314,7 +318,7 @@ Entries are kept for 30 days and purged by a daily job, which is why `@EnableSch
 ./gradlew test
 ```
 
-116 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
+121 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
 **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 503s and

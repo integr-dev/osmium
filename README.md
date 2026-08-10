@@ -15,7 +15,7 @@ what needs attention, and what is being said in game.
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 116 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 121 tests |
 | [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 66 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
@@ -60,8 +60,8 @@ nodes, arranged as nested tiers:
 
 | Role | Adds |
 |---|---|
-| `viewer` | see your own account and the role list |
-| `orchestrator` | *viewer* + full authority over hosts and agents |
+| `viewer` | watch the fleet, and see your own account |
+| `orchestrator` | *viewer* + acting on hosts and agents |
 | `administrator` | *orchestrator* + user management |
 
 So the split is "runs the agents" versus "runs the people". Details in
@@ -70,7 +70,7 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 116 tests; needs Docker for Testcontainers
+cd backend && ./gradlew test     # 121 tests; needs Docker for Testcontainers
 cd frontend && npm test          # 66 tests
 ```
 

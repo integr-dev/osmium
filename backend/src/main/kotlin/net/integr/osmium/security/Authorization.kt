@@ -64,17 +64,22 @@ data class RoleDefinition(val name: String, val nodes: Set<String>)
  * self-describing. Changing the hierarchy is a code change plus a restart.
  */
 object RoleDefinitions {
+    /**
+     * Read-only throughout. `fleet.read` gates listing hosts and agents and the live streams, and
+     * nothing else — every way to change the fleet is a separate node — so a viewer watches the
+     * fleet without being able to touch it.
+     */
     private val VIEWER_NODES: Set<String> = setOf(
         Nodes.USER_READ_SELF,
         Nodes.USER_EDIT_SELF,
         // Role definitions are not sensitive, and every account needs them to see where its own
         // tier sits in the ladder.
         Nodes.ROLE_READ,
+        Nodes.FLEET_READ,
     )
 
-    /** Full authority over the fleet. The nodes stay separate so a future tier can be given less. */
+    /** Adds acting on the fleet. The nodes stay separate so a future tier can be given less. */
     private val ORCHESTRATOR_NODES: Set<String> = VIEWER_NODES + setOf(
-        Nodes.FLEET_READ,
         Nodes.FLEET_CONTROL,
         Nodes.FLEET_CHAT,
         Nodes.FLEET_LOGIN,

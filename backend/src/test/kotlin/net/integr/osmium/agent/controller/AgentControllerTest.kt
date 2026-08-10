@@ -324,15 +324,58 @@ class AgentControllerTest : AbstractRestTest() {
         assert(agentRepository.findAll().isEmpty())
     }
 
+    /**
+     * A viewer watches the fleet but cannot touch it. `fleet.read` gates listing and the live
+     * streams only; every way to change an agent is a separate node, which is what makes a
+     * read-only tier possible without a second set of routes.
+     */
     @Test
-    fun `listing agents requires host read`() {
-        val auth = authAs("ada", RoleNames.VIEWER)
+    fun `a viewer can list agents`() {
+        createAgent("Mason_01", reachableHost())
 
         mockMvc.get("/api/agents") {
-            header(HttpHeaders.AUTHORIZATION, auth)
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", RoleNames.VIEWER))
         }.andExpect {
-            status { isForbidden() }
+            status { isOk() }
+            jsonPath("$[0].label") { value("Mason_01") }
         }
+    }
+
+    @Test
+    fun `a viewer can read one agent`() {
+        val agent = createAgent("Mason_02", reachableHost())
+
+        mockMvc.get("/api/agents/${agent.id}") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada2", RoleNames.VIEWER))
+        }.andExpect {
+            status { isOk() }
+        }
+    }
+
+    /** The other half of the tier: reading is allowed, acting is not. */
+    @Test
+    fun `a viewer cannot connect or disconnect an agent`() {
+        val agent = createAgent("Mason_03", reachableHost(), state = AgentState.LINKED)
+        val viewer = authAs("ada3", RoleNames.VIEWER)
+
+        mockMvc.post("/api/agents/${agent.id}/connect") {
+            header(HttpHeaders.AUTHORIZATION, viewer)
+        }.andExpect { status { isForbidden() } }
+
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, viewer)
+        }.andExpect { status { isForbidden() } }
+    }
+
+    @Test
+    fun `a viewer cannot set an agent up`() {
+        val agent = createAgent("Mason_04", reachableHost())
+
+        mockMvc.post("/api/agents/${agent.id}/setup") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada4", RoleNames.VIEWER))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"method":"method_a"}"""
+        }.andExpect { status { isForbidden() } }
     }
 
     @Test

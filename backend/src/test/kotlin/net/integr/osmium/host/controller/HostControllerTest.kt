@@ -70,15 +70,33 @@ class HostControllerTest : AbstractRestTest() {
         assertNull(hostService.authenticate("osm_host_notanumber_secret"))
     }
 
+    /** A viewer sees the fleet. Enrolling, renaming, rotating and removing stay behind fleet.login. */
     @Test
-    fun `listing hosts requires host read`() {
-        val auth = authAs("ada", RoleNames.VIEWER)
+    fun `a viewer can list hosts`() {
+        reachableHost("host-eu-1")
 
         mockMvc.get("/api/hosts") {
-            header(HttpHeaders.AUTHORIZATION, auth)
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", RoleNames.VIEWER))
         }.andExpect {
-            status { isForbidden() }
+            status { isOk() }
+            jsonPath("$[0].name") { value("host-eu-1") }
         }
+    }
+
+    @Test
+    fun `a viewer cannot enrol or remove a host`() {
+        val host = reachableHost("host-eu-2")
+        val viewer = authAs("ada2", RoleNames.VIEWER)
+
+        mockMvc.post("/api/hosts") {
+            header(HttpHeaders.AUTHORIZATION, viewer)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"name":"host-eu-9"}"""
+        }.andExpect { status { isForbidden() } }
+
+        mockMvc.delete("/api/hosts/${host.id}") {
+            header(HttpHeaders.AUTHORIZATION, viewer)
+        }.andExpect { status { isForbidden() } }
     }
 
     @Test
