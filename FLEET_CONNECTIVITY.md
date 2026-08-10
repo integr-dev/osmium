@@ -939,3 +939,7 @@ handshake.
 | Where is the audit log read? | An administrator-only page in the frontend, gated on a new `audit.read` node |
 | How are chat and activity carried? | Two host event types, `chat` and `activity`, scoped by the host — see *Wire protocol → Chat and activity events* |
 | How are the three streams paged? | Keyset cursor `<instant>\|<id>`, newest first, scrolled rather than clicked; searching is server-side |
+| How is telemetry carried? | Inside `agent_status`, alongside the state; the backend splits the two halves on receipt |
+| Is telemetry stored? | **No.** Latest value in memory, aged out after 30s. Never written to Postgres |
+| What is the chat rate limit? | 30 messages a minute per agent, as a token bucket, refunded when a message could not be delivered |
+| How is the schema managed? | Flyway migrations with `ddl-auto=validate`; existing databases adopted by `baseline-on-migrate` |

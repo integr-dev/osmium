@@ -314,7 +314,7 @@ export interface paths {
         };
         /**
          * Stream every host and agent change.
-         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`. Payloads match the REST responses, so a client replaces the resource in place rather than refetching.
+         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat` and `activity` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
          */
         get: operations["fleet"];
         put?: never;
@@ -332,7 +332,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream one agent's changes. */
+        /**
+         * Stream one agent's changes.
+         * @description The same events as the fleet stream, filtered to this agent. A server's global chat arrives here too, under whichever agent currently forwards it, so a view showing one agent's conversation filters on `scope`.
+         */
         get: operations["agent"];
         put?: never;
         post?: never;

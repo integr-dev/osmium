@@ -172,7 +172,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-76 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+79 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, and the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one.

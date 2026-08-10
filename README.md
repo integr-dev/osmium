@@ -15,8 +15,8 @@ what needs attention, and what is being said in game.
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 121 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 66 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 200 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 79 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
@@ -70,13 +70,14 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 121 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 66 tests
+cd backend && ./gradlew test     # 200 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 79 tests
 ```
 
-The backend covers every route — happy paths, 401s, per-role 403s, 409s, 503s — plus a real client
-over a real host socket. The frontend covers the route guard, the auth store, the API client
-middleware and the fleet store's derived state.
+The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
+clients over real host sockets, and unit tests on an injected clock for anything about the passage of
+time. The frontend covers the route guard, the auth store, the API client middleware, the fleet
+store's derived state and cursor paging.
 
 ## CI
 

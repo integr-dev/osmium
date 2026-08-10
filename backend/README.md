@@ -132,7 +132,9 @@ changes automatically.
 | `DELETE` | `/api/users/{id}` | `user.delete` |
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
-| `GET` | `/api/audit` | `audit.read` (newest first, `limit` clamped to 1..1000) |
+| `GET` | `/api/audit` | `audit.read` (cursor-paged, `query` searches, `limit` clamped to 1..500) |
+| `GET` | `/api/activity` | `fleet.read` (cursor-paged; `agentId` narrows to one agent) |
+| `GET` | `/api/chat` | `fleet.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
 | `GET` | `/api/stream/fleet` | `fleet.read` (server-sent events) |
 | `GET` | `/api/stream/agents/{id}` | `fleet.read` (server-sent events) |
 | `GET` | `/api/hosts` | `fleet.read` |
@@ -146,7 +148,7 @@ changes automatically.
 | `DELETE` | `/api/agents/{id}` | `fleet.control` |
 | `POST` | `/api/agents/{id}/setup` | `fleet.login` |
 | `POST` | `/api/agents/{id}/connect`, `/disconnect` | `fleet.control` |
-| `POST` | `/api/agents/{id}/chat` | `fleet.chat` |
+| `POST` | `/api/agents/{id}/chat` | `fleet.chat` (rate limited per agent; **429** when exceeded) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -223,10 +225,21 @@ the state is genuinely unknown at that point.
 `/api/stream/agents/{id}` narrows it to one agent. The channel is **receive-only** — commands stay
 on REST, where they are node-gated and audited.
 
-Events carry the same shapes the REST endpoints return (`agent`, `agent-removed`, `host`,
-`host-removed`), so a client replaces the resource in place rather than refetching. That is why the
-response mappers live in `dto/Mappers.kt` instead of being private to a service: two mappers would
-let the stream and the API drift.
+| Event | Carries | Client does |
+|---|---|---|
+| `agent`, `host` | the resource, in the shape REST returns it | replaces it in place |
+| `agent-removed`, `host-removed` | `{ id }` | drops it |
+| `chat`, `activity` | one new line | appends it to the feed |
+| `telemetry` | `{ agentId, telemetry }` | merges the vitals into the agent |
+
+Resource events carry the same shapes the REST endpoints return, so a client replaces what it holds
+rather than refetching. That is why each feature's `toResponse` is shared between its controller and
+the broker instead of being private to a service: two mappers would let the stream and the API
+drift.
+
+The feeds are the exception, and deliberately: they are appended to rather than replaced, and
+telemetry is a merge rather than a resource, which is what keeps a reading arriving every second
+from re-sending an entire agent.
 
 Three properties are load-bearing:
 
@@ -521,16 +534,23 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-121 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
-**Docker must be running**.
+200 tests across 15 classes. Most run against a real Postgres 18 through Testcontainers with
+`@ServiceConnection`, so **Docker must be running**.
 
-- **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 503s and
-  validation failures. Each runs in a transaction that is rolled back, so the suite leaves no state
-  behind.
-- **`HostLinkTest`** drives a real client over a real socket: it authenticates with an
-  enrolment token, heartbeats, receives a dispatched command and answers it. It is deliberately not
-  transactional — the host runs on other threads, so a rolled-back test transaction would be
-  invisible to it — and cleans up explicitly instead.
+- **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
+  503s and validation failures. Each runs in a transaction that is rolled back, so the suite leaves
+  no state behind.
+- **Socket tests** drive a real client over a real WebSocket. `HostLinkTest` authenticates with an
+  enrolment token, heartbeats, receives a dispatched command and answers it; `ChatListenerServiceTest`
+  elects listeners across two hosts and asserts on the commands that actually reach them. Both are
+  deliberately not transactional — the host runs on other threads, so a rolled-back test transaction
+  would be invisible to it — and clean up explicitly instead.
+- **Unit tests on a clock the test owns** cover the parts that are about the passage of time:
+  telemetry ageing out, the coalescing tick, and the chat rate limiter's bucket. Waiting for real
+  seconds to pass would be slow and flaky, so those never touch the container.
+
+No mocking library. The suite runs against real things — a real database, a real socket, or a plain
+object with a clock injected — which is why a fake `WebSocketSession` does not appear anywhere.
 
 ## Docker image
 
