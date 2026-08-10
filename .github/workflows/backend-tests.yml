@@ -1,0 +1,64 @@
+name: Backend tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-tests.yml'
+      - '.github/scripts/junit-summary.mjs'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-tests.yml'
+      - '.github/scripts/junit-summary.mjs'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Testcontainers starts a real Postgres 18, so this needs the Docker daemon the hosted Ubuntu
+    # runner provides. It will not work on a container-based or self-hosted runner without one.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The wrapper is committed without the executable bit, so mode 100644 arrives here unusable.
+      - name: Make the wrapper executable
+        run: chmod +x gradlew
+
+      - name: Tests
+        run: ./gradlew test
+
+      - name: Summarise test results
+        if: always()
+        run: node "$GITHUB_WORKSPACE/.github/scripts/junit-summary.mjs" "Backend tests" build/test-results/test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: |
+            backend/build/test-results/test
+            backend/build/reports/tests/test
+          if-no-files-found: warn
+          retention-days: 14

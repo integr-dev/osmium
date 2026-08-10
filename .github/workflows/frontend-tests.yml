@@ -1,0 +1,67 @@
+name: Frontend tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-tests.yml'
+      - '.github/scripts/junit-summary.mjs'
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-tests.yml'
+      - '.github/scripts/junit-summary.mjs'
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      # Every check below runs even after an earlier one fails, so one run reports every problem
+      # instead of hiding the tests behind a lint error. Any failure still fails the job.
+      - name: Unit tests
+        run: npm run test:ci
+
+      - name: Lint
+        if: always()
+        run: npm run lint
+
+      - name: Type-check and build
+        if: always()
+        run: npm run build
+
+      - name: Summarise test results
+        if: always()
+        run: node "$GITHUB_WORKSPACE/.github/scripts/junit-summary.mjs" "Frontend unit tests" test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-results
+          path: frontend/test-results
+          if-no-files-found: warn
+          retention-days: 14

@@ -232,6 +232,11 @@ roughly 20 minutes per CI run, which is not worth it here.
 
 ## CI
 
+`.github/workflows/backend-tests.yml` runs `./gradlew test` on pushes to `main` and on pull requests
+touching `backend/`. Failures become inline annotations and a job summary table; the JUnit XML and
+the HTML report are uploaded as artifacts. It needs the Docker daemon on the hosted runner, since
+Testcontainers starts a real Postgres.
+
 `.github/workflows/backend-image.yml` builds this image and pushes it to
 `ghcr.io/integr-dev/osmium/backend` on every push to `main` that touches `backend/`, and on manual
 dispatch. Tags come from the `version` in `build.gradle.kts`, plus `sha-<short>` and `latest`.
