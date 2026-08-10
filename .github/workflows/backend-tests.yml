@@ -1,18 +1,15 @@
 name: Backend tests
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/backend-tests.yml'
-      - '.github/scripts/junit-summary.mjs'
   pull_request:
     paths:
       - 'backend/**'
       - '.github/workflows/backend-tests.yml'
       - '.github/scripts/junit-summary.mjs'
   workflow_dispatch:
+  # Called by backend-image.yml, which gates publishing on this. There is deliberately no `push`
+  # trigger: on main the image workflow drives this, so the suite runs once rather than twice.
+  workflow_call:
 
 concurrency:
   group: backend-tests-${{ github.ref }}

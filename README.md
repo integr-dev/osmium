@@ -82,10 +82,16 @@ Four workflows, all path-filtered so a change to one module does not run the oth
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `backend-tests.yml` | push to `main`, pull request | `./gradlew test`, annotates failures, uploads reports |
-| `frontend-tests.yml` | push to `main`, pull request | Vitest, ESLint and the `vue-tsc` build, all three under `if: always()` |
-| `backend-image.yml` | push to `main` | publishes `ghcr.io/integr-dev/osmium/backend` |
-| `frontend-image.yml` | push to `main` | publishes `ghcr.io/integr-dev/osmium/frontend` |
+| `backend-tests.yml` | pull request, or called | `./gradlew test`, annotates failures, uploads reports |
+| `frontend-tests.yml` | pull request, or called | Vitest, ESLint and the `vue-tsc` build, all three under `if: always()` |
+| `backend-image.yml` | push to `main` | runs the tests, then publishes `ghcr.io/integr-dev/osmium/backend` |
+| `frontend-image.yml` | push to `main` | runs the tests, then publishes `ghcr.io/integr-dev/osmium/frontend` |
+
+**Nothing is published without a green suite.** Each image workflow calls the matching test workflow
+as a reusable workflow and gates its publishing job on it with `needs`. The test workflows therefore
+have no `push` trigger of their own — on `main` the image workflow drives them, so a push runs the
+suite once rather than twice, and the suite cannot drift between the pull-request run and the
+publishing run.
 
 Image tags come from the version in `build.gradle.kts` and `package.json` respectively, plus
 `sha-<short>` and `latest`. Failing tests become inline annotations and a job summary table, built

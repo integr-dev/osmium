@@ -115,13 +115,16 @@ started before the backend; now it boots and returns 502 until the backend appea
 
 ## CI
 
-`.github/workflows/frontend-tests.yml` runs the suite, ESLint and the `vue-tsc` build on pushes to
-`main` and on pull requests touching `frontend/`. All three run even after one fails, so a lint error
-never hides the test results; any failure fails the job. Failing tests become inline annotations and
-a job summary table.
+`.github/workflows/frontend-tests.yml` runs the suite, ESLint and the `vue-tsc` build on pull
+requests touching `frontend/`. All three run even after one fails, so a lint error never hides the
+test results; any failure fails the job. Failing tests become inline annotations and a job summary
+table.
 
 `.github/workflows/frontend-image.yml` builds and pushes the image to
-`ghcr.io/integr-dev/osmium/frontend`, tagged from the `version` in `package.json`.
+`ghcr.io/integr-dev/osmium/frontend`, tagged from the `version` in `package.json`. It **calls the
+test workflow first** and gates publishing on it with `needs`, so a failing suite means no image.
+That is also why the test workflow has no `push` trigger: on `main` this one drives it, and the
+suite runs once instead of twice.
 
 ## Layout
 

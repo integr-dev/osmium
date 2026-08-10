@@ -6,6 +6,8 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/backend-image.yml'
+      - '.github/workflows/backend-tests.yml'
+      - '.github/scripts/junit-summary.mjs'
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +18,15 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Nothing reaches the registry unless this passes. Reused rather than duplicated, so the suite
+  # cannot drift between the pull-request run and the publishing run.
+  test:
+    uses: ./.github/workflows/backend-tests.yml
+    permissions:
+      contents: read
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

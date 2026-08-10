@@ -232,10 +232,10 @@ roughly 20 minutes per CI run, which is not worth it here.
 
 ## CI
 
-`.github/workflows/backend-tests.yml` runs `./gradlew test` on pushes to `main` and on pull requests
-touching `backend/`. Failures become inline annotations and a job summary table; the JUnit XML and
-the HTML report are uploaded as artifacts. It needs the Docker daemon on the hosted runner, since
-Testcontainers starts a real Postgres.
+`.github/workflows/backend-tests.yml` runs `./gradlew test` on pull requests touching `backend/`.
+Failures become inline annotations and a job summary table; the JUnit XML and the HTML report are
+uploaded as artifacts. It needs the Docker daemon on the hosted runner, since Testcontainers starts
+a real Postgres.
 
 Two things any further workflow here has to repeat: `gradlew` is committed as mode `100644`, so it
 must be `chmod +x`ed before use, and a container-based or self-hosted runner without Docker cannot
@@ -244,6 +244,10 @@ run this suite at all.
 `.github/workflows/backend-image.yml` builds this image and pushes it to
 `ghcr.io/integr-dev/osmium/backend` on every push to `main` that touches `backend/`, and on manual
 dispatch. Tags come from the `version` in `build.gradle.kts`, plus `sha-<short>` and `latest`.
+
+It **calls the test workflow first** and gates publishing on it with `needs`, so a failing suite
+means no image. That is also why the test workflow has no `push` trigger: on `main` this one drives
+it, and the suite runs once instead of twice.
 
 ## Layout
 
