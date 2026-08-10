@@ -55,7 +55,9 @@ enum class AuditAction {
 @Entity
 @Table(
     name = "audit_entries",
-    indexes = [Index(name = "idx_audit_entries_at", columnList = "at")],
+    // Composite, and in the order the trail is read: keyset paging seeks on `(at, id)` and the
+    // tiebreak has to be in the index or every page boundary costs a sort.
+    indexes = [Index(name = "idx_audit_entries_at_id", columnList = "at, id")],
 )
 class AuditEntry(
     @Id

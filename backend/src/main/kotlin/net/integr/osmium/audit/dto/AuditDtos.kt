@@ -18,6 +18,16 @@ data class AuditEntryResponse(
     val detail: String?,
 )
 
+@Schema(description = "One page of the trail, newest first.")
+data class AuditPageResponse(
+    val items: List<AuditEntryResponse>,
+    @param:Schema(
+        description = "Pass back as `cursor` to fetch the next, older page. Null when the trail ends.",
+        example = "2026-08-10T09:14:22.481Z|417",
+    )
+    val nextCursor: String?,
+)
+
 fun AuditEntry.toResponse(): AuditEntryResponse = AuditEntryResponse(
     id = checkNotNull(id) { "Audit entry has not been persisted yet" },
     at = at,

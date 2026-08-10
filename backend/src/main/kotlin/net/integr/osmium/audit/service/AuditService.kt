@@ -1,11 +1,12 @@
 package net.integr.osmium.audit.service
 
 import net.integr.osmium.audit.config.AuditProperties
-import net.integr.osmium.audit.dto.AuditEntryResponse
+import net.integr.osmium.audit.dto.AuditPageResponse
 import net.integr.osmium.audit.dto.toResponse
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.model.AuditEntry
 import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.web.PageCursor
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Limit
 import org.springframework.scheduling.annotation.Scheduled
@@ -48,8 +49,49 @@ class AuditService(
         )
     }
 
-    fun findRecent(limit: Int): List<AuditEntryResponse> =
-        auditEntryRepository.findAllByOrderByAtDescIdDesc(Limit.of(limit)).map { it.toResponse() }
+    /**
+     * One page of the trail, newest first, optionally narrowed by [query].
+     *
+     * Searching is done here rather than in the browser. Once the response is a page, a filter that
+     * only sees what is loaded is worse than no filter at all: it would search the newest hundred
+     * rows of a thirty-day trail and report "nothing matches", which reads as an answer rather than
+     * as a limit.
+     *
+     * [query] matches the account, the target, the detail, or the name of the action. Action names
+     * are resolved here because the column stores the enum constant - an operator searching for
+     * "chat" means every kind of chat entry, not a substring of some text field.
+     */
+    fun findPage(limit: Int, cursor: String?, query: String?): AuditPageResponse {
+        val (beforeAt, beforeId) = PageCursor.decode(cursor)
+        val needle = query?.trim()?.lowercase().orEmpty()
+
+        val rows = auditEntryRepository.page(
+            beforeAt = beforeAt,
+            beforeId = beforeId,
+            // `%` matches every non-null column, so an unfiltered request needs no separate query.
+            needle = if (needle.isEmpty()) "%" else "%${escapeLike(needle)}%",
+            actions = if (needle.isEmpty()) AuditAction.entries else {
+                AuditAction.entries.filter { needle in it.name.lowercase() }
+            },
+            limit = Limit.of(limit),
+        )
+
+        return AuditPageResponse(
+            items = rows.map { it.toResponse() },
+            // A short page means the trail ran out. A full one may or may not have more, and one
+            // wasted request at the end is cheaper than a count on every request.
+            nextCursor = rows.lastOrNull()
+                ?.takeIf { rows.size == limit }
+                ?.let { PageCursor.encode(it.at, checkNotNull(it.id)) },
+        )
+    }
+
+    /**
+     * Neutralises the `like` wildcards so a search for `50%` looks for that text rather than
+     * matching everything. Pairs with the `escape '\'` clause on the query.
+     */
+    private fun escapeLike(needle: String): String =
+        needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     /**
      * Drops entries past their retention. Runs daily rather than on write: a purge on every command

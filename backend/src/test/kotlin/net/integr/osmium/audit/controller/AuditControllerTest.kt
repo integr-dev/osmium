@@ -1,5 +1,6 @@
 package net.integr.osmium.audit.controller
 
+import com.jayway.jsonpath.JsonPath
 import net.integr.osmium.AbstractRestTest
 import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.audit.model.AuditAction
@@ -53,7 +54,7 @@ class AuditControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "administrator"))
         }.andExpect {
             status { isOk() }
-            jsonPath("$[*].account") { value(contains("newer", "older")) }
+            jsonPath("$.items[*].account") { value(contains("newer", "older")) }
         }
     }
 
@@ -65,7 +66,7 @@ class AuditControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "administrator"))
         }.andExpect {
             status { isOk() }
-            jsonPath("$[0].detail") { value("hello world") }
+            jsonPath("$.items[0].detail") { value("hello world") }
         }
     }
 
@@ -77,7 +78,7 @@ class AuditControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "administrator"))
         }.andExpect {
             status { isOk() }
-            jsonPath("$") { value(hasSize<Any>(2)) }
+            jsonPath("$.items") { value(hasSize<Any>(2)) }
         }
     }
 
@@ -90,7 +91,127 @@ class AuditControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "administrator"))
         }.andExpect {
             status { isOk() }
-            jsonPath("$") { value(hasSize<Any>(1)) }
+            jsonPath("$.items") { value(hasSize<Any>(1)) }
+        }
+    }
+
+    // ---- paging --------------------------------------------------------------------------------
+
+    /** The whole point of the cursor: everything older than the first page is still reachable. */
+    @Test
+    fun `the cursor walks the trail to the end without repeating or skipping`() {
+        val now = Instant.now()
+        repeat(5) { index ->
+            entry("admin", AuditAction.AGENT_CONNECT, "Mason_$index", at = now.minusSeconds(index.toLong()))
+        }
+
+        val seen = mutableListOf<String>()
+        var cursor: String? = ""
+        var pages = 0
+
+        while (cursor != null) {
+            val body = mockMvc.get("/api/audit?limit=2${if (cursor.isEmpty()) "" else "&cursor=$cursor"}") {
+                header(HttpHeaders.AUTHORIZATION, authAs("walker$pages", "administrator"))
+            }.andExpect { status { isOk() } }.andReturn().response.contentAsString
+
+            seen += JsonPath.read<List<String>>(body, "$.items[*].target")
+            cursor = JsonPath.read<String?>(body, "$.nextCursor")
+            pages++
+        }
+
+        assertEquals(listOf("Mason_0", "Mason_1", "Mason_2", "Mason_3", "Mason_4"), seen)
+        assertEquals(3, pages)
+    }
+
+    /**
+     * Two entries in the same instant are ordinary under concurrent commands. Without `id` breaking
+     * the tie, one of them falls into the gap at a page boundary.
+     */
+    @Test
+    fun `entries recorded in the same instant both survive a page boundary`() {
+        val same = Instant.now()
+        entry("admin", AuditAction.AGENT_CONNECT, "Mason_a", at = same)
+        entry("admin", AuditAction.AGENT_CONNECT, "Mason_b", at = same)
+
+        val first = mockMvc.get("/api/audit?limit=1") {
+            header(HttpHeaders.AUTHORIZATION, authAs("tied", "administrator"))
+        }.andReturn().response.contentAsString
+
+        mockMvc.get("/api/audit?limit=1&cursor=${JsonPath.read<String>(first, "$.nextCursor")}") {
+            header(HttpHeaders.AUTHORIZATION, authAs("tied2", "administrator"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items[0].target") { value("Mason_a") }
+        }
+    }
+
+    @Test
+    fun `a malformed cursor is rejected rather than silently starting over`() {
+        mockMvc.get("/api/audit?cursor=not-a-cursor") {
+            header(HttpHeaders.AUTHORIZATION, authAs("confused", "administrator"))
+        }.andExpect { status { isBadRequest() } }
+    }
+
+    // ---- searching -----------------------------------------------------------------------------
+
+    @Test
+    fun `a query matches the account, the target and the detail`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01")
+        entry("bob", AuditAction.AGENT_CONNECT, "Spire_07")
+        entry("carol", AuditAction.AGENT_CHAT, "Mason_02", detail = "bring deepslate")
+
+        fun targets(query: String, as_: String): List<String> {
+            val body = mockMvc.get("/api/audit?query=$query") {
+                header(HttpHeaders.AUTHORIZATION, authAs(as_, "administrator"))
+            }.andExpect { status { isOk() } }.andReturn().response.contentAsString
+            return JsonPath.read(body, "$.items[*].target")
+        }
+
+        assertEquals(listOf("Mason_01"), targets("alice", "s1"))
+        assertEquals(listOf("Spire_07"), targets("spire", "s2"))
+        assertEquals(listOf("Mason_02"), targets("deepslate", "s3"))
+    }
+
+    /** The column stores the enum constant, so the action has to be matched by name server-side. */
+    @Test
+    fun `a query matches the name of the action`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01")
+        entry("alice", AuditAction.HOST_ROTATE_TOKEN, "host-eu-1")
+
+        mockMvc.get("/api/audit?query=rotate") {
+            header(HttpHeaders.AUTHORIZATION, authAs("searcher", "administrator"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items[*].target") { value(contains("host-eu-1")) }
+        }
+    }
+
+    /** No action name matches, so the `in` clause is empty - which must narrow, not blow up. */
+    @Test
+    fun `a query matching nothing returns an empty page`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01")
+
+        mockMvc.get("/api/audit?query=zzzzz") {
+            header(HttpHeaders.AUTHORIZATION, authAs("fruitless", "administrator"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items") { value(hasSize<Any>(0)) }
+            jsonPath("$.nextCursor") { value(null as String?) }
+        }
+    }
+
+    /** Otherwise a search for a literal `%` would quietly match the whole trail. */
+    @Test
+    fun `like wildcards in a query are searched for literally`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01")
+        entry("alice", AuditAction.AGENT_CHAT, "Mason_02", detail = "100% done")
+
+        mockMvc.get("/api/audit") {
+            header(HttpHeaders.AUTHORIZATION, authAs("literal", "administrator"))
+            param("query", "%")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items[*].target") { value(contains("Mason_02")) }
         }
     }
 
