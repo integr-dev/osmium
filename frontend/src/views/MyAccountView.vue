@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   CheckCheck,
   CircleAlert,
@@ -16,6 +17,7 @@ import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
 import { useAuthStore } from '../stores/auth'
 
+const { t } = useI18n()
 const auth = useAuthStore()
 
 const username = ref(auth.user?.username ?? '')
@@ -113,8 +115,8 @@ async function changePassword() {
 <template>
   <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header>
-      <h1 class="text-2xl font-semibold tracking-tight">My account</h1>
-      <p class="text-sm opacity-60">Your identity, role and effective permissions.</p>
+      <h1 class="text-2xl font-semibold tracking-tight">{{ t('account.title') }}</h1>
+      <p class="text-sm opacity-60">{{ t('account.subtitle') }}</p>
     </header>
 
     <div class="grid gap-6 lg:grid-cols-3">
@@ -137,7 +139,7 @@ async function changePassword() {
                 <component :is="roleIcon(auth.user.role)" class="size-3" />
                 {{ auth.user.role }}
               </span>
-              <span v-else class="badge badge-ghost badge-sm mt-2">No role</span>
+              <span v-else class="badge badge-ghost badge-sm mt-2">{{ t('account.noRole') }}</span>
             </div>
           </div>
 
@@ -148,11 +150,11 @@ async function changePassword() {
               @click="openRename"
             >
               <PencilLine class="size-4 opacity-70" />
-              Rename account
+              {{ t('account.rename') }}
             </button>
             <button class="btn btn-soft btn-sm w-full justify-start gap-3" @click="openPassword">
               <KeyRound class="size-4 opacity-70" />
-              Change password
+              {{ t('account.changePassword') }}
             </button>
           </div>
         </div>
@@ -162,11 +164,10 @@ async function changePassword() {
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
             <ShieldCheck class="text-primary size-4" />
-            Role
+            {{ t('account.role') }}
           </h2>
           <p class="text-sm opacity-60">
-            Roles are nested levels, so an account holds exactly one. Each tier includes everything
-            the tier below it grants.
+            {{ t('account.roleHint') }}
           </p>
 
           <ul v-if="auth.user?.role" class="flex flex-col gap-2">
@@ -191,8 +192,8 @@ async function changePassword() {
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2">
                   <span class="font-medium capitalize">{{ tier.name }}</span>
-                  <span v-if="tier.current" class="badge badge-primary badge-xs">current</span>
-                  <span v-else-if="tier.held" class="text-xs opacity-50">included</span>
+                  <span v-if="tier.current" class="badge badge-primary badge-xs">{{ t('account.current') }}</span>
+                  <span v-else-if="tier.held" class="text-xs opacity-50">{{ t('account.included') }}</span>
                 </div>
                 <div v-if="tier.nodes.length" class="mt-1.5 flex flex-wrap gap-1">
                   <span
@@ -204,14 +205,14 @@ async function changePassword() {
                     {{ nodeLabel(node) }}
                   </span>
                 </div>
-                <div v-else class="mt-1 text-xs opacity-50">Node breakdown needs role.read</div>
+                <div v-else class="mt-1 text-xs opacity-50">{{ t('account.permissionsHidden') }}</div>
               </div>
             </li>
           </ul>
 
           <div v-else class="flex items-center gap-2 py-6 text-sm opacity-60">
             <TriangleAlert class="size-4" />
-            No role assigned. An administrator has to grant one.
+            {{ t('account.noRoleAssigned') }}
           </div>
         </div>
       </div>
@@ -221,11 +222,11 @@ async function changePassword() {
       <div class="card-body gap-3">
         <h2 class="card-title flex items-center gap-2 text-base">
           <KeyRound class="text-primary size-4" />
-          Effective permissions
+          {{ t('account.permissions') }}
           <span class="badge badge-ghost badge-sm">{{ auth.user?.nodes?.length ?? 0 }}</span>
         </h2>
         <p class="text-sm opacity-60">
-          Everything your role and the tiers below it grant, flattened.
+          {{ t('account.permissionsHint') }}
         </p>
         <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
           <div
@@ -239,7 +240,7 @@ async function changePassword() {
               <span class="block truncate font-mono text-[0.7rem] opacity-40">{{ node }}</span>
             </span>
           </div>
-          <span v-if="!auth.user?.nodes?.length" class="text-sm opacity-60">None.</span>
+          <span v-if="!auth.user?.nodes?.length" class="text-sm opacity-60">{{ t('account.noPermissions') }}</span>
         </div>
       </div>
     </div>
@@ -248,15 +249,15 @@ async function changePassword() {
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <PencilLine class="text-primary size-5" />
-          Rename account
+          {{ t('account.rename') }}
         </h3>
         <p class="mt-1 text-sm opacity-60">
-          Renaming ends the current session, because the token identifies you by username.
+          {{ t('account.renameWarning') }}
         </p>
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="rename">
           <FormField
             v-model="username"
-            label="Username"
+            :label="t('account.username')"
             :icon="UserRound"
             type="text"
             maxlength="64"
@@ -269,31 +270,31 @@ async function changePassword() {
           </div>
           <div v-else-if="renameState.done" role="alert" class="alert alert-warning alert-soft">
             <TriangleAlert class="size-4" />
-            <span>Renamed. Log in again to continue.</span>
+            <span>{{ t('account.renamed') }}</span>
           </div>
 
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('rename-account')?.close()">
-              Close
+              {{ t('common.close') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog id="change-password" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <KeyRound class="text-primary size-5" />
-          Change password
+          {{ t('account.changePassword') }}
         </h3>
-        <p class="mt-1 text-sm opacity-60">Requires your current password. 4–72 characters.</p>
+        <p class="mt-1 text-sm opacity-60">{{ t('account.passwordHint') }}</p>
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="changePassword">
           <FormField
             v-model="currentPassword"
-            label="Current password"
+            :label="t('account.currentPassword')"
             :icon="KeyRound"
             type="password"
             autocomplete="current-password"
@@ -301,7 +302,7 @@ async function changePassword() {
           />
           <FormField
             v-model="newPassword"
-            label="New password"
+            :label="t('account.newPassword')"
             :icon="KeyRound"
             type="password"
             autocomplete="new-password"
@@ -311,8 +312,8 @@ async function changePassword() {
           />
           <FormField
             v-model="confirmPassword"
-            label="Confirm new password"
-            placeholder="Repeat the new password"
+            :label="t('account.confirmPassword')"
+            :placeholder="t('account.confirmPlaceholder')"
             :icon="CheckCheck"
             :invalid="Boolean(confirmPassword) && confirmPassword !== newPassword"
             type="password"
@@ -326,18 +327,18 @@ async function changePassword() {
           </div>
           <div v-else-if="passwordState.done" role="alert" class="alert alert-success alert-soft">
             <CircleCheck class="size-4" />
-            <span>Password changed.</span>
+            <span>{{ t('account.passwordChanged') }}</span>
           </div>
 
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('change-password')?.close()">
-              Close
+              {{ t('common.close') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">Change password</button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('account.changePassword') }}</button>
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
   </div>
 </template>

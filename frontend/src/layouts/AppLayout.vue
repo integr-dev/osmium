@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   Bot as Agent,
   LayoutDashboard,
@@ -22,6 +23,7 @@ import { useAuthStore } from '../stores/auth'
 import { STATE_DOT } from '../lib/agentState'
 import { useAgentStore } from '../stores/agents'
 
+const { t } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 const router = useRouter()
@@ -43,8 +45,8 @@ const degraded = computed(() => backendEverReached.value && !backendReachable.va
 
 const backendTip = computed(() =>
   retrying.value
-    ? 'Retrying…'
-    : 'Cannot reach the backend — showing the last data loaded. Click to retry.',
+    ? t('connection.retrying')
+    : t('connection.backendLost'),
 )
 
 async function retry() {
@@ -87,16 +89,15 @@ function logout() {
         <div class="rounded-field bg-warning/10 flex size-12 items-center justify-center">
           <TriangleAlert class="text-warning size-6" />
         </div>
-        <h1 class="text-lg font-semibold">Cannot reach the backend</h1>
+        <h1 class="text-lg font-semibold">{{ t('connection.blockedTitle') }}</h1>
         <p class="text-sm opacity-70">
-          Osmium is signed in but has not been able to load anything. Nothing is shown rather than an
-          empty fleet, because the two look identical and mean very different things.
+          {{ t('connection.blockedBody') }}
         </p>
         <button class="btn btn-primary btn-sm gap-2" :disabled="retrying" @click="retry">
           <RotateCw class="size-4" :class="retrying ? 'animate-spin' : ''" />
-          {{ retrying ? 'Retrying…' : 'Try again' }}
+          {{ retrying ? t('connection.retrying') : t('connection.tryAgain') }}
         </button>
-        <button class="btn btn-ghost btn-xs" type="button" @click="logout">Log out</button>
+        <button class="btn btn-ghost btn-xs" type="button" @click="logout">{{ t('nav.logOut') }}</button>
       </div>
     </div>
   </div>
@@ -107,7 +108,7 @@ function logout() {
     <div class="drawer-content flex min-h-screen flex-col">
       <!-- Only reachable below lg, where the sidebar is collapsed. -->
       <div class="navbar border-base-300 bg-base-200 border-b lg:hidden">
-        <label for="app-drawer" class="btn btn-square btn-ghost btn-sm" aria-label="Open navigation">
+        <label for="app-drawer" class="btn btn-square btn-ghost btn-sm" :aria-label="t('nav.openNavigation')">
           <Menu class="size-5" />
         </label>
         <img src="/logo.svg" alt="" class="ml-2 size-6" />
@@ -122,7 +123,7 @@ function logout() {
     <AddAgentModal v-model:open="addAgentOpen" />
 
     <div class="drawer-side">
-      <label for="app-drawer" class="drawer-overlay" aria-label="Close navigation"></label>
+      <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
 
       <aside class="border-base-300 bg-base-200 flex min-h-full w-64 flex-col border-r">
         <div class="flex items-center gap-3 px-5 py-6">
@@ -148,7 +149,7 @@ function logout() {
             <span
               v-else-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
               class="tooltip tooltip-bottom"
-              data-tip="Live updates disconnected — reconnecting"
+              :data-tip="t('connection.streamLost')"
             >
               <WifiOff class="text-warning size-4" />
             </span>
@@ -160,13 +161,13 @@ function logout() {
             <li>
               <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
                 <LayoutDashboard class="size-4 shrink-0" />
-                Dashboard
+                {{ t('nav.dashboard') }}
               </RouterLink>
             </li>
             <li>
               <RouterLink :to="{ name: 'hosts' }" class="gap-3">
                 <Server class="size-4 shrink-0" />
-                Hosts
+                {{ t('nav.hosts') }}
                 <span class="badge badge-xs ml-auto">
                   {{ agentStore.hosts.filter((host) => host.reachable).length }}/{{ agentStore.hosts.length }}
                 </span>
@@ -176,7 +177,7 @@ function logout() {
               <details open>
                 <summary class="gap-3">
                   <Agent class="size-4 shrink-0" />
-                  Agents
+                  {{ t('nav.agents') }}
                   <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
                 </summary>
                 <ul class="gap-0.5">
@@ -193,7 +194,7 @@ function logout() {
                   <li>
                     <button type="button" class="gap-2.5 opacity-70" @click="addAgentOpen = true">
                       <Plus class="size-4 shrink-0" />
-                      Add agent
+                      {{ t('nav.addAgent') }}
                     </button>
                   </li>
                 </ul>
@@ -207,25 +208,25 @@ function logout() {
             <li>
               <RouterLink :to="{ name: 'account' }" class="gap-3">
                 <User class="size-4 shrink-0" />
-                My account
+                {{ t('nav.myAccount') }}
               </RouterLink>
             </li>
             <li v-if="auth.can('user.read')">
               <RouterLink :to="{ name: 'accounts' }" class="gap-3">
                 <Users class="size-4 shrink-0" />
-                All accounts
+                {{ t('nav.allAccounts') }}
               </RouterLink>
             </li>
             <li v-if="auth.can('audit.read')">
               <RouterLink :to="{ name: 'audit' }" class="gap-3">
                 <ScrollText class="size-4 shrink-0" />
-                Audit log
+                {{ t('nav.auditLog') }}
               </RouterLink>
             </li>
             <li>
               <button type="button" class="text-error hover:bg-error/10 gap-3" @click="logout">
                 <LogOut class="size-4 shrink-0" />
-                Log out
+                {{ t('nav.logOut') }}
               </button>
             </li>
           </ul>

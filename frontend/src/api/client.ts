@@ -1,6 +1,7 @@
 import createClient, { type Middleware } from 'openapi-fetch'
 import { ref } from 'vue'
 import type { paths, components } from './schema'
+import { t } from '../i18n'
 import { token } from './token'
 
 /**
@@ -23,7 +24,7 @@ export type ApiError = { message?: string }
  * one of them working without a second failure path.
  */
 export const UNREACHABLE_STATUS = 599
-export const UNREACHABLE_MESSAGE = 'Cannot reach the backend'
+export const UNREACHABLE_MESSAGE = t('errors.unreachable')
 
 /**
  * Gateway failures, which mean the proxy in front of the backend could not reach it. Both dev and
@@ -123,7 +124,7 @@ export const api = createClient<paths>({
 api.use(auth)
 
 /** Pulls the message out of an ApiError body, falling back to something printable. */
-export function errorMessage(error: unknown, fallback = 'Something went wrong'): string {
+export function errorMessage(error: unknown, fallback = t('errors.generic')): string {
   if (error && typeof error === 'object' && 'message' in error) {
     const message = (error as ApiError).message
     if (typeof message === 'string' && message.length > 0) return message

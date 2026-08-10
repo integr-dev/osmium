@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChevronLeft, ChevronRight, Server, UserPlus } from 'lucide-vue-next'
 import FormField from './FormField.vue'
 import { useAgentStore } from '../stores/agents'
@@ -7,6 +8,7 @@ import { useRouter } from 'vue-router'
 
 const open = defineModel<boolean>('open', { required: true })
 
+const { t } = useI18n()
 const agentStore = useAgentStore()
 const router = useRouter()
 
@@ -62,20 +64,20 @@ async function submit() {
     <div class="modal-box">
       <h3 class="flex items-center gap-2 text-lg font-semibold">
         <UserPlus class="text-primary size-5" />
-        New agent
+        {{ t('agents.addTitle') }}
       </h3>
 
       <ul class="steps mt-4 w-full">
-        <li class="step step-primary text-xs">Identity</li>
-        <li class="step text-xs" :class="step === 2 ? 'step-primary' : ''">Host</li>
+        <li class="step step-primary text-xs">{{ t('agents.identity') }}</li>
+        <li class="step text-xs" :class="step === 2 ? 'step-primary' : ''">{{ t('agents.host') }}</li>
       </ul>
 
       <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
         <template v-if="step === 1">
           <FormField
             v-model="draft.label"
-            label="Agent name"
-            placeholder="e.g. Mason_04"
+            :label="t('agents.label')"
+            :placeholder="t('agents.labelPlaceholder')"
             :icon="UserPlus"
             type="text"
             maxlength="64"
@@ -83,8 +85,8 @@ async function submit() {
           />
           <FormField
             v-model="draft.serverAddress"
-            label="Target server"
-            placeholder="mc.example.com:25565"
+            :label="t('agents.server')"
+            :placeholder="t('agents.serverPlaceholder')"
             :icon="Server"
             type="text"
             required
@@ -92,7 +94,7 @@ async function submit() {
         </template>
 
         <template v-else>
-          <p class="text-sm opacity-60">Which host runs this agent? Offline hosts can be assigned now and connected later.</p>
+          <p class="text-sm opacity-60">{{ t('agents.hostStepHint') }}</p>
           <ul v-if="agentStore.hosts.length" class="flex flex-col gap-1">
             <li v-for="host in agentStore.hosts" :key="host.id">
               <label class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-center gap-3 p-3">
@@ -118,7 +120,7 @@ async function submit() {
             </li>
           </ul>
           <p v-else class="rounded-field bg-base-300/30 px-3 py-4 text-center text-sm opacity-60">
-            No hosts yet. Add one under Hosts first.
+            {{ t('agents.noHosts') }}
           </p>
         </template>
 
@@ -129,16 +131,16 @@ async function submit() {
         <div class="modal-action">
           <button v-if="step === 2" class="btn btn-ghost btn-sm gap-1" type="button" @click="step = 1">
             <ChevronLeft class="size-4" />
-            Back
+            {{ t('agents.back') }}
           </button>
-          <button v-else class="btn btn-ghost btn-sm" type="button" @click="open = false">Cancel</button>
+          <button v-else class="btn btn-ghost btn-sm" type="button" @click="open = false">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="busy || (step === 2 && !agentStore.hosts.length)">
-            {{ step === 1 ? 'Next' : 'Create' }}
+            {{ step === 1 ? t('agents.next') : t('agents.create') }}
             <ChevronRight v-if="step === 1" class="size-4" />
           </button>
         </div>
       </form>
     </div>
-    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
   </dialog>
 </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Activity,
@@ -23,11 +24,12 @@ import {
   Users,
 } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
-import { STATE_BADGE, STATE_LABEL } from '../lib/agentState'
-import { LOGIN_METHODS } from '../lib/loginMethods'
+import { STATE_BADGE, stateLabel } from '../lib/agentState'
+import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
 import { formatUptime, isOnline, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -42,7 +44,7 @@ const removeDialog = ref<HTMLDialogElement | null>(null)
 const setupDialog = ref<HTMLDialogElement | null>(null)
 const draft = ref({ label: '', serverAddress: '' })
 const editError = ref<string | null>(null)
-const setupMethod = ref(LOGIN_METHODS[0]!.id)
+const setupMethod = ref(LOGIN_METHOD_IDS[0])
 
 const agent = computed(() => agentStore.byId(Number(route.params.id)))
 
@@ -91,7 +93,7 @@ async function send() {
  * perform, so the operator is the only one who knows which mechanism will work there.
  */
 function openSetup() {
-  setupMethod.value = LOGIN_METHODS[0]!.id
+  setupMethod.value = LOGIN_METHOD_IDS[0]
   setupDialog.value?.showModal()
 }
 
@@ -156,11 +158,11 @@ async function confirmRemove() {
 
       <div class="flex items-center gap-4 text-right">
         <div>
-          <div class="text-xs uppercase opacity-50">Status</div>
-          <span class="badge badge-sm" :class="STATE_BADGE[agent.state]">{{ STATE_LABEL[agent.state] }}</span>
+          <div class="text-xs uppercase opacity-50">{{ t('common.status') }}</div>
+          <span class="badge badge-sm" :class="STATE_BADGE[agent.state]">{{ stateLabel(agent.state) }}</span>
         </div>
         <div>
-          <div class="text-xs uppercase opacity-50">Uptime</div>
+          <div class="text-xs uppercase opacity-50">{{ t('agents.uptime') }}</div>
           <div class="flex items-center gap-1 font-medium tabular-nums">
             <Clock class="size-3.5 opacity-50" />
             {{ formatUptime(agent.telemetry.uptimeSeconds) }}
@@ -169,11 +171,11 @@ async function confirmRemove() {
         <div v-if="auth.can('fleet.control')" class="flex gap-1">
           <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
             <SquarePen class="size-4" />
-            Edit
+            {{ t('common.edit') }}
           </button>
           <button class="btn btn-ghost btn-sm text-error gap-1" @click="removeDialog?.showModal()">
             <Trash2 class="size-4" />
-            Delete
+            {{ t('common.delete') }}
           </button>
         </div>
       </div>
@@ -186,11 +188,7 @@ async function confirmRemove() {
 
     <div v-if="!hostReachable" role="alert" class="alert alert-warning alert-soft">
       <TriangleAlert class="size-4 shrink-0" />
-      <span>
-        <span class="font-medium">{{ agent.hostName }}</span> is not connected, so commands cannot be
-        delivered. Enrolling a host only issues its token — the host has to connect to Osmium using
-        that token before this agent can be set up or connected.
-      </span>
+      <span>{{ t('agents.hostOffline', { host: agent.hostName }) }}</span>
     </div>
 
     <div
@@ -200,8 +198,7 @@ async function confirmRemove() {
     >
       <KeyRound class="size-4 shrink-0" />
       <span>
-        This agent has no credentials on its host yet. Setting it up prompts the host to log in — the
-        login happens there, not here.
+        {{ t('agents.notSetUp') }}
       </span>
     </div>
 
@@ -210,7 +207,7 @@ async function confirmRemove() {
       <div class="card-body gap-4">
         <h2 class="card-title flex items-center gap-2 text-base">
           <Agent class="text-primary size-4" />
-          Stats
+          {{ t('agents.stats') }}
         </h2>
 
         <div class="grid gap-4 sm:grid-cols-2">
@@ -218,7 +215,7 @@ async function confirmRemove() {
             <Heart class="text-error size-4 shrink-0" />
             <div class="min-w-0 flex-1">
               <div class="flex justify-between text-xs opacity-60">
-                <span>Health</span>
+                <span>{{ t('agents.health') }}</span>
                 <span class="tabular-nums">{{ agent.telemetry.health }} / 20</span>
               </div>
               <progress class="progress progress-error mt-1 w-full" :value="healthPercent" max="100"></progress>
@@ -229,7 +226,7 @@ async function confirmRemove() {
             <Beef class="text-warning size-4 shrink-0" />
             <div class="min-w-0 flex-1">
               <div class="flex justify-between text-xs opacity-60">
-                <span>Food</span>
+                <span>{{ t('agents.food') }}</span>
                 <span class="tabular-nums">{{ agent.telemetry.food }} / 20</span>
               </div>
               <progress class="progress progress-warning mt-1 w-full" :value="foodPercent" max="100"></progress>
@@ -241,7 +238,7 @@ async function confirmRemove() {
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
             <MapPin class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
-              <span class="block text-xs opacity-50">Position</span>
+              <span class="block text-xs opacity-50">{{ t('agents.position') }}</span>
               <span class="block truncate font-mono text-sm tabular-nums">
                 {{ agent.telemetry.position.x }}, {{ agent.telemetry.position.y }},
                 {{ agent.telemetry.position.z }}
@@ -251,21 +248,21 @@ async function confirmRemove() {
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
             <Target class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
-              <span class="block text-xs opacity-50">Task</span>
+              <span class="block text-xs opacity-50">{{ t('agents.task') }}</span>
               <span class="block truncate text-sm">{{ agent.telemetry.task }}</span>
             </span>
           </div>
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
             <Signal class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
-              <span class="block text-xs opacity-50">Ping</span>
+              <span class="block text-xs opacity-50">{{ t('agents.ping') }}</span>
               <span class="block truncate text-sm tabular-nums">{{ agent.telemetry.pingMs }} ms</span>
             </span>
           </div>
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
             <Hammer class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
-              <span class="block text-xs opacity-50">Blocks placed</span>
+              <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
               <span class="block truncate text-sm tabular-nums">
                 {{ agent.telemetry.blocksPlaced.toLocaleString() }}
               </span>
@@ -280,7 +277,7 @@ async function confirmRemove() {
       <div class="card-body gap-3">
         <h2 class="card-title flex items-center gap-2 text-base">
           <Users class="text-primary size-4" />
-          Nearby players
+          {{ t('agents.nearbyPlayers') }}
           <span class="badge badge-ghost badge-sm">{{ agent.telemetry.nearby.length }}</span>
         </h2>
 
@@ -291,12 +288,12 @@ async function confirmRemove() {
             class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
           >
             <span class="flex-1 truncate text-sm font-medium">{{ player.name }}</span>
-            <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">agent</span>
+            <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">{{ t('agents.agentTag') }}</span>
             <span class="text-xs tabular-nums opacity-50">{{ player.distance.toFixed(1) }} m</span>
           </li>
         </ul>
 
-        <p v-else class="py-6 text-center text-sm opacity-50">No players in range.</p>
+        <p v-else class="py-6 text-center text-sm opacity-50">{{ t('agents.noNearby') }}</p>
       </div>
     </div>
 
@@ -305,7 +302,7 @@ async function confirmRemove() {
       <div class="card-body gap-3">
         <h2 class="card-title flex items-center gap-2 text-base">
           <Activity class="text-primary size-4" />
-          Activity
+          {{ t('agents.activity') }}
         </h2>
 
         <ul v-if="agent.telemetry.activity.length" class="flex flex-col gap-1">
@@ -320,7 +317,7 @@ async function confirmRemove() {
           </li>
         </ul>
 
-        <p v-else class="py-6 text-center text-sm opacity-50">No incidents recorded.</p>
+        <p v-else class="py-6 text-center text-sm opacity-50">{{ t('agents.noActivity') }}</p>
       </div>
     </div>
 
@@ -329,7 +326,7 @@ async function confirmRemove() {
       <div class="card-body gap-4">
         <h2 class="card-title flex items-center gap-2 text-base">
           <Power class="text-primary size-4" />
-          Actions
+          {{ t('common.actions') }}
         </h2>
 
         <div class="flex flex-wrap gap-2">
@@ -340,7 +337,7 @@ async function confirmRemove() {
             @click="openSetup"
           >
             <KeyRound class="size-4" />
-            Set up on host
+            {{ t('agents.setUp') }}
           </button>
           <button
             v-if="auth.can('fleet.control')"
@@ -349,7 +346,7 @@ async function confirmRemove() {
             @click="run(() => agentStore.connect(agent!.id))"
           >
             <RotateCw class="size-4" />
-            Connect
+            {{ t('agents.connect') }}
           </button>
           <button
             v-if="auth.can('fleet.control')"
@@ -358,7 +355,7 @@ async function confirmRemove() {
             @click="run(() => agentStore.disconnect(agent!.id))"
           >
             <Power class="size-4" />
-            Disconnect
+            {{ t('agents.disconnect') }}
           </button>
         </div>
 
@@ -366,7 +363,7 @@ async function confirmRemove() {
 
         <div class="flex items-center gap-2 text-sm font-medium opacity-70">
           <MessageSquare class="size-4" />
-          Chat
+          {{ t('agents.chat') }}
           <span class="text-xs font-normal opacity-60">
             — messages to or from this agent. Server chat is on the dashboard.
           </span>
@@ -388,7 +385,7 @@ async function confirmRemove() {
             v-model="message"
             class="input w-full"
             type="text"
-            placeholder="Send a message as this agent"
+            :placeholder="t('agents.chatPlaceholder')"
             :disabled="busy || !hostReachable || !isOnline(agent)"
           />
           <button
@@ -397,7 +394,7 @@ async function confirmRemove() {
             :disabled="busy || !hostReachable || !isOnline(agent) || !message.trim()"
           >
             <Send class="size-4" />
-            Send
+            {{ t('agents.send') }}
           </button>
         </form>
       </div>
@@ -407,16 +404,13 @@ async function confirmRemove() {
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <SquarePen class="text-primary size-5" />
-          Edit {{ agent.label }}
+          {{ t('agents.editTitle', { name: agent.label }) }}
         </h3>
-        <p class="mt-1 text-sm opacity-60">
-          Moving to another server keeps the agent's credentials — the account is the same wherever it
-          joins — but it has to be offline first.
-        </p>
+        <p class="mt-1 text-sm opacity-60">{{ t('agents.editHint') }}</p>
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveEdit">
           <FormField
             v-model="draft.label"
-            label="Name"
+            :label="t('agents.label')"
             :icon="Agent"
             type="text"
             maxlength="64"
@@ -424,7 +418,7 @@ async function confirmRemove() {
           />
           <FormField
             v-model="draft.serverAddress"
-            label="Server"
+            :label="t('agents.server')"
             placeholder="mc.example.com:25565"
             :icon="Server"
             type="text"
@@ -432,7 +426,7 @@ async function confirmRemove() {
             :disabled="isOnline(agent)"
           />
           <p v-if="isOnline(agent)" class="text-xs opacity-60">
-            Disconnect the agent to move it to another server.
+            {{ t('agents.moveOffline') }}
           </p>
 
           <div v-if="editError" role="alert" class="alert alert-error alert-soft">
@@ -441,47 +435,43 @@ async function confirmRemove() {
           </div>
 
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">Cancel</button>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog ref="setupDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <KeyRound class="text-primary size-5" />
-          Set up {{ agent.label }}
+          {{ t('agents.setUpTitle', { name: agent.label }) }}
         </h3>
-        <p class="mt-3 text-sm opacity-70">
-          The login runs on <span class="font-medium">{{ agent.hostName }}</span>, not here. Osmium
-          relays your choice and never sees the credentials — finish the sign-in on the host, then
-          the agent reports back as ready.
-        </p>
+        <p class="mt-3 text-sm opacity-70">{{ t('agents.setUpBody', { host: agent.hostName }) }}</p>
 
         <ul class="list bg-base-100 border-base-300 mt-4 rounded-box border">
-          <li v-for="method in LOGIN_METHODS" :key="method.id" class="list-row items-center">
+          <li v-for="id in LOGIN_METHOD_IDS" :key="id" class="list-row items-center">
             <label class="flex w-full cursor-pointer items-center gap-3">
-              <input v-model="setupMethod" type="radio" :value="method.id" class="radio radio-sm radio-primary" />
+              <input v-model="setupMethod" type="radio" :value="id" class="radio radio-sm radio-primary" />
               <span class="min-w-0 flex-1">
-                <span class="block text-sm font-medium">{{ method.label }}</span>
-                <span class="block text-xs opacity-60">{{ method.description }}</span>
+                <span class="block text-sm font-medium">{{ t(`loginMethod.${id}.label`) }}</span>
+                <span class="block text-xs opacity-60">{{ t(`loginMethod.${id}.description`) }}</span>
               </span>
             </label>
           </li>
         </ul>
 
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">Cancel</button>
+          <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary btn-sm gap-2" type="button" @click="confirmSetup">
             <KeyRound class="size-4" />
-            Start setup
+            {{ t('agents.setUpStart') }}
           </button>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog ref="removeDialog" class="modal">
@@ -491,19 +481,17 @@ async function confirmRemove() {
           Delete {{ agent.label }}?
         </h3>
         <p class="mt-3 text-sm opacity-70">
-          The agent record is removed from Osmium. Credentials cached on
-          <span class="font-medium">{{ agent.hostName }}</span> are not cleaned up by this, so revoke
-          the account there if it should stop being usable.
+          {{ t('agents.removeWarning', { host: agent.hostName }) }}
         </p>
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">Cancel</button>
+          <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
           <button class="btn btn-error btn-sm gap-2" type="button" @click="confirmRemove">
             <Trash2 class="size-4" />
-            Delete
+            {{ t('common.delete') }}
           </button>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
   </div>
 
@@ -511,7 +499,7 @@ async function confirmRemove() {
     <div class="card border-base-300 bg-base-200 border">
       <div class="card-body items-center gap-2 py-20 text-center">
         <Agent class="size-8 opacity-30" />
-        <p class="text-sm opacity-50">No agent with that id.</p>
+        <p class="text-sm opacity-50">{{ t('agents.notFound') }}</p>
       </div>
     </div>
   </div>

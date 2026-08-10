@@ -1,3 +1,4 @@
+import { i18n } from '../i18n'
 import type { AgentResponse } from '../api/client'
 
 type AgentState = AgentResponse['state']
@@ -26,12 +27,7 @@ export const STATE_BADGE: Record<AgentState, string> = {
   STALE: 'badge-warning badge-soft',
 }
 
-export const STATE_LABEL: Record<AgentState, string> = {
-  ONLINE: 'Online',
-  LINKED: 'Ready',
-  UNLINKED: 'Not set up',
-  SETUP_PENDING: 'Setting up',
-  NEEDS_RELINK: 'Needs relink',
-  CONNECT_FAILED: 'Connect failed',
-  STALE: 'Unknown',
+/** The state as an operator reads it. Colours stay here; wording lives with the rest of the copy. */
+export function stateLabel(state: AgentState): string {
+  return i18n.global.t('agentState.' + state)
 }

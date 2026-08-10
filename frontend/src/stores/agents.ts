@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, errorMessage, type AgentResponse, type HostResponse } from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
+import { t } from '../i18n'
 
 /**
  * Fleet state.
@@ -122,7 +123,7 @@ export const useAgentStore = defineStore('agents', () => {
   async function loadHosts(): Promise<void> {
     const { data, error: failure } = await api.GET('/api/hosts')
     if (failure) {
-      error.value = errorMessage(failure, 'Could not load hosts')
+      error.value = errorMessage(failure, t('errors.loadHosts'))
       return
     }
     hosts.value = (data ?? []) as HostResponse[]
@@ -131,7 +132,7 @@ export const useAgentStore = defineStore('agents', () => {
   async function loadAgents(): Promise<void> {
     const { data, error: failure } = await api.GET('/api/agents')
     if (failure) {
-      error.value = errorMessage(failure, 'Could not load agents')
+      error.value = errorMessage(failure, t('errors.loadAgents'))
       return
     }
     // Telemetry is preserved across refreshes so the mock does not reset on every poll.
@@ -312,7 +313,7 @@ export const useAgentStore = defineStore('agents', () => {
    */
   async function enrolHost(name: string): Promise<string> {
     const { data, error: failure } = await api.POST('/api/hosts', { body: { name } })
-    if (failure || !data?.token) throw new Error(errorMessage(failure, 'Could not enrol the host'))
+    if (failure || !data?.token) throw new Error(errorMessage(failure, t('errors.enrolHost')))
     return data.token
   }
 
@@ -321,7 +322,7 @@ export const useAgentStore = defineStore('agents', () => {
       params: { path: { id } },
       body: { name },
     })
-    if (failure) throw new Error(errorMessage(failure, 'Could not rename the host'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.renameHost')))
   }
 
   /** Returns the replacement token, shown once. The host's current connection is closed. */
@@ -329,13 +330,13 @@ export const useAgentStore = defineStore('agents', () => {
     const { data, error: failure } = await api.POST('/api/hosts/{id}/rotate-token', {
       params: { path: { id } },
     })
-    if (failure || !data?.token) throw new Error(errorMessage(failure, 'Could not rotate the token'))
+    if (failure || !data?.token) throw new Error(errorMessage(failure, t('errors.rotateToken')))
     return data.token
   }
 
   async function removeHost(id: number): Promise<void> {
     const { error: failure } = await api.DELETE('/api/hosts/{id}', { params: { path: { id } } })
-    if (failure) throw new Error(errorMessage(failure, 'Could not remove the host'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.removeHost')))
   }
 
   async function addAgent(input: {
@@ -344,7 +345,7 @@ export const useAgentStore = defineStore('agents', () => {
     serverAddress: string
   }): Promise<AgentResponse> {
     const { data, error: failure } = await api.POST('/api/agents', { body: input })
-    if (failure || !data) throw new Error(errorMessage(failure, 'Could not create the agent'))
+    if (failure || !data) throw new Error(errorMessage(failure, t('errors.createAgent')))
     return data as AgentResponse
   }
 
@@ -357,12 +358,12 @@ export const useAgentStore = defineStore('agents', () => {
       params: { path: { id } },
       body: changes,
     })
-    if (failure) throw new Error(errorMessage(failure, 'Could not update the agent'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.updateAgent')))
   }
 
   async function removeAgent(id: number): Promise<void> {
     const { error: failure } = await api.DELETE('/api/agents/{id}', { params: { path: { id } } })
-    if (failure) throw new Error(errorMessage(failure, 'Could not remove the agent'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.removeAgent')))
   }
 
   async function setupAgent(id: number, method: string): Promise<void> {
@@ -370,19 +371,19 @@ export const useAgentStore = defineStore('agents', () => {
       params: { path: { id } },
       body: { method },
     })
-    if (failure) throw new Error(errorMessage(failure, 'Could not start setup'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.setUpAgent')))
   }
 
   async function connect(id: number): Promise<void> {
     const { error: failure } = await api.POST('/api/agents/{id}/connect', { params: { path: { id } } })
-    if (failure) throw new Error(errorMessage(failure, 'Could not connect'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.connectAgent')))
   }
 
   async function disconnect(id: number): Promise<void> {
     const { error: failure } = await api.POST('/api/agents/{id}/disconnect', {
       params: { path: { id } },
     })
-    if (failure) throw new Error(errorMessage(failure, 'Could not disconnect'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.disconnectAgent')))
   }
 
   async function say(id: number, message: string): Promise<void> {
@@ -391,7 +392,7 @@ export const useAgentStore = defineStore('agents', () => {
       params: { path: { id } },
       body: { message: message.trim() },
     })
-    if (failure) throw new Error(errorMessage(failure, 'Could not send the message'))
+    if (failure) throw new Error(errorMessage(failure, t('errors.sendMessage')))
   }
 
   return {

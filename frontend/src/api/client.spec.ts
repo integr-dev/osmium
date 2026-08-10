@@ -5,6 +5,7 @@ import {
   backendReachable,
   errorMessage,
   isUnreachable,
+  UNREACHABLE_MESSAGE,
   setUnauthorizedHandler,
 } from './client'
 import { token } from './token'
@@ -67,7 +68,7 @@ describe('an unreachable backend', () => {
 
     const { error } = await api.GET('/api/agents')
 
-    expect(errorMessage(error)).toBe('Cannot reach the backend')
+    expect(errorMessage(error)).toBe(UNREACHABLE_MESSAGE)
     expect(isUnreachable(error)).toBe(true)
   })
 

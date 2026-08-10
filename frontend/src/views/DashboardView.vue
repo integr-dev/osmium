@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import {
   Activity,
@@ -19,6 +20,7 @@ import { STATE_DOT } from '../lib/agentState'
 import type { Sector } from '../stores/agents'
 import { useAgentStore } from '../stores/agents'
 
+const { t } = useI18n()
 const agentStore = useAgentStore()
 
 onMounted(() => void agentStore.refresh())
@@ -70,7 +72,7 @@ function percent(part: number, whole: number): number {
   <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ t('dashboard.title') }}</h1>
         <p class="text-sm opacity-60">
           Building <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
         </p>
@@ -86,28 +88,28 @@ function percent(part: number, whole: number): number {
     <div class="stats stats-vertical sm:stats-horizontal border-base-300 bg-base-200 w-full border">
       <div class="stat">
         <div class="stat-figure text-primary"><Agent class="size-7" /></div>
-        <div class="stat-title">Agents online</div>
+        <div class="stat-title">{{ t('dashboard.agentsOnline') }}</div>
         <div class="stat-value text-3xl">
           {{ agentStore.online.length }}<span class="text-lg opacity-40">/{{ agentStore.agents.length }}</span>
         </div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
-        <div class="stat-title">Blocks placed</div>
+        <div class="stat-title">{{ t('dashboard.blocksPlaced') }}</div>
         <div class="stat-value text-3xl">{{ agentStore.blocksPlaced.toLocaleString() }}</div>
         <div class="stat-desc">of {{ agentStore.schematic.totalBlocks.toLocaleString() }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Gauge class="size-7" /></div>
-        <div class="stat-title">Throughput</div>
+        <div class="stat-title">{{ t('dashboard.throughput') }}</div>
         <div class="stat-value text-3xl">{{ agentStore.blocksPerMinute }}</div>
-        <div class="stat-desc">blocks / minute</div>
+        <div class="stat-desc">{{ t('dashboard.perMinute') }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Clock class="size-7" /></div>
-        <div class="stat-title">Est. remaining</div>
+        <div class="stat-title">{{ t('dashboard.remaining') }}</div>
         <div class="stat-value text-3xl">{{ eta }}</div>
-        <div class="stat-desc">at the current rate</div>
+        <div class="stat-desc">{{ t('dashboard.atCurrentRate') }}</div>
       </div>
     </div>
 
@@ -116,7 +118,7 @@ function percent(part: number, whole: number): number {
         <div class="flex items-center justify-between">
           <h2 class="card-title flex items-center gap-2 text-base">
             <Layers class="text-primary size-4" />
-            Schematic progress
+            {{ t('dashboard.progress') }}
           </h2>
           <span class="text-sm opacity-60">
             Layer {{ agentStore.schematic.currentLayer }} of {{ agentStore.schematic.layers }}
@@ -142,7 +144,7 @@ function percent(part: number, whole: number): number {
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
             <TriangleAlert class="text-warning size-4" />
-            Needs attention
+            {{ t('dashboard.needsAttention') }}
             <span class="badge badge-ghost badge-sm">{{ agentStore.attention.length }}</span>
           </h2>
 
@@ -167,7 +169,7 @@ function percent(part: number, whole: number): number {
             </RouterLink>
           </ul>
 
-          <p v-else class="py-8 text-center text-sm opacity-50">Every agent is healthy.</p>
+          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.allHealthy') }}</p>
         </div>
       </div>
 
@@ -175,7 +177,7 @@ function percent(part: number, whole: number): number {
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
             <Map class="text-primary size-4" />
-            Sectors
+            {{ t('dashboard.sectors') }}
             <span class="badge badge-ghost badge-sm">
               {{ agentStore.sectors.filter((sector) => sector.status === 'done').length }}/{{
                 agentStore.sectors.length
@@ -217,7 +219,7 @@ function percent(part: number, whole: number): number {
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
             <Blocks class="text-primary size-4" />
-            Contribution
+            {{ t('dashboard.contribution') }}
           </h2>
 
           <ul class="flex flex-col gap-3">
@@ -250,7 +252,7 @@ function percent(part: number, whole: number): number {
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h2 class="card-title flex items-center gap-2 text-base">
               <MessagesSquare class="text-primary size-4" />
-              Server chat
+              {{ t('dashboard.serverChat') }}
             </h2>
           </div>
           <p class="text-xs opacity-50">
@@ -283,17 +285,17 @@ function percent(part: number, whole: number): number {
                   <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
                 </p>
                 <p v-if="!agentStore.globalChatFor(server).length" class="text-sm opacity-50">
-                  Nothing yet.
+                  {{ t('dashboard.noChat') }}
                 </p>
               </div>
 
               <p v-else class="text-sm opacity-50">
-                No agent online here, so nothing is listening.
+                {{ t('dashboard.noListener') }}
               </p>
             </div>
           </div>
 
-          <p v-else class="py-8 text-center text-sm opacity-50">No agents on any server yet.</p>
+          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.noChat') }}</p>
         </div>
       </div>
     </div>
@@ -303,9 +305,9 @@ function percent(part: number, whole: number): number {
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
             <Activity class="text-primary size-4" />
-            Agent activity
+            {{ t('dashboard.activity') }}
           </h2>
-          <p class="text-xs opacity-50">Incidents and connectivity — not conversation.</p>
+          <p class="text-xs opacity-50">{{ t('dashboard.activityHint') }}</p>
 
           <div v-if="agentStore.activity.length" class="flex max-h-64 flex-col gap-1 overflow-y-auto">
             <RouterLink
@@ -324,7 +326,7 @@ function percent(part: number, whole: number): number {
             </RouterLink>
           </div>
 
-          <p v-else class="py-8 text-center text-sm opacity-50">Nothing yet.</p>
+          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.noActivity') }}</p>
         </div>
       </div>
     </div>

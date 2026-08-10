@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Bot as Agent, Copy, KeyRound, Plus, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
 import AddHostModal from '../components/AddHostModal.vue'
 import FormField from '../components/FormField.vue'
 import type { HostResponse } from '../api/client'
 import { useAgentStore } from '../stores/agents'
 
+const { t } = useI18n()
 const agentStore = useAgentStore()
 
 const addOpen = ref(false)
@@ -90,16 +92,16 @@ async function confirmRemove() {
   <div class="mx-auto flex max-w-5xl flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">Hosts</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ t('hosts.title') }}</h1>
         <p class="text-sm opacity-60">
-          Machines that run your agents.
+          {{ t('hosts.subtitle') }}
           {{ agentStore.hosts.filter((host) => host.reachable).length }} of
           {{ agentStore.hosts.length }} online.
         </p>
       </div>
       <button class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
         <Plus class="size-4" />
-        Enrol host
+        {{ t('hosts.enrol') }}
       </button>
     </header>
 
@@ -113,11 +115,11 @@ async function confirmRemove() {
         <table class="table">
           <thead>
             <tr>
-              <th>Host</th>
-              <th>Status</th>
-              <th>Agent</th>
-              <th>Agents</th>
-              <th class="text-right">Actions</th>
+              <th>{{ t('hosts.host') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('hosts.version') }}</th>
+              <th>{{ t('hosts.agents') }}</th>
+              <th class="text-right">{{ t('common.actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -155,15 +157,15 @@ async function confirmRemove() {
                 <div class="flex justify-end gap-1">
                   <button class="btn btn-ghost btn-xs gap-1" @click="openRename(host)">
                     <SquarePen class="size-3.5" />
-                    Rename
+                    {{ t('hosts.rename') }}
                   </button>
                   <button class="btn btn-ghost btn-xs gap-1" @click="openRotate(host)">
                     <KeyRound class="size-3.5" />
-                    Rotate token
+                    {{ t('hosts.rotateToken') }}
                   </button>
                   <button class="btn btn-ghost btn-xs text-error gap-1" @click="askRemove(host)">
                     <Trash2 class="size-3.5" />
-                    Remove
+                    {{ t('hosts.removeAction') }}
                   </button>
                 </div>
               </td>
@@ -172,7 +174,7 @@ async function confirmRemove() {
               <td colspan="5">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Server class="size-6" />
-                  <span class="text-sm">No hosts enrolled.</span>
+                  <span class="text-sm">{{ t('hosts.none') }}</span>
                 </div>
               </td>
             </tr>
@@ -187,16 +189,13 @@ async function confirmRemove() {
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <SquarePen class="text-primary size-5" />
-          Rename host
+          {{ t('hosts.rename') }}
         </h3>
-        <p class="mt-1 text-sm opacity-60">
-          Only the name is yours to set — address, version and reachability are observed when the
-          host connects.
-        </p>
+        <p class="mt-1 text-sm opacity-60">{{ t('hosts.renameHint') }}</p>
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveRename">
           <FormField
             v-model="renameDraft"
-            label="Host name"
+            :label="t('hosts.name')"
             :icon="Server"
             type="text"
             maxlength="64"
@@ -207,40 +206,39 @@ async function confirmRemove() {
             <span>{{ renameError }}</span>
           </div>
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">Cancel</button>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog ref="rotateDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <KeyRound class="text-primary size-5" />
-          Rotate token for {{ rotating?.name }}
+          {{ t('hosts.rotateTitle', { name: rotating?.name }) }}
         </h3>
 
         <div v-if="!rotatedToken" class="mt-4 flex flex-col gap-4">
           <p class="text-sm opacity-70">
-            Issues a new token and invalidates the current one. The host is disconnected and has to
-            reconnect with the replacement — its agents are kept.
+            {{ t('hosts.rotateIntro') }}
           </p>
           <div v-if="rotateError" role="alert" class="alert alert-error alert-soft">
             <TriangleAlert class="size-4" />
             <span>{{ rotateError }}</span>
           </div>
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="rotateDialog?.close()">Cancel</button>
-            <button class="btn btn-primary btn-sm" type="button" @click="confirmRotate">Rotate</button>
+            <button class="btn btn-ghost btn-sm" type="button" @click="rotateDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="button" @click="confirmRotate">{{ t('hosts.rotate') }}</button>
           </div>
         </div>
 
         <div v-else class="mt-4 flex flex-col gap-4">
           <div role="alert" class="alert alert-warning alert-soft">
             <TriangleAlert class="size-4" />
-            <span>Copy this now — it is shown once and cannot be recovered.</span>
+            <span>{{ t('hosts.tokenWarning') }}</span>
           </div>
           <label class="input w-full">
             <KeyRound class="size-4 opacity-60" />
@@ -251,39 +249,34 @@ async function confirmRemove() {
             </button>
           </label>
           <div class="modal-action">
-            <button class="btn btn-primary btn-sm" type="button" @click="rotateDialog?.close()">Done</button>
+            <button class="btn btn-primary btn-sm" type="button" @click="rotateDialog?.close()">{{ t('common.done') }}</button>
           </div>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog ref="removeDialog" class="modal" @close="pendingRemove = null">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <TriangleAlert class="text-error size-5" />
-          Remove {{ pendingRemove?.name }}?
+          {{ t('hosts.removeTitle', { name: pendingRemove?.name }) }}
         </h3>
         <p class="mt-3 text-sm opacity-70">
           <template v-if="pendingRemove && agentStore.agentsOnHost(pendingRemove.id).length">
-            This host runs
-            <span class="text-error font-medium">
-              {{ agentStore.agentsOnHost(pendingRemove.id).length }} agent(s)
-            </span>
-            , which will be removed with it.
+            {{ t('hosts.removeWithAgents', { count: agentStore.agentsOnHost(pendingRemove.id).length }) }}
           </template>
-          <template v-else>This host has no agents.</template>
-          Its token stops working.
+          <template v-else>{{ t('hosts.removeNoAgents') }}</template>
         </p>
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">Cancel</button>
+          <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
           <button class="btn btn-error btn-sm gap-2" type="button" @click="confirmRemove">
             <Trash2 class="size-4" />
-            Remove
+            {{ t('hosts.removeAction') }}
           </button>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
   </div>
 </template>

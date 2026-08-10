@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   CheckCheck,
   ChevronLeft,
@@ -22,6 +23,7 @@ import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
 import { useAuthStore } from '../stores/auth'
 
+const { t } = useI18n()
 const auth = useAuthStore()
 
 const users = ref<UserResponse[]>([])
@@ -206,17 +208,17 @@ function openEdit(user: UserResponse) {
   <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-semibold tracking-tight">All accounts</h1>
-        <p class="text-sm opacity-60">Registration is administrator-only.</p>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ t('accounts.title') }}</h1>
+        <p class="text-sm opacity-60">{{ t('accounts.subtitle') }}</p>
       </div>
       <div class="flex items-center gap-2">
         <label class="input input-sm w-56">
           <Search class="size-4 opacity-60" />
-          <input v-model="query" type="search" placeholder="Filter by username" />
+          <input v-model="query" type="search" :placeholder="t('accounts.filterPlaceholder')" />
         </label>
         <button v-if="auth.can('user.create')" class="btn btn-primary btn-sm gap-2" @click="openCreate">
           <Plus class="size-4" />
-          New account
+          {{ t('accounts.newAccount') }}
         </button>
       </div>
     </header>
@@ -224,7 +226,7 @@ function openEdit(user: UserResponse) {
     <div class="stats border-base-300 bg-base-200 w-full border">
       <div class="stat">
         <div class="stat-figure opacity-60"><Users class="size-7" /></div>
-        <div class="stat-title">Accounts</div>
+        <div class="stat-title">{{ t('accounts.count') }}</div>
         <div class="stat-value text-3xl">{{ users.length }}</div>
       </div>
       <div v-for="entry in breakdown.roles" :key="entry.name" class="stat">
@@ -236,7 +238,7 @@ function openEdit(user: UserResponse) {
       </div>
       <div class="stat">
         <div class="stat-figure opacity-40"><CircleSlash2 class="size-7" /></div>
-        <div class="stat-title">No role</div>
+        <div class="stat-title">{{ t('accounts.noRole') }}</div>
         <div class="stat-value text-3xl">{{ breakdown.none }}</div>
       </div>
     </div>
@@ -255,9 +257,9 @@ function openEdit(user: UserResponse) {
         <table class="table">
           <thead>
             <tr>
-              <th>Account</th>
-              <th>Role</th>
-              <th class="text-right">Actions</th>
+              <th>{{ t('accounts.account') }}</th>
+              <th>{{ t('accounts.role') }}</th>
+              <th class="text-right">{{ t('common.actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -296,7 +298,7 @@ function openEdit(user: UserResponse) {
                     @click="openEdit(user)"
                   >
                     <SquarePen class="size-3.5" />
-                    Edit
+                    {{ t('common.edit') }}
                   </button>
                   <button
                     v-if="auth.can('user.role.write') && user.username !== auth.user?.username"
@@ -304,7 +306,7 @@ function openEdit(user: UserResponse) {
                     @click="openRole(user)"
                   >
                     <UserRoundCog class="size-3.5" />
-                    Role
+                    {{ t('accounts.changeRole') }}
                   </button>
                   <button
                     v-if="auth.can('user.delete') && user.username !== auth.user?.username"
@@ -312,7 +314,7 @@ function openEdit(user: UserResponse) {
                     @click="remove(user)"
                   >
                     <Trash2 class="size-3.5" />
-                    Delete
+                    {{ t('common.delete') }}
                   </button>
                 </div>
               </td>
@@ -321,7 +323,7 @@ function openEdit(user: UserResponse) {
               <td colspan="3">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Users class="size-6" />
-                  <span class="text-sm">No accounts match that filter.</span>
+                  <span class="text-sm">{{ t('accounts.noMatches') }}</span>
                 </div>
               </td>
             </tr>
@@ -334,18 +336,18 @@ function openEdit(user: UserResponse) {
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <UserPlus class="text-primary size-5" />
-          New account
+          {{ t('accounts.newAccount') }}
         </h3>
         <ul class="steps mt-4 w-full">
-          <li class="step step-primary text-xs">Account</li>
-          <li class="step text-xs" :class="createStep === 2 ? 'step-primary' : ''">Role</li>
+          <li class="step step-primary text-xs">{{ t('accounts.account') }}</li>
+          <li class="step text-xs" :class="createStep === 2 ? 'step-primary' : ''">{{ t('accounts.role') }}</li>
         </ul>
 
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="submitCreate">
           <template v-if="createStep === 1">
             <FormField
               v-model="draft.username"
-              label="Username"
+              :label="t('accounts.username')"
               :icon="UserRound"
               type="text"
               maxlength="64"
@@ -353,8 +355,8 @@ function openEdit(user: UserResponse) {
             />
             <FormField
               v-model="draft.password"
-              label="Password"
-              placeholder="4–72 characters"
+              :label="t('accounts.password')"
+              :placeholder="t('accounts.passwordPlaceholder')"
               :icon="KeyRound"
               type="password"
               autocomplete="new-password"
@@ -364,8 +366,8 @@ function openEdit(user: UserResponse) {
             />
             <FormField
               v-model="draft.confirmPassword"
-              label="Confirm password"
-              placeholder="Repeat the password"
+              :label="t('accounts.confirmPassword')"
+              :placeholder="t('accounts.confirmPlaceholder')"
               :icon="CheckCheck"
               :invalid="Boolean(draft.confirmPassword) && draft.confirmPassword !== draft.password"
               type="password"
@@ -376,7 +378,7 @@ function openEdit(user: UserResponse) {
 
           <template v-else>
             <p class="text-sm opacity-60">
-              Roles are nested levels, so exactly one applies. Each includes the tiers below it.
+              {{ t('accounts.roleHint') }}
             </p>
             <ul class="flex flex-col gap-1">
               <li v-for="role in roles" :key="role.id">
@@ -412,8 +414,8 @@ function openEdit(user: UserResponse) {
                   />
                   <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
                   <span class="min-w-0 flex-1">
-                    <span class="block font-medium">No role</span>
-                    <span class="block text-xs opacity-60">Creates the account with no permissions</span>
+                    <span class="block font-medium">{{ t('accounts.noRole') }}</span>
+                    <span class="block text-xs opacity-60">{{ t('accounts.noRoleHint') }}</span>
                   </span>
                 </label>
               </li>
@@ -433,7 +435,7 @@ function openEdit(user: UserResponse) {
               @click="createStep = 1"
             >
               <ChevronLeft class="size-4" />
-              Back
+              {{ t('accounts.back') }}
             </button>
             <button
               v-else
@@ -441,7 +443,7 @@ function openEdit(user: UserResponse) {
               type="button"
               @click="dialog('create-user')?.close()"
             >
-              Cancel
+              {{ t('common.cancel') }}
             </button>
             <button class="btn btn-primary btn-sm gap-1" type="submit">
               {{ createStep === 1 ? 'Next' : 'Create' }}
@@ -450,7 +452,7 @@ function openEdit(user: UserResponse) {
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog id="edit-user" class="modal">
@@ -465,7 +467,7 @@ function openEdit(user: UserResponse) {
         <form v-if="editingUser" class="mt-5 flex flex-col gap-4" @submit.prevent="saveUser">
           <FormField
             v-model="editingUser.username"
-            label="Username"
+            :label="t('accounts.username')"
             :icon="UserRound"
             type="text"
             maxlength="64"
@@ -473,8 +475,8 @@ function openEdit(user: UserResponse) {
           />
           <FormField
             v-model="editingUser.password"
-            label="New password"
-            placeholder="Leave blank to keep the current one"
+            :label="t('accounts.newPassword')"
+            :placeholder="t('accounts.passwordOptional')"
             :icon="KeyRound"
             type="password"
             autocomplete="new-password"
@@ -483,8 +485,8 @@ function openEdit(user: UserResponse) {
           />
           <FormField
             v-model="editingUser.confirmPassword"
-            label="Confirm new password"
-            placeholder="Repeat the new password"
+            :label="t('accounts.confirmNewPassword')"
+            :placeholder="t('accounts.confirmNewPlaceholder')"
             :icon="CheckCheck"
             :invalid="editingUser.confirmPassword !== editingUser.password"
             type="password"
@@ -493,13 +495,13 @@ function openEdit(user: UserResponse) {
           />
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-user')?.close()">
-              Cancel
+              {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
     <dialog id="edit-role" class="modal">
@@ -509,7 +511,7 @@ function openEdit(user: UserResponse) {
           Role for {{ editing?.user.username }}
         </h3>
         <p class="mt-1 text-sm opacity-60">
-          Roles are nested levels, so exactly one applies. Each includes the tiers below it.
+          {{ t('accounts.roleHint') }}
         </p>
         <form class="mt-4 flex flex-col gap-3" @submit.prevent="saveRole">
           <ul v-if="editing" class="flex flex-col gap-1">
@@ -549,21 +551,21 @@ function openEdit(user: UserResponse) {
                 />
                 <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
                 <span class="min-w-0 flex-1">
-                  <span class="block font-medium">No role</span>
-                  <span class="block text-xs opacity-60">Removes every permission</span>
+                  <span class="block font-medium">{{ t('accounts.noRole') }}</span>
+                  <span class="block text-xs opacity-60">{{ t('accounts.removeRoleHint') }}</span>
                 </span>
               </label>
             </li>
           </ul>
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-role')?.close()">
-              Cancel
+              {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
           </div>
         </form>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
   </div>
 </template>

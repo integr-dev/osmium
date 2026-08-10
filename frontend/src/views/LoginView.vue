@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, KeyRound, LogIn, UserRound } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
 import { useAuthStore } from '../stores/auth'
 
+const { t } = useI18n()
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
@@ -44,14 +46,14 @@ async function submit() {
             <img src="/logo.svg" alt="" class="size-14" />
             <div class="text-center">
               <h1 class="text-2xl font-semibold tracking-tight">Osmium</h1>
-              <p class="text-sm opacity-60">Sign in to continue</p>
+              <p class="text-sm opacity-60">{{ t('login.subtitle') }}</p>
             </div>
           </div>
 
           <form class="flex flex-col gap-4" @submit.prevent="submit">
             <FormField
               v-model="username"
-              label="Username"
+              :label="t('login.username')"
               :icon="UserRound"
               type="text"
               autocomplete="username"
@@ -60,7 +62,7 @@ async function submit() {
 
             <FormField
               v-model="password"
-              label="Password"
+              :label="t('login.password')"
               :icon="KeyRound"
               type="password"
               autocomplete="current-password"
@@ -75,14 +77,14 @@ async function submit() {
             <button class="btn btn-primary btn-block gap-2" type="submit" :disabled="busy">
               <span v-if="busy" class="loading loading-spinner loading-sm"></span>
               <LogIn v-else class="size-4" />
-              Log in
+              {{ busy ? t('login.signingIn') : t('login.signIn') }}
             </button>
           </form>
         </div>
       </div>
 
       <p class="mt-6 text-center text-xs opacity-40">
-        Accounts are created by an administrator.
+        {{ t('accounts.subtitle') }}
       </p>
     </div>
   </div>

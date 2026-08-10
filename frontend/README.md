@@ -105,6 +105,28 @@ Two things make this work that are easy to get wrong:
 Unreachable never clears the session. It says nothing about whether the token is valid, and dropping
 it over a blip would cost the operator their session.
 
+## Copy
+
+Every string the operator sees lives in `src/i18n/en.ts`. One locale — the value is not translation
+but having a single place where the product's voice is decided, instead of it accumulating in
+templates a phrase at a time.
+
+Components read it with `useI18n()`. Code that is not a component — stores, presentation maps —
+imports `t` from `src/i18n` directly.
+
+Two rules for anything added:
+
+- **Say what happened and what to do, not why the code works that way.** Design reasoning belongs in
+  comments and in `FLEET_CONNECTIVITY.md`. A message that explains it asks the reader to care about
+  a decision they cannot act on.
+- **Never call Osmium "the server".** In this product a server is a *Minecraft* server, so Osmium is
+  named directly and its parts are hosts and agents.
+
+One trap worth knowing: **vue-i18n reads a dot in a key as a path separator**. Permission nodes
+contain dots (`fleet.chat`), so `t('permission.fleet.chat')` looks for `permission → fleet → chat`,
+finds nothing, and silently returns the key. `nodeLabel` therefore indexes the copy object directly
+rather than going through `t()`, and `i18n.spec.ts` pins that.
+
 ## Authorization in the UI
 
 `GET /api/auth/me` returns the account's flattened permission nodes, and the UI gates on the same
@@ -122,7 +144,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-60 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+66 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
 fleet store's derived state.
 
@@ -187,7 +209,8 @@ suite runs once instead of twice.
 src/api/         generated schema, typed client, token storage, live-update client
 src/components/  FormField, the add-host and add-agent modals
 src/layouts/     AppLayout: sidebar, nav, drawer
-src/lib/         presentation maps for agent state, roles, node labels and login methods
+src/i18n/        every user-facing string
+src/lib/         presentation maps for agent state, roles and permission labels
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub

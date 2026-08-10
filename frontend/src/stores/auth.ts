@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, errorMessage, isUnreachable, type UserResponse } from '../api/client'
 import { token } from '../api/token'
+import { t } from '../i18n'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserResponse | null>(null)
@@ -19,7 +20,7 @@ export const useAuthStore = defineStore('auth', () => {
     const { data, error } = await api.POST('/api/auth/login', {
       body: { username, password },
     })
-    if (error || !data?.token) throw new Error(errorMessage(error, 'Invalid username or password'))
+    if (error || !data?.token) throw new Error(errorMessage(error, t('errors.invalidCredentials')))
 
     token.value = data.token
     await loadUser()

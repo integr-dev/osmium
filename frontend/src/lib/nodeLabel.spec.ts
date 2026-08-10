@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { en } from '../i18n/en'
 import { nodeLabel } from './nodeLabel'
 
 describe('nodeLabel', () => {
   it('names a known node', () => {
-    expect(nodeLabel('fleet.chat')).toBe('Speak in game as an agent')
+    // Compared against the copy file, not a literal, so rewording does not break the test.
+    expect(nodeLabel('fleet.chat')).toBe(en.permission['fleet.chat'])
   })
 
   // The map is presentation only. A node added on the backend must still render as something, or
