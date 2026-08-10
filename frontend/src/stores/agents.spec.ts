@@ -15,19 +15,22 @@ const HOSTS: HostResponse[] = [
  */
 const AGENTS: AgentResponse[] = [
   agent({ id: 6, state: 'ONLINE', serverAddress: 'alpha.example:25565' }),
-  agent({ id: 12, state: 'ONLINE', serverAddress: 'alpha.example:25565' }),
+  agent({ id: 12, state: 'ONLINE', serverAddress: 'alpha.example:25565', chatListener: true }),
   agent({ id: 7, state: 'STALE', serverAddress: 'alpha.example:25565' }),
   agent({ id: 3, state: 'LINKED', serverAddress: 'beta.example:25565' }),
   agent({ id: 5, state: 'ONLINE', serverAddress: 'beta.example:25565' }),
 ]
 
-function agent(fields: Pick<AgentResponse, 'id' | 'state' | 'serverAddress'>): AgentResponse {
+function agent(
+  fields: Pick<AgentResponse, 'id' | 'state' | 'serverAddress'> & { chatListener?: boolean },
+): AgentResponse {
   return {
     label: `Mason_${fields.id}`,
     hostId: 1,
     hostName: 'eu-1',
     mcUsername: null,
     mcUuid: null,
+    chatListener: false,
     ...fields,
   }
 }
@@ -62,7 +65,7 @@ describe('fleet store', () => {
   })
 
   describe('server summaries', () => {
-    it('elects one listener per server, not one per fleet', async () => {
+    it('reports each server once, with its share of the fleet', async () => {
       fleet()
       const store = useAgentStore()
 
@@ -72,11 +75,15 @@ describe('fleet store', () => {
         'alpha.example:25565',
         'beta.example:25565',
       ])
+      const alpha = store.serverSummaries.find((s) => s.address === 'alpha.example:25565')
+      expect(alpha).toMatchObject({ online: 2, total: 3 })
     })
 
-    // Stability is the point: the longest-running agent wins, so an agent joining never displaces a
-    // listener that is already working.
-    it('picks the longest-running online agent', async () => {
+    /**
+     * Read, not derived. Election is backend-side, so the store reports whichever agent was actually
+     * told to forward — working it out here would be a guess that can disagree with the fleet.
+     */
+    it('reports the listener the backend elected', async () => {
       fleet()
       const store = useAgentStore()
 
@@ -86,16 +93,16 @@ describe('fleet store', () => {
       expect(alpha?.listener?.id).toBe(12)
     })
 
-    it('leaves a server without a listener when nothing there is online', async () => {
-      fleet([agent({ id: 3, state: 'LINKED', serverAddress: 'gamma.example:25565' })])
+    // Honest rather than tidy: nothing is forwarding, so that server has no global feed.
+    it('leaves a server without a listener when the backend has elected none', async () => {
+      fleet([agent({ id: 5, state: 'ONLINE', serverAddress: 'gamma.example:25565' })])
       const store = useAgentStore()
 
       await store.refresh()
 
       const gamma = store.serverSummaries.find((s) => s.address === 'gamma.example:25565')
       expect(gamma?.listener).toBeUndefined()
-      expect(gamma?.online).toBe(0)
-      expect(gamma?.total).toBe(1)
+      expect(gamma?.online).toBe(1)
     })
   })
 

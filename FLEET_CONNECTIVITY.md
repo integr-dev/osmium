@@ -596,6 +596,34 @@ and the backend deduplicating on `(server, text, time bucket)` — needs no fail
 wire traffic by the fleet size. Election was chosen; deduplication remains the fallback if the
 failover logic proves fiddly.
 
+#### How it actually runs
+
+`ChatListenerService` sweeps every server on a **timer**, not on events, and the reason is specific:
+`STALE` is *derived* from the host's heartbeat when a record is read, so a host going silent changes
+nothing in the database and fires nothing. An event-driven election would leave a dead listener
+holding the role indefinitely, and the symptom — that server's chat simply stops — gives no hint
+why. The sweep runs well inside the heartbeat grace window, so the grace window is what bounds how
+long a lost listener goes unnoticed, and it doubles as the retry for a command that could not be
+delivered.
+
+Two invariants hold the design together:
+
+- **Told before recorded.** `Agent.chatListener` is only set once the `set_chat_listener` write to
+  the host has gone through. Setting it first would let a server have a listener on paper and
+  silence in practice, which is the one failure an operator cannot see from the dashboard.
+- **Eligibility is reachable *and* writable.** An agent is a candidate only if it derives as `ONLINE`
+  and its host has a live socket. A host can sit inside its grace window with the connection already
+  gone — a closed laptop, a killed process — and electing an agent the backend cannot write to
+  records a listener that was never told.
+
+`onlineSince` exists to rank candidates, and is reset on each entry into `ONLINE` rather than
+accumulated: a reconnect is a new session, so an agent that keeps dropping cannot out-rank one that
+has never lost its connection.
+
+The frontend **reads** `chatListener` off the agent rather than working out who ought to hold it.
+Deriving it in the browser produced a plausible answer that could quietly disagree with which agent
+was actually forwarding.
+
 ### Persistence
 
 Three streams, three retentions. They are separated because they carry different things and age

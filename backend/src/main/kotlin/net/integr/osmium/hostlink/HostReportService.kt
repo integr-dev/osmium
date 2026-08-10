@@ -18,6 +18,7 @@ import net.integr.osmium.hostlink.MessageKind
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 import net.integr.osmium.host.model.Host
 import net.integr.osmium.host.service.HostService
 
@@ -116,6 +117,12 @@ class HostReportService(
         // thing polling would otherwise have to discover.
         if (agent.state != state) {
             agent.state = state
+            // Chat listener election ranks by session length, so the clock starts on entering the
+            // game and stops on leaving it. A reconnect is a new session, not a continuation.
+            agent.onlineSince = if (state == AgentState.ONLINE) Instant.now() else null
+            // An agent that left the game has stopped forwarding whatever it was forwarding. Saying
+            // so here means the next election sees a vacancy rather than a listener that is gone.
+            if (state != AgentState.ONLINE) agent.chatListener = false
             publish(agent)
         }
     }

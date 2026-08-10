@@ -32,6 +32,12 @@ data class AgentResponse(
     val state: AgentState,
     val mcUsername: String?,
     val mcUuid: String?,
+
+    @field:Schema(
+        description = "True when this agent forwards its server's global chat. One per server, " +
+            "elected by the backend - a server with none has no global feed.",
+    )
+    val chatListener: Boolean,
 )
 
 @Schema(
@@ -79,6 +85,7 @@ fun Agent.toResponse(): AgentResponse = AgentResponse(
     state = effectiveState(),
     mcUsername = mcUsername,
     mcUuid = mcUuid,
+    chatListener = chatListener,
 )
 
 const val AGENT_LABEL_MAX_LENGTH = 64

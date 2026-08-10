@@ -240,9 +240,11 @@ export const useAgentStore = defineStore('agents', () => {
   /**
    * Each server with its share of the fleet, and the agent forwarding its global chat.
    *
-   * One elected listener **per server**, not per fleet, chosen for stability - the longest running
-   * online agent - so a new agent joining never displaces a working listener. A server with nobody
-   * online has no listener, which is honest: nothing is watching its chat.
+   * The listener is **read, not computed**. Election is backend-side — only it sees the whole fleet,
+   * and agents on one server can be spread across several hosts — and `chatListener` reports which
+   * agent was actually told to forward. Working it out here would be a guess that quietly disagrees
+   * with what the agents are doing. A server with nobody listening has no global feed, which is
+   * honest rather than a gap to paper over.
    */
   const serverSummaries = computed<ServerSummary[]>(() =>
     servers.value.map((address) => {
@@ -251,9 +253,7 @@ export const useAgentStore = defineStore('agents', () => {
         address,
         online: here.filter(isOnline).length,
         total: here.length,
-        listener: here
-          .filter(isOnline)
-          .sort((a, b) => b.telemetry.uptimeSeconds - a.telemetry.uptimeSeconds)[0],
+        listener: here.find((agent) => agent.chatListener),
       }
     }),
   )

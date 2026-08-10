@@ -546,6 +546,8 @@ export interface components {
             state?: "UNLINKED" | "SETUP_PENDING" | "LINKED" | "ONLINE" | "NEEDS_RELINK" | "CONNECT_FAILED" | "STALE";
             mcUsername?: string | null;
             mcUuid?: string | null;
+            /** @description True when this agent forwards its server's global chat. One per server, elected by the backend - a server with none has no global feed. */
+            chatListener?: boolean;
         };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
