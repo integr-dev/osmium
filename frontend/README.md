@@ -21,6 +21,8 @@ The dev proxy keeps things same-origin, which is why the backend needs no CORS c
 |---|---|
 | `npm run dev` | dev server with HMR |
 | `npm run build` | type-check with `vue-tsc`, then bundle |
+| `npm test` | Vitest unit suite |
+| `npm run test:watch` | Vitest in watch mode |
 | `npm run lint` | ESLint |
 | `npm run api:generate` | regenerate `src/api/schema.d.ts` from `openapi.json` |
 
@@ -59,6 +61,24 @@ v-if="auth.can('agent.chat')"      // hides what @PreAuthorize would reject
 
 Same source of truth, so there is no duplicated role logic. Route guards use `meta.node`.
 
+## Tests
+
+```bash
+npm test
+```
+
+37 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
+fleet store's derived state.
+
+No component or browser tests. That is a deliberate limit rather than an omission — every frontend
+bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
+mounted-component test would have caught none of them. Only a real browser would.
+
+`src/test/setup.ts` replaces `globalThis.fetch` before any module imports the API client, because
+openapi-fetch resolves `fetch` once when `createClient` runs — a stub installed inside a test would
+never be seen. Tests declare responses through `respondWith` and inspect what was sent via `calls`.
+
 ## Security posture
 
 The access token lives in **`localStorage`**. That is a deliberate trade: it survives a reload, but
@@ -93,6 +113,16 @@ The upstream is resolved per request through a configurable `DNS_RESOLVER` rathe
 literal `proxy_pass` makes nginx resolve the host on start-up, so the container crash-looped when it
 started before the backend; now it boots and returns 502 until the backend appears.
 
+## CI
+
+`.github/workflows/frontend-tests.yml` runs the suite, ESLint and the `vue-tsc` build on pushes to
+`main` and on pull requests touching `frontend/`. All three run even after one fails, so a lint error
+never hides the test results; any failure fails the job. Failing tests become inline annotations and
+a job summary table.
+
+`.github/workflows/frontend-image.yml` builds and pushes the image to
+`ghcr.io/integr-dev/osmium/frontend`, tagged from the `version` in `package.json`.
+
 ## Layout
 
 ```
@@ -102,5 +132,8 @@ src/layouts/     AppLayout: sidebar, nav, drawer
 src/lib/         presentation maps for bot state, roles and node labels
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
+src/test/        Vitest setup and the fetch stub
 src/views/       dashboard, hosts, bot detail, accounts, settings, login
 ```
+
+Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.
