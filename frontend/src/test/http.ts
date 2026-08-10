@@ -17,6 +17,11 @@ export interface RecordedCall {
 export interface StubReply {
   status?: number
   body?: unknown
+  /**
+   * Serve this stream as the response body instead of JSON-encoding `body`. Needed for the
+   * server-sent-event client, which is only interesting while a response is still open.
+   */
+  stream?: ReadableStream<Uint8Array>
 }
 
 type Responder = (call: RecordedCall) => StubReply
@@ -42,7 +47,31 @@ export function lastCall(): RecordedCall {
   return call
 }
 
-export async function stubFetch(request: Request): Promise<Response> {
+/**
+ * Makes a response body fail when the request is aborted, which a real `fetch` does for free. The
+ * stub does not, so without this an abort is invisible to the reader and anything that cancels a
+ * stream — the live-update watchdog, for one — looks broken when it is working.
+ */
+function abortable(stream: ReadableStream<Uint8Array>, signal: AbortSignal): ReadableStream<Uint8Array> {
+  const source = stream.getReader()
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      signal.addEventListener('abort', () =>
+        controller.error(new DOMException('The operation was aborted.', 'AbortError')),
+      )
+    },
+    async pull(controller) {
+      const { done, value } = await source.read()
+      if (done) controller.close()
+      else controller.enqueue(value)
+    },
+  })
+}
+
+export async function stubFetch(input: Request | string, init?: RequestInit): Promise<Response> {
+  // openapi-fetch hands over a built Request; the live-update client calls fetch(url, init). Both
+  // have to work, and getting this wrong makes a request vanish silently rather than fail loudly.
+  const request = input instanceof Request ? input : new Request(input, init)
   const raw = await request.clone().text()
   const call: RecordedCall = {
     url: request.url,
@@ -52,7 +81,13 @@ export async function stubFetch(request: Request): Promise<Response> {
   }
   calls.push(call)
 
-  const { status = 200, body = {} } = responder(call)
+  const { status = 200, body = {}, stream } = responder(call)
+  if (stream) {
+    return new Response(abortable(stream, request.signal), {
+      status,
+      headers: { 'Content-Type': 'text/event-stream' },
+    })
+  }
   return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },

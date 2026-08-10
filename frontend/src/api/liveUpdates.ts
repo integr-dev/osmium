@@ -29,6 +29,12 @@ const BASE_RETRY_MS = 1_000
 const MAX_RETRY_MS = 30_000
 
 /**
+ * How long a silent connection is tolerated. The backend sends a keep-alive comment every 30s, so
+ * anything approaching twice that means the connection is dead even though the socket looks open.
+ */
+const IDLE_TIMEOUT_MS = 45_000
+
+/**
  * Opens a stream and keeps it open, reconnecting with backoff until `close()` is called.
  *
  * Reconnection is ours to write here: the native `EventSource` would have handled it, and giving
@@ -36,13 +42,32 @@ const MAX_RETRY_MS = 30_000
  * does not get hammered by every open tab.
  */
 export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): LiveUpdateHandle {
-  const controller = new AbortController()
   let closed = false
   let retryMs = BASE_RETRY_MS
   let retryTimer: ReturnType<typeof setTimeout> | undefined
+  let watchdog: ReturnType<typeof setTimeout> | undefined
+  let controller: AbortController | null = null
+
+  /**
+   * A dead connection does not always announce itself. A proxy holding the client side open, a
+   * sleeping laptop or a NAT timeout all leave a socket that looks healthy and never delivers
+   * anything — so silence is treated as failure rather than waited on indefinitely.
+   *
+   * Re-armed on every chunk, keep-alive comments included: that is what those comments are for, and
+   * a keep-alive nothing checks is decoration.
+   */
+  function armWatchdog(attempt: AbortController): void {
+    clearTimeout(watchdog)
+    watchdog = setTimeout(() => attempt.abort(), IDLE_TIMEOUT_MS)
+  }
 
   async function connect(): Promise<void> {
     if (closed) return
+
+    // One controller per attempt. A single shared one would stay aborted after the first timeout,
+    // so every later reconnect would fail instantly.
+    const attempt = new AbortController()
+    controller = attempt
 
     try {
       const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}${path}`, {
@@ -50,7 +75,7 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
           Accept: 'text/event-stream',
           ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
         },
-        signal: controller.signal,
+        signal: attempt.signal,
       })
 
       // A 401 or 403 will not fix itself by retrying: the session is gone or the account lost the
@@ -60,9 +85,14 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
 
       retryMs = BASE_RETRY_MS
       handlers.onConnect?.()
-      await read(response.body)
-    } catch (failure) {
-      if (closed || (failure instanceof DOMException && failure.name === 'AbortError')) return
+      armWatchdog(attempt)
+      await read(response.body, attempt)
+    } catch {
+      // Only an explicit close() stops the loop. A watchdog abort lands here too and *should*
+      // reconnect, which is why this no longer bails out on AbortError.
+      if (closed) return
+    } finally {
+      clearTimeout(watchdog)
     }
 
     if (closed) return
@@ -71,7 +101,7 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
     retryMs = Math.min(retryMs * 2, MAX_RETRY_MS)
   }
 
-  async function read(body: ReadableStream<Uint8Array>): Promise<void> {
+  async function read(body: ReadableStream<Uint8Array>, attempt: AbortController): Promise<void> {
     const reader = body.getReader()
     // Decoded incrementally with `stream: true`, since a chunk boundary can fall mid-character.
     const decoder = new TextDecoder()
@@ -81,7 +111,9 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
       const { done, value } = await reader.read()
       if (done) return
 
+      armWatchdog(attempt)
       buffer += decoder.decode(value, { stream: true })
+
       // Events are separated by a blank line. A chunk can hold several, or half of one.
       let split = buffer.indexOf('\n\n')
       while (split !== -1) {
@@ -117,7 +149,8 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
     close() {
       closed = true
       clearTimeout(retryTimer)
-      controller.abort()
+      clearTimeout(watchdog)
+      controller?.abort()
     },
   }
 }

@@ -61,6 +61,13 @@ it backs off from 1s to 30s and gives up entirely on 401 or 403, which retrying 
 `AppLayout` holds one stream open for the session. Events land in the store's `applyEvent`, which is
 the seam between transport and state — exported so the ingest is testable without a socket.
 
+**Silence is treated as failure.** A dead connection does not always announce itself: a proxy
+holding the client side open, a sleeping laptop or a NAT timeout all leave a socket that looks
+healthy and delivers nothing. The client re-arms a 45s watchdog on every chunk — keep-alive comments
+included, since that is what they are for — and aborts to reconnect when it fires. Without it the
+disconnected indicator only reacts to errors the browser happens to notice, which in dev behind the
+Vite proxy can be never.
+
 **Commands no longer refetch.** Anything that changes stored state publishes an event that arrives
 before the response is written, so a refetch would only re-read what the stream already applied.
 
@@ -85,7 +92,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-45 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+52 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, and the
 fleet store's derived state.
 
