@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { onMounted, ref } from 'vue'
-import { Bot, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users } from 'lucide-vue-next'
-import AddBotModal from '../components/AddBotModal.vue'
+import { Bot as Agent, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users } from 'lucide-vue-next'
+import AddAgentModal from '../components/AddAgentModal.vue'
 import { useAuthStore } from '../stores/auth'
-import { STATE_DOT } from '../lib/botState'
-import { useBotStore } from '../stores/bots'
+import { STATE_DOT } from '../lib/agentState'
+import { useAgentStore } from '../stores/agents'
 
 const auth = useAuthStore()
-const botStore = useBotStore()
+const agentStore = useAgentStore()
 const router = useRouter()
 
-const addBotOpen = ref(false)
+const addAgentOpen = ref(false)
 
 // The sidebar is present on every authenticated page, so it is the natural place to load the fleet.
 onMounted(() => {
-  if (auth.can('agent.read')) void botStore.refresh()
+  if (auth.can('fleet.read')) void agentStore.refresh()
 })
 
 function logout() {
@@ -43,7 +43,7 @@ function logout() {
       </main>
     </div>
 
-    <AddBotModal v-model:open="addBotOpen" />
+    <AddAgentModal v-model:open="addAgentOpen" />
 
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" aria-label="Close navigation"></label>
@@ -67,32 +67,32 @@ function logout() {
                 <Server class="size-4 shrink-0" />
                 Hosts
                 <span class="badge badge-xs ml-auto">
-                  {{ botStore.hosts.filter((host) => host.reachable).length }}/{{ botStore.hosts.length }}
+                  {{ agentStore.hosts.filter((host) => host.reachable).length }}/{{ agentStore.hosts.length }}
                 </span>
               </RouterLink>
             </li>
             <li>
               <details open>
                 <summary class="gap-3">
-                  <Bot class="size-4 shrink-0" />
-                  Bots
-                  <span class="badge badge-xs ml-auto">{{ botStore.online.length }}/{{ botStore.bots.length }}</span>
+                  <Agent class="size-4 shrink-0" />
+                  Agents
+                  <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
                 </summary>
                 <ul class="gap-0.5">
-                  <li v-for="bot in botStore.bots" :key="bot.id">
-                    <RouterLink :to="{ name: 'bot', params: { id: bot.id } }" class="gap-2.5">
+                  <li v-for="agent in agentStore.agents" :key="agent.id">
+                    <RouterLink :to="{ name: 'agent', params: { id: agent.id } }" class="gap-2.5">
                       <span
                         class="size-2 shrink-0 rounded-full"
-                        :class="STATE_DOT[bot.state] ?? 'bg-base-content/30'"
-                        :title="bot.state"
+                        :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                        :title="agent.state"
                       ></span>
-                      <span class="truncate">{{ bot.label }}</span>
+                      <span class="truncate">{{ agent.label }}</span>
                     </RouterLink>
                   </li>
                   <li>
-                    <button type="button" class="gap-2.5 opacity-70" @click="addBotOpen = true">
+                    <button type="button" class="gap-2.5 opacity-70" @click="addAgentOpen = true">
                       <Plus class="size-4 shrink-0" />
-                      Add bot
+                      Add agent
                     </button>
                   </li>
                 </ul>

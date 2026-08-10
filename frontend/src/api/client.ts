@@ -10,7 +10,7 @@ import { token } from './token'
 export type UserResponse = Required<components['schemas']['UserResponse']>
 export type RoleResponse = Required<components['schemas']['RoleResponse']>
 export type HostResponse = Required<components['schemas']['HostResponse']>
-export type BotResponse = Required<components['schemas']['BotResponse']>
+export type AgentResponse = Required<components['schemas']['AgentResponse']>
 
 /** Not in the document either - the @RestControllerAdvice return type is never scanned. */
 export type ApiError = { message?: string }

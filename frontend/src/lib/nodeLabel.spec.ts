@@ -3,7 +3,7 @@ import { nodeLabel } from './nodeLabel'
 
 describe('nodeLabel', () => {
   it('names a known node', () => {
-    expect(nodeLabel('agent.chat')).toBe('Speak in game as a bot')
+    expect(nodeLabel('fleet.chat')).toBe('Speak in game as an agent')
   })
 
   // The map is presentation only. A node added on the backend must still render as something, or

@@ -3,12 +3,12 @@ import { computed, ref } from 'vue'
 import { Info, KeyRound, MessageSquare, Power, ScrollText, Server, User } from 'lucide-vue-next'
 
 /**
- * The operator audit trail: who triggered what, not what happened to a bot. Bot-side events
- * (died, kicked, connected) are the *activity* feed and live on the dashboard and bot pages.
+ * The operator audit trail: who triggered what, not what happened to an agent. Agent-side events
+ * (died, kicked, connected) are the *activity* feed and live on the dashboard and agent pages.
  *
  * MOCK. Nothing writes an audit record yet — there is no audit entity, table or endpoint on the
  * backend. These rows exist so the surface and its shape are settled before the log is built.
- * See the Audit section of BOT_CONNECTIVITY.md.
+ * See the Audit section of FLEET_CONNECTIVITY.md.
  */
 type AuditAction = 'setup' | 'connect' | 'disconnect' | 'chat' | 'host'
 
@@ -72,11 +72,11 @@ const filtered = computed(() => {
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">Audit log</h1>
-        <p class="text-sm opacity-60">Every command an operator issued, and what a bot was made to say.</p>
+        <p class="text-sm opacity-60">Every command an operator issued, and what an agent was made to say.</p>
       </div>
       <label class="input input-sm w-full max-w-xs">
         <ScrollText class="size-4 shrink-0 opacity-60" />
-        <input v-model="query" type="search" placeholder="Filter by account, bot or text" />
+        <input v-model="query" type="search" placeholder="Filter by account, agent or text" />
       </label>
     </header>
 
@@ -128,7 +128,7 @@ const filtered = computed(() => {
     </div>
 
     <p class="text-xs opacity-50">
-      Audit entries are kept for 30 days. Bot activity is kept for 10 days and chat for 3.
+      Audit entries are kept for 30 days. Agent activity is kept for 10 days and chat for 3.
     </p>
   </div>
 </template>

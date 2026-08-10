@@ -7,13 +7,13 @@ describe('auth middleware', () => {
   it('attaches the bearer token', async () => {
     token.value = 'abc123'
 
-    await api.GET('/api/bots')
+    await api.GET('/api/agents')
 
     expect(lastCall().headers.get('Authorization')).toBe('Bearer abc123')
   })
 
   it('sends no Authorization header when signed out', async () => {
-    await api.GET('/api/bots')
+    await api.GET('/api/agents')
 
     expect(lastCall().headers.get('Authorization')).toBeNull()
   })
@@ -24,7 +24,7 @@ describe('auth middleware', () => {
     setUnauthorizedHandler(onUnauthorized)
     respondWith(() => ({ status: 401, body: { message: 'Unauthorized' } }))
 
-    await api.GET('/api/bots')
+    await api.GET('/api/agents')
 
     expect(token.value).toBeNull()
     expect(onUnauthorized).toHaveBeenCalledOnce()

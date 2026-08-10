@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, errorMessage, type BotResponse, type HostResponse } from '../api/client'
+import { api, errorMessage, type AgentResponse, type HostResponse } from '../api/client'
 
 /**
  * Fleet state.
  *
- * Hosts, bots and their lifecycle states are **real** and come from the backend. Telemetry, chat and
+ * Hosts, agents and their lifecycle states are **real** and come from the backend. Telemetry, chat and
  * build progress are still **mock**: the backend has no agent connected yet, so nothing reports
  * health, position or chat. Those parts are marked below and are what the SSE stream will replace.
  */
@@ -23,7 +23,7 @@ export interface ChatLine {
 }
 
 /**
- * Something that happened *to* a bot: kicks, deaths, warnings, connectivity transitions. Kept out
+ * Something that happened *to* an agent: kicks, deaths, warnings, connectivity transitions. Kept out
  * of chat so an incident is not buried between two lines of small talk.
  */
 export interface ActivityLine {
@@ -33,7 +33,7 @@ export interface ActivityLine {
 }
 
 /** MOCK. Replaced by the telemetry stream once an agent reports. */
-export interface BotTelemetry {
+export interface AgentTelemetry {
   uptimeSeconds: number
   health: number
   food: number
@@ -47,7 +47,7 @@ export interface BotTelemetry {
   activity: ActivityLine[]
 }
 
-export type FleetBot = BotResponse & { telemetry: BotTelemetry }
+export type FleetAgent = AgentResponse & { telemetry: AgentTelemetry }
 
 export interface Sector {
   id: string
@@ -59,12 +59,12 @@ export interface Sector {
 }
 
 export interface Attention {
-  bot: FleetBot
+  agent: FleetAgent
   reason: string
   severity: 'error' | 'warning'
 }
 
-/** A line of ordinary server chat, forwarded by exactly one elected bot per server. */
+/** A line of ordinary server chat, forwarded by exactly one elected agent per server. */
 export interface GlobalChatLine {
   at: string
   server: string
@@ -72,14 +72,14 @@ export interface GlobalChatLine {
   text: string
 }
 
-/** States in which a bot is genuinely in game. */
-export function isOnline(bot: BotResponse): boolean {
-  return bot.state === 'ONLINE'
+/** States in which an agent is genuinely in game. */
+export function isOnline(agent: AgentResponse): boolean {
+  return agent.state === 'ONLINE'
 }
 
-export const useBotStore = defineStore('bots', () => {
+export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
-  const bots = ref<FleetBot[]>([])
+  const agents = ref<FleetAgent[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -102,7 +102,7 @@ export const useBotStore = defineStore('bots', () => {
 
   const globalChat = ref<GlobalChatLine[]>([
     { at: '14:06', server: 'mc.example.com:25565', from: 'Notch', text: 'that cathedral is getting huge' },
-    { at: '14:05', server: 'mc.example.com:25565', from: 'Dinnerbone', text: 'who is running all these bots' },
+    { at: '14:05', server: 'mc.example.com:25565', from: 'Dinnerbone', text: 'who is running all these agents' },
     { at: '14:03', server: 'mc.example.com:25565', from: 'jeb_', text: 'anyone got spare deepslate?' },
   ])
 
@@ -128,25 +128,25 @@ export const useBotStore = defineStore('bots', () => {
   }
 
   async function loadBots(): Promise<void> {
-    const { data, error: failure } = await api.GET('/api/bots')
+    const { data, error: failure } = await api.GET('/api/agents')
     if (failure) {
-      error.value = errorMessage(failure, 'Could not load bots')
+      error.value = errorMessage(failure, 'Could not load agents')
       return
     }
     // Telemetry is preserved across refreshes so the mock does not reset on every poll.
-    const previous = new Map(bots.value.map((bot) => [bot.id, bot.telemetry]))
-    bots.value = ((data ?? []) as BotResponse[]).map((bot) => ({
-      ...bot,
-      telemetry: previous.get(bot.id) ?? mockTelemetry(bot),
+    const previous = new Map(agents.value.map((agent) => [agent.id, agent.telemetry]))
+    agents.value = ((data ?? []) as AgentResponse[]).map((agent) => ({
+      ...agent,
+      telemetry: previous.get(agent.id) ?? mockTelemetry(agent),
     }))
   }
 
   // ---- derived -------------------------------------------------------------------------------
 
-  const online = computed(() => bots.value.filter(isOnline))
+  const online = computed(() => agents.value.filter(isOnline))
 
   const blocksPlaced = computed(() =>
-    bots.value.reduce((sum, bot) => sum + bot.telemetry.blocksPlaced, 0),
+    agents.value.reduce((sum, agent) => sum + agent.telemetry.blocksPlaced, 0),
   )
 
   const progressPercent = computed(() =>
@@ -154,7 +154,7 @@ export const useBotStore = defineStore('bots', () => {
   )
 
   const blocksPerMinute = computed(
-    () => online.value.filter((bot) => bot.telemetry.blocksPlaced > 0).length * 38,
+    () => online.value.filter((agent) => agent.telemetry.blocksPlaced > 0).length * 38,
   )
 
   const etaMinutes = computed(() => {
@@ -164,17 +164,17 @@ export const useBotStore = defineStore('bots', () => {
   })
 
   /** Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it. */
-  const servers = computed(() => [...new Set(bots.value.map((bot) => bot.serverAddress))].sort())
+  const servers = computed(() => [...new Set(agents.value.map((agent) => agent.serverAddress))].sort())
 
   /**
    * One elected listener **per server**, not per fleet. Chosen for stability - the longest running
-   * online bot - so a new bot joining never displaces a working listener.
+   * online agent - so a new agent joining never displaces a working listener.
    */
-  const chatListeners = computed<Record<string, FleetBot | undefined>>(() => {
-    const byServer: Record<string, FleetBot | undefined> = {}
+  const chatListeners = computed<Record<string, FleetAgent | undefined>>(() => {
+    const byServer: Record<string, FleetAgent | undefined> = {}
     for (const server of servers.value) {
       byServer[server] = online.value
-        .filter((bot) => bot.serverAddress === server)
+        .filter((agent) => agent.serverAddress === server)
         .sort((a, b) => b.telemetry.uptimeSeconds - a.telemetry.uptimeSeconds)[0]
     }
     return byServer
@@ -186,48 +186,48 @@ export const useBotStore = defineStore('bots', () => {
 
   const attention = computed<Attention[]>(() => {
     const found: Attention[] = []
-    for (const bot of bots.value) {
-      if (bot.state === 'STALE') {
-        found.push({ bot, reason: 'Host unreachable', severity: 'error' })
+    for (const agent of agents.value) {
+      if (agent.state === 'STALE') {
+        found.push({ agent, reason: 'Host unreachable', severity: 'error' })
         continue
       }
-      if (bot.state === 'NEEDS_RELINK') {
-        found.push({ bot, reason: 'Needs relink', severity: 'error' })
+      if (agent.state === 'NEEDS_RELINK') {
+        found.push({ agent, reason: 'Needs relink', severity: 'error' })
         continue
       }
-      if (!isOnline(bot)) continue
+      if (!isOnline(agent)) continue
 
-      if (bot.telemetry.health <= 10) {
-        found.push({ bot, reason: `Health ${bot.telemetry.health}/20`, severity: 'error' })
+      if (agent.telemetry.health <= 10) {
+        found.push({ agent, reason: `Health ${agent.telemetry.health}/20`, severity: 'error' })
       }
-      if (bot.telemetry.food <= 8) {
-        found.push({ bot, reason: `Food ${bot.telemetry.food}/20`, severity: 'warning' })
+      if (agent.telemetry.food <= 8) {
+        found.push({ agent, reason: `Food ${agent.telemetry.food}/20`, severity: 'warning' })
       }
-      if (bot.telemetry.pingMs >= 100) {
-        found.push({ bot, reason: `Ping ${bot.telemetry.pingMs} ms`, severity: 'warning' })
+      if (agent.telemetry.pingMs >= 100) {
+        found.push({ agent, reason: `Ping ${agent.telemetry.pingMs} ms`, severity: 'warning' })
       }
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))
   })
 
-  /** Every bot's incidents merged into one feed, newest first. Conversation is not included. */
+  /** Every agent's incidents merged into one feed, newest first. Conversation is not included. */
   const activity = computed(() =>
-    bots.value
-      .flatMap((bot) => bot.telemetry.activity.map((line) => ({ ...line, bot })))
+    agents.value
+      .flatMap((agent) => agent.telemetry.activity.map((line) => ({ ...line, agent })))
       .sort((a, b) => b.at.localeCompare(a.at))
       .slice(0, 12),
   )
 
-  function byId(id: number): FleetBot | undefined {
-    return bots.value.find((bot) => bot.id === id)
+  function byId(id: number): FleetAgent | undefined {
+    return agents.value.find((agent) => agent.id === id)
   }
 
   function hostById(id: number): HostResponse | undefined {
     return hosts.value.find((host) => host.id === id)
   }
 
-  function botsOnHost(hostId: number): FleetBot[] {
-    return bots.value.filter((bot) => bot.hostId === hostId)
+  function agentsOnHost(hostId: number): FleetAgent[] {
+    return agents.value.filter((agent) => agent.hostId === hostId)
   }
 
   // ---- commands ------------------------------------------------------------------------------
@@ -265,38 +265,38 @@ export const useBotStore = defineStore('bots', () => {
     await refresh()
   }
 
-  async function addBot(input: {
+  async function addAgent(input: {
     label: string
     hostId: number
     serverAddress: string
-  }): Promise<BotResponse> {
-    const { data, error: failure } = await api.POST('/api/bots', { body: input })
-    if (failure || !data) throw new Error(errorMessage(failure, 'Could not create the bot'))
+  }): Promise<AgentResponse> {
+    const { data, error: failure } = await api.POST('/api/agents', { body: input })
+    if (failure || !data) throw new Error(errorMessage(failure, 'Could not create the agent'))
     await refresh()
-    return data as BotResponse
+    return data as AgentResponse
   }
 
   /** Rename and/or move to another server. Omitted fields are left alone by the backend. */
-  async function updateBot(
+  async function updateAgent(
     id: number,
     changes: { label?: string; serverAddress?: string },
   ): Promise<void> {
-    const { error: failure } = await api.PATCH('/api/bots/{id}', {
+    const { error: failure } = await api.PATCH('/api/agents/{id}', {
       params: { path: { id } },
       body: changes,
     })
-    if (failure) throw new Error(errorMessage(failure, 'Could not update the bot'))
+    if (failure) throw new Error(errorMessage(failure, 'Could not update the agent'))
     await refresh()
   }
 
-  async function removeBot(id: number): Promise<void> {
-    const { error: failure } = await api.DELETE('/api/bots/{id}', { params: { path: { id } } })
-    if (failure) throw new Error(errorMessage(failure, 'Could not remove the bot'))
+  async function removeAgent(id: number): Promise<void> {
+    const { error: failure } = await api.DELETE('/api/agents/{id}', { params: { path: { id } } })
+    if (failure) throw new Error(errorMessage(failure, 'Could not remove the agent'))
     await refresh()
   }
 
-  async function setupBot(id: number, method: string): Promise<void> {
-    const { error: failure } = await api.POST('/api/bots/{id}/setup', {
+  async function setupAgent(id: number, method: string): Promise<void> {
+    const { error: failure } = await api.POST('/api/agents/{id}/setup', {
       params: { path: { id } },
       body: { method },
     })
@@ -305,13 +305,13 @@ export const useBotStore = defineStore('bots', () => {
   }
 
   async function connect(id: number): Promise<void> {
-    const { error: failure } = await api.POST('/api/bots/{id}/connect', { params: { path: { id } } })
+    const { error: failure } = await api.POST('/api/agents/{id}/connect', { params: { path: { id } } })
     if (failure) throw new Error(errorMessage(failure, 'Could not connect'))
     await refresh()
   }
 
   async function disconnect(id: number): Promise<void> {
-    const { error: failure } = await api.POST('/api/bots/{id}/disconnect', {
+    const { error: failure } = await api.POST('/api/agents/{id}/disconnect', {
       params: { path: { id } },
     })
     if (failure) throw new Error(errorMessage(failure, 'Could not disconnect'))
@@ -320,7 +320,7 @@ export const useBotStore = defineStore('bots', () => {
 
   async function say(id: number, message: string): Promise<void> {
     if (!message.trim()) return
-    const { error: failure } = await api.POST('/api/bots/{id}/chat', {
+    const { error: failure } = await api.POST('/api/agents/{id}/chat', {
       params: { path: { id } },
       body: { message: message.trim() },
     })
@@ -329,7 +329,7 @@ export const useBotStore = defineStore('bots', () => {
 
   return {
     hosts,
-    bots,
+    agents,
     loading,
     error,
     schematic,
@@ -348,15 +348,15 @@ export const useBotStore = defineStore('bots', () => {
     refresh,
     byId,
     hostById,
-    botsOnHost,
+    agentsOnHost,
     enrolHost,
     renameHost,
     rotateHostToken,
     removeHost,
-    addBot,
-    updateBot,
-    removeBot,
-    setupBot,
+    addAgent,
+    updateAgent,
+    removeAgent,
+    setupAgent,
     connect,
     disconnect,
     say,
@@ -364,12 +364,12 @@ export const useBotStore = defineStore('bots', () => {
 })
 
 /**
- * MOCK. Stable per bot id so the UI does not shuffle on refresh, and only populated for bots the
- * backend reports as online - an UNLINKED bot genuinely has no telemetry.
+ * MOCK. Stable per agent id so the UI does not shuffle on refresh, and only populated for agents the
+ * backend reports as online - an UNLINKED agent genuinely has no telemetry.
  */
-function mockTelemetry(bot: BotResponse): BotTelemetry {
-  const seed = bot.id
-  const live = isOnline(bot)
+function mockTelemetry(agent: AgentResponse): AgentTelemetry {
+  const seed = agent.id
+  const live = isOnline(agent)
 
   return {
     uptimeSeconds: live ? 1_800 + seed * 917 : 0,
@@ -378,7 +378,7 @@ function mockTelemetry(bot: BotResponse): BotTelemetry {
     position: { x: 100 + seed * 7, y: 71, z: -340 - seed * 5 },
     dimension: 'overworld',
     pingMs: live ? 35 + (seed % 5) * 22 : 0,
-    task: live ? 'Awaiting assignment' : describe(bot.state),
+    task: live ? 'Awaiting assignment' : describe(agent.state),
     blocksPlaced: live ? seed * 1_240 : 0,
     nearby: [],
     chat: [],
@@ -386,7 +386,7 @@ function mockTelemetry(bot: BotResponse): BotTelemetry {
   }
 }
 
-function describe(state: BotResponse['state']): string {
+function describe(state: AgentResponse['state']): string {
   switch (state) {
     case 'UNLINKED':
       return 'Not set up yet'

@@ -125,7 +125,7 @@ class UserControllerTest : AbstractRestTest() {
 
     @Test
     fun `orchestrator cannot create an account`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
 
         mockMvc.post("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -159,15 +159,15 @@ class UserControllerTest : AbstractRestTest() {
 
     @Test
     fun `orchestrator inherits the viewer self-edit node`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
 
         mockMvc.patch("/api/users/me") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"username":"bot-two"}"""
+            content = """{"username":"agent-two"}"""
         }.andExpect {
             status { isOk() }
-            jsonPath("$.username") { value("bot-two") }
+            jsonPath("$.username") { value("agent-two") }
         }
     }
 
@@ -201,7 +201,7 @@ class UserControllerTest : AbstractRestTest() {
 
     @Test
     fun `orchestrator cannot edit somebody else`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val victim = createUser(username = "grace")
 
         mockMvc.patch("/api/users/${victim.id}") {
@@ -385,7 +385,7 @@ class UserControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isOk() }
             jsonPath("$.role") { value(RoleNames.ORCHESTRATOR) }
-            jsonPath("$.nodes") { value(contains("agent.chat", "agent.control", "agent.login", "agent.read", "role.read", "user.edit.self", "user.read.self")) }
+            jsonPath("$.nodes") { value(contains("fleet.chat", "fleet.control", "fleet.login", "fleet.read", "role.read", "user.edit.self", "user.read.self")) }
         }
     }
 
@@ -454,7 +454,7 @@ class UserControllerTest : AbstractRestTest() {
 
     @Test
     fun `orchestrator cannot replace a role`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val target = createUser(username = "grace")
 
         mockMvc.put("/api/users/${target.id}/role") {

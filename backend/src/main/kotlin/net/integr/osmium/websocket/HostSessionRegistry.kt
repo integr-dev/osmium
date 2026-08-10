@@ -8,14 +8,14 @@ import tools.jackson.databind.ObjectMapper
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Which hosts currently have a live agent connection, and the sole means of writing to them.
+ * Which hosts currently have a live host connection, and the sole means of writing to them.
  *
- * One socket per host, multiplexing every bot that host owns. Kept behind this small interface so
+ * One socket per host, multiplexing every agent that host owns. Kept behind this small interface so
  * that fanning out across several backend instances later becomes one implementation rather than a
- * rewrite - see the note on multiple instances in BOT_CONNECTIVITY.md.
+ * rewrite - see the note on multiple instances in FLEET_CONNECTIVITY.md.
  */
 @Component
-class AgentSessionRegistry(private val objectMapper: ObjectMapper) {
+class HostSessionRegistry(private val objectMapper: ObjectMapper) {
 
     private val log = LoggerFactory.getLogger(javaClass)
     private val sessions = ConcurrentHashMap<Long, WebSocketSession>()
@@ -51,7 +51,7 @@ class AgentSessionRegistry(private val objectMapper: ObjectMapper) {
      * Writes one envelope to a host. Returns false when there is nothing to write to, which the
      * caller turns into an immediate failure - commands are never queued for later delivery.
      */
-    fun send(hostId: Long, envelope: AgentEnvelope): Boolean {
+    fun send(hostId: Long, envelope: HostEnvelope): Boolean {
         val session = sessions[hostId]?.takeIf { it.isOpen } ?: return false
 
         return try {

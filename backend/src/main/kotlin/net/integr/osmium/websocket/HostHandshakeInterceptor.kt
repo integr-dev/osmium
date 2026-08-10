@@ -9,13 +9,13 @@ import org.springframework.web.socket.WebSocketHandler
 import org.springframework.web.socket.server.HandshakeInterceptor
 
 /**
- * Authenticates an agent during the WebSocket handshake, before any frame is accepted.
+ * Authenticates a host during the WebSocket handshake, before any frame is accepted.
  *
- * Agents are servers rather than browsers, so they can set an Authorization header - the limitation
+ * Hosts are servers rather than browsers, so they can set an Authorization header - the limitation
  * that forces post-connect authentication for browser sockets does not apply here.
  */
 @Component
-class AgentHandshakeInterceptor(private val hostService: HostService) : HandshakeInterceptor {
+class HostHandshakeInterceptor(private val hostService: HostService) : HandshakeInterceptor {
 
     override fun beforeHandshake(
         request: ServerHttpRequest,

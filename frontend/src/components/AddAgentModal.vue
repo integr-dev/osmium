@@ -2,12 +2,12 @@
 import { ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, Server, UserPlus } from 'lucide-vue-next'
 import FormField from './FormField.vue'
-import { useBotStore } from '../stores/bots'
+import { useAgentStore } from '../stores/agents'
 import { useRouter } from 'vue-router'
 
 const open = defineModel<boolean>('open', { required: true })
 
-const botStore = useBotStore()
+const agentStore = useAgentStore()
 const router = useRouter()
 
 const dialogEl = ref<HTMLDialogElement | null>(null)
@@ -18,7 +18,7 @@ const busy = ref(false)
 
 watch(open, (isOpen) => {
   if (isOpen) {
-    draft.value = { label: '', serverAddress: '', hostId: botStore.hosts[0]?.id ?? null }
+    draft.value = { label: '', serverAddress: '', hostId: agentStore.hosts[0]?.id ?? null }
     step.value = 1
     error.value = null
     dialogEl.value?.showModal()
@@ -33,24 +33,24 @@ async function submit() {
     return
   }
   if (draft.value.hostId === null) {
-    error.value = 'Pick a host to run this bot'
+    error.value = 'Pick a host to run this agent'
     return
   }
 
   busy.value = true
   error.value = null
   try {
-    const bot = await botStore.addBot({
+    const agent = await agentStore.addAgent({
       label: draft.value.label,
       serverAddress: draft.value.serverAddress,
       hostId: draft.value.hostId,
     })
     open.value = false
-    void router.push({ name: 'bot', params: { id: bot.id } })
+    void router.push({ name: 'agent', params: { id: agent.id } })
   } catch (failure) {
     // Conflicts and validation errors are all step 1 fields, so send the operator back.
     step.value = 1
-    error.value = failure instanceof Error ? failure.message : 'Could not create the bot'
+    error.value = failure instanceof Error ? failure.message : 'Could not create the agent'
   } finally {
     busy.value = false
   }
@@ -62,7 +62,7 @@ async function submit() {
     <div class="modal-box">
       <h3 class="flex items-center gap-2 text-lg font-semibold">
         <UserPlus class="text-primary size-5" />
-        New bot
+        New agent
       </h3>
 
       <ul class="steps mt-4 w-full">
@@ -74,7 +74,7 @@ async function submit() {
         <template v-if="step === 1">
           <FormField
             v-model="draft.label"
-            label="Bot name"
+            label="Agent name"
             placeholder="e.g. Mason_04"
             :icon="UserPlus"
             type="text"
@@ -92,14 +92,14 @@ async function submit() {
         </template>
 
         <template v-else>
-          <p class="text-sm opacity-60">Which host runs this bot? Offline hosts can be assigned now and connected later.</p>
-          <ul v-if="botStore.hosts.length" class="flex flex-col gap-1">
-            <li v-for="host in botStore.hosts" :key="host.id">
+          <p class="text-sm opacity-60">Which host runs this agent? Offline hosts can be assigned now and connected later.</p>
+          <ul v-if="agentStore.hosts.length" class="flex flex-col gap-1">
+            <li v-for="host in agentStore.hosts" :key="host.id">
               <label class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-center gap-3 p-3">
                 <input
                   v-model="draft.hostId"
                   type="radio"
-                  name="bot-host"
+                  name="agent-host"
                   class="radio radio-sm radio-primary shrink-0"
                   :value="host.id"
                 />
@@ -113,7 +113,7 @@ async function submit() {
                     {{ host.address ?? 'not yet connected' }}
                   </span>
                 </span>
-                <span class="text-xs opacity-50">{{ host.botCount }} bots</span>
+                <span class="text-xs opacity-50">{{ host.agentCount }} agents</span>
               </label>
             </li>
           </ul>
@@ -132,7 +132,7 @@ async function submit() {
             Back
           </button>
           <button v-else class="btn btn-ghost btn-sm" type="button" @click="open = false">Cancel</button>
-          <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="busy || (step === 2 && !botStore.hosts.length)">
+          <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="busy || (step === 2 && !agentStore.hosts.length)">
             {{ step === 1 ? 'Next' : 'Create' }}
             <ChevronRight v-if="step === 1" class="size-4" />
           </button>

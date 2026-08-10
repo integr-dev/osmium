@@ -28,14 +28,14 @@ class HostControllerTest : AbstractRestTest() {
         mockMvc.post("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-1"}"""
+            content = """{"name":"host-eu-1"}"""
         }.andExpect {
             status { isCreated() }
-            jsonPath("$.host.name") { value("agent-eu-1") }
+            jsonPath("$.host.name") { value("host-eu-1") }
             jsonPath("$.host.reachable") { value(false) }
             jsonPath("$.host.address") { value(null) }
-            jsonPath("$.host.botCount") { value(0) }
-            jsonPath("$.token") { value(startsWith("osm_ag_")) }
+            jsonPath("$.host.agentCount") { value(0) }
+            jsonPath("$.token") { value(startsWith("osm_host_")) }
         }
     }
 
@@ -46,7 +46,7 @@ class HostControllerTest : AbstractRestTest() {
         val body = mockMvc.post("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-1"}"""
+            content = """{"name":"host-eu-1"}"""
         }.andReturn().response.contentAsString
 
         val token: String = com.jayway.jsonpath.JsonPath.read(body, "$.token")
@@ -56,22 +56,22 @@ class HostControllerTest : AbstractRestTest() {
         assertNotEquals(token, stored.tokenHash)
         assert(!stored.tokenHash.contains(token.substringAfterLast('_')))
 
-        // The agent can still authenticate with the plaintext it was given.
+        // The host can still authenticate with the plaintext it was given.
         assertEquals(stored.id, hostService.authenticate(token)?.id)
     }
 
     @Test
     fun `a tampered or unknown token authenticates nobody`() {
-        val host = reachableHost("agent-eu-1")
+        val host = reachableHost("host-eu-1")
 
-        assertNull(hostService.authenticate("osm_ag_${host.id}_wrongsecret"))
-        assertNull(hostService.authenticate("osm_ag_999999_whatever"))
+        assertNull(hostService.authenticate("osm_host_${host.id}_wrongsecret"))
+        assertNull(hostService.authenticate("osm_host_999999_whatever"))
         assertNull(hostService.authenticate("not-even-a-token"))
-        assertNull(hostService.authenticate("osm_ag_notanumber_secret"))
+        assertNull(hostService.authenticate("osm_host_notanumber_secret"))
     }
 
     @Test
-    fun `listing hosts requires agent read`() {
+    fun `listing hosts requires host read`() {
         val auth = authAs("ada", RoleNames.VIEWER)
 
         mockMvc.get("/api/hosts") {
@@ -83,7 +83,7 @@ class HostControllerTest : AbstractRestTest() {
 
     @Test
     fun `orchestrator can list and enrol hosts`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
 
         mockMvc.get("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -94,7 +94,7 @@ class HostControllerTest : AbstractRestTest() {
         mockMvc.post("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-9"}"""
+            content = """{"name":"host-eu-9"}"""
         }.andExpect {
             status { isCreated() }
         }
@@ -102,7 +102,7 @@ class HostControllerTest : AbstractRestTest() {
 
     @Test
     fun `orchestrator cannot manage users, which is what separates it from an administrator`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
 
         mockMvc.get("/api/users") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -114,12 +114,12 @@ class HostControllerTest : AbstractRestTest() {
     @Test
     fun `enrolling rejects a duplicate name`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        hostRepository.saveAndFlush(Host(name = "agent-eu-1", tokenHash = "x"))
+        hostRepository.saveAndFlush(Host(name = "host-eu-1", tokenHash = "x"))
 
         mockMvc.post("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-1"}"""
+            content = """{"name":"host-eu-1"}"""
         }.andExpect {
             status { isConflict() }
         }
@@ -128,7 +128,7 @@ class HostControllerTest : AbstractRestTest() {
     @Test
     fun `a host with no heartbeat is not reachable`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        hostRepository.saveAndFlush(Host(name = "agent-eu-1", tokenHash = "x"))
+        hostRepository.saveAndFlush(Host(name = "host-eu-1", tokenHash = "x"))
 
         mockMvc.get("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -141,7 +141,7 @@ class HostControllerTest : AbstractRestTest() {
     @Test
     fun `a host heartbeating now is reachable`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        reachableHost("agent-eu-1")
+        reachableHost("host-eu-1")
 
         mockMvc.get("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -154,46 +154,46 @@ class HostControllerTest : AbstractRestTest() {
     @Test
     fun `a host can be renamed`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val host = reachableHost("agent-eu-1")
+        val host = reachableHost("host-eu-1")
 
         mockMvc.patch("/api/hosts/${host.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-renamed"}"""
+            content = """{"name":"host-eu-renamed"}"""
         }.andExpect {
             status { isOk() }
-            jsonPath("$.name") { value("agent-eu-renamed") }
+            jsonPath("$.name") { value("host-eu-renamed") }
         }
     }
 
     @Test
     fun `renaming a host rejects a name already enrolled`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        reachableHost("agent-eu-1")
-        val other = reachableHost("agent-eu-2")
+        reachableHost("host-eu-1")
+        val other = reachableHost("host-eu-2")
 
         mockMvc.patch("/api/hosts/${other.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-1"}"""
+            content = """{"name":"host-eu-1"}"""
         }.andExpect {
             status { isConflict() }
         }
     }
 
     @Test
-    fun `rotating a token invalidates the old one and keeps the host's bots`() {
+    fun `rotating a token invalidates the old one and keeps the host's agents`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
 
         val enrolled = mockMvc.post("/api/hosts") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-eu-1"}"""
+            content = """{"name":"host-eu-1"}"""
         }.andReturn().response.contentAsString
 
         val original: String = com.jayway.jsonpath.JsonPath.read(enrolled, "$.token")
         val hostId: Int = com.jayway.jsonpath.JsonPath.read(enrolled, "$.host.id")
-        createBot(label = "Mason_01", host = hostRepository.findById(hostId.toLong()).orElseThrow())
+        createAgent(label = "Mason_01", host = hostRepository.findById(hostId.toLong()).orElseThrow())
 
         val rotated = mockMvc.post("/api/hosts/$hostId/rotate-token") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -208,18 +208,18 @@ class HostControllerTest : AbstractRestTest() {
         assertNull(hostService.authenticate(original))
         assertEquals(hostId.toLong(), hostService.authenticate(replacement)?.id)
 
-        // Rotating must not cost the host its bots - that is what makes it better than re-enrolling.
-        assertEquals(1, botRepository.findAllByHostId(hostId.toLong()).size)
+        // Rotating must not cost the host its agents - that is what makes it better than re-enrolling.
+        assertEquals(1, agentRepository.findAllByHostId(hostId.toLong()).size)
     }
 
     @Test
     fun `orchestrator can rename and rotate, a viewer cannot`() {
-        val host = reachableHost("agent-eu-1")
+        val host = reachableHost("host-eu-1")
 
         mockMvc.patch("/api/hosts/${host.id}") {
-            header(HttpHeaders.AUTHORIZATION, authAs("bot", RoleNames.ORCHESTRATOR))
+            header(HttpHeaders.AUTHORIZATION, authAs("agent", RoleNames.ORCHESTRATOR))
             contentType = MediaType.APPLICATION_JSON
-            content = """{"name":"agent-renamed"}"""
+            content = """{"name":"host-renamed"}"""
         }.andExpect {
             status { isOk() }
         }
@@ -232,10 +232,10 @@ class HostControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `removing a host removes its bots`() {
+    fun `removing a host removes its agents`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val host = reachableHost("agent-eu-1")
-        createBot(label = "Mason_01", host = host)
+        val host = reachableHost("host-eu-1")
+        createAgent(label = "Mason_01", host = host)
 
         mockMvc.delete("/api/hosts/${host.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
@@ -244,7 +244,7 @@ class HostControllerTest : AbstractRestTest() {
         }
 
         assertNull(hostRepository.findAll().firstOrNull())
-        assert(botRepository.findAll().isEmpty())
+        assert(agentRepository.findAll().isEmpty())
     }
 
     @Test

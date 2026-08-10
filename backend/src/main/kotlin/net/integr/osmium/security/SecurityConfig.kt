@@ -35,19 +35,19 @@ class SecurityConfig(
 ) {
 
     /**
-     * The agent socket gets its own chain, matched first and deliberately without the resource
+     * The host socket gets its own chain, matched first and deliberately without the resource
      * server.
      *
      * `permitAll` on the main chain is not enough: it governs authorization, but the bearer token
-     * filter still *authenticates* any `Authorization: Bearer …` header, and an agent's enrolment
+     * filter still *authenticates* any `Authorization: Bearer …` header, and a host's enrolment
      * token is not a JWT - so the handshake was rejected with 401 before the interceptor ran.
      * Leaving oauth2ResourceServer off this chain lets the token reach
-     * [net.integr.osmium.websocket.AgentHandshakeInterceptor], which is what understands it.
+     * [net.integr.osmium.websocket.HostHandshakeInterceptor], which is what understands it.
      */
     @Bean
     @Order(1)
-    fun agentSocketFilterChain(http: HttpSecurity): SecurityFilterChain = http
-        .securityMatcher("/ws/agent")
+    fun hostSocketFilterChain(http: HttpSecurity): SecurityFilterChain = http
+        .securityMatcher("/ws/host")
         .csrf { it.disable() }
         .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
         .authorizeHttpRequests { it.anyRequest().permitAll() }

@@ -2,11 +2,11 @@
 import { ref, watch } from 'vue'
 import { Copy, KeyRound, Server, TriangleAlert } from 'lucide-vue-next'
 import FormField from './FormField.vue'
-import { useBotStore } from '../stores/bots'
+import { useAgentStore } from '../stores/agents'
 
 const open = defineModel<boolean>('open', { required: true })
 
-const botStore = useBotStore()
+const agentStore = useAgentStore()
 
 const dialogEl = ref<HTMLDialogElement | null>(null)
 const name = ref('')
@@ -32,7 +32,7 @@ async function enrol() {
   error.value = null
   try {
     // Reveal the one-time token in place rather than closing, mirroring Phase 0 in the design.
-    token.value = await botStore.enrolHost(name.value)
+    token.value = await agentStore.enrolHost(name.value)
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : 'Could not enrol the host'
   } finally {

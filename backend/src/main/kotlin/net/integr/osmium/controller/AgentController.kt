@@ -5,12 +5,12 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
-import net.integr.osmium.dto.BotResponse
+import net.integr.osmium.dto.AgentResponse
 import net.integr.osmium.dto.ChatRequest
-import net.integr.osmium.dto.CreateBotRequest
-import net.integr.osmium.dto.SetupBotRequest
-import net.integr.osmium.dto.UpdateBotRequest
-import net.integr.osmium.service.BotService
+import net.integr.osmium.dto.CreateAgentRequest
+import net.integr.osmium.dto.SetupAgentRequest
+import net.integr.osmium.dto.UpdateAgentRequest
+import net.integr.osmium.service.AgentService
 import org.springframework.http.HttpStatus
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -24,132 +24,132 @@ import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-@RequestMapping("/api/bots")
-@Tag(name = "Bots", description = "Minecraft bots. Commands are routed to the host that runs them.")
-class BotController(private val botService: BotService) {
+@RequestMapping("/api/agents")
+@Tag(name = "Agents", description = "Minecraft agents. Commands are routed to the host that runs them.")
+class AgentController(private val agentService: AgentService) {
 
     @GetMapping
-    @PreAuthorize("hasAuthority('agent.read')")
-    @Operation(summary = "List every bot.")
+    @PreAuthorize("hasAuthority('fleet.read')")
+    @Operation(summary = "List every agent.")
     @ApiResponses(
-        ApiResponse(responseCode = "200", description = "All bots."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
+        ApiResponse(responseCode = "200", description = "All agents."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
     )
-    fun list(): List<BotResponse> = botService.findAll()
+    fun list(): List<AgentResponse> = agentService.findAll()
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('agent.read')")
-    @Operation(summary = "Read one bot.")
+    @PreAuthorize("hasAuthority('fleet.read')")
+    @Operation(summary = "Read one agent.")
     @ApiResponses(
-        ApiResponse(responseCode = "200", description = "The bot."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
+        ApiResponse(responseCode = "200", description = "The agent."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
     )
-    fun get(@PathVariable id: Long): BotResponse = botService.findById(id)
+    fun get(@PathVariable id: Long): AgentResponse = agentService.findById(id)
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAuthority('agent.control')")
+    @PreAuthorize("hasAuthority('fleet.control')")
     @Operation(
-        summary = "Create a bot slot.",
-        description = "Nothing has touched Minecraft at this point; the bot starts UNLINKED.",
+        summary = "Create an agent slot.",
+        description = "Nothing has touched Minecraft at this point; the agent starts UNLINKED.",
     )
     @ApiResponses(
-        ApiResponse(responseCode = "201", description = "Bot created."),
+        ApiResponse(responseCode = "201", description = "Agent created."),
         ApiResponse(responseCode = "400", description = "Invalid fields, or unknown host."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
         ApiResponse(responseCode = "409", description = "Label already in use."),
     )
-    fun create(@Valid @RequestBody request: CreateBotRequest): BotResponse = botService.create(request)
+    fun create(@Valid @RequestBody request: CreateAgentRequest): AgentResponse = agentService.create(request)
 
     @PatchMapping("/{id}")
-    @PreAuthorize("hasAuthority('agent.control')")
+    @PreAuthorize("hasAuthority('fleet.control')")
     @Operation(
-        summary = "Rename a bot or move it to another server.",
+        summary = "Rename an agent or move it to another server.",
         description = "Omitted fields are left alone. Moving does not affect credentials - the " +
-            "account is the same wherever it joins - but the bot must be offline first.",
+            "account is the same wherever it joins - but the agent must be offline first.",
     )
     @ApiResponses(
-        ApiResponse(responseCode = "200", description = "Updated bot."),
+        ApiResponse(responseCode = "200", description = "Updated agent."),
         ApiResponse(responseCode = "400", description = "Blank or over-long field."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.control`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
-        ApiResponse(responseCode = "409", description = "Label taken, or the bot is online."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "Label taken, or the agent is online."),
     )
     fun update(
         @PathVariable id: Long,
-        @Valid @RequestBody request: UpdateBotRequest,
-    ): BotResponse = botService.update(id, request)
+        @Valid @RequestBody request: UpdateAgentRequest,
+    ): AgentResponse = agentService.update(id, request)
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('agent.control')")
-    @Operation(summary = "Delete a bot.")
+    @PreAuthorize("hasAuthority('fleet.control')")
+    @Operation(summary = "Delete an agent.")
     @ApiResponses(
-        ApiResponse(responseCode = "204", description = "Bot deleted."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.control`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
+        ApiResponse(responseCode = "204", description = "Agent deleted."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
     )
-    fun delete(@PathVariable id: Long) = botService.delete(id)
+    fun delete(@PathVariable id: Long) = agentService.delete(id)
 
     @PostMapping("/{id}/setup")
-    @PreAuthorize("hasAuthority('agent.login')")
+    @PreAuthorize("hasAuthority('fleet.login')")
     @Operation(
-        summary = "Ask the host to set this bot up.",
-        description = "Sends `setup_bot` and moves the bot to SETUP_PENDING. Osmium does not " +
+        summary = "Ask the host to set this agent up.",
+        description = "Sends `setup_agent` and moves the agent to SETUP_PENDING. Osmium does not " +
             "perform or observe the login - the host reports back a verdict.",
     )
     @ApiResponses(
-        ApiResponse(responseCode = "200", description = "Command accepted; bot is SETUP_PENDING."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.login`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
-        ApiResponse(responseCode = "409", description = "Setup already running, or the bot is online."),
+        ApiResponse(responseCode = "200", description = "Command accepted; agent is SETUP_PENDING."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.login`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "Setup already running, or the agent is online."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )
     fun setup(
         @PathVariable id: Long,
-        @Valid @RequestBody request: SetupBotRequest,
-    ): BotResponse = botService.setup(id, request)
+        @Valid @RequestBody request: SetupAgentRequest,
+    ): AgentResponse = agentService.setup(id, request)
 
     @PostMapping("/{id}/connect")
-    @PreAuthorize("hasAuthority('agent.control')")
-    @Operation(summary = "Connect the bot to its Minecraft server.")
+    @PreAuthorize("hasAuthority('fleet.control')")
+    @Operation(summary = "Connect the agent to its Minecraft server.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.control`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
-        ApiResponse(responseCode = "409", description = "The bot has not been set up."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent has not been set up."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )
-    fun connect(@PathVariable id: Long): BotResponse = botService.connect(id)
+    fun connect(@PathVariable id: Long): AgentResponse = agentService.connect(id)
 
     @PostMapping("/{id}/disconnect")
-    @PreAuthorize("hasAuthority('agent.control')")
-    @Operation(summary = "Disconnect the bot from its Minecraft server.")
+    @PreAuthorize("hasAuthority('fleet.control')")
+    @Operation(summary = "Disconnect the agent from its Minecraft server.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.control`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
-        ApiResponse(responseCode = "409", description = "The bot is not online."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )
-    fun disconnect(@PathVariable id: Long): BotResponse = botService.disconnect(id)
+    fun disconnect(@PathVariable id: Long): AgentResponse = agentService.disconnect(id)
 
     @PostMapping("/{id}/chat")
-    @PreAuthorize("hasAuthority('agent.chat')")
+    @PreAuthorize("hasAuthority('fleet.chat')")
     @Operation(
-        summary = "Speak in game as this bot.",
+        summary = "Speak in game as this agent.",
         description = "Impersonation: this says something under an account you own, so it is gated " +
-            "separately from agent.control.",
+            "separately from fleet.control.",
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
         ApiResponse(responseCode = "400", description = "Blank or over-long message."),
-        ApiResponse(responseCode = "403", description = "Missing node `agent.chat`."),
-        ApiResponse(responseCode = "404", description = "No such bot."),
-        ApiResponse(responseCode = "409", description = "The bot is not online."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.chat`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )
-    fun chat(@PathVariable id: Long, @Valid @RequestBody request: ChatRequest): BotResponse =
-        botService.chat(id, request)
+    fun chat(@PathVariable id: Long, @Valid @RequestBody request: ChatRequest): AgentResponse =
+        agentService.chat(id, request)
 }

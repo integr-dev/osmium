@@ -1,9 +1,9 @@
 /**
- * Login mechanisms the operator can pick when setting a bot up.
+ * Login mechanisms the operator can pick when setting an agent up.
  *
  * Placeholders until the real mechanisms are chosen. The `id` is relayed to the host verbatim and
  * the backend never interprets it, so replacing these is a change to this list plus the agent —
- * not to the protocol. See "`method` is a mechanism, never an account" in BOT_CONNECTIVITY.md.
+ * not to the protocol. See "`method` is a mechanism, never an account" in FLEET_CONNECTIVITY.md.
  *
  * A method must never identify an account. "Use the device code flow" is a mechanism; an email
  * address or profile name would make the backend an authority on *which* identity to acquire.

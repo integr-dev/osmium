@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Bot, Copy, KeyRound, Plus, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { Bot as Agent, Copy, KeyRound, Plus, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
 import AddHostModal from '../components/AddHostModal.vue'
 import FormField from '../components/FormField.vue'
 import type { HostResponse } from '../api/client'
-import { useBotStore } from '../stores/bots'
+import { useAgentStore } from '../stores/agents'
 
-const botStore = useBotStore()
+const agentStore = useAgentStore()
 
 const addOpen = ref(false)
 const pendingRemove = ref<HostResponse | null>(null)
@@ -24,7 +24,7 @@ const rotatedToken = ref<string | null>(null)
 const rotateError = ref<string | null>(null)
 const copied = ref(false)
 
-onMounted(() => void botStore.refresh())
+onMounted(() => void agentStore.refresh())
 
 function openRename(host: HostResponse) {
   renaming.value = host
@@ -37,7 +37,7 @@ async function saveRename() {
   if (!renaming.value) return
   renameError.value = null
   try {
-    await botStore.renameHost(renaming.value.id, renameDraft.value)
+    await agentStore.renameHost(renaming.value.id, renameDraft.value)
     renameDialog.value?.close()
   } catch (failure) {
     renameError.value = failure instanceof Error ? failure.message : 'Could not rename the host'
@@ -56,7 +56,7 @@ async function confirmRotate() {
   if (!rotating.value) return
   rotateError.value = null
   try {
-    rotatedToken.value = await botStore.rotateHostToken(rotating.value.id)
+    rotatedToken.value = await agentStore.rotateHostToken(rotating.value.id)
   } catch (failure) {
     rotateError.value = failure instanceof Error ? failure.message : 'Could not rotate the token'
   }
@@ -77,7 +77,7 @@ async function confirmRemove() {
   if (!pendingRemove.value) return
   error.value = null
   try {
-    await botStore.removeHost(pendingRemove.value.id)
+    await agentStore.removeHost(pendingRemove.value.id)
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : 'Could not remove the host'
   }
@@ -92,9 +92,9 @@ async function confirmRemove() {
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">Hosts</h1>
         <p class="text-sm opacity-60">
-          Machines that run your bots.
-          {{ botStore.hosts.filter((host) => host.reachable).length }} of
-          {{ botStore.hosts.length }} online.
+          Machines that run your agents.
+          {{ agentStore.hosts.filter((host) => host.reachable).length }} of
+          {{ agentStore.hosts.length }} online.
         </p>
       </div>
       <button class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
@@ -103,9 +103,9 @@ async function confirmRemove() {
       </button>
     </header>
 
-    <div v-if="error || botStore.error" role="alert" class="alert alert-error alert-soft">
+    <div v-if="error || agentStore.error" role="alert" class="alert alert-error alert-soft">
       <TriangleAlert class="size-4" />
-      <span>{{ error ?? botStore.error }}</span>
+      <span>{{ error ?? agentStore.error }}</span>
     </div>
 
     <div class="card border-base-300 bg-base-200 border">
@@ -116,12 +116,12 @@ async function confirmRemove() {
               <th>Host</th>
               <th>Status</th>
               <th>Agent</th>
-              <th>Bots</th>
+              <th>Agents</th>
               <th class="text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="host in botStore.hosts" :key="host.id" class="hover:bg-base-300/40">
+            <tr v-for="host in agentStore.hosts" :key="host.id" class="hover:bg-base-300/40">
               <td>
                 <div class="flex items-center gap-3">
                   <div class="rounded-field bg-base-300/40 flex size-8 items-center justify-center">
@@ -144,11 +144,11 @@ async function confirmRemove() {
                   {{ host.reachable ? 'Online' : 'Unreachable' }}
                 </span>
               </td>
-              <td class="font-mono text-sm opacity-70">{{ host.agentVersion ?? '—' }}</td>
+              <td class="font-mono text-sm opacity-70">{{ host.hostVersion ?? '—' }}</td>
               <td>
                 <span class="badge badge-ghost badge-sm gap-1">
-                  <Bot class="size-3" />
-                  {{ host.botCount }}
+                  <Agent class="size-3" />
+                  {{ host.agentCount }}
                 </span>
               </td>
               <td>
@@ -168,7 +168,7 @@ async function confirmRemove() {
                 </div>
               </td>
             </tr>
-            <tr v-if="botStore.hosts.length === 0">
+            <tr v-if="agentStore.hosts.length === 0">
               <td colspan="5">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Server class="size-6" />
@@ -225,7 +225,7 @@ async function confirmRemove() {
         <div v-if="!rotatedToken" class="mt-4 flex flex-col gap-4">
           <p class="text-sm opacity-70">
             Issues a new token and invalidates the current one. The host is disconnected and has to
-            reconnect with the replacement — its bots are kept.
+            reconnect with the replacement — its agents are kept.
           </p>
           <div v-if="rotateError" role="alert" class="alert alert-error alert-soft">
             <TriangleAlert class="size-4" />
@@ -265,14 +265,14 @@ async function confirmRemove() {
           Remove {{ pendingRemove?.name }}?
         </h3>
         <p class="mt-3 text-sm opacity-70">
-          <template v-if="pendingRemove && botStore.botsOnHost(pendingRemove.id).length">
+          <template v-if="pendingRemove && agentStore.agentsOnHost(pendingRemove.id).length">
             This host runs
             <span class="text-error font-medium">
-              {{ botStore.botsOnHost(pendingRemove.id).length }} bot(s)
+              {{ agentStore.agentsOnHost(pendingRemove.id).length }} agent(s)
             </span>
             , which will be removed with it.
           </template>
-          <template v-else>This host has no bots.</template>
+          <template v-else>This host has no agents.</template>
           Its token stops working.
         </p>
         <div class="modal-action">

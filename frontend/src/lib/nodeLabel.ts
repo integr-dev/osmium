@@ -15,10 +15,10 @@ const LABELS: Record<string, string> = {
   'user.role.write': 'Assign roles',
   'role.read': 'View roles',
   'audit.read': 'View the audit log',
-  'agent.read': 'View hosts and bots',
-  'agent.control': 'Manage and control bots',
-  'agent.chat': 'Speak in game as a bot',
-  'agent.login': 'Enrol hosts and set up bots',
+  'fleet.read': 'View hosts and agents',
+  'fleet.control': 'Manage and control agents',
+  'fleet.chat': 'Speak in game as an agent',
+  'fleet.login': 'Enrol hosts and set up agents',
 }
 
 export function nodeLabel(node: string): string {

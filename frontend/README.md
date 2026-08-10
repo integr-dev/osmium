@@ -1,6 +1,6 @@
 # Osmium frontend
 
-Vue 3 / Vite single-page app: the operator dashboard for the bot fleet.
+Vue 3 / Vite single-page app: the operator dashboard for the agent fleet.
 
 Not a meta-framework. The backend is a standalone JWT API, so there is no SEO need and no
 server-side session to render against — a static bundle behind nginx does the job and deploys as
@@ -28,7 +28,7 @@ The dev proxy keeps things same-origin, which is why the backend needs no CORS c
 
 ## Talking to the backend
 
-API types are **generated from the backend's OpenAPI document**, so `UserResponse`, `BotState` and
+API types are **generated from the backend's OpenAPI document**, so `UserResponse`, `AgentState` and
 the rest come straight from the Kotlin. Rename a field in the backend and this fails to compile.
 
 ```bash
@@ -46,9 +46,9 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, bots, their lifecycle states and all commands are **real API calls**. Telemetry, chat and
-build progress are **mock**, and marked as such in `src/stores/bots.ts` — nothing reports them until
-an agent connects. They are what the SSE stream will replace.
+Hosts, agents, their lifecycle states and all commands are **real API calls**. Telemetry, chat and
+build progress are **mock**, and marked as such in `src/stores/agents.ts` — nothing reports them until
+a host connects. They are what the SSE stream will replace.
 
 ## Authorization in the UI
 
@@ -56,7 +56,7 @@ an agent connects. They are what the SSE stream will replace.
 strings the backend checks:
 
 ```ts
-v-if="auth.can('agent.chat')"      // hides what @PreAuthorize would reject
+v-if="auth.can('fleet.chat')"      // hides what @PreAuthorize would reject
 ```
 
 Same source of truth, so there is no duplicated role logic. Route guards use `meta.node`.
@@ -85,7 +85,7 @@ The access token lives in **`localStorage`**. That is a deliberate trade: it sur
 an XSS would expose a token valid for its full TTL. There are no refresh tokens, so the alternative
 was re-authenticating on every reload.
 
-Two mitigations carry that decision, and both matter more once real bot credentials are in play:
+Two mitigations carry that decision, and both matter more once real agent credentials are in play:
 
 - **A strict CSP** is served by nginx in production — `script-src 'self'` with no `unsafe-inline`,
   so an injected script simply does not execute. See `nginx.conf.template`.
@@ -130,13 +130,13 @@ suite runs once instead of twice.
 
 ```
 src/api/         generated schema, typed client, token storage
-src/components/  FormField, the add-host and add-bot modals
+src/components/  FormField, the add-host and add-agent modals
 src/layouts/     AppLayout: sidebar, nav, drawer
-src/lib/         presentation maps for bot state, roles, node labels and login methods
+src/lib/         presentation maps for agent state, roles, node labels and login methods
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub
-src/views/       dashboard, hosts, bot detail, accounts, audit log, login
+src/views/       dashboard, hosts, agent detail, accounts, audit log, login
 ```
 
 Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.

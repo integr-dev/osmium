@@ -13,17 +13,17 @@ import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
 
 /**
- * Lifecycle of a bot as the backend sees it. The backend never observes the Minecraft connection
- * directly - it knows the last thing the agent reported plus whether that agent is reachable.
+ * Lifecycle of an agent as the backend sees it. The backend never observes the Minecraft connection
+ * directly - it knows the last thing the host reported plus whether that host is reachable.
  */
-enum class BotState {
+enum class AgentState {
     /** Created, but no Minecraft account set up on the host yet. */
     UNLINKED,
 
-    /** `setup_bot` sent; the host is authenticating by means the backend does not observe. */
+    /** `setup_agent` sent; the host is authenticating by means the backend does not observe. */
     SETUP_PENDING,
 
-    /** The host holds credentials for this bot. Not in game. */
+    /** The host holds credentials for this agent. Not in game. */
     LINKED,
 
     ONLINE,
@@ -39,8 +39,8 @@ enum class BotState {
 }
 
 @Entity
-@Table(name = "bots")
-class Bot(
+@Table(name = "agents")
+class Agent(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id", nullable = false)
@@ -59,7 +59,7 @@ class Bot(
 
     @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false, length = 32)
-    var state: BotState = BotState.UNLINKED,
+    var state: AgentState = AgentState.UNLINKED,
 
     /** Reported by the host after a successful setup. Identity only - never a credential. */
     @Column(name = "mc_username", length = 32)
@@ -72,6 +72,6 @@ class Bot(
      * What the operator should see. A reachable host's report is trusted; an unreachable host means
      * the stored state is stale regardless of what it last said.
      */
-    fun effectiveState(): BotState =
-        if (!host.isReachable() && state == BotState.ONLINE) BotState.STALE else state
+    fun effectiveState(): AgentState =
+        if (!host.isReachable() && state == AgentState.ONLINE) AgentState.STALE else state
 }

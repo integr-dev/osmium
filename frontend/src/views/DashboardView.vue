@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router'
 import {
   Activity,
   Blocks,
-  Bot,
+  Bot as Agent,
   CircleAlert,
   Clock,
   Gauge,
@@ -15,13 +15,13 @@ import {
   TriangleAlert,
 } from 'lucide-vue-next'
 import { onMounted } from 'vue'
-import { STATE_DOT } from '../lib/botState'
-import type { Sector } from '../stores/bots'
-import { useBotStore } from '../stores/bots'
+import { STATE_DOT } from '../lib/agentState'
+import type { Sector } from '../stores/agents'
+import { useAgentStore } from '../stores/agents'
 
-const botStore = useBotStore()
+const agentStore = useAgentStore()
 
-onMounted(() => void botStore.refresh())
+onMounted(() => void agentStore.refresh())
 
 const SECTOR_BADGE: Record<Sector['status'], string> = {
   done: 'badge-success badge-soft',
@@ -44,7 +44,7 @@ const SECTOR_PROGRESS: Record<Sector['status'], string> = {
 }
 
 const eta = computed(() => {
-  const minutes = botStore.etaMinutes
+  const minutes = agentStore.etaMinutes
   if (minutes === null) return 'stalled'
   const hours = Math.floor(minutes / 60)
   return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
@@ -52,13 +52,13 @@ const eta = computed(() => {
 
 /** Builders only, ranked by contribution, for the leaderboard bars. */
 const contributors = computed(() =>
-  [...botStore.bots]
-    .filter((bot) => bot.telemetry.blocksPlaced > 0)
+  [...agentStore.agents]
+    .filter((agent) => agent.telemetry.blocksPlaced > 0)
     .sort((a, b) => b.telemetry.blocksPlaced - a.telemetry.blocksPlaced),
 )
 
 const topContribution = computed(() =>
-  Math.max(1, ...contributors.value.map((bot) => bot.telemetry.blocksPlaced)),
+  Math.max(1, ...contributors.value.map((agent) => agent.telemetry.blocksPlaced)),
 )
 
 function percent(part: number, whole: number): number {
@@ -72,35 +72,35 @@ function percent(part: number, whole: number): number {
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p class="text-sm opacity-60">
-          Building <span class="font-medium opacity-100">{{ botStore.schematic.name }}</span>
+          Building <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
         </p>
       </div>
       <span
         class="badge badge-sm gap-1"
-        :class="botStore.blocksPerMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
+        :class="agentStore.blocksPerMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
       >
-        {{ botStore.blocksPerMinute > 0 ? 'Building' : 'Stalled' }}
+        {{ agentStore.blocksPerMinute > 0 ? 'Building' : 'Stalled' }}
       </span>
     </header>
 
     <div class="stats stats-vertical sm:stats-horizontal border-base-300 bg-base-200 w-full border">
       <div class="stat">
-        <div class="stat-figure text-primary"><Bot class="size-7" /></div>
-        <div class="stat-title">Bots online</div>
+        <div class="stat-figure text-primary"><Agent class="size-7" /></div>
+        <div class="stat-title">Agents online</div>
         <div class="stat-value text-3xl">
-          {{ botStore.online.length }}<span class="text-lg opacity-40">/{{ botStore.bots.length }}</span>
+          {{ agentStore.online.length }}<span class="text-lg opacity-40">/{{ agentStore.agents.length }}</span>
         </div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
         <div class="stat-title">Blocks placed</div>
-        <div class="stat-value text-3xl">{{ botStore.blocksPlaced.toLocaleString() }}</div>
-        <div class="stat-desc">of {{ botStore.schematic.totalBlocks.toLocaleString() }}</div>
+        <div class="stat-value text-3xl">{{ agentStore.blocksPlaced.toLocaleString() }}</div>
+        <div class="stat-desc">of {{ agentStore.schematic.totalBlocks.toLocaleString() }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Gauge class="size-7" /></div>
         <div class="stat-title">Throughput</div>
-        <div class="stat-value text-3xl">{{ botStore.blocksPerMinute }}</div>
+        <div class="stat-value text-3xl">{{ agentStore.blocksPerMinute }}</div>
         <div class="stat-desc">blocks / minute</div>
       </div>
       <div class="stat">
@@ -119,18 +119,18 @@ function percent(part: number, whole: number): number {
             Schematic progress
           </h2>
           <span class="text-sm opacity-60">
-            Layer {{ botStore.schematic.currentLayer }} of {{ botStore.schematic.layers }}
+            Layer {{ agentStore.schematic.currentLayer }} of {{ agentStore.schematic.layers }}
           </span>
         </div>
         <progress
           class="progress progress-primary w-full"
-          :value="botStore.progressPercent"
+          :value="agentStore.progressPercent"
           max="100"
         ></progress>
         <div class="flex justify-between text-xs opacity-60">
-          <span>{{ botStore.progressPercent.toFixed(1) }}% complete</span>
+          <span>{{ agentStore.progressPercent.toFixed(1) }}% complete</span>
           <span class="tabular-nums">
-            {{ (botStore.schematic.totalBlocks - botStore.blocksPlaced).toLocaleString() }} blocks
+            {{ (agentStore.schematic.totalBlocks - agentStore.blocksPlaced).toLocaleString() }} blocks
             remaining
           </span>
         </div>
@@ -143,21 +143,21 @@ function percent(part: number, whole: number): number {
           <h2 class="card-title flex items-center gap-2 text-base">
             <TriangleAlert class="text-warning size-4" />
             Needs attention
-            <span class="badge badge-ghost badge-sm">{{ botStore.attention.length }}</span>
+            <span class="badge badge-ghost badge-sm">{{ agentStore.attention.length }}</span>
           </h2>
 
-          <ul v-if="botStore.attention.length" class="flex flex-col gap-1">
+          <ul v-if="agentStore.attention.length" class="flex flex-col gap-1">
             <RouterLink
-              v-for="(item, index) in botStore.attention"
-              :key="`${item.bot.id}-${index}`"
-              :to="{ name: 'bot', params: { id: item.bot.id } }"
+              v-for="(item, index) in agentStore.attention"
+              :key="`${item.agent.id}-${index}`"
+              :to="{ name: 'agent', params: { id: item.agent.id } }"
               class="rounded-field hover:bg-base-300/50 flex items-center gap-3 px-3 py-2"
             >
               <CircleAlert
                 class="size-4 shrink-0"
                 :class="item.severity === 'error' ? 'text-error' : 'text-warning'"
               />
-              <span class="flex-1 truncate text-sm font-medium">{{ item.bot.label }}</span>
+              <span class="flex-1 truncate text-sm font-medium">{{ item.agent.label }}</span>
               <span
                 class="badge badge-xs"
                 :class="item.severity === 'error' ? 'badge-error badge-soft' : 'badge-warning badge-soft'"
@@ -167,7 +167,7 @@ function percent(part: number, whole: number): number {
             </RouterLink>
           </ul>
 
-          <p v-else class="py-8 text-center text-sm opacity-50">Every bot is healthy.</p>
+          <p v-else class="py-8 text-center text-sm opacity-50">Every agent is healthy.</p>
         </div>
       </div>
 
@@ -177,14 +177,14 @@ function percent(part: number, whole: number): number {
             <Map class="text-primary size-4" />
             Sectors
             <span class="badge badge-ghost badge-sm">
-              {{ botStore.sectors.filter((sector) => sector.status === 'done').length }}/{{
-                botStore.sectors.length
+              {{ agentStore.sectors.filter((sector) => sector.status === 'done').length }}/{{
+                agentStore.sectors.length
               }}
             </span>
           </h2>
 
           <ul class="flex flex-col gap-3">
-            <li v-for="sector in botStore.sectors" :key="sector.id">
+            <li v-for="sector in agentStore.sectors" :key="sector.id">
               <div class="flex items-center justify-between gap-2">
                 <span class="truncate text-sm">{{ sector.name }}</span>
                 <span class="badge badge-xs shrink-0" :class="SECTOR_BADGE[sector.status]">
@@ -221,23 +221,23 @@ function percent(part: number, whole: number): number {
           </h2>
 
           <ul class="flex flex-col gap-3">
-            <li v-for="bot in contributors" :key="bot.id">
+            <li v-for="agent in contributors" :key="agent.id">
               <div class="flex items-center justify-between text-xs">
                 <RouterLink
-                  :to="{ name: 'bot', params: { id: bot.id } }"
+                  :to="{ name: 'agent', params: { id: agent.id } }"
                   class="flex items-center gap-2 hover:underline"
                 >
                   <span
                     class="size-1.5 rounded-full"
-                    :class="STATE_DOT[bot.state] ?? 'bg-base-content/30'"
+                    :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
                   ></span>
-                  {{ bot.label }}
+                  {{ agent.label }}
                 </RouterLink>
-                <span class="tabular-nums opacity-60">{{ bot.telemetry.blocksPlaced.toLocaleString() }}</span>
+                <span class="tabular-nums opacity-60">{{ agent.telemetry.blocksPlaced.toLocaleString() }}</span>
               </div>
               <progress
                 class="progress progress-primary mt-1 w-full"
-                :value="percent(bot.telemetry.blocksPlaced, topContribution)"
+                :value="percent(agent.telemetry.blocksPlaced, topContribution)"
                 max="100"
               ></progress>
             </li>
@@ -254,17 +254,17 @@ function percent(part: number, whole: number): number {
             </h2>
           </div>
           <p class="text-xs opacity-50">
-            One elected bot forwards each server's chat, so it is not duplicated per bot.
+            One elected agent forwards each server's chat, so it is not duplicated per agent.
           </p>
 
           <!-- A fleet can span servers, so this is grouped by server rather than shown as one feed. -->
-          <div v-if="botStore.servers.length" class="flex max-h-72 flex-col gap-4 overflow-y-auto">
-            <div v-for="server in botStore.servers" :key="server">
+          <div v-if="agentStore.servers.length" class="flex max-h-72 flex-col gap-4 overflow-y-auto">
+            <div v-for="server in agentStore.servers" :key="server">
               <div class="mb-1 flex items-center justify-between gap-2">
                 <span class="truncate font-mono text-xs opacity-60">{{ server }}</span>
-                <span v-if="botStore.chatListeners[server]" class="shrink-0 text-xs opacity-50">
+                <span v-if="agentStore.chatListeners[server]" class="shrink-0 text-xs opacity-50">
                   via
-                  <span class="font-medium">{{ botStore.chatListeners[server]?.label }}</span>
+                  <span class="font-medium">{{ agentStore.chatListeners[server]?.label }}</span>
                 </span>
                 <span v-else class="badge badge-warning badge-soft badge-xs shrink-0 gap-1">
                   <TriangleAlert class="size-3" />
@@ -272,9 +272,9 @@ function percent(part: number, whole: number): number {
                 </span>
               </div>
 
-              <div v-if="botStore.chatListeners[server]" class="flex flex-col gap-1">
+              <div v-if="agentStore.chatListeners[server]" class="flex flex-col gap-1">
                 <p
-                  v-for="(line, index) in botStore.globalChatFor(server)"
+                  v-for="(line, index) in agentStore.globalChatFor(server)"
                   :key="index"
                   class="flex gap-2 text-sm"
                 >
@@ -282,18 +282,18 @@ function percent(part: number, whole: number): number {
                   <span class="font-medium">{{ line.from }}</span>
                   <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
                 </p>
-                <p v-if="!botStore.globalChatFor(server).length" class="text-sm opacity-50">
+                <p v-if="!agentStore.globalChatFor(server).length" class="text-sm opacity-50">
                   Nothing yet.
                 </p>
               </div>
 
               <p v-else class="text-sm opacity-50">
-                No bot online here, so nothing is listening.
+                No agent online here, so nothing is listening.
               </p>
             </div>
           </div>
 
-          <p v-else class="py-8 text-center text-sm opacity-50">No bots on any server yet.</p>
+          <p v-else class="py-8 text-center text-sm opacity-50">No agents on any server yet.</p>
         </div>
       </div>
     </div>
@@ -303,15 +303,15 @@ function percent(part: number, whole: number): number {
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
             <Activity class="text-primary size-4" />
-            Bot activity
+            Agent activity
           </h2>
           <p class="text-xs opacity-50">Incidents and connectivity — not conversation.</p>
 
-          <div v-if="botStore.activity.length" class="flex max-h-64 flex-col gap-1 overflow-y-auto">
+          <div v-if="agentStore.activity.length" class="flex max-h-64 flex-col gap-1 overflow-y-auto">
             <RouterLink
-              v-for="(line, index) in botStore.activity"
+              v-for="(line, index) in agentStore.activity"
               :key="index"
-              :to="{ name: 'bot', params: { id: line.bot.id } }"
+              :to="{ name: 'agent', params: { id: line.agent.id } }"
               class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
             >
               <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
@@ -319,7 +319,7 @@ function percent(part: number, whole: number): number {
                 class="size-1.5 shrink-0 rounded-full"
                 :class="SEVERITY_DOT[line.severity]"
               ></span>
-              <span class="font-medium">{{ line.bot.label }}</span>
+              <span class="font-medium">{{ line.agent.label }}</span>
               <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
             </RouterLink>
           </div>

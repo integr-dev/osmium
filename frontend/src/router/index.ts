@@ -25,9 +25,9 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/HostsView.vue'),
       },
       {
-        path: 'bots/:id',
-        name: 'bot',
-        component: () => import('../views/BotDetailView.vue'),
+        path: 'agents/:id',
+        name: 'agent',
+        component: () => import('../views/AgentDetailView.vue'),
       },
       {
         path: 'account',

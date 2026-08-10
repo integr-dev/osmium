@@ -1,35 +1,35 @@
 # Osmium
 
-Orchestration for a fleet of Minecraft bots that build a large schematic together.
+Orchestration for a fleet of Minecraft agents that build a large schematic together.
 
-An operator uploads a schematic, picks the bots to work it, and Osmium splits it into segments and
-hands each bot its own slice. The dashboard shows what the fleet is doing: progress, throughput, what
+An operator uploads a schematic, picks the agents to work it, and Osmium splits it into segments and
+hands each agent its own slice. The dashboard shows what the fleet is doing: progress, throughput, what
 needs attention, and what is being said in game.
 
-> **Status:** early. Authentication, accounts, hosts, bots and the agent transport are built and
-> tested. The agent itself is not — see [`agent/`](agent/). Telemetry and build progress in the UI
-> are still mock, because nothing reports them until an agent connects.
+> **Status:** early. Authentication, accounts, hosts, agents and the host transport are built and
+> tested. The host itself is not — see [`host/`](host/). Telemetry and build progress in the UI
+> are still mock, because nothing reports them until a host connects.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, bots, and the WebSocket agents dial into. | Built, 88 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 88 tests |
 | [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 37 tests |
-| [`agent/`](agent/) | Runs on a machine you control, holds the Minecraft credentials, drives the bots. | **Not started** |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. | **Not started** |
 
 ## The one idea worth knowing
 
 **Osmium never holds Minecraft credentials, and never performs the login.**
 
-The backend sends a host a `setup_bot` command; that host logs the account in by whatever means it
+The backend sends a host a `setup_agent` command; that host logs the account in by whatever means it
 prefers and reports back only the resulting username and UUID. A full database dump therefore reveals
 *which* accounts you run — not the ability to run them.
 
-That constraint shapes everything else: how bots are addressed, why hosts dial out instead of being
-connected to, and why a host being unreachable makes a bot's state *unknown* rather than offline.
+That constraint shapes everything else: how agents are addressed, why hosts dial out instead of being
+connected to, and why a host being unreachable makes an agent's state *unknown* rather than offline.
 
-[`BOT_CONNECTIVITY.md`](BOT_CONNECTIVITY.md) is the design document — credential custody, the wire
+[`FLEET_CONNECTIVITY.md`](FLEET_CONNECTIVITY.md) is the design document — credential custody, the wire
 protocol, liveness, chat, and the alternatives that were rejected and why.
 
 ## Running it locally
@@ -59,10 +59,10 @@ nodes, arranged as nested tiers:
 | Role | Adds |
 |---|---|
 | `viewer` | see your own account and the role list |
-| `orchestrator` | *viewer* + full authority over hosts and bots |
+| `orchestrator` | *viewer* + full authority over hosts and agents |
 | `administrator` | *orchestrator* + user management |
 
-So the split is "runs the bots" versus "runs the people". Details in
+So the split is "runs the agents" versus "runs the people". Details in
 [`backend/README.md`](backend/README.md).
 
 ## Tests
@@ -73,7 +73,7 @@ cd frontend && npm test          # 37 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 503s — plus a real client
-over a real agent socket. The frontend covers the route guard, the auth store, the API client
+over a real host socket. The frontend covers the route guard, the auth store, the API client
 middleware and the fleet store's derived state.
 
 ## CI

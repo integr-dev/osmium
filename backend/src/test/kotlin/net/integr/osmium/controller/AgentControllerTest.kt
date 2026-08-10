@@ -1,7 +1,7 @@
 package net.integr.osmium.controller
 
 import net.integr.osmium.AbstractRestTest
-import net.integr.osmium.model.BotState
+import net.integr.osmium.model.AgentState
 import net.integr.osmium.security.RoleNames
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpHeaders
@@ -11,21 +11,21 @@ import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
 
-class BotControllerTest : AbstractRestTest() {
+class AgentControllerTest : AbstractRestTest() {
 
     @Test
-    fun `orchestrator creates a bot, which starts unlinked`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+    fun `orchestrator creates an agent, which starts unlinked`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val host = reachableHost()
 
-        mockMvc.post("/api/bots") {
+        mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
         }.andExpect {
             status { isCreated() }
             jsonPath("$.label") { value("Mason_01") }
-            jsonPath("$.state") { value(BotState.UNLINKED.name) }
+            jsonPath("$.state") { value(AgentState.UNLINKED.name) }
             jsonPath("$.hostName") { value(host.name) }
             jsonPath("$.mcUsername") { value(null) }
         }
@@ -33,10 +33,10 @@ class BotControllerTest : AbstractRestTest() {
 
     @Test
     fun `the server address is normalised, so one server does not become two`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val host = reachableHost()
 
-        mockMvc.post("/api/bots") {
+        mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"  MC.Example.com  "}"""
@@ -45,7 +45,7 @@ class BotControllerTest : AbstractRestTest() {
             jsonPath("$.serverAddress") { value("mc.example.com:25565") }
         }
 
-        mockMvc.post("/api/bots") {
+        mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_02","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
@@ -54,16 +54,16 @@ class BotControllerTest : AbstractRestTest() {
             jsonPath("$.serverAddress") { value("mc.example.com:25565") }
         }
 
-        // Both bots must land on the same grouping key, or they get separate chat listeners.
-        assert(botRepository.findAll().map { it.serverAddress }.distinct().size == 1)
+        // Both agents must land on the same grouping key, or they get separate chat listeners.
+        assert(agentRepository.findAll().map { it.serverAddress }.distinct().size == 1)
     }
 
     @Test
-    fun `viewer cannot create a bot`() {
+    fun `viewer cannot create an agent`() {
         val auth = authAs("ada", RoleNames.VIEWER)
         val host = reachableHost()
 
-        mockMvc.post("/api/bots") {
+        mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
@@ -73,12 +73,12 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `creating a bot rejects a duplicate label`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+    fun `creating an agent rejects a duplicate label`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val host = reachableHost()
-        createBot(label = "Mason_01", host = host)
+        createAgent(label = "Mason_01", host = host)
 
-        mockMvc.post("/api/bots") {
+        mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
@@ -88,10 +88,10 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `creating a bot rejects an unknown host`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+    fun `creating an agent rejects an unknown host`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
 
-        mockMvc.post("/api/bots") {
+        mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_01","hostId":999999,"serverAddress":"mc.example.com:25565"}"""
@@ -101,34 +101,34 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `a bot on an unreachable host reports its stored state, and online becomes stale`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+    fun `an agent on an unreachable host reports its stored state, and online becomes stale`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val cold = unreachableHost()
-        createBot(label = "Mason_01", host = cold, state = BotState.ONLINE)
-        createBot(label = "Mason_02", host = cold, state = BotState.LINKED)
+        createAgent(label = "Mason_01", host = cold, state = AgentState.ONLINE)
+        createAgent(label = "Mason_02", host = cold, state = AgentState.LINKED)
 
-        mockMvc.get("/api/bots") {
+        mockMvc.get("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isOk() }
-            // ONLINE is not trustworthy without a live agent; LINKED is unaffected.
-            jsonPath("$[?(@.label == 'Mason_01')].state") { value(BotState.STALE.name) }
-            jsonPath("$[?(@.label == 'Mason_02')].state") { value(BotState.LINKED.name) }
+            // ONLINE is not trustworthy without a live host; LINKED is unaffected.
+            jsonPath("$[?(@.label == 'Mason_01')].state") { value(AgentState.STALE.name) }
+            jsonPath("$[?(@.label == 'Mason_02')].state") { value(AgentState.LINKED.name) }
         }
     }
 
     @Test
-    fun `commands to a bot on an unreachable host fail fast rather than queueing`() {
+    fun `commands to an agent on an unreachable host fail fast rather than queueing`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val bot = createBot(label = "Mason_01", host = unreachableHost(), state = BotState.LINKED)
+        val agent = createAgent(label = "Mason_01", host = unreachableHost(), state = AgentState.LINKED)
 
-        mockMvc.post("/api/bots/${bot.id}/connect") {
+        mockMvc.post("/api/agents/${agent.id}/connect") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isServiceUnavailable() }
         }
 
-        mockMvc.post("/api/bots/${bot.id}/setup") {
+        mockMvc.post("/api/agents/${agent.id}/setup") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"method":"device_code"}"""
@@ -137,22 +137,22 @@ class BotControllerTest : AbstractRestTest() {
         }
 
         // The failed command must not have advanced the state.
-        assert(botRepository.findById(bot.id!!).orElseThrow().state == BotState.LINKED)
+        assert(agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.LINKED)
     }
 
     @Test
     fun `state is validated before delivery is attempted`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        // Reachable, so a 503 cannot mask the state check - but there is still no agent behind it.
-        val bot = createBot(label = "Mason_01", host = reachableHost(), state = BotState.UNLINKED)
+        // Reachable, so a 503 cannot mask the state check - but there is still no host behind it.
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.UNLINKED)
 
-        mockMvc.post("/api/bots/${bot.id}/connect") {
+        mockMvc.post("/api/agents/${agent.id}/connect") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isConflict() }
         }
 
-        mockMvc.post("/api/bots/${bot.id}/disconnect") {
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isConflict() }
@@ -162,9 +162,9 @@ class BotControllerTest : AbstractRestTest() {
     @Test
     fun `setup is refused while another setup is already running`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val bot = createBot(label = "Mason_01", host = reachableHost(), state = BotState.SETUP_PENDING)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.SETUP_PENDING)
 
-        mockMvc.post("/api/bots/${bot.id}/setup") {
+        mockMvc.post("/api/agents/${agent.id}/setup") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"method":"device_code"}"""
@@ -174,12 +174,12 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `orchestrator has full authority over bots`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
-        val bot = createBot(label = "Mason_01", host = reachableHost(), state = BotState.ONLINE)
+    fun `orchestrator has full authority over agents`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
 
-        // 503 rather than 403: authorization passed, there is simply no agent to deliver to.
-        mockMvc.post("/api/bots/${bot.id}/chat") {
+        // 503 rather than 403: authorization passed, there is simply no host to deliver to.
+        mockMvc.post("/api/agents/${agent.id}/chat") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"message":"hello"}"""
@@ -187,7 +187,7 @@ class BotControllerTest : AbstractRestTest() {
             status { isServiceUnavailable() }
         }
 
-        mockMvc.post("/api/bots/${bot.id}/disconnect") {
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isServiceUnavailable() }
@@ -195,11 +195,11 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `viewer cannot speak as a bot`() {
+    fun `viewer cannot speak as an agent`() {
         val auth = authAs("ada", RoleNames.VIEWER)
-        val bot = createBot(label = "Mason_01", host = reachableHost(), state = BotState.ONLINE)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
 
-        mockMvc.post("/api/bots/${bot.id}/chat") {
+        mockMvc.post("/api/agents/${agent.id}/chat") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"message":"hello"}"""
@@ -211,9 +211,9 @@ class BotControllerTest : AbstractRestTest() {
     @Test
     fun `chat rejects a blank message`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
-        val bot = createBot(label = "Mason_01", host = reachableHost(), state = BotState.ONLINE)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
 
-        mockMvc.post("/api/bots/${bot.id}/chat") {
+        mockMvc.post("/api/agents/${agent.id}/chat") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"message":"   "}"""
@@ -223,16 +223,16 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `commands on an unknown bot return not found`() {
+    fun `commands on an unknown agent return not found`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)
 
-        mockMvc.post("/api/bots/999999/connect") {
+        mockMvc.post("/api/agents/999999/connect") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isNotFound() }
         }
 
-        mockMvc.get("/api/bots/999999") {
+        mockMvc.get("/api/agents/999999") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isNotFound() }
@@ -240,11 +240,11 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `a bot can be renamed and moved to another server`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
-        val target = createBot(label = "Mason_01", host = reachableHost(), state = BotState.LINKED)
+    fun `an agent can be renamed and moved to another server`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
 
-        mockMvc.patch("/api/bots/${target.id}") {
+        mockMvc.patch("/api/agents/${target.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_09","serverAddress":"Other.Example.com"}"""
@@ -253,16 +253,16 @@ class BotControllerTest : AbstractRestTest() {
             jsonPath("$.label") { value("Mason_09") }
             jsonPath("$.serverAddress") { value("other.example.com:25565") }
             // The account is the same account wherever it joins, so credentials are untouched.
-            jsonPath("$.state") { value(BotState.LINKED.name) }
+            jsonPath("$.state") { value(AgentState.LINKED.name) }
         }
     }
 
     @Test
-    fun `a bot cannot be moved to another server while it is online`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
-        val target = createBot(label = "Mason_01", host = reachableHost(), state = BotState.ONLINE)
+    fun `an agent cannot be moved to another server while it is online`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
 
-        mockMvc.patch("/api/bots/${target.id}") {
+        mockMvc.patch("/api/agents/${target.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"serverAddress":"other.example.com:25565"}"""
@@ -271,7 +271,7 @@ class BotControllerTest : AbstractRestTest() {
         }
 
         // Renaming is unaffected: the label is only a display name.
-        mockMvc.patch("/api/bots/${target.id}") {
+        mockMvc.patch("/api/agents/${target.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_09"}"""
@@ -281,13 +281,13 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `renaming a bot rejects a label already in use`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
+    fun `renaming an agent rejects a label already in use`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val host = reachableHost()
-        createBot(label = "Mason_01", host = host)
-        val other = createBot(label = "Mason_02", host = host)
+        createAgent(label = "Mason_01", host = host)
+        val other = createAgent(label = "Mason_02", host = host)
 
-        mockMvc.patch("/api/bots/${other.id}") {
+        mockMvc.patch("/api/agents/${other.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"Mason_01"}"""
@@ -297,11 +297,11 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `viewer cannot edit a bot`() {
+    fun `viewer cannot edit an agent`() {
         val auth = authAs("ada", RoleNames.VIEWER)
-        val target = createBot(label = "Mason_01", host = reachableHost())
+        val target = createAgent(label = "Mason_01", host = reachableHost())
 
-        mockMvc.patch("/api/bots/${target.id}") {
+        mockMvc.patch("/api/agents/${target.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"label":"pwned"}"""
@@ -311,24 +311,24 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `orchestrator deletes a bot`() {
-        val auth = authAs("bot", RoleNames.ORCHESTRATOR)
-        val bot = createBot(label = "Mason_01", host = reachableHost())
+    fun `orchestrator deletes an agent`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost())
 
-        mockMvc.delete("/api/bots/${bot.id}") {
+        mockMvc.delete("/api/agents/${agent.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isNoContent() }
         }
 
-        assert(botRepository.findAll().isEmpty())
+        assert(agentRepository.findAll().isEmpty())
     }
 
     @Test
-    fun `listing bots requires agent read`() {
+    fun `listing agents requires host read`() {
         val auth = authAs("ada", RoleNames.VIEWER)
 
-        mockMvc.get("/api/bots") {
+        mockMvc.get("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isForbidden() }
@@ -336,8 +336,8 @@ class BotControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `listing bots rejects an unauthenticated request`() {
-        mockMvc.get("/api/bots").andExpect {
+    fun `listing agents rejects an unauthenticated request`() {
+        mockMvc.get("/api/agents").andExpect {
             status { isUnauthorized() }
         }
     }

@@ -44,10 +44,10 @@ class RoleControllerTest : AbstractRestTest() {
             jsonPath("$[?(@.name == 'orchestrator')].nodes[*]") {
                 value(
                     contains(
-                        Nodes.AGENT_CHAT,
-                        Nodes.AGENT_CONTROL,
-                        Nodes.AGENT_LOGIN,
-                        Nodes.AGENT_READ,
+                        Nodes.FLEET_CHAT,
+                        Nodes.FLEET_CONTROL,
+                        Nodes.FLEET_LOGIN,
+                        Nodes.FLEET_READ,
                         Nodes.ROLE_READ,
                         Nodes.USER_EDIT_SELF,
                         Nodes.USER_READ_SELF,

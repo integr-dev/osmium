@@ -10,9 +10,9 @@ import java.time.Duration
 import java.time.Instant
 
 /**
- * An agent host: a machine running the agent process that owns bots.
+ * A host: a machine running the host process that owns agents.
  *
- * Holds no Minecraft credentials - see BOT_CONNECTIVITY.md. The enrolment token is stored hashed,
+ * Holds no Minecraft credentials - see FLEET_CONNECTIVITY.md. The enrolment token is stored hashed,
  * like a password, and shown to the operator exactly once.
  */
 @Entity
@@ -30,21 +30,21 @@ class Host(
     var tokenHash: String = "",
 
     /**
-     * Observed when the agent dials in, not configured: the agent connects to Osmium, so the
+     * Observed when the host dials in, not configured: the host connects to Osmium, so the
      * backend never needs to reach it. Null until the first connection.
      */
     @Column(name = "address", length = 128)
     var address: String? = null,
 
-    @Column(name = "agent_version", length = 32)
-    var agentVersion: String? = null,
+    @Column(name = "host_version", length = 32)
+    var hostVersion: String? = null,
 
     @Column(name = "last_seen_at")
     var lastSeenAt: Instant? = null,
 ) {
     /**
      * Reachability is derived from the heartbeat rather than stored, so a backend restart cannot
-     * leave a host stuck "online". A missed grace window means unreachable, which puts its bots in
+     * leave a host stuck "online". A missed grace window means unreachable, which puts its agents in
      * STALE - not OFFLINE, because we do not actually know whether they are still in game.
      */
     fun isReachable(now: Instant = Instant.now()): Boolean {

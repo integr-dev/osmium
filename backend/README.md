@@ -1,14 +1,14 @@
 # Osmium backend
 
 Spring Boot 4.1 / Kotlin. Provides JWT authentication with role-grouped permission nodes, the host
-and bot domain, and the WebSocket that agents dial into.
+and agent domain, and the WebSocket that hosts dial into.
 
 Routes authorize against **nodes only** — never against roles. Roles exist purely as named bundles
 of nodes, so adding a role never requires touching a route annotation.
 
-It holds **no Minecraft credentials**. Commands are relayed to the host that owns a bot; that host
+It holds **no Minecraft credentials**. Commands are relayed to the host that owns an agent; that host
 performs any login itself and reports back only an identity. See
-[`../BOT_CONNECTIVITY.md`](../BOT_CONNECTIVITY.md).
+[`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md).
 
 ## Requirements
 
@@ -77,12 +77,12 @@ model honest. A null role means no permissions at all.
 | `user.role.write` | change the role of an account |
 | `role.read` | list roles and their nodes |
 | `audit.read` | read the operator audit trail, including outbound message text |
-| `agent.read` | see hosts, bots and telemetry |
-| `agent.control` | create, edit, delete bots; connect and disconnect them |
-| `agent.chat` | **speak in game as a bot** |
-| `agent.login` | enrol hosts, rotate tokens, trigger `setup_bot` |
+| `fleet.read` | see hosts, agents and telemetry |
+| `fleet.control` | create, edit, delete agents; connect and disconnect them |
+| `fleet.chat` | **speak in game as an agent** |
+| `fleet.login` | enrol hosts, rotate tokens, trigger `setup_agent` |
 
-`agent.chat` and `agent.login` stay separate from `agent.control` even though one tier currently
+`fleet.chat` and `fleet.login` stay separate from `fleet.control` even though one tier currently
 holds all four: the first is impersonation under an account you own, the second is credential
 acquisition. Collapsing them would make that distinction unrecoverable if a narrower tier is ever
 wanted.
@@ -96,14 +96,14 @@ single flat set lookup and the table is self-describing.
 | Role | Nodes |
 |---|---|
 | `viewer` | `user.read.self`, `user.edit.self`, `role.read` |
-| `orchestrator` | *viewer* + `agent.read`, `agent.control`, `agent.chat`, `agent.login` |
+| `orchestrator` | *viewer* + `fleet.read`, `fleet.control`, `fleet.chat`, `fleet.login` |
 | `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read` |
 
-The division is "runs the bots" versus "runs the people": an orchestrator has full authority over the
+The division is "runs the agents" versus "runs the people": an orchestrator has full authority over the
 fleet, and what an administrator adds is user management plus the audit trail.
 
-`audit.read` sits outside the `agent.*` tier deliberately. Running the fleet is not the same as being
-entitled to read every other operator's actions and the text they had a bot speak.
+`audit.read` sits outside the `fleet.*` tier deliberately. Running the fleet is not the same as being
+entitled to read every other operator's actions and the text they had an agent speak.
 
 Changing the hierarchy is a code change plus a restart. `DataInitializer` diffs the desired node set
 against the stored one on every boot and rewrites it on mismatch, so an existing database picks up
@@ -123,24 +123,24 @@ changes automatically.
 | `DELETE` | `/api/users/{id}` | `user.delete` |
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
-| `GET` | `/api/hosts` | `agent.read` |
-| `POST` | `/api/hosts` | `agent.login` (returns the enrolment token once) |
-| `PATCH` | `/api/hosts/{id}` | `agent.login` (rename) |
-| `POST` | `/api/hosts/{id}/rotate-token` | `agent.login` |
-| `DELETE` | `/api/hosts/{id}` | `agent.login` (cascades to its bots) |
-| `GET` | `/api/bots`, `/api/bots/{id}` | `agent.read` |
-| `POST` | `/api/bots` | `agent.control` |
-| `PATCH` | `/api/bots/{id}` | `agent.control` (rename, move server) |
-| `DELETE` | `/api/bots/{id}` | `agent.control` |
-| `POST` | `/api/bots/{id}/setup` | `agent.login` |
-| `POST` | `/api/bots/{id}/connect`, `/disconnect` | `agent.control` |
-| `POST` | `/api/bots/{id}/chat` | `agent.chat` |
+| `GET` | `/api/hosts` | `fleet.read` |
+| `POST` | `/api/hosts` | `fleet.login` (returns the enrolment token once) |
+| `PATCH` | `/api/hosts/{id}` | `fleet.login` (rename) |
+| `POST` | `/api/hosts/{id}/rotate-token` | `fleet.login` |
+| `DELETE` | `/api/hosts/{id}` | `fleet.login` (cascades to its agents) |
+| `GET` | `/api/agents`, `/api/agents/{id}` | `fleet.read` |
+| `POST` | `/api/agents` | `fleet.control` |
+| `PATCH` | `/api/agents/{id}` | `fleet.control` (rename, move server) |
+| `DELETE` | `/api/agents/{id}` | `fleet.control` |
+| `POST` | `/api/agents/{id}/setup` | `fleet.login` |
+| `POST` | `/api/agents/{id}/connect`, `/disconnect` | `fleet.control` |
+| `POST` | `/api/agents/{id}/chat` | `fleet.chat` |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
 route, so those paths cannot be used to lock yourself out or bypass the current-password check.
 
-Bot commands answer **503** when the owning host has no live connection. They are never queued: a
+Agent commands answer **503** when the owning host has no live connection. They are never queued: a
 disconnect firing long after an operator fixed things by hand is worse than an immediate failure.
 
 OpenAPI is generated from annotations by springdoc:
@@ -179,29 +179,30 @@ must log in again after renaming themselves.
 Baking nodes into the token claims would remove that query, but would leave revoked permissions live
 for up to a full token TTL. That is the reason it is not done.
 
-## Hosts, bots and the agent socket
+## Hosts, agents and the host socket
 
-A **host** is a machine running an agent; a **bot** is one Minecraft session on one server, owned by
-a host. Enrolling a host issues a token once — only its hash is stored — and the host then dials in:
+A **host** is a machine running the Osmium host software; an **agent** is one Minecraft session on
+one server, owned by a host. Enrolling a host issues a token once — only its hash is stored — and
+the host then dials in:
 
 ```
-agent → backend    WSS /ws/agent, Authorization: Bearer osm_ag_<hostId>_<secret>
+host → backend    WSS /ws/host, Authorization: Bearer osm_host_<hostId>_<secret>
 ```
 
 The token embeds the host id so authentication is one lookup plus one hash comparison, rather than a
 BCrypt check against every enrolled host.
 
 That endpoint has **its own security filter chain**, deliberately without the resource server.
-`permitAll` alone is not enough: the bearer-token filter would still try to authenticate an agent
+`permitAll` alone is not enough: the bearer-token filter would still try to authenticate a host
 token as a JWT and reject the handshake with 401.
 
-One socket per host multiplexes all its bots, so every message carries a `botId`; there is no
+One socket per host multiplexes all its agents, so every message carries an `agentId`; there is no
 destination field, because the connection *is* the host. Commands are fire-and-forget and state
-advances when the agent reports back — it is the source of truth about its own bots, and is trusted
-only for the bots it owns.
+advances when the host reports back — it is the source of truth about its own agents, and is trusted
+only for the agents it owns.
 
 Reachability is **derived** from the heartbeat rather than stored, so a backend restart cannot leave
-a host stuck online. An `ONLINE` bot whose host is unreachable reports as `STALE`, not offline —
+a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
 the state is genuinely unknown at that point.
 
 ## Tests
@@ -216,9 +217,9 @@ the state is genuinely unknown at that point.
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 503s and
   validation failures. Each runs in a transaction that is rolled back, so the suite leaves no state
   behind.
-- **`AgentWebSocketTest`** drives a real client over a real socket: it authenticates with an
+- **`HostWebSocketTest`** drives a real client over a real socket: it authenticates with an
   enrolment token, heartbeats, receives a dispatched command and answers it. It is deliberately not
-  transactional — the agent runs on other threads, so a rolled-back test transaction would be
+  transactional — the host runs on other threads, so a rolled-back test transaction would be
   invisible to it — and cleans up explicitly instead.
 
 ## Docker image
@@ -263,9 +264,9 @@ it, and the suite runs once instead of twice.
 config/      configuration properties, OpenAPI and WebSocket setup, DataInitializer seeding
 controller/  REST endpoints and the exception handler
 dto/         request/response records, bean validation, entity mappers
-model/       JPA entities and the bot lifecycle enum
+model/       JPA entities and the agent lifecycle enum
 repository/  Spring Data repositories
 security/    node/role definitions, JWT issuing, Spring Security wiring
-service/     domain logic; AgentEventService applies what agents report
-websocket/   the agent socket: envelope, handshake auth, session registry
+service/     domain logic; HostEventService applies what hosts report
+websocket/   the host socket: envelope, handshake auth, session registry
 ```

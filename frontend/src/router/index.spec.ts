@@ -59,7 +59,7 @@ describe('route guard', () => {
   // audit.read is administrator-only and deliberately outside the agent.* tier, so an orchestrator
   // running the whole fleet still cannot read what other operators did.
   it('keeps the audit log from an account without audit.read', async () => {
-    signIn(['agent.read', 'agent.control', 'agent.chat', 'agent.login'])
+    signIn(['fleet.read', 'fleet.control', 'fleet.chat', 'fleet.login'])
 
     await router.push('/audit')
 

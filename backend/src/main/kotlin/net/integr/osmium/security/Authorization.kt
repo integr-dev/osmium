@@ -16,17 +16,17 @@ object Nodes {
     const val ROLE_READ = "role.read"
 
     /**
-     * Read the operator audit trail: who triggered which command, and the text of anything a bot was
-     * made to say. Deliberately outside the `agent.*` tier - an orchestrator running the fleet does
+     * Read the operator audit trail: who triggered which command, and the text of anything an agent was
+     * made to say. Deliberately outside the `fleet.*` tier - an orchestrator running the fleet does
      * not automatically get to read every other operator's actions.
      */
     const val AUDIT_READ = "audit.read"
 
-    /** See BOT_CONNECTIVITY.md - chat and login are deliberately not folded into control. */
-    const val AGENT_READ = "agent.read"
-    const val AGENT_CONTROL = "agent.control"
-    const val AGENT_CHAT = "agent.chat"
-    const val AGENT_LOGIN = "agent.login"
+    /** See FLEET_CONNECTIVITY.md - chat and login are deliberately not folded into control. */
+    const val FLEET_READ = "fleet.read"
+    const val FLEET_CONTROL = "fleet.control"
+    const val FLEET_CHAT = "fleet.chat"
+    const val FLEET_LOGIN = "fleet.login"
 
     val ALL: Set<String> = setOf(
         USER_READ_SELF,
@@ -38,10 +38,10 @@ object Nodes {
         USER_ROLE_WRITE,
         ROLE_READ,
         AUDIT_READ,
-        AGENT_READ,
-        AGENT_CONTROL,
-        AGENT_CHAT,
-        AGENT_LOGIN,
+        FLEET_READ,
+        FLEET_CONTROL,
+        FLEET_CHAT,
+        FLEET_LOGIN,
     )
 }
 
@@ -72,10 +72,10 @@ object RoleDefinitions {
 
     /** Full authority over the fleet. The nodes stay separate so a future tier can be given less. */
     private val ORCHESTRATOR_NODES: Set<String> = VIEWER_NODES + setOf(
-        Nodes.AGENT_READ,
-        Nodes.AGENT_CONTROL,
-        Nodes.AGENT_CHAT,
-        Nodes.AGENT_LOGIN,
+        Nodes.FLEET_READ,
+        Nodes.FLEET_CONTROL,
+        Nodes.FLEET_CHAT,
+        Nodes.FLEET_LOGIN,
     )
 
     /** Adds user management and the audit trail — what an orchestrator cannot do. */
