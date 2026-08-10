@@ -41,9 +41,10 @@ const routes: RouteRecordRaw[] = [
         meta: { node: 'user.read' },
       },
       {
-        path: 'settings',
-        name: 'settings',
-        component: () => import('../views/SettingsView.vue'),
+        path: 'audit',
+        name: 'audit',
+        component: () => import('../views/AuditView.vue'),
+        meta: { node: 'audit.read' },
       },
     ],
   },

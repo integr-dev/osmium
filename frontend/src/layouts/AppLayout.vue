@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { onMounted, ref } from 'vue'
-import { Bot, LayoutDashboard, LogOut, Menu, Plus, Server, Settings, User, Users } from 'lucide-vue-next'
+import { Bot, LayoutDashboard, LogOut, Menu, Plus, ScrollText, Server, User, Users } from 'lucide-vue-next'
 import AddBotModal from '../components/AddBotModal.vue'
 import { useAuthStore } from '../stores/auth'
 import { STATE_DOT } from '../lib/botState'
@@ -115,10 +115,10 @@ function logout() {
                 All accounts
               </RouterLink>
             </li>
-            <li>
-              <RouterLink :to="{ name: 'settings' }" class="gap-3">
-                <Settings class="size-4 shrink-0" />
-                Settings
+            <li v-if="auth.can('audit.read')">
+              <RouterLink :to="{ name: 'audit' }" class="gap-3">
+                <ScrollText class="size-4 shrink-0" />
+                Audit log
               </RouterLink>
             </li>
             <li>

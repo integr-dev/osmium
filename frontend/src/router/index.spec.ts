@@ -56,6 +56,24 @@ describe('route guard', () => {
     expect(router.currentRoute.value.name).toBe('accounts')
   })
 
+  // audit.read is administrator-only and deliberately outside the agent.* tier, so an orchestrator
+  // running the whole fleet still cannot read what other operators did.
+  it('keeps the audit log from an account without audit.read', async () => {
+    signIn(['agent.read', 'agent.control', 'agent.chat', 'agent.login'])
+
+    await router.push('/audit')
+
+    expect(router.currentRoute.value.name).toBe('dashboard')
+  })
+
+  it('admits the audit log with audit.read', async () => {
+    signIn(['audit.read'])
+
+    await router.push('/audit')
+
+    expect(router.currentRoute.value.name).toBe('audit')
+  })
+
   it('admits routes that require no node', async () => {
     signIn([])
 

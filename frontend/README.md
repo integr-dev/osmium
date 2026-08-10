@@ -132,11 +132,11 @@ suite runs once instead of twice.
 src/api/         generated schema, typed client, token storage
 src/components/  FormField, the add-host and add-bot modals
 src/layouts/     AppLayout: sidebar, nav, drawer
-src/lib/         presentation maps for bot state, roles and node labels
+src/lib/         presentation maps for bot state, roles, node labels and login methods
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub
-src/views/       dashboard, hosts, bot detail, accounts, settings, login
+src/views/       dashboard, hosts, bot detail, accounts, audit log, login
 ```
 
 Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.
