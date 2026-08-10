@@ -377,8 +377,13 @@ each message self-describing.
 
 ### `method` is a mechanism, never an account
 
-`setup_bot` carries the login method the operator chose in the frontend — `device_code`,
-`token_file`, and so on — which the backend relays without interpreting.
+`setup_bot` carries the login method the operator chose in the frontend, which the backend relays
+without interpreting.
+
+The real mechanisms are not decided yet, so the chooser currently offers four **placeholders** —
+`method_a` through `method_d`. They exist to prove the path end to end: the frontend picks one, the
+backend stores nothing about what it means, and the agent receives the string verbatim. Replacing
+them is a frontend list change and an agent implementation, not a protocol change.
 
 The line this must not cross: **a mechanism selector is fine, an account hint is not.** Relaying
 "use the device code flow" says nothing about which credential results. Relaying an email address, a
@@ -387,6 +392,12 @@ acquire, which is precisely the role this design removes from it. The same field
 so the rule has to be written down rather than inferred.
 
 The frontend presents the choice; the backend is a courier.
+
+**Hosts do not advertise which methods they support.** The chooser offers every method and an
+unsupported one fails in `setup_result`. Advertisement was considered and rejected: it would put the
+backend in the business of knowing what a method *is* in order to store and filter it, which is the
+exact coupling `method` is written to avoid, and it buys only an earlier error message for a
+selection an operator makes once per bot. A late, clear rejection is the accepted cost.
 
 ### Version handshake
 
@@ -529,11 +540,32 @@ logic proves fiddly.
 
 ### Persistence
 
-- **Outbound is persisted permanently**, with the message text, in the audit log. Recording that
-  operator X made bot Y speak without recording what it said is close to useless.
-- **Everything else is a small per-bot ring buffer** (~50 lines), enough that a page reload is not
-  blank. Inbound chat is other people's messages: not retaining it is a privacy improvement as well
-  as a storage one.
+Three streams, three retentions. They are separated because they carry different things and age
+differently, not because they are stored differently.
+
+| Stream | Holds | Retention |
+|---|---|---|
+| **Operator audit** | who triggered `setup`, `connect`, `disconnect`, `chat`, and the outbound text | **30 days** |
+| **Activity** | `system` and `lifecycle` events: died, kicked, connected, relink needed | **10 days** |
+| **Chat** | everything said, inbound and outbound | **3 days** |
+
+The ladder encodes how long each stream stays *useful*, which is not the same as how interesting it
+is at the moment it happens.
+
+**Audit outlives the rest** because it is the only stream about people rather than machines.
+Questions like "who disconnected the fleet on Tuesday" get asked weeks later, and it is the smallest
+stream by volume — a row per command, not per event. Outbound message text rides along with it,
+because logging that operator X made bot Y speak without logging what it said is close to useless.
+
+**Activity is diagnostic, and diagnostics go stale.** A crash loop or a relink storm is investigated
+within days or not at all; a death from three weeks ago tells you nothing you would act on. Ten days
+covers a fortnight's on-call without keeping noise forever.
+
+**Chat is the largest stream and the only one full of other people's words**, so it gets the
+shortest life. This is still a **loosening** of the original decision that inbound chat would never
+be persisted at all — only a ~50-line per-bot ring buffer. Scrollback surviving a reload was judged
+worth it; the 3-day window is what bounds the cost, so Osmium is a short-lived store of third-party
+conversation rather than no store at all.
 
 ### Rate limiting
 
@@ -597,6 +629,22 @@ The agent stays deliberately dumb about work: it receives a segment, builds it, 
 Anything more and it becomes a distributed scheduler without a coordinator — a much harder problem
 than the one being solved.
 
+### Schematic formats
+
+Both **Sponge `.schem`** and **Litematica `.litematic`** are accepted, behind a single parser
+interface that normalises either into one internal block model. Everything downstream — splitting,
+segment dispatch, progress — sees only that model and never learns which format was uploaded.
+
+Two formats rather than one because they are not interchangeable in practice: `.schem` is what
+current WorldEdit exports and is the simpler, palette-based, version-aware format, while
+`.litematic` is what most large builds actually exist as, with multiple regions and richer metadata.
+Picking one would have meant converting by hand on every upload.
+
+The cost is paid up front, deliberately. Adding the second format later would mean retrofitting an
+abstraction through splitting and dispatch once those exist, which is the expensive moment to
+discover that the block model leaked format assumptions. A parser interface with two implementations
+from the start forces the model to be format-neutral while it is still cheap to prove.
+
 ## Agent process model
 
 One agent process runs **all** of that host's bots, rather than a process per bot.
@@ -653,12 +701,26 @@ as them.
 
 ## Audit
 
+> **Not built.** This section is the design, not a description of the code — there is no audit
+> entity, table or service yet. Every other mention of the audit trail in this document, including
+> the threat model and the chat table, is intent rather than fact.
+
 Every `setup`, `connect`, `disconnect` and `chat` records the acting Osmium account, the target bot,
 and a timestamp. Actions are taken under a real Minecraft identity; when something goes wrong
 in-game, "the bot did it" is not an answer.
 
 The audit trail records *that* a setup was triggered and what the host reported back — never how the
 host authenticated, which Osmium does not know.
+
+**Retained 30 days** — the longest of the three streams; see the retention table under *Chat →
+Persistence*. "Audit" here means **operator actions**, a different stream from the activity feed that
+a bot's own events land in. The two are easy to conflate and are deliberately kept apart: one answers
+"who did this", the other "what happened to this bot".
+
+It is read through an administrator-only surface — `GET` gated on **`audit.read`**, rendered by the
+frontend's Audit log page, which occupies the sidebar slot the settings page used to. The node sits
+outside the `agent.*` tier on purpose: an orchestrator has full authority over the fleet but no
+standing right to read every other operator's actions, or the text they had a bot speak.
 
 ## Residual risks
 
@@ -712,15 +774,22 @@ real accounts we can provision and afford to lose), not a token-format one.
 
 ## Open questions
 
-- What schematic formats are accepted, and how does the backend split one into segments? Segment
-  shape drives whether bots collide, queue behind each other, or work independently.
-- How long is the audit log retained, and does it need exporting? It now holds chat text, which makes
-  retention a policy question rather than only a storage one.
-- Do login methods need per-host capability advertisement? The frontend offers a chooser, but nothing
-  currently stops an operator picking a method the target host cannot perform. The host would reject
-  it in `setup_result`, which works but is a late and unhelpful failure.
-- Which login methods are offered in the first place?
+- **How does the backend split a schematic into segments?** The formats are settled — see *Work
+  assignment → Schematic formats* — but segment *shape* is not, and it is the part that decides
+  whether bots collide, queue behind each other, or work independently.
+- **Does the audit log need exporting?** Retention is settled at 30 days; whether an operator can
+  pull entries out, and under which node, is not.
 
 Answered elsewhere in this document, kept here as a pointer: the process model, sector assignment,
-chat scoping and listener election, chat persistence and rate limits, the `setup_bot` method field,
-and the version handshake.
+schematic formats, chat scoping and listener election, chat persistence and retention, rate limits,
+the `setup_bot` method field and why hosts do not advertise their methods, and the version handshake.
+
+### Recently closed
+
+| Question | Answer |
+|---|---|
+| Which schematic formats? | Both `.schem` and `.litematic`, behind one parser interface |
+| Which login methods? | Four placeholders, `method_a`–`method_d`, until real mechanisms are chosen |
+| Per-host method advertisement? | **Rejected.** The backend stays uninterested in what a method means; an unsupported one fails in `setup_result` |
+| Audit retention? | Operator audit 30 days, activity 10 days, chat 3 days |
+| Where is the audit log read? | An administrator-only page in the frontend, gated on a new `audit.read` node |

@@ -44,6 +44,11 @@ set to `osmium`.
 | `osmium.jwt.ttl` | `OSMIUM_JWT_TTL` | `1h` | access token lifetime |
 | `osmium.bootstrap.username` | `OSMIUM_BOOTSTRAP_USERNAME` | `admin` | seeded account |
 | `osmium.bootstrap.password` | `OSMIUM_BOOTSTRAP_PASSWORD` | `admin` | seeded account |
+| `osmium.cors.origins` | `OSMIUM_CORS_ORIGINS` | empty | comma-separated exact origins for `/api/**` |
+
+CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
+therefore same-origin. `*` is rejected outright: the configuration allows credentials, and no
+browser accepts that combination.
 
 > The committed JWT secret and the `admin`/`admin` bootstrap credentials are development defaults.
 > The bootstrap account is a full administrator from the first boot and **nothing forces a password
@@ -69,8 +74,9 @@ model honest. A null role means no permissions at all.
 | `user.edit` | edit any account, including resetting its password |
 | `user.create` | create accounts |
 | `user.delete` | delete accounts |
-| `user.roles.write` | change the role of an account |
+| `user.role.write` | change the role of an account |
 | `role.read` | list roles and their nodes |
+| `audit.read` | read the operator audit trail, including outbound message text |
 | `agent.read` | see hosts, bots and telemetry |
 | `agent.control` | create, edit, delete bots; connect and disconnect them |
 | `agent.chat` | **speak in game as a bot** |
@@ -91,10 +97,13 @@ single flat set lookup and the table is self-describing.
 |---|---|
 | `viewer` | `user.read.self`, `user.edit.self`, `role.read` |
 | `orchestrator` | *viewer* + `agent.read`, `agent.control`, `agent.chat`, `agent.login` |
-| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.roles.write` |
+| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read` |
 
 The division is "runs the bots" versus "runs the people": an orchestrator has full authority over the
-fleet, and user management is the only thing an administrator adds.
+fleet, and what an administrator adds is user management plus the audit trail.
+
+`audit.read` sits outside the `agent.*` tier deliberately. Running the fleet is not the same as being
+entitled to read every other operator's actions and the text they had a bot speak.
 
 Changing the hierarchy is a code change plus a restart. `DataInitializer` diffs the desired node set
 against the stored one on every boot and rewrites it on mismatch, so an existing database picks up
@@ -112,7 +121,7 @@ changes automatically.
 | `PATCH` | `/api/users/me` | `user.edit.self` |
 | `PATCH` | `/api/users/{id}` | `user.edit` |
 | `DELETE` | `/api/users/{id}` | `user.delete` |
-| `PUT` | `/api/users/{id}/role` | `user.roles.write` |
+| `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
 | `GET` | `/api/hosts` | `agent.read` |
 | `POST` | `/api/hosts` | `agent.login` (returns the enrolment token once) |
@@ -237,9 +246,8 @@ Failures become inline annotations and a job summary table; the JUnit XML and th
 uploaded as artifacts. It needs the Docker daemon on the hosted runner, since Testcontainers starts
 a real Postgres.
 
-Two things any further workflow here has to repeat: `gradlew` is committed as mode `100644`, so it
-must be `chmod +x`ed before use, and a container-based or self-hosted runner without Docker cannot
-run this suite at all.
+One constraint any further workflow here inherits: a container-based or self-hosted runner without
+Docker cannot run this suite at all.
 
 `.github/workflows/backend-image.yml` builds this image and pushes it to
 `ghcr.io/integr-dev/osmium/backend` on every push to `main` that touches `backend/`, and on manual
