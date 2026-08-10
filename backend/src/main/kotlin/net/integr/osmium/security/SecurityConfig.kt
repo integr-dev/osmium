@@ -1,8 +1,8 @@
 package net.integr.osmium.security
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret
-import net.integr.osmium.config.CorsProperties
-import net.integr.osmium.config.JwtProperties
+import net.integr.osmium.security.CorsProperties
+import net.integr.osmium.security.JwtProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
@@ -25,6 +25,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 import java.nio.charset.StandardCharsets
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
+import net.integr.osmium.main
+import net.integr.osmium.hostlink.HostHandshakeAuthenticator
 
 @Configuration
 @EnableWebSecurity
@@ -42,7 +44,7 @@ class SecurityConfig(
      * filter still *authenticates* any `Authorization: Bearer …` header, and a host's enrolment
      * token is not a JWT - so the handshake was rejected with 401 before the interceptor ran.
      * Leaving oauth2ResourceServer off this chain lets the token reach
-     * [net.integr.osmium.websocket.HostHandshakeInterceptor], which is what understands it.
+     * [net.integr.osmium.websocket.HostHandshakeAuthenticator], which is what understands it.
      */
     @Bean
     @Order(1)

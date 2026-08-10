@@ -1,6 +1,6 @@
 package net.integr.osmium.security
 
-import net.integr.osmium.repository.UserRepository
+import net.integr.osmium.account.repository.UserRepository
 import org.springframework.core.convert.converter.Converter
 import org.springframework.security.authentication.AbstractAuthenticationToken
 import org.springframework.security.core.authority.SimpleGrantedAuthority

@@ -1,0 +1,344 @@
+package net.integr.osmium.agent.controller
+
+import net.integr.osmium.AbstractRestTest
+import net.integr.osmium.agent.model.AgentState
+import net.integr.osmium.security.RoleNames
+import org.junit.jupiter.api.Test
+import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
+import org.springframework.test.web.servlet.delete
+import org.springframework.test.web.servlet.get
+import org.springframework.test.web.servlet.patch
+import org.springframework.test.web.servlet.post
+
+class AgentControllerTest : AbstractRestTest() {
+
+    @Test
+    fun `orchestrator creates an agent, which starts unlinked`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val host = reachableHost()
+
+        mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+        }.andExpect {
+            status { isCreated() }
+            jsonPath("$.label") { value("Mason_01") }
+            jsonPath("$.state") { value(AgentState.UNLINKED.name) }
+            jsonPath("$.hostName") { value(host.name) }
+            jsonPath("$.mcUsername") { value(null) }
+        }
+    }
+
+    @Test
+    fun `the server address is normalised, so one server does not become two`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val host = reachableHost()
+
+        mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"  MC.Example.com  "}"""
+        }.andExpect {
+            status { isCreated() }
+            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
+        }
+
+        mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_02","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+        }.andExpect {
+            status { isCreated() }
+            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
+        }
+
+        // Both agents must land on the same grouping key, or they get separate chat listeners.
+        assert(agentRepository.findAll().map { it.serverAddress }.distinct().size == 1)
+    }
+
+    @Test
+    fun `viewer cannot create an agent`() {
+        val auth = authAs("ada", RoleNames.VIEWER)
+        val host = reachableHost()
+
+        mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+        }.andExpect {
+            status { isForbidden() }
+        }
+    }
+
+    @Test
+    fun `creating an agent rejects a duplicate label`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val host = reachableHost()
+        createAgent(label = "Mason_01", host = host)
+
+        mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
+    @Test
+    fun `creating an agent rejects an unknown host`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+
+        mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_01","hostId":999999,"serverAddress":"mc.example.com:25565"}"""
+        }.andExpect {
+            status { isBadRequest() }
+        }
+    }
+
+    @Test
+    fun `an agent on an unreachable host reports its stored state, and online becomes stale`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val cold = unreachableHost()
+        createAgent(label = "Mason_01", host = cold, state = AgentState.ONLINE)
+        createAgent(label = "Mason_02", host = cold, state = AgentState.LINKED)
+
+        mockMvc.get("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isOk() }
+            // ONLINE is not trustworthy without a live host; LINKED is unaffected.
+            jsonPath("$[?(@.label == 'Mason_01')].state") { value(AgentState.STALE.name) }
+            jsonPath("$[?(@.label == 'Mason_02')].state") { value(AgentState.LINKED.name) }
+        }
+    }
+
+    @Test
+    fun `commands to an agent on an unreachable host fail fast rather than queueing`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        val agent = createAgent(label = "Mason_01", host = unreachableHost(), state = AgentState.LINKED)
+
+        mockMvc.post("/api/agents/${agent.id}/connect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+
+        mockMvc.post("/api/agents/${agent.id}/setup") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"method":"device_code"}"""
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+
+        // The failed command must not have advanced the state.
+        assert(agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.LINKED)
+    }
+
+    @Test
+    fun `state is validated before delivery is attempted`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        // Reachable, so a 503 cannot mask the state check - but there is still no host behind it.
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.UNLINKED)
+
+        mockMvc.post("/api/agents/${agent.id}/connect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isConflict() }
+        }
+
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
+    @Test
+    fun `setup is refused while another setup is already running`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.SETUP_PENDING)
+
+        mockMvc.post("/api/agents/${agent.id}/setup") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"method":"device_code"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
+    @Test
+    fun `orchestrator has full authority over agents`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
+
+        // 503 rather than 403: authorization passed, there is simply no host to deliver to.
+        mockMvc.post("/api/agents/${agent.id}/chat") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"hello"}"""
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+    }
+
+    @Test
+    fun `viewer cannot speak as an agent`() {
+        val auth = authAs("ada", RoleNames.VIEWER)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
+
+        mockMvc.post("/api/agents/${agent.id}/chat") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"hello"}"""
+        }.andExpect {
+            status { isForbidden() }
+        }
+    }
+
+    @Test
+    fun `chat rejects a blank message`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
+
+        mockMvc.post("/api/agents/${agent.id}/chat") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"   "}"""
+        }.andExpect {
+            status { isBadRequest() }
+        }
+    }
+
+    @Test
+    fun `commands on an unknown agent return not found`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+
+        mockMvc.post("/api/agents/999999/connect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isNotFound() }
+        }
+
+        mockMvc.get("/api/agents/999999") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isNotFound() }
+        }
+    }
+
+    @Test
+    fun `an agent can be renamed and moved to another server`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.patch("/api/agents/${target.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_09","serverAddress":"Other.Example.com"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.label") { value("Mason_09") }
+            jsonPath("$.serverAddress") { value("other.example.com:25565") }
+            // The account is the same account wherever it joins, so credentials are untouched.
+            jsonPath("$.state") { value(AgentState.LINKED.name) }
+        }
+    }
+
+    @Test
+    fun `an agent cannot be moved to another server while it is online`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
+
+        mockMvc.patch("/api/agents/${target.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":"other.example.com:25565"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+
+        // Renaming is unaffected: the label is only a display name.
+        mockMvc.patch("/api/agents/${target.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_09"}"""
+        }.andExpect {
+            status { isOk() }
+        }
+    }
+
+    @Test
+    fun `renaming an agent rejects a label already in use`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val host = reachableHost()
+        createAgent(label = "Mason_01", host = host)
+        val other = createAgent(label = "Mason_02", host = host)
+
+        mockMvc.patch("/api/agents/${other.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_01"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
+    @Test
+    fun `viewer cannot edit an agent`() {
+        val auth = authAs("ada", RoleNames.VIEWER)
+        val target = createAgent(label = "Mason_01", host = reachableHost())
+
+        mockMvc.patch("/api/agents/${target.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"pwned"}"""
+        }.andExpect {
+            status { isForbidden() }
+        }
+    }
+
+    @Test
+    fun `orchestrator deletes an agent`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost())
+
+        mockMvc.delete("/api/agents/${agent.id}") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isNoContent() }
+        }
+
+        assert(agentRepository.findAll().isEmpty())
+    }
+
+    @Test
+    fun `listing agents requires host read`() {
+        val auth = authAs("ada", RoleNames.VIEWER)
+
+        mockMvc.get("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isForbidden() }
+        }
+    }
+
+    @Test
+    fun `listing agents rejects an unauthenticated request`() {
+        mockMvc.get("/api/agents").andExpect {
+            status { isUnauthorized() }
+        }
+    }
+}

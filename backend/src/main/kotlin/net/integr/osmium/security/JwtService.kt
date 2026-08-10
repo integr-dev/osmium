@@ -1,7 +1,7 @@
 package net.integr.osmium.security
 
-import net.integr.osmium.config.JwtProperties
-import net.integr.osmium.model.User
+import net.integr.osmium.security.JwtProperties
+import net.integr.osmium.account.model.User
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm
 import org.springframework.security.oauth2.jwt.JwsHeader
 import org.springframework.security.oauth2.jwt.JwtClaimsSet

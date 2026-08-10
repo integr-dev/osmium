@@ -1,14 +1,14 @@
 package net.integr.osmium
 
 import com.jayway.jsonpath.JsonPath
-import net.integr.osmium.model.Agent
-import net.integr.osmium.model.AgentState
-import net.integr.osmium.model.Host
-import net.integr.osmium.model.User
-import net.integr.osmium.repository.AgentRepository
-import net.integr.osmium.repository.HostRepository
-import net.integr.osmium.repository.RoleRepository
-import net.integr.osmium.repository.UserRepository
+import net.integr.osmium.agent.model.Agent
+import net.integr.osmium.agent.model.AgentState
+import net.integr.osmium.host.model.Host
+import net.integr.osmium.account.model.User
+import net.integr.osmium.agent.repository.AgentRepository
+import net.integr.osmium.host.repository.HostRepository
+import net.integr.osmium.account.repository.RoleRepository
+import net.integr.osmium.account.repository.UserRepository
 import java.time.Instant
 import net.integr.osmium.security.encodeRequired
 import org.springframework.beans.factory.annotation.Autowired

@@ -6,8 +6,8 @@ and agent domain, and the WebSocket that hosts dial into.
 Routes authorize against **nodes only** — never against roles. Roles exist purely as named bundles
 of nodes, so adding a role never requires touching a route annotation.
 
-It holds **no Minecraft credentials**. Commands are relayed to the host that owns an agent; that host
-performs any login itself and reports back only an identity. See
+It holds **no Minecraft credentials**. Commands are relayed to the host that owns an agent; that
+host performs any login itself and reports back only an identity. See
 [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md).
 
 ## Requirements
@@ -100,11 +100,11 @@ single flat set lookup and the table is self-describing.
 | `orchestrator` | *viewer* + `fleet.read`, `fleet.control`, `fleet.chat`, `fleet.login` |
 | `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read` |
 
-The division is "runs the agents" versus "runs the people": an orchestrator has full authority over the
-fleet, and what an administrator adds is user management plus the audit trail.
+The division is "runs the agents" versus "runs the people": an orchestrator has full authority over
+the fleet, and what an administrator adds is user management plus the audit trail.
 
-`audit.read` sits outside the `fleet.*` tier deliberately. Running the fleet is not the same as being
-entitled to read every other operator's actions and the text they had an agent speak.
+`audit.read` sits outside the `fleet.*` tier deliberately. Running the fleet is not the same as
+being entitled to read every other operator's actions and the text they had an agent speak.
 
 Changing the hierarchy is a code change plus a restart. `DataInitializer` diffs the desired node set
 against the stored one on every boot and rewrites it on mismatch, so an existing database picks up
@@ -211,9 +211,9 @@ the state is genuinely unknown at that point.
 
 ## Live updates
 
-`GET /api/stream/fleet` is a server-sent event stream of everything that changes; `/api/stream/agents/{id}`
-narrows it to one agent. The channel is **receive-only** — commands stay on REST, where they are
-node-gated and audited.
+`GET /api/stream/fleet` is a server-sent event stream of everything that changes;
+`/api/stream/agents/{id}` narrows it to one agent. The channel is **receive-only** — commands stay
+on REST, where they are node-gated and audited.
 
 Events carry the same shapes the REST endpoints return (`agent`, `agent-removed`, `host`,
 `host-removed`), so a client replaces the resource in place rather than refetching. That is why the
@@ -267,9 +267,9 @@ as two unrelated things.
 
 ### Adding a new action needs a manual migration
 
-Hibernate maps `AuditAction` with a `CHECK` constraint listing every enum name, and `ddl-auto=update`
-writes that constraint **once and never alters it**. Adding a value therefore succeeds at boot and
-then fails at insert time against the stale list:
+Hibernate maps `AuditAction` with a `CHECK` constraint listing every enum name, and
+`ddl-auto=update` writes that constraint **once and never alters it**. Adding a value therefore
+succeeds at boot and then fails at insert time against the stale list:
 
 ```
 ERROR: new row for relation "audit_entries" violates check constraint "audit_entries_action_check"
@@ -320,7 +320,7 @@ Entries are kept for 30 days and purged by a daily job, which is why `@EnableSch
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 503s and
   validation failures. Each runs in a transaction that is rolled back, so the suite leaves no state
   behind.
-- **`HostWebSocketTest`** drives a real client over a real socket: it authenticates with an
+- **`HostLinkTest`** drives a real client over a real socket: it authenticates with an
   enrolment token, heartbeats, receives a dispatched command and answers it. It is deliberately not
   transactional — the host runs on other threads, so a rolled-back test transaction would be
   invisible to it — and cleans up explicitly instead.
@@ -363,13 +363,25 @@ it, and the suite runs once instead of twice.
 
 ## Layout
 
+Packaged **by feature first, layer second**. Each feature owns its controller, service,
+repository, model and DTOs, so a change to one subsystem stays in one directory.
+
 ```
-config/      configuration properties, OpenAPI and WebSocket setup, DataInitializer seeding
-controller/  REST endpoints and the exception handler
-dto/         request/response records, bean validation, entity mappers
-model/       JPA entities and the agent lifecycle enum
-repository/  Spring Data repositories
-security/    node/role definitions, JWT issuing, Spring Security wiring
-service/     domain logic; HostEventService applies what hosts report
-websocket/   the host socket: envelope, handshake auth, session registry
+account/      users, roles, permission nodes, login, password rotation, seeding
+host/         the machines that run agents
+agent/        Minecraft sessions and the commands that drive them
+audit/        the operator trail and its retention purge
+
+hostlink/     the backend<->host channel: envelope, handshake auth, connections, reports
+liveupdates/  the backend->browser channel: events, broker, subscriptions, SSE endpoint
+security/     node/role definitions, JWT issuing, Spring Security wiring
+web/          cross-cutting HTTP: exception handling, OpenAPI setup
 ```
+
+The four feature packages each contain `controller/`, `service/`, `repository/`, `model/` and
+`dto/`. The four below the gap are not features and stay flat: two are channels, one is framework
+wiring, one is cross-cutting HTTP.
+
+Naming follows what a class *does*, not how it does it — `HostConnections`, not
+`HostSessionRegistry`; `HostMessageHandler`, not `HostWebSocketHandler`. The transport is visible
+from the type it extends.

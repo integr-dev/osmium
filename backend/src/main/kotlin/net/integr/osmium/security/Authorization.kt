@@ -1,4 +1,6 @@
 package net.integr.osmium.security
+import net.integr.osmium.account.config.DataInitializer
+import net.integr.osmium.account.model.Role
 
 /**
  * Canonical permission nodes. Routes are annotated with the literal string
