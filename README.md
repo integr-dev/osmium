@@ -3,12 +3,13 @@
 Orchestration for a fleet of Minecraft agents that build a large schematic together.
 
 An operator uploads a schematic, picks the agents to work it, and Osmium splits it into segments and
-hands each agent its own slice. The dashboard shows what the fleet is doing: progress, throughput, what
-needs attention, and what is being said in game.
+hands each agent its own slice. The dashboard shows what the fleet is doing: progress, throughput,
+what needs attention, and what is being said in game.
 
-> **Status:** early. Authentication, accounts, hosts, agents and the host transport are built and
-> tested. The host itself is not — see [`host/`](host/). Telemetry and build progress in the UI
-> are still mock, because nothing reports them until a host connects.
+> **Status:** early. Authentication, accounts, hosts, agents, the audit log, live updates and the
+> host transport are built and tested. The host program itself lives outside this repository — Rust
+> on azalea, see [`host/`](host/). Telemetry, chat and build progress in the UI are still mock,
+> because nothing reports them until a host connects.
 
 ## Modules
 
@@ -16,21 +17,22 @@ needs attention, and what is being said in game.
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 116 tests |
 | [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 45 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. | **Not started** |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
 
 **Osmium never holds Minecraft credentials, and never performs the login.**
 
 The backend sends a host a `setup_agent` command; that host logs the account in by whatever means it
-prefers and reports back only the resulting username and UUID. A full database dump therefore reveals
-*which* accounts you run — not the ability to run them.
+prefers and reports back only the resulting username and UUID. A full database dump therefore
+reveals *which* accounts you run — not the ability to run them.
 
-That constraint shapes everything else: how agents are addressed, why hosts dial out instead of being
-connected to, and why a host being unreachable makes an agent's state *unknown* rather than offline.
+That constraint shapes everything else: how agents are addressed, why hosts dial out instead of
+being connected to, and why a host being unreachable makes an agent's state *unknown* rather than
+offline.
 
-[`FLEET_CONNECTIVITY.md`](FLEET_CONNECTIVITY.md) is the design document — credential custody, the wire
-protocol, liveness, chat, and the alternatives that were rejected and why.
+[`FLEET_CONNECTIVITY.md`](FLEET_CONNECTIVITY.md) is the design document — credential custody, the
+wire protocol, liveness, chat, and the alternatives that were rejected and why.
 
 ## Running it locally
 

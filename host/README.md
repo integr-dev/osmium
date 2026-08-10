@@ -1,10 +1,15 @@
 # Osmium host
 
-**Not started.** This directory is a placeholder.
+**Not built here.** This directory is a placeholder; the host is being written separately, in
+**Rust** on [azalea](https://github.com/azalea-rs/azalea).
 
-The host runs on a machine you control. It holds the Minecraft credentials, drives the agents, and is
-the only component that ever performs a login. Everything it needs to talk to already exists on the
-backend side and is covered by tests — see `HostWebSocketTest`.
+The host runs on a machine you control. It holds the Minecraft credentials, drives the agents, and
+is the only component that ever performs a login. Everything it needs to talk to already exists on
+the backend side and is covered by tests — see `HostLinkTest`.
+
+This file and [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md) are the contract between the
+two sides. The backend imposes no language or library: the protocol is a WebSocket carrying JSON
+envelopes, so azalea is a choice the host makes rather than something the backend knows about.
 
 ## What it has to do
 
@@ -28,9 +33,10 @@ Store the token cache with mode `0600`, encrypted with a key from the environmen
 
 ## Before writing any of it
 
-Read [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md). It specifies the envelope, the three message
-kinds, correlation ids, the agent state machine, chat scoping and listener election, and the rules for
-unknown messages. It also records what was rejected and why, which will save re-deriving it.
+Read [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md). It specifies the envelope, the three
+message kinds, correlation ids, the agent state machine, chat scoping and listener election, and the
+rules for unknown messages. It also records what was rejected and why, which will save re-deriving
+it.
 
 Two decisions from that document are easy to get wrong:
 

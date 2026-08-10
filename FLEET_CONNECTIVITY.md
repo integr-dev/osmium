@@ -10,18 +10,18 @@
 | Live updates over SSE | **Built**, for hosts and agents; telemetry coalescing waits on telemetry |
 | Chat scoping and listener election, work assignment | **Not built** |
 
-Telemetry, chat and build progress in the frontend are still mock
-(`frontend/src/stores/agents.ts`), because nothing reports them until a host connects. Sections not
-marked built are design, not description.
+Telemetry, chat and build progress in the frontend are still mock (`frontend/src/stores/agents.ts`),
+because nothing reports them until a host connects. Sections not marked built are design, not
+description.
 
-**Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator brings
-a new agent online. *How* a host authenticates is explicitly out of scope — that is the point of the
-design, not an omission.
+**Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator
+brings a new agent online. *How* a host authenticates is explicitly out of scope — that is the point
+of the design, not an omission.
 
 ## Problem
 
-Osmium orchestrates Minecraft agents that collaboratively build a large schematic. Every agent needs a
-Microsoft account to join a server. The requirement is that **Osmium never logs an agent into a
+Osmium orchestrates Minecraft agents that collaboratively build a large schematic. Every agent needs
+a Microsoft account to join a server. The requirement is that **Osmium never logs an agent into a
 Microsoft account itself**, and that a compromise of the Osmium backend does not hand an attacker
 those accounts.
 
@@ -49,8 +49,8 @@ would mean re-authenticating every agent on every restart, which does not scale 
 agents. The goal is therefore containment, not avoidance.
 
 Keeping the backend out of the flow *entirely*, rather than merely out of storage, is what makes the
-containment argument simple: there is no code path in Osmium that touches an authentication artefact,
-so there is nothing to audit, leak, or get subtly wrong.
+containment argument simple: there is no code path in Osmium that touches an authentication
+artefact, so there is nothing to audit, leak, or get subtly wrong.
 
 ## Threat model
 
@@ -67,10 +67,10 @@ so there is nothing to audit, leak, or get subtly wrong.
 
 ```
 ┌──────────┐        ┌──────────────────┐        ┌─────────────────────┐
-│ frontend │──JWT──▶│ Spring backend   │◀──WSS──│ host          │
-└──────────┘        │ • orchestrates   │  host │ • performs the login│
+│ frontend │──JWT──▶│ Spring backend   │◀──WSS──│ host  (Rust)        │
+└──────────┘  SSE   │ • orchestrates   │  host  │ • performs the login│
                     │ • no MC creds    │  token │ • encrypted tokens  │──▶ Minecraft
-                    │ • no auth path   │        │ • mineflayer client │     server
+                    │ • no auth path   │        │ • azalea clients    │     server
                     │ • audit log      │        │                     │
                     └──────────────────┘        └─────────────────────┘
                             ▲                            ▲
@@ -130,10 +130,10 @@ sequenceDiagram
     B->>B: Agent status = LINKED
 ```
 
-The only thing that crosses the WebSocket is the command and its result. On success the host
-reports the resulting **Minecraft username and UUID** — the identity, so the fleet can be displayed
-and audited — and nothing else. On failure it reports a reason string suitable for showing an
-operator (`cancelled`, `timed out`, `account has no Minecraft profile`), never a credential or an
+The only thing that crosses the WebSocket is the command and its result. On success the host reports
+the resulting **Minecraft username and UUID** — the identity, so the fleet can be displayed and
+audited — and nothing else. On failure it reports a reason string suitable for showing an operator
+(`cancelled`, `timed out`, `account has no Minecraft profile`), never a credential or an
 intermediate auth artefact.
 
 This is a stronger property than the backend merely not *storing* credentials: it never sees the
@@ -144,11 +144,11 @@ up to the dashboard for the operator to type into Microsoft. That trains operato
 shown by an internal tool into a real Microsoft login — precisely the device-code phishing pattern.
 Removing the relay removes the hazard rather than mitigating it.
 
-**The host owns the auth mechanism.** Device code flow, an existing token cache, a local
-credential helper — the backend's protocol is unchanged either way, and the host can change approach
-without a backend release. The trade is that **completing a login requires access to the host**,
-out of band from Osmium. That is a deliberate cost: it is what keeps the backend out of the
-credential path entirely.
+**The host owns the auth mechanism.** Device code flow, an existing token cache, a local credential
+helper — the backend's protocol is unchanged either way, and the host can change approach without a
+backend release. The trade is that **completing a login requires access to the host**, out of band
+from Osmium. That is a deliberate cost: it is what keeps the backend out of the credential path
+entirely.
 
 ### Phase 3 — connect to the Minecraft server
 
@@ -156,13 +156,13 @@ credential path entirely.
 operator → backend    POST /api/agents/{id}/connect
 backend  → host      connect(agentId, host, port, version)
 host                 loads cached tokens, refreshing MSA → XBL → XSTS → MC if expired
-host                 creates the mineflayer client
+host                 starts the azalea client   
 host    → backend    online(agentId, position, health, food, ping)
 backend  → frontend   status ONLINE
 ```
 
-Phases 2 and 3 are separate because linking needs a human and connecting does not. That is what
-lets an agent recover from a crash at 03:00 without waking anyone.
+Phases 2 and 3 are separate because linking needs a human and connecting does not. That is what lets
+an agent recover from a crash at 03:00 without waking anyone.
 
 ### Phase 4 — steady state
 
@@ -207,8 +207,8 @@ agent: its host went unreachable.
 
 ## Host liveness vs agent liveness
 
-A host going down is a different failure from an agent disconnecting, and the two must not be collapsed
-into one "offline" state. There are two independent liveness axes:
+A host going down is a different failure from an agent disconnecting, and the two must not be
+collapsed into one "offline" state. There are two independent liveness axes:
 
 - **Host reachability** — the backend↔host WebSocket heartbeat. The backend observes this
   **directly**.
@@ -226,7 +226,7 @@ When a host stops heartbeating, three causes are indistinguishable from the back
 |---|---|
 | Host fully dead | No — gone from the server |
 | Only the backend↔host link dropped | Yes — still building |
-| Host process crashed, host fine | No — mineflayer died with the process |
+| Host process crashed, machine fine | No — its clients died with the process |
 
 Because the backend cannot tell these apart, all of that host's agents become **`STALE`**, not
 `OFFLINE`: last-known telemetry shown with an "as of Xs ago" marker and a distinct greyed-out
@@ -245,14 +245,14 @@ open anything.
 ### Rules that follow
 
 1. **Never auto-act on host loss.** No auto-reconnect, no marking agents dead. The cause is unknown,
-   and acting on a wrong guess can double-connect an account — two mineflayer clients with the same
+   and acting on a wrong guess can double-connect an account — two clients with the same
    identity, which the server kicks. Recovery is operator-initiated.
 2. **The host is the source of truth on reconnect.** When the WebSocket returns, the host
    re-enumerates its actual live clients and reports the real set. The backend reconciles to that
    view — agents still in-game return to `ONLINE`, the rest fall to `LINKED` — and never asserts state
    back onto the host.
-3. **A host restart is not an agent restart.** mineflayer clients die with the host process, so
-   after the host (or its host) restarts, its agents are genuinely offline and must be reconnected
+3. **A host restart is not an agent restart.** Every client lives inside the one host process, so
+   after that process restarts its agents are genuinely offline and must be reconnected
    via Phase 3. The host reports them `LINKED` on reconnect; the token cache survives, so no fresh
    setup is needed.
 
@@ -271,8 +271,8 @@ stateDiagram-v2
 
 ## Command routing
 
-The backend never addresses an agent directly. There is one WebSocket **per host**, multiplexing every
-agent that host owns, so reaching an agent is two lookups:
+The backend never addresses an agent directly. There is one WebSocket **per host**, multiplexing
+every agent that host owns, so reaching an agent is two lookups:
 
 ```
 operator clicks Disconnect on Mason_01
@@ -282,7 +282,7 @@ backend   agent.hostId → host-1 → that host's open WS session
           sends { id: "cmd-7f3a", type: "disconnect", agentId: "agent-1" }
   │
   ▼  (the single connection the host dialled in on)
-host     agentId → its local map of mineflayer clients
+host     agentId → its local map of azalea clients
           client.quit()
   │
   ▼
@@ -301,29 +301,30 @@ the control the operator actually pressed.
 
 ### Undeliverable commands fail fast
 
-If a host's WebSocket is gone, its agents are `STALE` and commands to them are undeliverable. They must
-be **rejected immediately**, not queued. Silent queueing means a command can fire twenty minutes
-later when the host reconnects — long after an operator has resolved the situation by hand — and
-disconnect an agent that is deliberately running.
+If a host's WebSocket is gone, its agents are `STALE` and commands to them are undeliverable. They
+must be **rejected immediately**, not queued. Silent queueing means a command can fire twenty
+minutes later when the host reconnects — long after an operator has resolved the situation by hand —
+and disconnect an agent that is deliberately running.
 
 ### Authorization is backend-side only
 
 The host authenticated once with its enrolment token and trusts what the backend sends; it performs
 no permission checks of its own. `fleet.control`, `fleet.chat` and the rest are therefore enforced
-**before dispatch**. The consequence is that a compromised backend can drive every agent — accepted in
-exchange for the backend never holding credentials, which keeps the accounts themselves out of reach.
+**before dispatch**. The consequence is that a compromised backend can drive every agent — accepted
+in exchange for the backend never holding credentials, which keeps the accounts themselves out of
+reach.
 
 ### Agents are not portable between hosts
 
-An agent's token cache lives on its host's disk. Moving an agent to another host is therefore not a routing
-change but a **fresh setup** (Phase 2) on the new host, requiring whatever human step that host's
-login mechanism involves. Worth knowing before building any drag-to-rebalance interface: the UI
-would imply an operation the credential model does not support.
+An agent's token cache lives on its host's disk. Moving an agent to another host is therefore not a
+routing change but a **fresh setup** (Phase 2) on the new host, requiring whatever human step that
+host's login mechanism involves. Worth knowing before building any drag-to-rebalance interface: the
+UI would imply an operation the credential model does not support.
 
 ## Wire protocol
 
-Every message on the backend↔host WebSocket shares one envelope. The payload is **nested, not
-spread across the top level**.
+Every message on the backend↔host WebSocket shares one envelope. The payload is **nested, not spread
+across the top level**.
 
 ```jsonc
 // backend → host
@@ -345,9 +346,9 @@ spread across the top level**.
 
 ### There is no destination field
 
-The connection *is* the host. The backend selected that socket by resolving `agent.hostId`, so encoding
-the host again in the message would create a second source of truth that can disagree with the socket
-being written to. Only `agentId` is carried, and only to route **within** a host.
+The connection *is* the host. The backend selected that socket by resolving `agent.hostId`, so
+encoding the host again in the message would create a second source of truth that can disagree with
+the socket being written to. Only `agentId` is carried, and only to route **within** a host.
 
 `agentId` is therefore **optional**: heartbeats, the version handshake and host-level errors are not
 agent-scoped, and forcing a sentinel value on them would leak that sentinel through every handler.
@@ -403,8 +404,8 @@ selection an operator makes once per agent. A late, clear rejection is the accep
 
 ### Version handshake
 
-The host sends `hostVersion` in its hello and the backend records it — there is already a column
-for it — and logs a warning when it does not match what the backend expects.
+The host sends `hostVersion` in its hello and the backend records it — there is already a column for
+it — and logs a warning when it does not match what the backend expects.
 
 It is **a signal, not a gate.** A hard version check causes the outage it is meant to prevent: bump
 the backend and every host in the fleet is locked out simultaneously. Tolerating unknown messages
@@ -425,8 +426,8 @@ A hard minimum is reserved for a deliberately breaking protocol change.
 > **Built**, except telemetry coalescing. Hosts and agents stream; there is no telemetry to throttle
 > until a host reports some, so that part stays design.
 
-The browser channel is **receive-only**. Commands already travel over REST, where they are node-gated
-and audited; the frontend only needs to be told what changed.
+The browser channel is **receive-only**. Commands already travel over REST, where they are
+node-gated and audited; the frontend only needs to be told what changed.
 
 ```
 host ──WS──▶ backend ──SSE──▶ browser
@@ -453,14 +454,14 @@ not looking at.
 **`EventSource` cannot set an `Authorization` header.** The access token is held in `localStorage`
 and sent as a Bearer header, which the browser's native SSE API has no way to do. Putting the token
 in the query string lands it in access logs and referrers; switching to cookies reintroduces CSRF.
-The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer pattern unchanged.
-A browser WebSocket has the same limitation and solves it differently, by authenticating in the first
-frame.
+The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer pattern
+unchanged. A browser WebSocket has the same limitation and solves it differently, by authenticating
+in the first frame.
 
 **A long-lived stream breaks instant revocation.** Authorities resolve from the database on every
 REST request, so a demotion takes effect immediately — but a stream authorises once at subscribe and
-then runs for hours. This is the one place that guarantee leaks. The stream must **re-check its nodes
-periodically** (~30s) and close on failure, and should not outlive the token that opened it.
+then runs for hours. This is the one place that guarantee leaks. The stream must **re-check its
+nodes periodically** (~30s) and close on failure, and should not outlive the token that opened it.
 
 **The nginx config would otherwise break it.** Default buffering holds events until a buffer fills,
 and the default 60s `proxy_read_timeout` severs a stream that has merely been quiet. Fixed with a
@@ -488,8 +489,8 @@ chat on every agent's page shows the same message once per agent and drowns the 
 **Classification happens at the host**, which is the only place the raw packet types are visible;
 the backend cannot reliably infer scope from message text.
 
-**Chat and activity are two different feeds.** Conversation goes to chat; anything that happened *to*
-an agent goes to activity. Mixing them buries a kick between two lines of small talk.
+**Chat and activity are two different feeds.** Conversation goes to chat; anything that happened
+*to* an agent goes to activity. Mixing them buries a kick between two lines of small talk.
 
 | Scope | Example | Feed | Per-agent |
 |---|---|---|---|
@@ -500,9 +501,9 @@ an agent goes to activity. Mixing them buries a kick between two lines of small 
 | `system` | kicked, banned, died, warned | **activity** | yes |
 | `lifecycle` | connected, disconnected, setup failed, relink needed | **activity** | yes |
 
-So the agent page shows only conversation that is **to or about that agent**, with its incidents in a
-separate activity panel. Global chat goes to a single fleet feed on the dashboard, attributed to the
-server rather than to any agent.
+So the agent page shows only conversation that is **to or about that agent**, with its incidents in
+a separate activity panel. Global chat goes to a single fleet feed on the dashboard, attributed to
+the server rather than to any agent.
 
 ### Activity is incidents, not chat
 
@@ -515,10 +516,10 @@ scrolling past in a chat panel nobody has open does not surface it.
 
 ### Electing a chat listener
 
-Global chat is identical for every agent on a server, so exactly one agent per **server** forwards it and
-the rest suppress it. Election is **automatic and backend-side**: only the backend sees the whole
-fleet, and agents on one server may be spread across several hosts, so no host can tell whether
-another host already has a listener.
+Global chat is identical for every agent on a server, so exactly one agent per **server** forwards
+it and the rest suppress it. Election is **automatic and backend-side**: only the backend sees the
+whole fleet, and agents on one server may be spread across several hosts, so no host can tell
+whether another host already has a listener.
 
 ```
 backend → host   { "kind": "command", "type": "set_chat_listener", "agentId": 42,
@@ -539,10 +540,10 @@ Rules:
   listening.
 
 The tradeoff accepted: **a short gap in global chat during re-election**, and global chat is only
-available while at least one agent is connected. The alternative — every agent forwarding globals and
-the backend deduplicating on `(server, text, time bucket)` — needs no failover but multiplies wire
-traffic by the fleet size. Election was chosen; deduplication remains the fallback if the failover
-logic proves fiddly.
+available while at least one agent is connected. The alternative — every agent forwarding globals
+and the backend deduplicating on `(server, text, time bucket)` — needs no failover but multiplies
+wire traffic by the fleet size. Election was chosen; deduplication remains the fallback if the
+failover logic proves fiddly.
 
 ### Persistence
 
@@ -569,9 +570,9 @@ covers a fortnight's on-call without keeping noise forever.
 
 **Chat is the largest stream and the only one full of other people's words**, so it gets the
 shortest life. This is still a **loosening** of the original decision that inbound chat would never
-be persisted at all — only a ~50-line per-agent ring buffer. Scrollback surviving a reload was judged
-worth it; the 3-day window is what bounds the cost, so Osmium is a short-lived store of third-party
-conversation rather than no store at all.
+be persisted at all — only a ~50-line per-agent ring buffer. Scrollback surviving a reload was
+judged worth it; the 3-day window is what bounds the cost, so Osmium is a short-lived store of
+third-party conversation rather than no store at all.
 
 ### Rate limiting
 
@@ -591,8 +592,8 @@ agent**. Everything below hangs off it:
 - the global chat feed
 - a build: its schematic, sector assignments and progress aggregates
 
-Blocks placed, throughput and ETA are meaningless averaged across servers, and an agent on one server
-cannot help with a sector on another. Anything fleet-wide that is really build-wide has to be
+Blocks placed, throughput and ETA are meaningless averaged across servers, and an agent on one
+server cannot help with a sector on another. Anything fleet-wide that is really build-wide has to be
 grouped by server before it is shown.
 
 The address stays a plain string on `Agent` for now; a `Server` entity earns its place the moment
@@ -608,16 +609,17 @@ port at write time.
 ### One agent is one session, not one account
 
 A `Agent` connects to exactly one server. A Minecraft account can technically hold sessions on two
-servers at once, but modelling that on a single agent breaks it at every level: `ONLINE` would have to
-mean online on one server and disconnected from another, and health, position, nearby players, chat
-and sector assignment are all per-connection, so one agent would carry two contradictory sets.
+servers at once, but modelling that on a single agent breaks it at every level: `ONLINE` would have
+to mean online on one server and disconnected from another, and health, position, nearby players,
+chat and sector assignment are all per-connection, so one agent would carry two contradictory sets.
 
-Treating an agent as a **session** rather than an account resolves this instead of special-casing it.
+Treating an agent as a **session** rather than an account resolves this instead of special-casing
+it.
 
 Running the same account on two servers therefore means **two agent records** — and exposes a real
-wrinkle worth stating before someone hits it: the host caches credentials per `agentId`, so the second
-agent would need its own setup for the same account. Supporting that properly means keying the host's
-cache by **account** rather than by agent. Deferred, not designed for.
+wrinkle worth stating before someone hits it: the host caches credentials per `agentId`, so the
+second agent would need its own setup for the same account. Supporting that properly means keying
+the host's cache by **account** rather than by agent. Deferred, not designed for.
 
 ## Work assignment
 
@@ -625,8 +627,8 @@ Sector assignment lives in the **backend**. It is the orchestrator, and sector s
 which sectors are claimed, blocked or queued is only knowable where the whole fleet is visible. Two
 hosts scheduling independently would claim the same sector.
 
-The flow: an operator uploads a schematic and picks the agents to work it, the backend splits it into
-segments, and **each agent receives only its own segment**.
+The flow: an operator uploads a schematic and picks the agents to work it, the backend splits it
+into segments, and **each agent receives only its own segment**.
 
 That last part is deliberate. An agent never holds the full build, which keeps the payload small and
 means a compromised host learns only its slice rather than the entire schematic.
@@ -653,7 +655,9 @@ from the start forces the model to be format-neutral while it is still cheap to 
 
 ## Host process model
 
-One host process runs **all** of that host's agents, rather than a process per agent.
+One host process runs **all** of that host's agents, rather than a process per agent. Each agent is
+an [azalea](https://github.com/azalea-rs/azalea) client — Rust, so the natural unit is an async task
+rather than a process, and running many in one process is the shape the library is built for.
 
 The `agentId` map is then a plain in-memory lookup, and crash recovery is already cheap: a restarted
 host reconnects and reports its agents as `LINKED`, because the token cache survives on disk and no
@@ -661,6 +665,10 @@ fresh setup is needed. Process isolation would be a heavy tool for a class of bu
 fixable.
 
 Worth revisiting only if per-agent memory growth turns out to be uncontainable within one process.
+
+**The backend depends on none of this.** The protocol is a WebSocket carrying JSON envelopes; the
+client library, language and concurrency model are the host's business, and replacing azalea needs
+no backend release. This section records what is being built, not a constraint the backend enforces.
 
 ## Data ownership
 
@@ -675,9 +683,8 @@ Worth revisiting only if per-agent memory growth turns out to be uncontainable w
 The last row is the point of the whole design. A full database dump reveals which accounts are
 operated — not the ability to operate them.
 
-Token cache handling on the host: mode `0600`, encrypted with a key supplied by the
-environment, listed in `.gitignore` and `.dockerignore`, and mounted as a volume rather than baked
-into an image.
+Token cache handling on the host: mode `0600`, encrypted with a key supplied by the environment,
+listed in `.gitignore` and `.dockerignore`, and mounted as a volume rather than baked into an image.
 
 ## Permission nodes
 
@@ -702,16 +709,16 @@ of them are meaningfully more dangerous than the others and a future tier may ne
   your infrastructure.
 
 Collapsing them into `fleet.control` would make that distinction unrecoverable; keeping them apart
-costs nothing today and leaves room for, say, a build-only tier that can connect agents but not speak
-as them.
+costs nothing today and leaves room for, say, a build-only tier that can connect agents but not
+speak as them.
 
 ## Audit
 
 > **Built**, in `backend/` and the frontend's Audit log page. The chat and activity streams described
 > elsewhere in this document remain design, since nothing reports them until a host connects.
 
-Every `setup`, `connect`, `disconnect` and `chat` records the acting Osmium account, the target agent,
-and a timestamp. Actions are taken under a real Minecraft identity; when something goes wrong
+Every `setup`, `connect`, `disconnect` and `chat` records the acting Osmium account, the target
+agent, and a timestamp. Actions are taken under a real Minecraft identity; when something goes wrong
 in-game, "the agent did it" is not an answer.
 
 Host enrolment, renaming, token rotation and deletion are recorded too, as are agent creation,
@@ -736,9 +743,9 @@ The audit trail records *that* a setup was triggered and what the host reported 
 host authenticated, which Osmium does not know.
 
 **Retained 30 days** — the longest of the three streams; see the retention table under *Chat →
-Persistence*. "Audit" here means **operator actions**, a different stream from the activity feed that
-an agent's own events land in. The two are easy to conflate and are deliberately kept apart: one answers
-"who did this", the other "what happened to this agent".
+Persistence*. "Audit" here means **operator actions**, a different stream from the activity feed
+that an agent's own events land in. The two are easy to conflate and are deliberately kept apart:
+one answers "who did this", the other "what happened to this agent".
 
 It is read through an administrator-only surface — `GET` gated on **`audit.read`**, rendered by the
 frontend's Audit log page, which occupies the sidebar slot the settings page used to. The node sits
@@ -787,8 +794,8 @@ Rejected, for two reasons:
 Note that this rejection is now an **operational policy, not an architectural constraint**. An
 earlier revision also rejected them for contradicting the manual-login requirement. That argument no
 longer holds: since the backend neither performs nor observes the login, it has no opinion on the
-mechanism, and a host *could* use cookie alts without Osmium being able to tell. The reason not to is
-provenance, and it has to be enforced by whoever operates the hosts rather than by the protocol.
+mechanism, and a host *could* use cookie alts without Osmium being able to tell. The reason not to
+is provenance, and it has to be enforced by whoever operates the hosts rather than by the protocol.
 
 The genuine pain cookie alts claim to solve — one human approval per account — is addressed instead
 by batching setup: Phase 2 is decoupled from Phase 3, so many accounts can be set up in a single
@@ -805,7 +812,8 @@ real accounts we can provision and afford to lose), not a token-format one.
 
 Answered elsewhere in this document, kept here as a pointer: the process model, sector assignment,
 schematic formats, chat scoping and listener election, chat persistence and retention, rate limits,
-the `setup_agent` method field and why hosts do not advertise their methods, and the version handshake.
+the `setup_agent` method field and why hosts do not advertise their methods, and the version
+handshake.
 
 ### Recently closed
 
