@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import {
@@ -13,17 +13,59 @@ import {
   Layers,
   Map,
   MessagesSquare,
+  Server,
   TriangleAlert,
 } from 'lucide-vue-next'
-import { onMounted } from 'vue'
+import ServerChatModal from '../components/ServerChatModal.vue'
+import type { ActivityEntryResponse } from '../api/client'
+import { fetchActivityPage } from '../api/feeds'
+import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_DOT } from '../lib/agentState'
-import type { Sector } from '../stores/agents'
+import type { Sector, ServerSummary } from '../stores/agents'
 import { useAgentStore } from '../stores/agents'
 
 const { t } = useI18n()
 const agentStore = useAgentStore()
 
-onMounted(() => void agentStore.refresh())
+/** Which server's chat is open. Null closes the modal. */
+const openServer = ref<ServerSummary | null>(null)
+
+const activityBox = ref<HTMLElement | null>(null)
+const activitySentinel = ref<HTMLElement | null>(null)
+
+const activityFeed = useFeed<ActivityEntryResponse>((cursor) => fetchActivityPage(cursor))
+const {
+  items: activity,
+  loading: activityLoading,
+  error: activityError,
+  exhausted: activityExhausted,
+} = activityFeed
+const activityScroll = useInfiniteScroll(activitySentinel, () => void moreActivity(), activityBox)
+
+let stopListening: (() => void) | null = null
+
+onMounted(async () => {
+  void agentStore.refresh()
+  await activityFeed.reset()
+  activityScroll.start()
+
+  // An incident arriving live belongs at the top, where the newest already is.
+  stopListening = agentStore.onFeedEvent((name, data) => {
+    if (name === 'activity') activityFeed.prepend(data as ActivityEntryResponse)
+  })
+})
+
+onBeforeUnmount(() => stopListening?.())
+
+async function moreActivity(): Promise<void> {
+  await activityFeed.more()
+  if (!activityExhausted.value) await activityScroll.rearm()
+}
+
+/** Time only: the feed is a working day's worth, and the date is noise inside one. */
+function formatTime(at: string): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
 
 const SECTOR_BADGE: Record<Sector['status'], string> = {
   done: 'badge-success badge-soft',
@@ -32,10 +74,10 @@ const SECTOR_BADGE: Record<Sector['status'], string> = {
   queued: 'badge-ghost',
 }
 
-const SEVERITY_DOT: Record<'info' | 'warning' | 'error', string> = {
-  info: 'bg-base-content/30',
-  warning: 'bg-warning',
-  error: 'bg-error',
+const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
+  INFO: 'bg-base-content/30',
+  WARNING: 'bg-warning',
+  ERROR: 'bg-error',
 }
 
 const SECTOR_PROGRESS: Record<Sector['status'], string> = {
@@ -249,86 +291,90 @@ function percent(part: number, whole: number): number {
 
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="card-title flex items-center gap-2 text-base">
-              <MessagesSquare class="text-primary size-4" />
-              {{ t('dashboard.serverChat') }}
-            </h2>
-          </div>
-          <p class="text-xs opacity-50">
-            One elected agent forwards each server's chat, so it is not duplicated per agent.
-          </p>
+          <h2 class="card-title flex items-center gap-2 text-base">
+            <Server class="text-primary size-4" />
+            {{ t('servers.title') }}
+            <span class="badge badge-ghost badge-sm">{{ agentStore.serverSummaries.length }}</span>
+          </h2>
+          <p class="text-xs opacity-50">{{ t('servers.hint') }}</p>
 
-          <!-- A fleet can span servers, so this is grouped by server rather than shown as one feed. -->
-          <div v-if="agentStore.servers.length" class="flex max-h-72 flex-col gap-4 overflow-y-auto">
-            <div v-for="server in agentStore.servers" :key="server">
-              <div class="mb-1 flex items-center justify-between gap-2">
-                <span class="truncate font-mono text-xs opacity-60">{{ server }}</span>
-                <span v-if="agentStore.chatListeners[server]" class="shrink-0 text-xs opacity-50">
-                  via
-                  <span class="font-medium">{{ agentStore.chatListeners[server]?.label }}</span>
+          <!--
+            One row per server rather than every server's chat stacked. A fleet can span servers and
+            each feed is long, so the card lists them and the conversation opens on demand.
+          -->
+          <ul v-if="agentStore.serverSummaries.length" class="flex flex-col gap-1">
+            <li v-for="server in agentStore.serverSummaries" :key="server.address">
+              <!-- Tailwind 4's preflight gives buttons cursor: default, so the row asks for it back. -->
+              <button
+                class="rounded-field hover:bg-base-300/50 flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left"
+                @click="openServer = server"
+              >
+                <MessagesSquare class="size-4 shrink-0 opacity-50" />
+                <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ server.address }}</span>
+
+                <span class="shrink-0 text-xs tabular-nums opacity-60">
+                  {{ t('servers.online', { online: server.online, total: server.total }) }}
+                </span>
+
+                <span
+                  v-if="server.listener"
+                  class="badge badge-success badge-soft badge-xs shrink-0"
+                >
+                  {{ t('servers.listening') }}
                 </span>
                 <span v-else class="badge badge-warning badge-soft badge-xs shrink-0 gap-1">
                   <TriangleAlert class="size-3" />
-                  no listener
+                  {{ t('servers.noListenerShort') }}
                 </span>
-              </div>
+              </button>
+            </li>
+          </ul>
 
-              <div v-if="agentStore.chatListeners[server]" class="flex flex-col gap-1">
-                <p
-                  v-for="(line, index) in agentStore.globalChatFor(server)"
-                  :key="index"
-                  class="flex gap-2 text-sm"
-                >
-                  <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
-                  <span class="font-medium">{{ line.from }}</span>
-                  <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
-                </p>
-                <p v-if="!agentStore.globalChatFor(server).length" class="text-sm opacity-50">
-                  {{ t('dashboard.noChat') }}
-                </p>
-              </div>
-
-              <p v-else class="text-sm opacity-50">
-                {{ t('dashboard.noListener') }}
-              </p>
-            </div>
-          </div>
-
-          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.noChat') }}</p>
+          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('servers.none') }}</p>
         </div>
       </div>
     </div>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <div class="card border-base-300 bg-base-200 border">
-        <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <Activity class="text-primary size-4" />
-            {{ t('dashboard.activity') }}
-          </h2>
-          <p class="text-xs opacity-50">{{ t('dashboard.activityHint') }}</p>
+    <div class="card border-base-300 bg-base-200 border">
+      <div class="card-body gap-3">
+        <h2 class="card-title flex items-center gap-2 text-base">
+          <Activity class="text-primary size-4" />
+          {{ t('dashboard.activity') }}
+        </h2>
+        <p class="text-xs opacity-50">{{ t('dashboard.activityHint') }}</p>
 
-          <div v-if="agentStore.activity.length" class="flex max-h-64 flex-col gap-1 overflow-y-auto">
-            <RouterLink
-              v-for="(line, index) in agentStore.activity"
-              :key="index"
-              :to="{ name: 'agent', params: { id: line.agent.id } }"
-              class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
-            >
-              <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
-              <span
-                class="size-1.5 shrink-0 rounded-full"
-                :class="SEVERITY_DOT[line.severity]"
-              ></span>
-              <span class="font-medium">{{ line.agent.label }}</span>
-              <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
-            </RouterLink>
-          </div>
+        <div v-if="activityError" role="alert" class="alert alert-error alert-soft">
+          <TriangleAlert class="size-4" />
+          <span>{{ activityError }}</span>
+        </div>
 
-          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.noActivity') }}</p>
+        <div ref="activityBox" class="flex max-h-96 flex-col gap-1 overflow-y-auto">
+          <component
+            :is="line.agentId ? RouterLink : 'div'"
+            v-for="line in activity"
+            :key="line.id"
+            :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
+            class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
+          >
+            <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
+            <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
+            <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
+            <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
+          </component>
+
+          <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
+            {{ t('common.loading') }}
+          </p>
+          <p v-else-if="!activity.length" class="py-8 text-center text-sm opacity-50">
+            {{ t('dashboard.noActivity') }}
+          </p>
+
+          <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
+          <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
         </div>
       </div>
     </div>
+
+    <ServerChatModal :server="openServer" @close="openServer = null" />
   </div>
 </template>

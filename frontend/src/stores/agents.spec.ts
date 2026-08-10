@@ -61,14 +61,14 @@ describe('fleet store', () => {
     expect(store.servers).toEqual(['alpha.example:25565', 'beta.example:25565'])
   })
 
-  describe('chat listeners', () => {
+  describe('server summaries', () => {
     it('elects one listener per server, not one per fleet', async () => {
       fleet()
       const store = useAgentStore()
 
       await store.refresh()
 
-      expect(Object.keys(store.chatListeners)).toEqual([
+      expect(store.serverSummaries.map((server) => server.address)).toEqual([
         'alpha.example:25565',
         'beta.example:25565',
       ])
@@ -82,7 +82,8 @@ describe('fleet store', () => {
 
       await store.refresh()
 
-      expect(store.chatListeners['alpha.example:25565']?.id).toBe(12)
+      const alpha = store.serverSummaries.find((s) => s.address === 'alpha.example:25565')
+      expect(alpha?.listener?.id).toBe(12)
     })
 
     it('leaves a server without a listener when nothing there is online', async () => {
@@ -91,7 +92,10 @@ describe('fleet store', () => {
 
       await store.refresh()
 
-      expect(store.chatListeners['gamma.example:25565']).toBeUndefined()
+      const gamma = store.serverSummaries.find((s) => s.address === 'gamma.example:25565')
+      expect(gamma?.listener).toBeUndefined()
+      expect(gamma?.online).toBe(0)
+      expect(gamma?.total).toBe(1)
     })
   })
 
@@ -220,6 +224,38 @@ describe('live updates', () => {
     store.applyEvent('host-removed', { id: 1 })
 
     expect(store.hostById(1)).toBeUndefined()
+  })
+
+  /**
+   * Chat and activity are not stored here — they are paged feeds owned by whichever view shows one —
+   * so the store's whole job for them is handing them on to a listener.
+   */
+  it('hands chat and activity to feed listeners', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+    const seen: string[] = []
+    store.onFeedEvent((name) => seen.push(name))
+
+    store.applyEvent('chat', { id: 1, text: 'hello' })
+    store.applyEvent('activity', { id: 2, text: 'kicked' })
+    store.applyEvent('agent-removed', { id: 6 })
+
+    expect(seen).toEqual(['chat', 'activity'])
+  })
+
+  it('stops delivering once a listener unsubscribes', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+    const seen: string[] = []
+    const stop = store.onFeedEvent((name) => seen.push(name))
+
+    store.applyEvent('chat', { id: 1 })
+    stop()
+    store.applyEvent('chat', { id: 2 })
+
+    expect(seen).toEqual(['chat'])
   })
 
   // A newer backend may send event types this build has never heard of; that must not throw.

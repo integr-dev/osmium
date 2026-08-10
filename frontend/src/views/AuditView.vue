@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Bot as Agent,
@@ -15,15 +15,19 @@ import {
   UserPlus,
   Users,
 } from 'lucide-vue-next'
-import { api, errorMessage, type AuditEntryResponse } from '../api/client'
+import type { AuditEntryResponse } from '../api/client'
+import { fetchAuditPage } from '../api/feeds'
+import { useFeed, useInfiniteScroll } from '../lib/feed'
 
 /**
  * The operator audit trail: who triggered what, not what happened to an agent. Agent-side events
  * (died, kicked, connected) are the *activity* feed and live on the dashboard and agent pages.
  *
- * Filtering is client-side because the endpoint returns a bounded, newest-first page: with a 30-day
- * retention and a row per command rather than per event, the whole window is small enough to hold.
- * Server-side search becomes worth building when that stops being true.
+ * Paged by cursor and scrolled rather than clicked: the trail is long enough that a fixed page
+ * hides most of it, and an offset would drift as commands are recorded while it is being read.
+ *
+ * Searching is done by the backend. A filter over only the rows already fetched would search the
+ * newest hundred of thirty days and report that nothing matches, which reads as an answer.
  */
 type AuditAction = AuditEntryResponse['action']
 
@@ -76,36 +80,43 @@ const { t } = useI18n()
 /** Wording lives with the rest of the copy; this is just the lookup. */
 const actionLabel = (action: AuditAction) => t('auditAction.' + action)
 
-const entries = ref<AuditEntryResponse[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+/** Long enough to swallow a burst of typing, short enough not to feel like a submit button. */
+const SEARCH_DEBOUNCE_MS = 250
+
 const query = ref('')
+const sentinel = ref<HTMLElement | null>(null)
+let debounce: ReturnType<typeof setTimeout> | null = null
 
-onMounted(load)
+const feed = useFeed((cursor) => fetchAuditPage(cursor, query.value.trim()))
+const scroll = useInfiniteScroll(sentinel, () => void loadMore())
 
-async function load() {
-  loading.value = true
-  error.value = null
-  const { data, error: failure } = await api.GET('/api/audit')
-  loading.value = false
+onMounted(async () => {
+  await feed.reset()
+  scroll.start()
+})
 
-  if (failure) {
-    error.value = errorMessage(failure, 'Could not load the audit log')
-    return
-  }
-  entries.value = (data ?? []) as AuditEntryResponse[]
+onBeforeUnmount(() => {
+  if (debounce) clearTimeout(debounce)
+})
+
+/** Typing rewinds to the newest matching entry rather than filtering what is already on screen. */
+watch(query, () => {
+  if (debounce) clearTimeout(debounce)
+  debounce = setTimeout(async () => {
+    await feed.reset()
+    await scroll.rearm()
+  }, SEARCH_DEBOUNCE_MS)
+})
+
+async function loadMore(): Promise<void> {
+  await feed.more()
+  if (!feed.exhausted.value) await scroll.rearm()
 }
 
-const filtered = computed(() => {
-  const needle = query.value.trim().toLowerCase()
-  if (!needle) return entries.value
-  return entries.value.filter((entry) =>
-    [entry.account, entry.target, entry.detail ?? '', actionLabel(entry.action)]
-      .join(' ')
-      .toLowerCase()
-      .includes(needle),
-  )
-})
+const entries = feed.items
+const loading = feed.loading
+const error = feed.error
+const exhausted = feed.exhausted
 
 /** Local time: an operator reading this is reasoning about their own working day. */
 function formatAt(at: string): string {
@@ -150,7 +161,7 @@ function formatAt(at: string): string {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="entry in filtered" :key="entry.id" class="hover:bg-base-300/40">
+            <tr v-for="entry in entries" :key="entry.id" class="hover:bg-base-300/40">
               <td class="whitespace-nowrap text-sm opacity-70">{{ formatAt(entry.at) }}</td>
               <td>
                 <div class="flex items-center gap-2">
@@ -172,12 +183,21 @@ function formatAt(at: string): string {
       </div>
 
       <p v-if="loading" class="py-10 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
+      <p v-else-if="!entries.length && query.trim()" class="py-10 text-center text-sm opacity-50">
+        {{ t('audit.noMatches') }}
+      </p>
       <p v-else-if="!entries.length" class="py-10 text-center text-sm opacity-50">
         {{ t('audit.none') }}
       </p>
-      <p v-else-if="!filtered.length" class="py-10 text-center text-sm opacity-50">
-        {{ t('audit.noMatches') }}
+      <p v-else-if="exhausted && !error" class="py-6 text-center text-xs opacity-40">
+        {{ t('audit.end') }}
       </p>
+
+      <!--
+        Watched by an IntersectionObserver: reaching it fetches the next page. Always rendered, so
+        the element the observer holds never goes away underneath it.
+      -->
+      <div ref="sentinel" aria-hidden="true" class="h-px"></div>
     </div>
 
     <p class="text-xs opacity-50">

@@ -14,6 +14,9 @@ export type RoleResponse = Required<components['schemas']['RoleResponse']>
 export type HostResponse = Required<components['schemas']['HostResponse']>
 export type AgentResponse = Required<components['schemas']['AgentResponse']>
 export type AuditEntryResponse = Required<components['schemas']['AuditEntryResponse']>
+export type ChatMessageResponse = Required<components['schemas']['ChatMessageResponse']>
+export type ActivityEntryResponse = Required<components['schemas']['ActivityEntryResponse']>
+
 
 /** Not in the document either - the @RestControllerAdvice return type is never scanned. */
 export type ApiError = { message?: string }

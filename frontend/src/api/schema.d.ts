@@ -359,6 +359,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of chat, newest first.
+         * @description Pass exactly one of `agentId` or `server`.
+         *
+         *                 `agentId` gives the conversation to or about that agent. `server` gives what everyone on
+         *                 that server saw, forwarded once by the elected listener - deliberately separate, because
+         *                 the server's chat is identical for every agent on it and would otherwise bury the lines
+         *                 that are actually about the agent you are looking at.
+         *
+         *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
+         *                 from the previous response to continue. Kept for 3 days.
+         */
+        get: operations["list_4"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/me": {
         parameters: {
             query?: never;
@@ -384,10 +412,37 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List recent operator actions, newest first.
-         * @description Entries are kept for 30 days by default and purged daily.
+         * One page of operator actions, newest first.
+         * @description Pages by cursor, not by offset: the trail grows while it is being read, so an offset
+         *                 would repeat or skip entries between requests. Send `nextCursor` from the previous
+         *                 response to continue; a null `nextCursor` means the trail ended.
+         *
+         *                 Entries are kept for 30 days by default and purged daily.
          */
-        get: operations["list_4"];
+        get: operations["list_5"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of agent incidents, newest first.
+         * @description Every agent's incidents merged, or one agent's when `agentId` is given.
+         *
+         *                 Pages by cursor, not by offset: incidents arrive while the feed is being read. Send
+         *                 `nextCursor` from the previous response to continue. Kept for 10 days.
+         */
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -532,6 +587,26 @@ export interface components {
             name?: string;
             nodes?: string[];
         };
+        /** @description One line of Minecraft chat, as the agent that observed it reported it. */
+        ChatMessageResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: date-time */
+            at?: string;
+            /** Format: int64 */
+            agentId?: number | null;
+            agentLabel?: string;
+            serverAddress?: string;
+            /** @enum {string} */
+            scope?: "OUTBOUND" | "DIRECT" | "LOCAL" | "GLOBAL";
+            from?: string;
+            text?: string;
+        };
+        /** @description One page of chat, newest first. */
+        ChatPageResponse: {
+            items?: components["schemas"]["ChatMessageResponse"][];
+            nextCursor?: string | null;
+        };
         /** @description One operator action: who did what, to which agent or host. */
         AuditEntryResponse: {
             /** Format: int64 */
@@ -543,6 +618,31 @@ export interface components {
             action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE";
             target?: string;
             detail?: string | null;
+        };
+        /** @description One page of the trail, newest first. */
+        AuditPageResponse: {
+            items?: components["schemas"]["AuditEntryResponse"][];
+            nextCursor?: string | null;
+        };
+        /** @description Something that happened to an agent: kicked, died, connected, relink needed. */
+        ActivityEntryResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: date-time */
+            at?: string;
+            /** Format: int64 */
+            agentId?: number | null;
+            agentLabel?: string;
+            /** @enum {string} */
+            scope?: "SYSTEM" | "LIFECYCLE";
+            /** @enum {string} */
+            severity?: "INFO" | "WARNING" | "ERROR";
+            text?: string;
+        };
+        /** @description One page of activity, newest first. */
+        ActivityPageResponse: {
+            items?: components["schemas"]["ActivityEntryResponse"][];
+            nextCursor?: string | null;
         };
     };
     responses: never;
@@ -1688,6 +1788,56 @@ export interface operations {
             };
         };
     };
+    list_4: {
+        parameters: {
+            query?: {
+                /** @description Conversation to or about this agent. Excludes the server's global chat. */
+                agentId?: number;
+                /**
+                 * @description Global chat on this server address.
+                 * @example mc.example.com:25565
+                 */
+                server?: string;
+                /** @description How many lines to return. Clamped to 1..500. */
+                limit?: number;
+                /** @description `nextCursor` from the previous page. Omit for the newest lines. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of chat. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChatPageResponse"];
+                };
+            };
+            /** @description Neither or both filters given, or a malformed `cursor`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChatPageResponse"];
+                };
+            };
+            /** @description Missing node `fleet.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChatPageResponse"];
+                };
+            };
+        };
+    };
     me: {
         parameters: {
             query?: never;
@@ -1726,11 +1876,15 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: {
-                /** @description How many entries to return, newest first. Clamped to 1..1000. */
+                /** @description How many entries to return. Clamped to 1..500. */
                 limit?: number;
+                /** @description `nextCursor` from the previous page. Omit for the newest entries. */
+                cursor?: string;
+                /** @description Narrows to entries whose account, target, detail or action matches. */
+                query?: string;
             };
             header?: never;
             path?: never;
@@ -1738,13 +1892,22 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Recent entries. */
+            /** @description A page of entries, oldest continuing at `nextCursor`. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["AuditEntryResponse"][];
+                    "*/*": components["schemas"]["AuditPageResponse"];
+                };
+            };
+            /** @description Malformed `cursor`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AuditPageResponse"];
                 };
             };
             /** @description Missing node `audit.read`. */
@@ -1753,7 +1916,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["AuditEntryResponse"][];
+                    "*/*": components["schemas"]["AuditPageResponse"];
+                };
+            };
+        };
+    };
+    list_6: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one agent. Omit for the whole fleet. */
+                agentId?: number;
+                /** @description How many entries to return. Clamped to 1..500. */
+                limit?: number;
+                /** @description `nextCursor` from the previous page. Omit for the newest entries. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ActivityPageResponse"];
+                };
+            };
+            /** @description Malformed `cursor`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ActivityPageResponse"];
+                };
+            };
+            /** @description Missing node `fleet.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ActivityPageResponse"];
                 };
             };
         };

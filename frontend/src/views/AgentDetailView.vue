@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -24,6 +24,9 @@ import {
   Users,
 } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
+import type { ActivityEntryResponse, ChatMessageResponse } from '../api/client'
+import { fetchActivityPage, fetchChatPage } from '../api/feeds'
+import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_BADGE, stateLabel } from '../lib/agentState'
 import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
 import { formatUptime, isOnline, useAgentStore } from '../stores/agents'
@@ -58,15 +61,79 @@ const hostReachable = computed(() => host.value?.reachable === true)
 const healthPercent = computed(() => ((agent.value?.telemetry.health ?? 0) / 20) * 100)
 const foodPercent = computed(() => ((agent.value?.telemetry.food ?? 0) / 20) * 100)
 
-const SEVERITY_DOT: Record<'info' | 'warning' | 'error', string> = {
-  info: 'bg-base-content/30',
-  warning: 'bg-warning',
-  error: 'bg-error',
+const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
+  INFO: 'bg-base-content/30',
+  WARNING: 'bg-warning',
+  ERROR: 'bg-error',
 }
 
-onMounted(() => {
+/**
+ * This agent's own feeds. Chat here is what was said **to or about this agent**; the server's global
+ * chat is on the dashboard, since it is identical for every agent on the server and would bury the
+ * lines that are actually about this one.
+ *
+ * Both are fixed-height panels rather than the whole page, so each scrolls its own older pages in.
+ */
+const agentId = computed(() => Number(route.params.id))
+
+const chatBox = ref<HTMLElement | null>(null)
+const chatSentinel = ref<HTMLElement | null>(null)
+const activityBox = ref<HTMLElement | null>(null)
+const activitySentinel = ref<HTMLElement | null>(null)
+
+const chatFeed = useFeed<ChatMessageResponse>((cursor) =>
+  fetchChatPage(cursor, { agentId: agentId.value }),
+)
+const activityFeed = useFeed<ActivityEntryResponse>((cursor) =>
+  fetchActivityPage(cursor, agentId.value),
+)
+const { items: chat, loading: chatLoading, exhausted: chatExhausted } = chatFeed
+const {
+  items: activity,
+  loading: activityLoading,
+  exhausted: activityExhausted,
+} = activityFeed
+
+const chatScroll = useInfiniteScroll(chatSentinel, () => void moreChat(), chatBox)
+const activityScroll = useInfiniteScroll(activitySentinel, () => void moreActivity(), activityBox)
+
+let stopListening: (() => void) | null = null
+
+onMounted(async () => {
   if (!agent.value) void agentStore.refresh()
+
+  await Promise.all([chatFeed.reset(), activityFeed.reset()])
+  chatScroll.start()
+  activityScroll.start()
+
+  stopListening = agentStore.onFeedEvent((name, data) => {
+    if (name === 'chat') {
+      const line = data as ChatMessageResponse
+      // Global arrives under whichever agent forwards it, and belongs to the server, not here.
+      if (line.agentId === agentId.value && line.scope !== 'GLOBAL') chatFeed.prepend(line)
+      return
+    }
+    const entry = data as ActivityEntryResponse
+    if (entry.agentId === agentId.value) activityFeed.prepend(entry)
+  })
 })
+
+onBeforeUnmount(() => stopListening?.())
+
+async function moreChat(): Promise<void> {
+  await chatFeed.more()
+  if (!chatExhausted.value) await chatScroll.rearm()
+}
+
+async function moreActivity(): Promise<void> {
+  await activityFeed.more()
+  if (!activityExhausted.value) await activityScroll.rearm()
+}
+
+/** Time only: chat is kept three days and activity ten, so the clock is what locates a line. */
+function formatTime(at: string): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
 
 /** Every command can legitimately fail with 503 while no agent is connected to the host. */
 async function run(action: () => Promise<void>) {
@@ -305,19 +372,27 @@ async function confirmRemove() {
           {{ t('agents.activity') }}
         </h2>
 
-        <ul v-if="agent.telemetry.activity.length" class="flex flex-col gap-1">
-          <li
-            v-for="(line, index) in agent.telemetry.activity"
-            :key="index"
+        <div ref="activityBox" class="flex max-h-72 flex-col gap-1 overflow-y-auto">
+          <div
+            v-for="line in activity"
+            :key="line.id"
             class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
           >
-            <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
+            <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
             <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
             <span class="min-w-0 flex-1">{{ line.text }}</span>
-          </li>
-        </ul>
+          </div>
 
-        <p v-else class="py-6 text-center text-sm opacity-50">{{ t('agents.noActivity') }}</p>
+          <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
+            {{ t('common.loading') }}
+          </p>
+          <p v-else-if="!activity.length" class="py-6 text-center text-sm opacity-50">
+            {{ t('agents.noActivity') }}
+          </p>
+
+          <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
+          <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
+        </div>
       </div>
     </div>
 
@@ -364,20 +439,28 @@ async function confirmRemove() {
         <div class="flex items-center gap-2 text-sm font-medium opacity-70">
           <MessageSquare class="size-4" />
           {{ t('agents.chat') }}
-          <span class="text-xs font-normal opacity-60">
-            — messages to or from this agent. Server chat is on the dashboard.
-          </span>
+          <span class="text-xs font-normal opacity-60">{{ t('agents.chatHint') }}</span>
         </div>
 
         <div
-          v-if="agent.telemetry.chat.length"
-          class="rounded-box bg-base-300/25 flex max-h-48 flex-col gap-1 overflow-y-auto p-3"
+          ref="chatBox"
+          class="rounded-box bg-base-300/25 flex max-h-64 flex-col gap-1 overflow-y-auto p-3"
         >
-          <p v-for="(line, index) in agent.telemetry.chat" :key="index" class="text-sm">
-            <span class="font-mono text-xs opacity-40">{{ line.at }}</span>
+          <p v-for="line in chat" :key="line.id" class="text-sm">
+            <span class="font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
             <span class="ml-2 font-medium">{{ line.from }}:</span>
             <span class="ml-1 opacity-80">{{ line.text }}</span>
           </p>
+
+          <p v-if="chatLoading" class="py-4 text-center text-sm opacity-50">
+            {{ t('common.loading') }}
+          </p>
+          <p v-else-if="!chat.length" class="py-4 text-center text-sm opacity-50">
+            {{ t('dashboard.noChat') }}
+          </p>
+
+          <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
+          <div ref="chatSentinel" aria-hidden="true" class="h-px shrink-0"></div>
         </div>
 
         <form v-if="auth.can('fleet.chat')" class="flex gap-2" @submit.prevent="send">

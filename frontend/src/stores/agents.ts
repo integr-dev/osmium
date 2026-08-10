@@ -7,31 +7,18 @@ import { t } from '../i18n'
 /**
  * Fleet state.
  *
- * Hosts, agents and their lifecycle states are **real** and come from the backend. Telemetry, chat and
- * build progress are still **mock**: the backend has no agent connected yet, so nothing reports
- * health, position or chat. Those parts are marked below and are what the SSE stream will replace.
+ * Hosts, agents and their lifecycle states are **real** and come from the backend, as are chat and
+ * activity — though nothing fills those until a host connects. Telemetry and build progress are
+ * still **mock**: nothing reports health, position or blocks placed yet. Those parts are marked.
+ *
+ * Chat and activity are not held here. They are cursor-paged feeds owned by whichever view shows
+ * one; the store only hands on the live lines as they arrive. See `src/lib/feed.ts`.
  */
 
 export interface NearbyPlayer {
   name: string
   distance: number
   isAgent: boolean
-}
-
-export interface ChatLine {
-  at: string
-  from: string
-  text: string
-}
-
-/**
- * Something that happened *to* an agent: kicks, deaths, warnings, connectivity transitions. Kept out
- * of chat so an incident is not buried between two lines of small talk.
- */
-export interface ActivityLine {
-  at: string
-  severity: 'info' | 'warning' | 'error'
-  text: string
 }
 
 /** MOCK. Replaced by the telemetry stream once an agent reports. */
@@ -45,8 +32,6 @@ export interface AgentTelemetry {
   task: string
   blocksPlaced: number
   nearby: NearbyPlayer[]
-  chat: ChatLine[]
-  activity: ActivityLine[]
 }
 
 export type FleetAgent = AgentResponse & { telemetry: AgentTelemetry }
@@ -66,12 +51,13 @@ export interface Attention {
   severity: 'error' | 'warning'
 }
 
-/** A line of ordinary server chat, forwarded by exactly one elected agent per server. */
-export interface GlobalChatLine {
-  at: string
-  server: string
-  from: string
-  text: string
+/** A Minecraft server and how much of the fleet is on it. */
+export interface ServerSummary {
+  address: string
+  online: number
+  total: number
+  /** The agent forwarding this server's global chat, or undefined when nothing is listening. */
+  listener: FleetAgent | undefined
 }
 
 /** States in which an agent is genuinely in game. */
@@ -100,12 +86,6 @@ export const useAgentStore = defineStore('agents', () => {
     { id: 'sector-b', name: 'Transept · sector B', blocksPlaced: 11_902, totalBlocks: 39_600, assigned: ['Mason_02'], status: 'active' },
     { id: 'sector-e', name: 'North wing · sector E', blocksPlaced: 9_140, totalBlocks: 34_800, assigned: ['Mason_03'], status: 'blocked' },
     { id: 'sector-d', name: 'Spire · sector D', blocksPlaced: 0, totalBlocks: 40_000, assigned: [], status: 'queued' },
-  ])
-
-  const globalChat = ref<GlobalChatLine[]>([
-    { at: '14:06', server: 'mc.example.com:25565', from: 'Notch', text: 'that cathedral is getting huge' },
-    { at: '14:05', server: 'mc.example.com:25565', from: 'Dinnerbone', text: 'who is running all these agents' },
-    { at: '14:03', server: 'mc.example.com:25565', from: 'jeb_', text: 'anyone got spare deepslate?' },
   ])
 
   // ---- loading -------------------------------------------------------------------------------
@@ -191,9 +171,29 @@ export const useAgentStore = defineStore('agents', () => {
       case 'host-removed':
         hosts.value = hosts.value.filter((host) => host.id !== (data as { id: number }).id)
         break
+      case 'chat':
+      case 'activity':
+        // Feeds are paged and owned by whichever view is showing one, so these are handed on rather
+        // than accumulated here: the store has no way to know which page a line belongs on.
+        for (const listener of feedListeners) listener(name, data)
+        break
       // 'ready' and anything this build does not know about are ignored, so a newer backend
       // sending a new event type never breaks an older tab.
     }
+  }
+
+  /**
+   * Live chat and activity, for whoever is displaying them.
+   *
+   * Returns its own unsubscribe, so a component drops the listener when it unmounts rather than the
+   * store growing a registry of views. Everything else the stream carries is state the store owns,
+   * which is why this exists only for the two feeds.
+   */
+  const feedListeners = new Set<(name: string, data: unknown) => void>()
+
+  function onFeedEvent(listener: (name: string, data: unknown) => void): () => void {
+    feedListeners.add(listener)
+    return () => feedListeners.delete(listener)
   }
 
   /** Telemetry is kept across the update, exactly as `loadAgents` does, so the mock does not reset. */
@@ -238,22 +238,25 @@ export const useAgentStore = defineStore('agents', () => {
   const servers = computed(() => [...new Set(agents.value.map((agent) => agent.serverAddress))].sort())
 
   /**
-   * One elected listener **per server**, not per fleet. Chosen for stability - the longest running
-   * online agent - so a new agent joining never displaces a working listener.
+   * Each server with its share of the fleet, and the agent forwarding its global chat.
+   *
+   * One elected listener **per server**, not per fleet, chosen for stability - the longest running
+   * online agent - so a new agent joining never displaces a working listener. A server with nobody
+   * online has no listener, which is honest: nothing is watching its chat.
    */
-  const chatListeners = computed<Record<string, FleetAgent | undefined>>(() => {
-    const byServer: Record<string, FleetAgent | undefined> = {}
-    for (const server of servers.value) {
-      byServer[server] = online.value
-        .filter((agent) => agent.serverAddress === server)
-        .sort((a, b) => b.telemetry.uptimeSeconds - a.telemetry.uptimeSeconds)[0]
-    }
-    return byServer
-  })
-
-  function globalChatFor(server: string): GlobalChatLine[] {
-    return globalChat.value.filter((line) => line.server === server)
-  }
+  const serverSummaries = computed<ServerSummary[]>(() =>
+    servers.value.map((address) => {
+      const here = agents.value.filter((agent) => agent.serverAddress === address)
+      return {
+        address,
+        online: here.filter(isOnline).length,
+        total: here.length,
+        listener: here
+          .filter(isOnline)
+          .sort((a, b) => b.telemetry.uptimeSeconds - a.telemetry.uptimeSeconds)[0],
+      }
+    }),
+  )
 
   const attention = computed<Attention[]>(() => {
     const found: Attention[] = []
@@ -280,14 +283,6 @@ export const useAgentStore = defineStore('agents', () => {
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))
   })
-
-  /** Every agent's incidents merged into one feed, newest first. Conversation is not included. */
-  const activity = computed(() =>
-    agents.value
-      .flatMap((agent) => agent.telemetry.activity.map((line) => ({ ...line, agent })))
-      .sort((a, b) => b.at.localeCompare(a.at))
-      .slice(0, 12),
-  )
 
   function byId(id: number): FleetAgent | undefined {
     return agents.value.find((agent) => agent.id === id)
@@ -403,20 +398,18 @@ export const useAgentStore = defineStore('agents', () => {
     liveUpdatesConnected,
     connectLiveUpdates,
     applyEvent,
+    onFeedEvent,
     disconnectLiveUpdates,
     schematic,
     sectors,
-    globalChat,
     online,
     servers,
-    chatListeners,
-    globalChatFor,
+    serverSummaries,
     blocksPlaced,
     progressPercent,
     blocksPerMinute,
     etaMinutes,
     attention,
-    activity,
     refresh,
     byId,
     hostById,
@@ -453,8 +446,6 @@ function mockTelemetry(agent: AgentResponse): AgentTelemetry {
     task: live ? 'Awaiting assignment' : describe(agent.state),
     blocksPlaced: live ? seed * 1_240 : 0,
     nearby: [],
-    chat: [],
-    activity: [],
   }
 }
 
