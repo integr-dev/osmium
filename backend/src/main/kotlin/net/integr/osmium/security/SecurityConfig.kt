@@ -1,6 +1,7 @@
 package net.integr.osmium.security
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret
+import net.integr.osmium.config.CorsProperties
 import net.integr.osmium.config.JwtProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -18,6 +19,9 @@ import org.springframework.security.oauth2.jwt.JwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 import java.nio.charset.StandardCharsets
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
@@ -25,7 +29,10 @@ import javax.crypto.spec.SecretKeySpec
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-class SecurityConfig(private val jwtProperties: JwtProperties) {
+class SecurityConfig(
+    private val jwtProperties: JwtProperties,
+    private val corsProperties: CorsProperties,
+) {
 
     /**
      * The agent socket gets its own chain, matched first and deliberately without the resource
@@ -53,6 +60,10 @@ class SecurityConfig(private val jwtProperties: JwtProperties) {
         jwtAuthenticationConverter: DatabaseJwtAuthenticationConverter,
     ): SecurityFilterChain = http
         .csrf { it.disable() }
+        .cors { cors ->
+            val source = corsConfigurationSource()
+            if (source == null) cors.disable() else cors.configurationSource(source)
+        }
         .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
         .authorizeHttpRequests {
             it.requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
@@ -65,6 +76,30 @@ class SecurityConfig(private val jwtProperties: JwtProperties) {
             resourceServer.jwt { jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter) }
         }
         .build()
+
+    /**
+     * Null when no origin is configured, which leaves CORS off entirely rather than answering
+     * preflights with an empty allow-list. Deliberately not a bean: a `CorsConfigurationSource` in
+     * the context is picked up automatically, and an empty one would be indistinguishable from
+     * having none.
+     */
+    private fun corsConfigurationSource(): CorsConfigurationSource? {
+        if (corsProperties.origins.isEmpty()) return null
+
+        val configuration = CorsConfiguration().apply {
+            allowedOrigins = corsProperties.origins
+            allowedMethods = listOf("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS")
+            allowedHeaders = listOf("Authorization", "Content-Type")
+            // The SPA sends the token in a header, not a cookie, but a split-origin deployment may
+            // still want credentialed requests; this is why '*' is refused in CorsProperties.
+            allowCredentials = true
+            maxAge = PREFLIGHT_CACHE_SECONDS
+        }
+
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/api/**", configuration)
+        }
+    }
 
     @Bean
     fun passwordEncoder(): PasswordEncoder = BCryptPasswordEncoder()
@@ -83,5 +118,6 @@ class SecurityConfig(private val jwtProperties: JwtProperties) {
 
     private companion object {
         val OPENAPI_PATHS = arrayOf("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**")
+        const val PREFLIGHT_CACHE_SECONDS = 3600L
     }
 }
