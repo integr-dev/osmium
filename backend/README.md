@@ -29,9 +29,10 @@ Then the app:
 ./gradlew bootRun          # gradlew.bat on Windows
 ```
 
-Hibernate creates the schema on first boot (`ddl-auto=update`) and `DataInitializer` seeds the
+Flyway builds the schema on first boot from `db/migration`, and `DataInitializer` seeds the
 permission nodes, the three roles, and — only while the `users` table is empty — a bootstrap
-administrator.
+administrator. A database that predates Flyway is adopted rather than rebuilt; see
+[Schema migrations](#schema-migrations).
 
 The app listens on `:8080`. Postgres is published on `:5432` with database, user and password all
 set to `osmium`.
@@ -279,17 +280,10 @@ the action. Both exist for the same reason — a filter that only saw the rows a
 search the newest hundred of a thirty-day trail and report "nothing matches", which reads as an
 answer rather than as a limit. See [Paged feeds](#paged-feeds).
 
-### Adding a new action needs a manual migration
+### Adding a new action needs a migration
 
-Hibernate maps `AuditAction` with a `CHECK` constraint listing every enum name, and
-`ddl-auto=update` writes that constraint **once and never alters it**. Adding a value therefore
-succeeds at boot and then fails at insert time against the stale list:
-
-```
-ERROR: new row for relation "audit_entries" violates check constraint "audit_entries_action_check"
-```
-
-Run this against any existing database when the enum changes:
+Hibernate maps `AuditAction` with a `CHECK` constraint listing every enum name, and it is written
+once. Adding a value needs a migration that rewrites the constraint:
 
 ```sql
 ALTER TABLE audit_entries DROP CONSTRAINT audit_entries_action_check;
@@ -298,13 +292,9 @@ ALTER TABLE audit_entries ADD CONSTRAINT audit_entries_action_check
 ```
 
 Both `columnDefinition` and an `AttributeConverter` were tried against a real Postgres to suppress
-the constraint; Hibernate 7.4 generates it either way. The tests never catch this, because
-Testcontainers builds a fresh schema from the current enum on every run — it only bites a database
-that already exists.
-
-That is the second symptom of the same root cause: **`ddl-auto=update` is not a migration tool.** It
-adds tables and columns and does nothing else. Flyway or Liquibase is the real answer before this
-runs anywhere that cannot be dropped and recreated.
+the constraint entirely; Hibernate 7.4 generates it either way. The same applies to `ChatScope`,
+`ActivityScope`, `ActivitySeverity` and `AgentState`. See [Schema migrations](#schema-migrations) —
+this is one of the three failures that motivated moving off `ddl-auto`.
 
 Two properties are worth knowing before relying on it:
 
@@ -357,6 +347,76 @@ Sub-second receive latency is the accepted cost.
 
 Both are also published on the live stream as `chat` and `activity` events, so an open feed grows
 without polling.
+
+### Chat listener election
+
+Global chat is identical for every agent on a server, so `ChatListenerService` picks exactly one per
+**server** to forward it and tells the rest to stay quiet. Backend-side because only the backend sees
+the whole fleet — agents on one server can be spread across several hosts, so no host can tell
+whether another already has a listener.
+
+It sweeps on a **timer rather than on events**, and that is the load-bearing decision. `STALE` is
+derived from the host's heartbeat at read time, so a host going silent changes nothing in the
+database and fires nothing at all; an event-driven election would leave a dead listener holding the
+role forever, and the only symptom is that a server's chat stops. The sweep runs inside the
+heartbeat grace window and doubles as the retry for an undelivered command.
+
+Two invariants:
+
+- **Told before recorded.** `Agent.chatListener` is set only after the `set_chat_listener` write
+  reaches the host, so it never claims a listener that was never told to listen.
+- **Eligible means reachable *and* writable.** A host can be inside its grace window with the socket
+  already gone. Electing an agent that cannot be written to records a listener in name only.
+
+A working listener is never displaced — a new agent joining does not take the role — so re-election
+only happens when the incumbent is lost. `Agent.onlineSince` ranks the candidates and resets on
+every entry into `ONLINE`, so an agent that keeps reconnecting cannot out-rank a stable one.
+
+## Schema migrations
+
+**Flyway owns the schema. Hibernate only checks it.** `ddl-auto=validate` means a mismatch between
+the entities and the database is a failure to start, not a failure three screens into the app.
+
+```
+src/main/resources/db/migration/
+  V1__baseline.sql                 the schema as it stood when Flyway took over
+  V2__drop_ddl_auto_leftovers.sql  the dead schema ddl-auto left behind
+```
+
+Adding one: next version number, a name that says what it does, and a matching entity change. The
+test suite is the check — Testcontainers builds a fresh database from the migrations and `validate`
+then compares it against the entities, so a migration that drifts from the mapping fails the build.
+
+**Existing databases are adopted, not rebuilt.** `spring.flyway.baseline-on-migrate=true` stamps a
+non-empty schema at V1 instead of re-running it, so V1 never executes against a database that
+predates Flyway and V2 onwards apply normally. On an empty database V1 runs like any other
+migration. Both paths were verified against a real Postgres: a clone of a pre-Flyway database
+baselined at V1, applied V2 and started clean.
+
+### Why this replaced `ddl-auto=update`
+
+It cost three separate debugging sessions, and the three share a root cause: **it adds, and does
+nothing else.** No alters, no drops, and failures are logged rather than fatal.
+
+| Symptom | What actually happened |
+|---|---|
+| `violates check constraint "audit_entries_action_check"` | An enum gained a value. The `CHECK` constraint listing the old values was written once and never altered. |
+| `column a1_0.chat_listener does not exist` | A `not null` column with no default cannot be added to a table with rows. The `alter` was rejected, logged, **and the application started anyway.** |
+| `user_roles`, `hosts.agent_version`, `idx_audit_entries_at` | Orphaned by a refactor, a rename and an index change. Nothing was ever dropped, so all three sat there for months. |
+
+The second is the worst of them, because nothing fails at boot — the symptom arrives later as a
+query against a column that is not there.
+
+None of the three could be caught by the tests, for one reason: Testcontainers builds the schema
+from scratch on every run, so all of them only ever bite a database that already exists. That is
+exactly the gap `validate` plus versioned migrations closes.
+
+One habit worth keeping regardless: **give every new non-nullable column a database default**, so
+adding it to a populated table is possible at all.
+
+```kotlin
+@Column(name = "chat_listener", nullable = false, columnDefinition = "boolean not null default false")
+```
 
 ## Paged feeds
 
@@ -438,7 +498,7 @@ host/         the machines that run agents
 agent/        Minecraft sessions and the commands that drive them
 audit/        the operator trail and its retention purge
 activity/     what happened to agents: kicks, deaths, lifecycle changes
-chat/         what was said in game, per agent and per server
+chat/         what was said in game, per agent and per server, and listener election
 
 hostlink/     the backend<->host channel: envelope, handshake auth, connections, reports
 liveupdates/  the backend->browser channel: events, broker, subscriptions, SSE endpoint

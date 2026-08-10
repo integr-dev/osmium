@@ -38,6 +38,13 @@ dependencies {
     implementation("org.springframework.security:spring-security-oauth2-jose")
     implementation("org.springframework.security:spring-security-oauth2-resource-server")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0")
+    // The schema is migrated, not inferred. Three artifacts, and all three are load-bearing:
+    // `spring-boot-flyway` carries the auto-configuration, which Boot 4 split out of the core jar -
+    // without it Flyway sits on the classpath and never runs; and `flyway-database-postgresql` is a
+    // separate artifact since Flyway 10, without which Flyway refuses to touch Postgres at all.
+    implementation("org.springframework.boot:spring-boot-flyway")
+    implementation("org.flywaydb:flyway-core")
+    runtimeOnly("org.flywaydb:flyway-database-postgresql")
     developmentOnly("org.springframework.boot:spring-boot-devtools")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
