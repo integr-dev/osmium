@@ -125,6 +125,8 @@ changes automatically.
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
 | `GET` | `/api/audit` | `audit.read` (newest first, `limit` clamped to 1..1000) |
+| `GET` | `/api/stream/fleet` | `fleet.read` (server-sent events) |
+| `GET` | `/api/stream/agents/{id}` | `fleet.read` (server-sent events) |
 | `GET` | `/api/hosts` | `fleet.read` |
 | `POST` | `/api/hosts` | `fleet.login` (returns the enrolment token once) |
 | `PATCH` | `/api/hosts/{id}` | `fleet.login` (rename) |
@@ -207,6 +209,37 @@ Reachability is **derived** from the heartbeat rather than stored, so a backend 
 a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
 the state is genuinely unknown at that point.
 
+## Live updates
+
+`GET /api/stream/fleet` is a server-sent event stream of everything that changes; `/api/stream/agents/{id}`
+narrows it to one agent. The channel is **receive-only** — commands stay on REST, where they are
+node-gated and audited.
+
+Events carry the same shapes the REST endpoints return (`agent`, `agent-removed`, `host`,
+`host-removed`), so a client replaces the resource in place rather than refetching. That is why the
+response mappers live in `dto/Mappers.kt` instead of being private to a service: two mappers would
+let the stream and the API drift.
+
+Three properties are load-bearing:
+
+- **Events publish after the transaction commits**, via `TransactionSynchronization`. Emitting inside
+  it would announce changes a rollback then discards, and a client applying them in place has no way
+  to learn it was told a lie. This is the mirror image of the audit log, which writes *inside* the
+  transaction so an entry exists only if the command committed.
+- **Streams re-check authority every 30s** and close on failure. Authorities resolve per request for
+  REST, so a demotion takes effect immediately — a stream authorises once and would otherwise run for
+  hours. It also never outlives the token that opened it.
+- **Deleting a host announces each cascaded agent** before the host itself. Publishing only the host
+  would leave every browser holding agents that no longer exist.
+
+Connect, disconnect and chat publish nothing: they change no stored state. The agent's state moves
+when the host reports back, and *that* is what reaches the browser.
+
+`InMemoryFleetEventBroker` is the only implementation. With two backend instances a host's WebSocket
+lands on one while a browser's stream sits on the other, and that browser never sees the event —
+solving it needs a shared broker or sticky routing. The `FleetEventBroker` interface exists so that
+becomes a second implementation rather than a rewrite.
+
 ## Audit log
 
 Anything that changes state, acts in game, or grants and revokes access is recorded. Reads are not —
@@ -281,7 +314,7 @@ Entries are kept for 30 days and purged by a daily job, which is why `@EnableSch
 ./gradlew test
 ```
 
-108 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
+116 tests. They run against a real Postgres 18 through Testcontainers with `@ServiceConnection`, so
 **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 503s and

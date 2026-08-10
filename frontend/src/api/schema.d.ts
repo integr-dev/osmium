@@ -305,6 +305,43 @@ export interface paths {
         patch: operations["update_1"];
         trace?: never;
     };
+    "/api/stream/fleet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream every host and agent change.
+         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`. Payloads match the REST responses, so a client replaces the resource in place rather than refetching.
+         */
+        get: operations["fleet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stream/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream one agent's changes. */
+        get: operations["agent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -483,6 +520,10 @@ export interface components {
             label?: string | null;
             /** @description Move the agent to this server. Only while it is not online. */
             serverAddress?: string | null;
+        };
+        SseEmitter: {
+            /** Format: int64 */
+            timeout?: number;
         };
         /** @description A role and the permission nodes it grants. */
         RoleResponse: {
@@ -1554,6 +1595,66 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    fleet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SseEmitter"];
+                };
+            };
+            /** @description Missing node `fleet.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SseEmitter"];
+                };
+            };
+        };
+    };
+    agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SseEmitter"];
+                };
+            };
+            /** @description Missing node `fleet.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SseEmitter"];
                 };
             };
         };

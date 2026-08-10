@@ -5,11 +5,15 @@ import net.integr.osmium.dto.ChatRequest
 import net.integr.osmium.dto.CreateAgentRequest
 import net.integr.osmium.dto.SetupAgentRequest
 import net.integr.osmium.dto.UpdateAgentRequest
-import net.integr.osmium.model.AuditAction
+import net.integr.osmium.dto.toResponse
 import net.integr.osmium.model.Agent
+import net.integr.osmium.model.AuditAction
 import net.integr.osmium.model.AgentState
 import net.integr.osmium.repository.AgentRepository
 import net.integr.osmium.repository.HostRepository
+import net.integr.osmium.stream.FleetEvent
+import net.integr.osmium.stream.FleetEventBroker
+import net.integr.osmium.stream.FleetEventType
 import net.integr.osmium.websocket.HostEnvelope
 import net.integr.osmium.websocket.HostSessionRegistry
 import net.integr.osmium.websocket.CommandType
@@ -27,6 +31,7 @@ class AgentService(
     private val registry: HostSessionRegistry,
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
+    private val broker: FleetEventBroker,
 ) {
     fun findAll(): List<AgentResponse> =
         agentRepository.findAll().sortedBy { it.label }.map { it.toResponse() }
@@ -53,6 +58,7 @@ class AgentService(
             target = saved.label,
             detail = "On ${host.name}, for ${saved.serverAddress}",
         )
+        publish(saved)
         return saved.toResponse()
     }
 
@@ -97,6 +103,7 @@ class AgentService(
                 target = agent.label,
                 detail = changes.joinToString("; "),
             )
+            publish(agent)
         }
 
         return agent.toResponse()
@@ -114,6 +121,9 @@ class AgentService(
             action = AuditAction.AGENT_DELETE,
             target = label,
             detail = "Was on $hostName; credentials cached there are not removed by this",
+        )
+        broker.publish(
+            FleetEvent(type = FleetEventType.AGENT_REMOVED, data = mapOf("id" to id), agentId = id),
         )
     }
 
@@ -146,6 +156,7 @@ class AgentService(
             target = agent.label,
             detail = "Method '${request.method}' on ${agent.host.name}",
         )
+        publish(agent)
         return agent.toResponse()
     }
 
@@ -216,15 +227,13 @@ class AgentService(
     private fun require(id: Long): Agent =
         agentRepository.findById(id).orElseThrow { NoSuchElementException("No agent with id $id") }
 
-    private fun Agent.toResponse(): AgentResponse = AgentResponse(
-        id = checkNotNull(id) { "Agent has not been persisted yet" },
-        label = label,
-        hostId = checkNotNull(host.id) { "Host has not been persisted yet" },
-        hostName = host.name,
-        serverAddress = serverAddress,
-        state = effectiveState(),
-        mcUsername = mcUsername,
-        mcUuid = mcUuid,
+    /**
+     * Connect, disconnect and chat publish nothing on purpose: they are fire-and-forget commands
+     * that change no stored state. The state advances when the host reports back, and that report
+     * is what the browser is told about.
+     */
+    private fun publish(agent: Agent) = broker.publish(
+        FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(), agentId = agent.id),
     )
 
     /**

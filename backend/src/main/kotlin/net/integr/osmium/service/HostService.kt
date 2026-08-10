@@ -4,11 +4,15 @@ import net.integr.osmium.dto.CreateHostRequest
 import net.integr.osmium.dto.HostEnrolledResponse
 import net.integr.osmium.dto.HostResponse
 import net.integr.osmium.dto.UpdateHostRequest
+import net.integr.osmium.dto.toResponse
 import net.integr.osmium.model.AuditAction
 import net.integr.osmium.model.Host
 import net.integr.osmium.repository.AgentRepository
 import net.integr.osmium.repository.HostRepository
 import net.integr.osmium.security.encodeRequired
+import net.integr.osmium.stream.FleetEvent
+import net.integr.osmium.stream.FleetEventBroker
+import net.integr.osmium.stream.FleetEventType
 import net.integr.osmium.websocket.HostSessionRegistry
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -24,6 +28,7 @@ class HostService(
     private val passwordEncoder: PasswordEncoder,
     private val registry: HostSessionRegistry,
     private val auditService: AuditService,
+    private val broker: FleetEventBroker,
 ) {
     fun findAll(): List<HostResponse> =
         hostRepository.findAll().sortedBy { it.name }.map { it.toResponse() }
@@ -50,6 +55,7 @@ class HostService(
             target = host.name,
             detail = "Enrolment token issued once",
         )
+        publish(host)
         return HostEnrolledResponse(host = host.toResponse(), token = token)
     }
 
@@ -74,9 +80,14 @@ class HostService(
     @Transactional
     fun recordHeartbeat(hostId: Long, hostVersion: String?, address: String?) {
         val host = hostRepository.findById(hostId).orElse(null) ?: return
+        val wasReachable = host.isReachable()
         host.lastSeenAt = Instant.now()
         hostVersion?.let { host.hostVersion = it }
         address?.let { host.address = it }
+
+        // Only on the transition. A heartbeat every ten seconds per host, forwarded to every open
+        // browser, would be pure noise: what changes is reachable false -> true.
+        if (!wasReachable) publish(host)
     }
 
     @Transactional
@@ -95,6 +106,7 @@ class HostService(
                 target = host.name,
                 detail = "Renamed from $previous",
             )
+            publish(host)
         }
         return host.toResponse()
     }
@@ -137,17 +149,27 @@ class HostService(
             target = host.name,
             detail = "Removed with ${agents.size} agent(s)",
         )
+        // Each cascaded agent is announced individually. Publishing only the host would leave every
+        // browser holding agents that no longer exist, with nothing to tell it otherwise.
+        for (agent in agents) {
+            broker.publish(
+                FleetEvent(
+                    type = FleetEventType.AGENT_REMOVED,
+                    data = mapOf("id" to agent.id),
+                    agentId = agent.id,
+                ),
+            )
+        }
+        broker.publish(FleetEvent(type = FleetEventType.HOST_REMOVED, data = mapOf("id" to id)))
     }
 
-    private fun Host.toResponse(): HostResponse = HostResponse(
-        id = checkNotNull(id) { "Host has not been persisted yet" },
-        name = name,
-        address = address,
-        hostVersion = hostVersion,
-        lastSeenAt = lastSeenAt,
-        reachable = isReachable(),
-        agentCount = id?.let { agentRepository.countByHostId(it) } ?: 0,
+    private fun publish(host: Host) = broker.publish(
+        FleetEvent(type = FleetEventType.HOST_CHANGED, data = host.toResponse()),
     )
+
+    /** Delegates to the shared mapper, supplying the count it deliberately does not query itself. */
+    private fun Host.toResponse(): HostResponse =
+        toResponse(agentCount = id?.let { agentRepository.countByHostId(it) } ?: 0)
 
     private fun generateSecret(): String {
         val bytes = ByteArray(TOKEN_BYTES).also { SecureRandom().nextBytes(it) }

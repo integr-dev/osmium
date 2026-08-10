@@ -1,7 +1,12 @@
 package net.integr.osmium.service
 
+import net.integr.osmium.dto.toResponse
+import net.integr.osmium.model.Agent
 import net.integr.osmium.model.AgentState
 import net.integr.osmium.repository.AgentRepository
+import net.integr.osmium.stream.FleetEvent
+import net.integr.osmium.stream.FleetEventBroker
+import net.integr.osmium.stream.FleetEventType
 import net.integr.osmium.websocket.HostEnvelope
 import net.integr.osmium.websocket.EventType
 import net.integr.osmium.websocket.MessageKind
@@ -17,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional
 class HostEventService(
     private val agentRepository: AgentRepository,
     private val hostService: HostService,
+    private val broker: FleetEventBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -67,6 +73,7 @@ class HostEventService(
             // Identity only. A credential must never appear here, and is not read if it does.
             agent.mcUsername = envelope.payload?.get("mcUsername")?.asString()
             agent.mcUuid = envelope.payload?.get("mcUuid")?.asString()
+            publish(agent)
         } else {
             // Back to where it started, so the operator can retry rather than being stuck pending.
             agent.state = AgentState.UNLINKED
@@ -75,6 +82,7 @@ class HostEventService(
                 agent.label,
                 envelope.payload?.get("reason")?.asString() ?: "no reason given",
             )
+            publish(agent)
         }
     }
 
@@ -89,8 +97,19 @@ class HostEventService(
         }
         // STALE is derived from host reachability, never reported: a host that can talk to us is
         // by definition not stale.
-        if (state != AgentState.STALE) agent.state = state
+        if (state == AgentState.STALE) return
+
+        // The whole point of the live channel: a state change the operator did not cause is the one
+        // thing polling would otherwise have to discover.
+        if (agent.state != state) {
+            agent.state = state
+            publish(agent)
+        }
     }
+
+    private fun publish(agent: Agent) = broker.publish(
+        FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(), agentId = agent.id),
+    )
 
     /** Rejects a host reporting on an agent it does not own, rather than trusting the agentId. */
     private fun resolve(hostId: Long, envelope: HostEnvelope) =
