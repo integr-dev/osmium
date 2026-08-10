@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "net.integr"
-version = "0.0.2-SNAPSHOT"
+version = "0.2.0"
 description = "backend"
 
 java {
