@@ -9,4 +9,6 @@ azalea-auth = "0.16.0"
 azalea-client = "0.16.0"
 reqwest = "0.13.4"
 serde = { version = "1.0.229", features = ["alloc", "derive"] }
+tokio = { workspace = true, features = ["net", "sync", "rt-multi-thread"] }
+tokio-tungstenite = "0.30.0"
 uuid = { version = "1.24.0", features = ["v4", "rng"] }

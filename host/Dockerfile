@@ -23,7 +23,7 @@ RUN mkdir -p /agent && chown -R osmium:osmium /agent /app
 
 USER osmium
 
-ENV OSMIUM_WS_URL="wss://<postgres-url>/ws/agent"
+ENV OSMIUM_WS_URL="wss://<backend-url>/ws/agent"
 
 VOLUME ["/agent"]
 

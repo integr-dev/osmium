@@ -3,4 +3,4 @@ resolver = "3"
 members = ["osmium-agent","osmium-router"]
 
 [workspace.dependencies]
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "net", "io-util"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "macros"] }
