@@ -7,7 +7,7 @@ services:
     container_name: osmium-agent
     restart: unless-stopped
     environment:
-      OSMIUM_AGENT_TOKEN: osm_ag_1_121b3c649b9fbc19ced2773b0059851e
+      OSMIUM_AGENT_TOKEN: osm_host_1_c0e4bbd82472f5e7bf77eb5b70745fdd
       OSMIUM_WS_URL: wss://localhost/ws/agent
     volumes:
       - agent:/agent
