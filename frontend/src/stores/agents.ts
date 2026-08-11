@@ -274,11 +274,11 @@ export const useAgentStore = defineStore('agents', () => {
     const found: Attention[] = []
     for (const agent of agents.value) {
       if (agent.state === 'STALE') {
-        found.push({ agent, reason: 'Host unreachable', severity: 'error' })
+        found.push({ agent, reason: t('attention.hostUnreachable'), severity: 'error' })
         continue
       }
       if (agent.state === 'NEEDS_RELINK') {
-        found.push({ agent, reason: 'Needs relink', severity: 'error' })
+        found.push({ agent, reason: t('attention.needsRelink'), severity: 'error' })
         continue
       }
       if (!isOnline(agent)) continue
@@ -289,13 +289,13 @@ export const useAgentStore = defineStore('agents', () => {
       if (!vitals) continue
 
       if (vitals.health <= 10) {
-        found.push({ agent, reason: `Health ${vitals.health}/20`, severity: 'error' })
+        found.push({ agent, reason: `${t('agents.health')} ${vitals.health}/20`, severity: 'error' })
       }
       if (vitals.food <= 8) {
-        found.push({ agent, reason: `Food ${vitals.food}/20`, severity: 'warning' })
+        found.push({ agent, reason: `${t('agents.food')} ${vitals.food}/20`, severity: 'warning' })
       }
       if (vitals.pingMs >= 100) {
-        found.push({ agent, reason: `Ping ${vitals.pingMs} ms`, severity: 'warning' })
+        found.push({ agent, reason: `${t('agents.ping')} ${vitals.pingMs} ms`, severity: 'warning' })
       }
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))
@@ -453,26 +453,26 @@ function mockBuild(agent: AgentResponse): BuildProgress {
   const live = isOnline(agent)
   return {
     blocksPlaced: live ? agent.id * 1_240 : 0,
-    task: live ? 'Awaiting assignment' : describe(agent.state),
+    task: live ? t('agentTask.awaitingAssignment') : describe(agent.state),
   }
 }
 
 function describe(state: AgentResponse['state']): string {
   switch (state) {
     case 'UNLINKED':
-      return 'Not set up yet'
+      return t('agentTask.notSetUp')
     case 'SETUP_PENDING':
-      return 'Awaiting setup on host'
+      return t('agentTask.awaitingSetup')
     case 'LINKED':
-      return 'Ready to connect'
+      return t('agentTask.readyToConnect')
     case 'NEEDS_RELINK':
-      return 'Credentials rejected'
+      return t('agentTask.credentialsRejected')
     case 'CONNECT_FAILED':
-      return 'Server refused the connection'
+      return t('agentTask.serverRefused')
     case 'STALE':
-      return 'Host unreachable'
+      return t('agentTask.hostUnreachable')
     default:
-      return 'Idle'
+      return t('agentTask.idle')
   }
 }
 

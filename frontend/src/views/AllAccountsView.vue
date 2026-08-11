@@ -87,7 +87,7 @@ function dialog(id: string): HTMLDialogElement | null {
 async function loadUsers() {
   const { data, error: failure } = await api.GET('/api/users')
   if (failure) {
-    error.value = errorMessage(failure, 'Could not load accounts')
+    error.value = errorMessage(failure, t('errors.loadAccounts'))
     return
   }
   users.value = (data ?? []) as UserResponse[]
@@ -110,7 +110,7 @@ function openCreate() {
 function submitCreate() {
   if (createStep.value === 1) {
     if (draft.value.password !== draft.value.confirmPassword) {
-      createError.value = 'The passwords do not match'
+      createError.value = t('errors.passwordMismatch')
       return
     }
     createError.value = null
@@ -133,7 +133,7 @@ async function createUser() {
   if (failure) {
     // Conflicts and validation errors come from the step 1 fields, so send the user back.
     createStep.value = 1
-    createError.value = errorMessage(failure, 'Could not create the account')
+    createError.value = errorMessage(failure, t('errors.createAccount'))
     return
   }
   dialog('create-user')?.close()
@@ -148,7 +148,7 @@ async function saveRole() {
     body: { role: editing.value.role },
   })
   if (failure) {
-    error.value = errorMessage(failure, 'Could not update the role')
+    error.value = errorMessage(failure, t('errors.changeRole'))
     return
   }
   editing.value = null
@@ -163,7 +163,7 @@ async function saveUser() {
   // Not trimmed: leading and trailing spaces are legitimate password characters.
   const password = editingUser.value.password
   if (password && password !== editingUser.value.confirmPassword) {
-    error.value = 'The new passwords do not match'
+    error.value = t('errors.passwordMismatch')
     return
   }
 
@@ -173,7 +173,7 @@ async function saveUser() {
     body: { username: editingUser.value.username, password: password || undefined },
   })
   if (failure) {
-    error.value = errorMessage(failure, 'Could not update the account')
+    error.value = errorMessage(failure, t('errors.updateAccount'))
     return
   }
   editingUser.value = null
@@ -187,7 +187,7 @@ async function remove(user: UserResponse) {
     params: { path: { id: user.id } },
   })
   if (failure) {
-    error.value = errorMessage(failure, 'Could not delete the account')
+    error.value = errorMessage(failure, t('errors.removeAccount'))
     return
   }
   await loadUsers()
@@ -273,7 +273,9 @@ function openEdit(user: UserResponse) {
                   </div>
                   <div>
                     <div class="font-medium">{{ user.username }}</div>
-                    <div class="text-xs opacity-50">{{ user.nodes.length }} nodes</div>
+                    <div class="text-xs opacity-50">
+                      {{ t('accounts.nodeCount', { count: user.nodes.length }, user.nodes.length) }}
+                    </div>
                   </div>
                 </div>
               </td>
@@ -287,7 +289,7 @@ function openEdit(user: UserResponse) {
                 </span>
                 <span v-else class="badge badge-ghost badge-sm gap-1 opacity-70">
                   <CircleSlash2 class="size-3" />
-                  none
+                  {{ t('common.none') }}
                 </span>
               </td>
               <td>
@@ -446,7 +448,7 @@ function openEdit(user: UserResponse) {
               {{ t('common.cancel') }}
             </button>
             <button class="btn btn-primary btn-sm gap-1" type="submit">
-              {{ createStep === 1 ? 'Next' : 'Create' }}
+              {{ createStep === 1 ? t('accounts.next') : t('accounts.create') }}
               <ChevronRight v-if="createStep === 1" class="size-4" />
             </button>
           </div>
@@ -459,10 +461,10 @@ function openEdit(user: UserResponse) {
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <SquarePen class="text-primary size-5" />
-          Edit {{ editingUser?.user.username }}
+          {{ t('accounts.editTitle', { name: editingUser?.user.username }) }}
         </h3>
         <p class="mt-1 text-sm opacity-60">
-          Renaming ends that account's sessions, since its token identifies it by username.
+          {{ t('accounts.renameWarning') }}
         </p>
         <form v-if="editingUser" class="mt-5 flex flex-col gap-4" @submit.prevent="saveUser">
           <FormField

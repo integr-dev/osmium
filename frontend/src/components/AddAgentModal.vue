@@ -35,7 +35,7 @@ async function submit() {
     return
   }
   if (draft.value.hostId === null) {
-    error.value = 'Pick a host to run this agent'
+    error.value = t('errors.pickHost')
     return
   }
 
@@ -52,7 +52,7 @@ async function submit() {
   } catch (failure) {
     // Conflicts and validation errors are all step 1 fields, so send the operator back.
     step.value = 1
-    error.value = failure instanceof Error ? failure.message : 'Could not create the agent'
+    error.value = failure instanceof Error ? failure.message : t('errors.createAgent')
   } finally {
     busy.value = false
   }
@@ -112,10 +112,12 @@ async function submit() {
                 <span class="min-w-0 flex-1">
                   <span class="block font-medium">{{ host.name }}</span>
                   <span class="block font-mono text-xs opacity-50">
-                    {{ host.address ?? 'not yet connected' }}
+                    {{ host.address ?? t('hosts.notConnected') }}
                   </span>
                 </span>
-                <span class="text-xs opacity-50">{{ host.agentCount }} agents</span>
+                <span class="text-xs opacity-50">
+                  {{ t('hosts.agentCount', { count: host.agentCount }, host.agentCount) }}
+                </span>
               </label>
             </li>
           </ul>

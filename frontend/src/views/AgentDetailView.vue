@@ -148,7 +148,7 @@ async function run(action: () => Promise<void>) {
   try {
     await action()
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : 'Command failed'
+    error.value = failure instanceof Error ? failure.message : t('errors.commandFailed')
   } finally {
     busy.value = false
   }
@@ -193,7 +193,7 @@ async function saveEdit() {
     })
     editDialog.value?.close()
   } catch (failure) {
-    editError.value = failure instanceof Error ? failure.message : 'Could not update the agent'
+    editError.value = failure instanceof Error ? failure.message : t('errors.updateAgent')
   }
 }
 
@@ -204,7 +204,7 @@ async function confirmRemove() {
     removeDialog.value?.close()
     void router.push({ name: 'dashboard' })
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : 'Could not delete the agent'
+    error.value = failure instanceof Error ? failure.message : t('errors.removeAgent')
     removeDialog.value?.close()
   }
 }
@@ -516,7 +516,7 @@ async function confirmRemove() {
           <FormField
             v-model="draft.serverAddress"
             :label="t('agents.server')"
-            placeholder="mc.example.com:25565"
+            :placeholder="t('agents.serverPlaceholder')"
             :icon="Server"
             type="text"
             required

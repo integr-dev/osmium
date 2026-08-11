@@ -95,6 +95,8 @@ const eta = computed(() => {
 })
 
 /** Builders only, ranked by contribution, for the leaderboard bars. Still mock — see the store. */
+const blocksRemaining = computed(() => agentStore.schematic.totalBlocks - agentStore.blocksPlaced)
+
 const contributors = computed(() =>
   [...agentStore.agents]
     .filter((agent) => agent.build.blocksPlaced > 0)
@@ -115,15 +117,21 @@ function percent(part: number, whole: number): number {
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('dashboard.title') }}</h1>
-        <p class="text-sm opacity-60">
-          Building <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
-        </p>
+        <!--
+          Component interpolation rather than a bare key plus a span: the name sits mid-sentence,
+          and word order around it is not the same in every language.
+        -->
+        <i18n-t keypath="dashboard.buildingName" tag="p" class="text-sm opacity-60" scope="global">
+          <template #name>
+            <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
+          </template>
+        </i18n-t>
       </div>
       <span
         class="badge badge-sm gap-1"
         :class="agentStore.blocksPerMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
       >
-        {{ agentStore.blocksPerMinute > 0 ? 'Building' : 'Stalled' }}
+        {{ agentStore.blocksPerMinute > 0 ? t('dashboard.building') : t('dashboard.stalled') }}
       </span>
     </header>
 
@@ -172,10 +180,15 @@ function percent(part: number, whole: number): number {
           max="100"
         ></progress>
         <div class="flex justify-between text-xs opacity-60">
-          <span>{{ agentStore.progressPercent.toFixed(1) }}% complete</span>
+          <span>{{ t('dashboard.percentComplete', { percent: agentStore.progressPercent.toFixed(1) }) }}</span>
           <span class="tabular-nums">
-            {{ (agentStore.schematic.totalBlocks - agentStore.blocksPlaced).toLocaleString() }} blocks
-            remaining
+            {{
+              t(
+                'dashboard.blocksRemaining',
+                { count: blocksRemaining.toLocaleString() },
+                blocksRemaining,
+              )
+            }}
           </span>
         </div>
       </div>

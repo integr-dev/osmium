@@ -24,7 +24,7 @@ async function submit() {
     const redirect = route.query.redirect
     await router.push(typeof redirect === 'string' ? redirect : { name: 'dashboard' })
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : 'Login failed'
+    error.value = failure instanceof Error ? failure.message : t('errors.loginFailed')
   } finally {
     busy.value = false
   }
