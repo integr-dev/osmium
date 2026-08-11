@@ -4,11 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
     image: osmium-agent:latest
-    container_name: osmium-agent
     restart: unless-stopped
     environment:
       OSMIUM_AGENT_TOKEN: osm_host_1_c0e4bbd82472f5e7bf77eb5b70745fdd
-      OSMIUM_WS_URL: wss://localhost/ws/agent
+      OSMIUM_WS_URL: wss://localhost:8080/ws/agent
     volumes:
       - agent:/agent
 volumes:
