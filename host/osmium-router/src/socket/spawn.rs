@@ -1,7 +1,19 @@
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio::{net::TcpStream, sync::mpsc::Sender};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::client::IntoClientRequest};
 
-pub async fn spawn_ws_client(addr: String, token: String) {
-    let mut request = addr.into_client_request().expect("Invalid backend address");
+use super::message::Message;
+
+/// connects a websocket client to the given address and handles incoming messages
+/// tx - channel to dispatch
+pub async fn ws_client(addr: String, token: String, tx: Sender<Message>) {
+    let stream = spawn(addr, token).await;
+}
+
+async fn spawn(addr: String, token: String) -> WebSocketStream<MaybeTlsStream<TcpStream>> {
+    let mut request = addr
+        .clone()
+        .into_client_request()
+        .expect("Invalid backend address");
 
     request.headers_mut().insert(
         "Authorization",
@@ -12,7 +24,7 @@ pub async fn spawn_ws_client(addr: String, token: String) {
 
     let (stream, _) = tokio_tungstenite::connect_async(request)
         .await
-        .expect("Failed to locate backend");
+        .expect(&format!("Failed to locate backend at {addr}"));
 
-    println!("connected :3")
+    stream
 }

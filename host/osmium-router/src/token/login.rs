@@ -1,6 +1,3 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
 pub enum Login {
     RefreshToken {
         /// MSA refresh token
@@ -13,4 +10,9 @@ pub enum Login {
         /// Mojang account token
         token: &'static str,
     },
+}
+
+pub enum LoginKind {
+    RefreshToken,
+    MojangToken,
 }
