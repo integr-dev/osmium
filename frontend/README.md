@@ -99,6 +99,20 @@ Search is **server-side**, which came with paging rather than as a separate impr
 over only the rows already fetched would search the newest hundred of a thirty-day trail and report
 "nothing matches", which reads as an answer rather than as a limit.
 
+### Exporting the audit log
+
+`src/api/auditExport.ts` is deliberately not built on the generated client: openapi-fetch parses
+the body, which is the point of it everywhere else and exactly wrong for an attachment. The token is
+a header, so the browser cannot simply be navigated to the URL — the blob is assembled and handed to
+a synthetic anchor instead.
+
+The pickers hold a **day**, not an instant, and each is converted to the matching local instant
+before it is sent. `toISOString` on a picked date would shift the day for anyone not on UTC, and the
+operator asking for "the 11th" means their own. The end day is inclusive on screen and exclusive on
+the wire, so the request asks for the start of the day after.
+
+The CSV itself is English whatever the interface is set to — see the backend README for why.
+
 Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
 store hands `chat` and `activity` events to whichever view is showing a feed, via `onFeedEvent`, and
 that view prepends them.

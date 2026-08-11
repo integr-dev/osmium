@@ -82,6 +82,7 @@ model honest. A null role means no permissions at all.
 | `user.role.write` | change the role of an account |
 | `role.read` | list roles and their nodes |
 | `audit.read` | read the operator audit trail, including outbound message text |
+| `audit.export` | pull the trail out as a CSV file |
 | `fleet.read` | see hosts, agents and telemetry |
 | `fleet.control` | create, edit, delete agents; connect and disconnect them |
 | `fleet.chat` | **speak in game as an agent** |
@@ -102,7 +103,7 @@ single flat set lookup and the table is self-describing.
 |---|---|
 | `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `fleet.read` |
 | `orchestrator` | *viewer* + `fleet.control`, `fleet.chat`, `fleet.login` |
-| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read` |
+| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read`, `audit.export` |
 
 A viewer is read-only throughout: `fleet.read` gates listing hosts and agents and the live streams,
 and nothing else, so it can watch the fleet without being able to touch it. Every way to change the
@@ -133,6 +134,7 @@ changes automatically.
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
 | `GET` | `/api/audit` | `audit.read` (cursor-paged, `query` searches, `limit` clamped to 1..500) |
+| `GET` | `/api/audit/export` | `audit.export` (CSV attachment; `from` inclusive, `to` exclusive) |
 | `GET` | `/api/activity` | `fleet.read` (cursor-paged; `agentId` narrows to one agent) |
 | `GET` | `/api/chat` | `fleet.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
 | `GET` | `/api/stream/fleet` | `fleet.read` (server-sent events) |
@@ -256,10 +258,28 @@ Three properties are load-bearing:
 Connect, disconnect and chat publish nothing: they change no stored state. The agent's state moves
 when the host reports back, and *that* is what reaches the browser.
 
-`InMemoryFleetEventBroker` is the only implementation. With two backend instances a host's WebSocket
+`InMemoryLiveUpdateBroker` is the only implementation. With two backend instances a host's WebSocket
 lands on one while a browser's stream sits on the other, and that browser never sees the event —
-solving it needs a shared broker or sticky routing. The `FleetEventBroker` interface exists so that
+solving it needs a shared broker or sticky routing. The `LiveUpdateBroker` interface exists so that
 becomes a second implementation rather than a rewrite.
+
+### Every event declares the node it needs
+
+`LiveUpdateType` carries the permission a subscriber must hold, alongside the SSE event name. It sits
+on the type rather than being passed at publish time because it belongs to the kind of event and not
+to the occurrence — every `agent` event needs `fleet.read`, always — so a publisher cannot forget it
+or set it wrong.
+
+**Nothing routes on it yet, on purpose.** Every current type requires `fleet.read`, which is exactly
+what the controller checks at subscribe and what `tick()` re-checks, so dispatch consulting the field
+would be a no-op. `LiveUpdateTypeTest` pins that uniformity rather than leaving it as a comment: the
+day a type arrives needing a different node — the audit trail and permission changes are the obvious
+candidates — the test fails, because at that moment one check at the door stops being sufficient.
+The fix it points at is `matches()` comparing the subscriber's nodes to `event.type.node`, and
+`tick()` refreshing each subscription's whole node set instead of probing one.
+
+They are not *fleet* events. The channel carries whatever a browser has to learn about without
+asking, and hosts and agents are only what it carries today.
 
 ## Audit log
 
@@ -293,6 +313,35 @@ Searching is server-side too: `?query=` matches the account, the target, the det
 the action. Both exist for the same reason — a filter that only saw the rows already fetched would
 search the newest hundred of a thirty-day trail and report "nothing matches", which reads as an
 answer rather than as a limit. See [Paged feeds](#paged-feeds).
+
+### Taking a copy
+
+`GET /api/audit/export?from=&to=` returns the range as a CSV attachment. `from` is inclusive and
+`to` exclusive, both ISO-8601 **instants** rather than dates, so the caller decides what timezone a
+day means instead of having UTC assumed for it — the browser sends the operator's local midnight.
+
+Three things about it are deliberate:
+
+- **It is gated on `audit.export`, not `audit.read`.** Reading is bounded and stays inside Osmium,
+  where the next read is itself observable; an export leaves as a file nothing here can see again.
+  Splitting them lets an account be trusted to look without being trusted to take.
+- **It records itself, before a single row is sent.** The entry describes the request rather than
+  the delivery, so an abandoned or failed download still leaves the trace that someone asked. That
+  puts a new row in the trail being read, so the range is capped at the instant the export started:
+  the file cannot contain the record of its own export, and the count in that record equals the rows
+  written. A `to` in the future is therefore not an error.
+- **The CSV is English and never translated.** It is read by tooling and kept as a record; a header
+  row that depended on the operator's locale could not be scripted against, and two files of the
+  same range would stop being comparable.
+
+Every field is quoted per RFC 4180. A value starting with `=`, `+`, `-`, `@`, tab or CR keeps its
+text and gains a leading apostrophe: `detail` carries in-game chat, written by whoever is on the
+Minecraft server, and without that a player typing `=HYPERLINK(…)` gets it executed when an
+administrator opens the file. That is a deliberate edit to the data — the alternative is a faithful
+file that runs code.
+
+The range is walked in batches of 500 against `idx_audit_entries_at_id` and flushed as it goes, so
+no size of range is held in memory.
 
 ### Adding a new action needs a migration
 
@@ -475,6 +524,7 @@ the entities and the database is a failure to start, not a failure three screens
 src/main/resources/db/migration/
   V1__baseline.sql                 the schema as it stood when Flyway took over
   V2__drop_ddl_auto_leftovers.sql  the dead schema ddl-auto left behind
+  V3__audit_export_action.sql      AUDIT_EXPORT added to the audit action constraint
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -534,7 +584,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-200 tests across 15 classes. Most run against a real Postgres 18 through Testcontainers with
+212 tests across 16 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
