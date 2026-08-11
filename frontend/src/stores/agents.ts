@@ -68,6 +68,7 @@ export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
   const agents = ref<FleetAgent[]>([])
   const loading = ref(false)
+  const loaded = ref(false)
   const error = ref<string | null>(null)
 
   // ---- mock, pending a connected agent -------------------------------------------------------
@@ -89,6 +90,14 @@ export const useAgentStore = defineStore('agents', () => {
 
   // ---- loading -------------------------------------------------------------------------------
 
+  /**
+   * `loaded` is what tells an empty fleet apart from one nobody has asked for yet.
+   *
+   * Without it every list has to render its empty state during the first request, so a fresh page
+   * says "No hosts yet." before it has any idea whether that is true. It stays true afterwards: a
+   * later refresh is a background update over content that is already on screen, and blanking it
+   * back to skeletons would be a worse lie than briefly stale numbers.
+   */
   async function refresh(): Promise<void> {
     loading.value = true
     error.value = null
@@ -96,6 +105,7 @@ export const useAgentStore = defineStore('agents', () => {
       await Promise.all([loadHosts(), loadAgents()])
     } finally {
       loading.value = false
+      loaded.value = true
     }
   }
 
@@ -422,6 +432,7 @@ export const useAgentStore = defineStore('agents', () => {
     hosts,
     agents,
     loading,
+    loaded,
     error,
     liveUpdatesConnected,
     connectLiveUpdates,

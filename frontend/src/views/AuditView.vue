@@ -19,6 +19,7 @@ import {
 import type { AuditEntryResponse } from '../api/client'
 import { fetchAuditPage } from '../api/feeds'
 import { downloadAuditCsv } from '../api/auditExport'
+import TableSkeleton from '../components/TableSkeleton.vue'
 import { useAuthStore } from '../stores/auth'
 import { useAgentStore } from '../stores/agents'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
@@ -186,7 +187,7 @@ function formatAt(at: string): string {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-5xl flex-col gap-6">
+  <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('audit.title') }}</h1>
@@ -275,7 +276,11 @@ function formatAt(at: string): string {
               <th>{{ t('audit.detail') }}</th>
             </tr>
           </thead>
-          <tbody>
+
+          <!-- Only the first page. Once there are rows, more arriving is an append, not a redraw. -->
+          <TableSkeleton v-if="loading && !entries.length" :rows="6" :columns="5" />
+
+          <tbody v-else>
             <tr v-for="entry in entries" :key="entry.id" class="hover:bg-base-300/40">
               <td class="whitespace-nowrap text-sm opacity-70">{{ formatAt(entry.at) }}</td>
               <td>
@@ -298,7 +303,14 @@ function formatAt(at: string): string {
         </table>
       </div>
 
-      <p v-if="loading" class="py-10 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
+      <!--
+        An indicator rather than more skeleton rows: this is the tail of an infinite scroll, and a
+        skeleton row here would be read as a real entry arriving rather than as a wait.
+      -->
+      <div v-if="loading && entries.length" class="flex justify-center py-6">
+        <span class="loading loading-dots loading-sm opacity-50"></span>
+      </div>
+      <p v-else-if="loading" class="sr-only">{{ t('common.loading') }}</p>
       <p v-else-if="!entries.length && query.trim()" class="py-10 text-center text-sm opacity-50">
         {{ t('audit.noMatches') }}
       </p>

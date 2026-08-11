@@ -21,6 +21,7 @@ import { api, errorMessage, type RoleResponse, type UserResponse } from '../api/
 import FormField from '../components/FormField.vue'
 import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
+import TableSkeleton from '../components/TableSkeleton.vue'
 import { useAuthStore } from '../stores/auth'
 import { useAgentStore } from '../stores/agents'
 
@@ -271,11 +272,7 @@ function openEdit(user: UserResponse) {
       <span>{{ error }}</span>
     </div>
 
-    <div v-if="loading" class="flex justify-center py-16">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <div v-else class="card border-base-300 bg-base-200 border">
+    <div class="card border-base-300 bg-base-200 border">
       <div class="overflow-x-auto">
         <table class="table">
           <thead>
@@ -285,7 +282,14 @@ function openEdit(user: UserResponse) {
               <th class="text-right">{{ t('common.actions') }}</th>
             </tr>
           </thead>
-          <tbody>
+
+          <!--
+            The header and the stat row above stay put while this loads. A spinner in their place
+            emptied the page and then jolted it back, which reads as a reload rather than a fetch.
+          -->
+          <TableSkeleton v-if="loading" :columns="3" />
+
+          <tbody v-else>
             <tr v-for="user in visible" :key="user.id" class="hover:bg-base-300/40">
               <td>
                 <div class="flex items-center gap-3">
