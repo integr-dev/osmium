@@ -139,8 +139,16 @@ function logout() {
             Only shown while something is wrong. A permanent green dot is decoration nobody reads.
           -->
           <div class="ml-auto flex items-center gap-1.5">
+            <!--
+              Opens leftward and wraps: these sit at the right edge of a fixed-width sidebar that
+              clips its own overflow, so a centred one-line bubble loses its second half.
+            -->
             <!-- The more severe of the two: nothing is loading at all, so the screen is frozen. -->
-            <span v-if="degraded" class="tooltip tooltip-bottom" :data-tip="backendTip">
+            <span
+              v-if="degraded"
+              class="tooltip tooltip-left before:w-44 before:whitespace-normal"
+              :data-tip="backendTip"
+            >
               <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="retrying" @click="retry">
                 <ServerOff class="text-error size-4" :class="retrying ? 'animate-pulse' : ''" />
               </button>
@@ -149,7 +157,7 @@ function logout() {
             <!-- The narrow case: the backend answers, but events are not arriving. -->
             <span
               v-else-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
-              class="tooltip tooltip-bottom"
+              class="tooltip tooltip-left before:w-44 before:whitespace-normal"
               :data-tip="t('connection.streamLost')"
             >
               <WifiOff class="text-warning size-4" />
