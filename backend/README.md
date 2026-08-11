@@ -137,8 +137,8 @@ changes automatically.
 | `GET` | `/api/audit/export` | `audit.export` (CSV attachment; `from` inclusive, `to` exclusive) |
 | `GET` | `/api/activity` | `fleet.read` (cursor-paged; `agentId` narrows to one agent) |
 | `GET` | `/api/chat` | `fleet.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
-| `GET` | `/api/stream/fleet` | `fleet.read` (server-sent events) |
-| `GET` | `/api/stream/agents/{id}` | `fleet.read` (server-sent events) |
+| `GET` | `/api/stream` | `user.read.self` (server-sent events; each event gated separately) |
+| `GET` | `/api/stream/agents/{id}` | `user.read.self` (server-sent events, narrowed to one agent) |
 | `GET` | `/api/hosts` | `fleet.read` |
 | `POST` | `/api/hosts` | `fleet.login` (returns the enrolment token once) |
 | `PATCH` | `/api/hosts/{id}` | `fleet.login` (rename) |
@@ -223,16 +223,20 @@ the state is genuinely unknown at that point.
 
 ## Live updates
 
-`GET /api/stream/fleet` is a server-sent event stream of everything that changes;
+`GET /api/stream` is a server-sent event stream of everything that changes;
 `/api/stream/agents/{id}` narrows it to one agent. The channel is **receive-only** — commands stay
 on REST, where they are node-gated and audited.
 
-| Event | Carries | Client does |
-|---|---|---|
-| `agent`, `host` | the resource, in the shape REST returns it | replaces it in place |
-| `agent-removed`, `host-removed` | `{ id }` | drops it |
-| `chat`, `activity` | one new line | appends it to the feed |
-| `telemetry` | `{ agentId, telemetry }` | merges the vitals into the agent |
+| Event | Node | Carries | Client does |
+|---|---|---|---|
+| `agent`, `host` | `fleet.read` | the resource, in the shape REST returns it | replaces it in place |
+| `agent-removed`, `host-removed` | `fleet.read` | `{ id }` | drops it |
+| `chat`, `activity` | `fleet.read` | one new line | appends it to the feed |
+| `telemetry` | `fleet.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
+| `user` | `user.read` | the account | replaces it in the list |
+| `user-removed` | `user.read` | `{ id }` | drops it |
+| `audit` | `audit.read` | one new entry | appends it to the trail |
+| `permissions` | `user.read.self` | the recipient's own account | replaces what it may do |
 
 Resource events carry the same shapes the REST endpoints return, so a client replaces what it holds
 rather than refetching. That is why each feature's `toResponse` is shared between its controller and
@@ -249,9 +253,10 @@ Three properties are load-bearing:
   it would announce changes a rollback then discards, and a client applying them in place has no way
   to learn it was told a lie. This is the mirror image of the audit log, which writes *inside* the
   transaction so an entry exists only if the command committed.
-- **Streams re-check authority every 30s** and close on failure. Authorities resolve per request for
-  REST, so a demotion takes effect immediately — a stream authorises once and would otherwise run for
-  hours. It also never outlives the token that opened it.
+- **Streams re-read authority every 30s**, and a demotion *narrows* one rather than only being able
+  to end it. Authorities resolve per request for REST, so a demotion bites immediately there; a
+  stream authorises once and would otherwise run for hours. Only losing `user.read.self` — the node
+  the endpoint itself is gated on — closes it. It also never outlives the token that opened it.
 - **Deleting a host announces each cascaded agent** before the host itself. Publishing only the host
   would leave every browser holding agents that no longer exist.
 
@@ -584,7 +589,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-212 tests across 16 classes. Most run against a real Postgres 18 through Testcontainers with
+218 tests across 17 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

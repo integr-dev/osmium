@@ -80,6 +80,16 @@ Vite proxy can be never.
 **Commands no longer refetch.** Anything that changes stored state publishes an event that arrives
 before the response is written, so a refetch would only re-read what the stream already applied.
 
+**What arrives depends on the account, not the endpoint.** One stream carries the fleet, the account
+list, the audit trail and the reader's own permissions, and the backend filters each event against
+the subscriber's nodes — so an orchestrator watching the same URL simply never sees `audit`.
+
+The `permissions` event is the odd one, and the reason it exists: authorities resolve per request on
+the backend, so a role change bites immediately there, while the browser learned what it may do once
+at login. Without it the UI keeps offering buttons that now 403, which reads as a bug rather than as
+access having changed. It is applied in the fleet store's `applyEvent` — not because permissions are
+fleet state, but because there is one stream and therefore one ingest.
+
 ## Paged feeds
 
 The audit log, activity and chat are all long enough that no view holds one. They page by **cursor
@@ -114,8 +124,12 @@ the wire, so the request asks for the start of the day after.
 The CSV itself is English whatever the interface is set to — see the backend README for why.
 
 Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
-store hands `chat` and `activity` events to whichever view is showing a feed, via `onFeedEvent`, and
-that view prepends them.
+store hands `chat`, `activity`, `audit`, `user` and `user-removed` events to whichever view is
+showing the matching list, via `onFeedEvent`, and that view prepends or replaces.
+
+A live audit entry is only prepended **while the search box is empty**. It has not been through the
+server-side search, so prepending it during one would put a row on screen that does not match what
+was typed.
 
 ## When the backend is unreachable
 
@@ -204,7 +218,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-84 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+85 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
