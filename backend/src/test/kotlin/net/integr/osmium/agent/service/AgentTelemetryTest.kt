@@ -8,9 +8,9 @@ import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.HostReportService
 import net.integr.osmium.hostlink.MessageKind
 import net.integr.osmium.host.model.Host
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.security.RoleNames
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -37,7 +37,7 @@ class AgentTelemetryTest : AbstractRestTest() {
     @Autowired private lateinit var telemetryStore: AgentTelemetryStore
     @Autowired private lateinit var telemetryPublisher: AgentTelemetryPublisher
     @Autowired private lateinit var agentService: AgentService
-    @Autowired private lateinit var broker: FleetEventBroker
+    @Autowired private lateinit var broker: LiveUpdateBroker
     @Autowired private lateinit var objectMapper: ObjectMapper
 
     private fun status(agent: Agent, payload: String) = HostEnvelope(
@@ -228,6 +228,69 @@ class AgentTelemetryTest : AbstractRestTest() {
         assertEquals(4.5, nearby.single { it.name == "Mason_02" }.distance)
     }
 
+    @Test
+    fun `a nearby player carries their position when the host reported one`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+
+        hostReports.onMessage(
+            checkNotNull(host.id),
+            status(
+                agent,
+                """{"health":20,"food":20,"pingMs":30,"position":{"x":0.0,"y":64.0,"z":0.0},
+                    "nearby":[{"name":"Notch","distance":12.4,
+                               "position":{"x":140.0,"y":71.0,"z":-338.0}}]}""",
+            ),
+        )
+
+        val position = assertNotNull(assertNotNull(telemetryStore.find(agent.id)).nearby.single().position)
+        assertEquals(140.0, position.x)
+        assertEquals(71.0, position.y)
+        assertEquals(-338.0, position.z)
+    }
+
+    /**
+     * Optional where the agent's own position is required. A missing one costs the coordinates, not
+     * the entry: that somebody is standing there is the fact worth keeping, and a host can have the
+     * distance without a usable position.
+     */
+    @Test
+    fun `a nearby player without a position is still listed`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+
+        hostReports.onMessage(
+            checkNotNull(host.id),
+            status(
+                agent,
+                """{"health":20,"food":20,"pingMs":30,"position":{"x":0.0,"y":64.0,"z":0.0},
+                    "nearby":[{"name":"Notch","distance":12.4}]}""",
+            ),
+        )
+
+        val nearby = assertNotNull(telemetryStore.find(agent.id)).nearby.single()
+        assertEquals("Notch", nearby.name)
+        assertNull(nearby.position)
+    }
+
+    /** Two coordinates and a guess for the third is a point nobody was ever at. */
+    @Test
+    fun `a partial nearby position is dropped rather than completed`() {
+        val host = reachableHost()
+        val agent = createAgent("Mason_01", host, state = AgentState.ONLINE)
+
+        hostReports.onMessage(
+            checkNotNull(host.id),
+            status(
+                agent,
+                """{"health":20,"food":20,"pingMs":30,"position":{"x":0.0,"y":64.0,"z":0.0},
+                    "nearby":[{"name":"Notch","distance":12.4,"position":{"x":140.0,"z":-338.0}}]}""",
+            ),
+        )
+
+        assertNull(assertNotNull(telemetryStore.find(agent.id)).nearby.single().position)
+    }
+
     /** Deleting an agent drops its sample, so the store cannot outgrow the fleet. */
     @Test
     fun `deleting an agent forgets its telemetry`() {
@@ -263,7 +326,7 @@ class AgentTelemetryTest : AbstractRestTest() {
             Agent(label = "Mason_tick", host = host, serverAddress = "mc.example.com:25565", state = AgentState.ONLINE),
         )
 
-        val seen = CopyOnWriteArrayList<FleetEvent>()
+        val seen = CopyOnWriteArrayList<LiveUpdateEvent>()
         broker.subscribe { seen += it }
 
         hostReports.onMessage(checkNotNull(host.id), status(agent, vitals))
@@ -272,7 +335,7 @@ class AgentTelemetryTest : AbstractRestTest() {
         // Scoped to this agent: the store and the pending set outlive a rolled-back transaction, so
         // agents from earlier tests can still be in flight on the scheduler's own tick.
         assertTrue(
-            seen.any { it.type == FleetEventType.AGENT_TELEMETRY && it.agentId == agent.id },
+            seen.any { it.type == LiveUpdateType.AGENT_TELEMETRY && it.agentId == agent.id },
             "the reported sample never reached the browser",
         )
 

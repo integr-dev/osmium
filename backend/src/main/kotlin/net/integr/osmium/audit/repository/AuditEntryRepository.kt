@@ -44,6 +44,32 @@ interface AuditEntryRepository : JpaRepository<AuditEntry, Long> {
     ): List<AuditEntry>
 
     /**
+     * One batch of a closed range, newest first, continuing strictly before `(beforeAt, beforeId)`.
+     *
+     * Keyset again rather than an offset, for the same reason and against the same index: an export
+     * walks the whole range in batches, and an offset would make each batch cost more than the last.
+     * `from` is inclusive and `to` exclusive, so consecutive ranges neither overlap nor leave a gap.
+     */
+    @Query(
+        """
+        select e from AuditEntry e
+        where e.at >= :from and e.at < :to
+          and (e.at < :beforeAt or (e.at = :beforeAt and e.id < :beforeId))
+        order by e.at desc, e.id desc
+        """,
+    )
+    fun range(
+        @Param("from") from: Instant,
+        @Param("to") to: Instant,
+        @Param("beforeAt") beforeAt: Instant,
+        @Param("beforeId") beforeId: Long,
+        limit: Limit,
+    ): List<AuditEntry>
+
+    @Query("select count(e) from AuditEntry e where e.at >= :from and e.at < :to")
+    fun countInRange(@Param("from") from: Instant, @Param("to") to: Instant): Long
+
+    /**
      * Bulk delete rather than loading and removing entities: a purge can touch far more rows than
      * belong in a persistence context, and nothing here needs entity lifecycle callbacks.
      */

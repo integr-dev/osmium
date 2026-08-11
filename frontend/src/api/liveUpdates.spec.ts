@@ -34,7 +34,7 @@ describe('live update client', () => {
     const body = openBody()
     respondWith(() => ({ stream: body.stream }))
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent: () => {} })
+    const handle = openLiveUpdates('/api/stream', { onEvent: () => {} })
     await settle()
 
     expect(lastCall().headers.get('Authorization')).toBe('Bearer stream-token')
@@ -46,7 +46,7 @@ describe('live update client', () => {
     respondWith(() => ({ stream: body.stream }))
     const onConnect = vi.fn()
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent: () => {}, onConnect })
+    const handle = openLiveUpdates('/api/stream', { onEvent: () => {}, onConnect })
     await settle()
 
     expect(onConnect).toHaveBeenCalledOnce()
@@ -58,7 +58,7 @@ describe('live update client', () => {
     respondWith(() => ({ stream: body.stream }))
     const onEvent = vi.fn()
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent })
+    const handle = openLiveUpdates('/api/stream', { onEvent })
     await settle()
 
     body.send('event:agent\ndata:{"id":')
@@ -79,7 +79,7 @@ describe('live update client', () => {
     respondWith(() => ({ stream: body.stream }))
     const onDisconnect = vi.fn()
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent: () => {}, onDisconnect })
+    const handle = openLiveUpdates('/api/stream', { onEvent: () => {}, onDisconnect })
     await settle()
     expect(onDisconnect).not.toHaveBeenCalled()
 
@@ -95,7 +95,7 @@ describe('live update client', () => {
     respondWith(() => ({ stream: body.stream }))
     const onDisconnect = vi.fn()
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent: () => {}, onDisconnect })
+    const handle = openLiveUpdates('/api/stream', { onEvent: () => {}, onDisconnect })
     await settle()
 
     // Two ticks of the backend's 30s keep-alive, either side of the 45s idle limit.
@@ -112,7 +112,7 @@ describe('live update client', () => {
     respondWith(() => ({ stream: body.stream }))
     const onDisconnect = vi.fn()
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent: () => {}, onDisconnect })
+    const handle = openLiveUpdates('/api/stream', { onEvent: () => {}, onDisconnect })
     await settle()
     handle.close()
 
@@ -126,7 +126,7 @@ describe('live update client', () => {
     respondWith(() => ({ status: 403, body: { message: 'Forbidden' } }))
     const onDisconnect = vi.fn()
 
-    const handle = openLiveUpdates('/api/stream/fleet', { onEvent: () => {}, onDisconnect })
+    const handle = openLiveUpdates('/api/stream', { onEvent: () => {}, onDisconnect })
     await settle()
     await vi.advanceTimersByTimeAsync(120_000)
 

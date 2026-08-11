@@ -50,9 +50,18 @@ Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**
 **telemetry** and **live updates** are real. They stay empty until a host connects and starts
 reporting, but nothing about them is faked.
 
-Only **build progress** is still mock — blocks placed, sectors, throughput, the schematic. It hangs
-off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not mixed in
-one object. Marked in `src/stores/agents.ts`.
+Two things are still mock. **Build progress** — blocks placed, sectors, throughput, the schematic —
+hangs off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not
+mixed in one object. Marked in `src/stores/agents.ts`.
+
+**Configuration** is mock end to end: `src/lib/configuration.ts` holds the field list, the values
+and a `saveSettings` that writes to a map in that module and resolves. Nothing reaches a host, and
+the screen says so in a banner rather than only in a comment. It is kept out of the fleet store for
+the same reason build progress is — a mock inside real state is one that outlives its purpose.
+
+What is meant to survive that mock is the **shape**: fields are declared as a schema and rendered
+generically by type, so adding a setting later is an entry in that file plus a copy key, not another
+block of markup. The field list itself is a placeholder, not a specification.
 
 Telemetry is **absent rather than zeroed** when an agent has not reported: `agent.telemetry` is
 null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes would render as an
@@ -80,6 +89,16 @@ Vite proxy can be never.
 **Commands no longer refetch.** Anything that changes stored state publishes an event that arrives
 before the response is written, so a refetch would only re-read what the stream already applied.
 
+**What arrives depends on the account, not the endpoint.** One stream carries the fleet, the account
+list, the audit trail and the reader's own permissions, and the backend filters each event against
+the subscriber's nodes — so an orchestrator watching the same URL simply never sees `audit`.
+
+The `permissions` event is the odd one, and the reason it exists: authorities resolve per request on
+the backend, so a role change bites immediately there, while the browser learned what it may do once
+at login. Without it the UI keeps offering buttons that now 403, which reads as a bug rather than as
+access having changed. It is applied in the fleet store's `applyEvent` — not because permissions are
+fleet state, but because there is one stream and therefore one ingest.
+
 ## Paged feeds
 
 The audit log, activity and chat are all long enough that no view holds one. They page by **cursor
@@ -99,9 +118,89 @@ Search is **server-side**, which came with paging rather than as a separate impr
 over only the rows already fetched would search the newest hundred of a thirty-day trail and report
 "nothing matches", which reads as an answer rather than as a limit.
 
+### Exporting the audit log
+
+`src/api/auditExport.ts` is deliberately not built on the generated client: openapi-fetch parses
+the body, which is the point of it everywhere else and exactly wrong for an attachment. The token is
+a header, so the browser cannot simply be navigated to the URL — the blob is assembled and handed to
+a synthetic anchor instead.
+
+The pickers hold a **day**, not an instant, and each is converted to the matching local instant
+before it is sent. `toISOString` on a picked date would shift the day for anyone not on UTC, and the
+operator asking for "the 11th" means their own. The end day is inclusive on screen and exclusive on
+the wire, so the request asks for the start of the day after.
+
+The CSV itself is English whatever the interface is set to — see the backend README for why.
+
 Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
-store hands `chat` and `activity` events to whichever view is showing a feed, via `onFeedEvent`, and
-that view prepends them.
+store hands `chat`, `activity`, `audit`, `user` and `user-removed` events to whichever view is
+showing the matching list, via `onFeedEvent`, and that view prepends or replaces.
+
+A live audit entry is only prepended **while the search box is empty**. It has not been through the
+server-side search, so prepending it during one would put a row on screen that does not match what
+was typed.
+
+## Loading states
+
+**Skeletons where the shape is known, an indicator where it is not.** A table already has its
+columns, so placeholder rows keep the header, the widths and the page height put; a spinner in the
+same place collapses the table and then shoves the page down when the data lands.
+`TableSkeleton.vue` is that, for the three tables. The tail of an infinite scroll gets an indicator
+instead — a skeleton row there reads as an entry arriving rather than as a wait.
+
+The rule this exists to enforce: **an empty state is a claim, and it must not be made before the
+answer is known.** Hosts said "No hosts yet." during its first request, the agent page said "Agent
+not found." on a reload before the fleet arrived, and the dashboard showed zeroes. All three read as
+facts. The fleet store therefore carries `loaded` alongside `loading`, since only the first tells an
+empty fleet apart from one nobody has asked for yet.
+
+`loaded` stays true once set. A later refresh is a background update over content already on screen,
+and blanking it back to skeletons would be a worse lie than briefly stale numbers.
+
+## Player heads
+
+Agents, nearby players and chat lines carry a Minecraft head. It comes from Osmium's own
+`/api/avatars/{name-or-uuid}`, never from a skin service directly — proxying is what keeps the CSP
+off a third-party image host, and it means no operator's browser tells one which agents exist or how
+often somebody is looking at them.
+
+That endpoint is gated on `fleet.read` like every other route, and an `<img src>` cannot send an
+`Authorization` header. So `src/lib/avatars.ts` fetches each head with the token and hands the
+element a blob URL — which is why `img-src` carries `blob:`. Object URLs are same-origin by
+construction; they can only name a blob this document already created.
+
+Two things that module has to get right, because a page renders the same head many times: it caches
+the **promise** rather than the result, so thirty elements mounting in one tick share one request;
+and it revokes evicted URLs, since an object URL pins its blob and a long session watching global
+chat meets a lot of names. It also does not go through the API client — that middleware logs the
+session out on a 401, and a decorative image must never be able to do that.
+
+`PlayerHead.vue` is the only component that knows about any of it. Nothing there is load-bearing:
+the name is beside the head everywhere it appears, so an agent that has never logged in, a
+deployment with `osmium.avatar.upstream` blank and a skin service having a bad minute all land on
+the same initial, and the interface reads as it did before heads existed.
+
+## Motion
+
+Two effects, one rule: **movement marks the instant something changed, and nothing else.**
+
+That is the other side of the line the sidebar already draws — a permanent green dot is decoration
+nobody reads, but Osmium is fed by a live stream, so values move while nobody is watching them.
+Without motion at the moment of change, an operator who looked away has no way to learn that they
+did.
+
+- `v-flash="someValue"` from `src/lib/motion.ts` tints a row for a moment when the bound value
+  changes. On the sidebar agents (state), the agent page's status badge, and the hosts table
+  (reachability). **Not** on telemetry: vitals move every second, and constant motion carries no
+  news.
+- `RollingNumber.vue` travels to a new figure instead of swapping it. Dashboard counts only, and
+  never on the first value — counting up from zero on load is an animation about nothing.
+- A `<TransitionGroup name="feed">` slides in newly arrived feed lines. It animates insertions but
+  not the first render, which is exactly the distinction wanted: a line arriving live moves, a page
+  of history simply appears.
+
+Every one of them is off under `prefers-reduced-motion`, honoured rather than softened. All of it is
+decorative by construction, so removing it loses nothing that is not also written on the page.
 
 ## When the backend is unreachable
 
@@ -135,12 +234,29 @@ it over a blip would cost the operator their session.
 
 ## Copy
 
-Every string the operator sees lives in `src/i18n/en.ts`. One locale — the value is not translation
-but having a single place where the product's voice is decided, instead of it accumulating in
-templates a phrase at a time.
+Every string the operator sees lives in `src/i18n/`, one file per locale — English and German. The
+value is not only translation but having a single place where the product's voice is decided,
+instead of it accumulating in templates a phrase at a time.
 
-Components read it with `useI18n()`. Code that is not a component — stores, presentation maps —
-imports `t` from `src/i18n` directly.
+English is the source. `Copy` in `en.ts` is the shape every other locale is typed against, so a key
+added there and not translated **fails the build** rather than falling back silently at runtime.
+Three things a type cannot see are tested instead: that the key sets really match, that a
+translation keeps every `{placeholder}`, and that it keeps the same number of `|` plural forms. Each
+of those fails silently — a dropped placeholder renders the phrase without the value, a dropped
+plural form loses the singular.
+
+**Nothing user-facing is written in a component.** That includes error fallbacks in `<script>` and
+the task and alert wording the fleet store derives — those were the last places English leaked
+through with a locale selected. The rule is worth stating because the compiler cannot enforce it:
+a string literal in a template is legal code.
+
+The picker is at the bottom of the sidebar. Switching is instant, since every component reads its
+copy through `useI18n()`; the choice persists in `localStorage` and moves `<html lang>` with it. A
+first visit follows `navigator.languages`, and an explicit choice outranks it from then on.
+
+Components read copy with `useI18n()`. Code that is not a component — stores, presentation maps —
+imports `t` from `src/i18n` directly. Those calls resolve at call time, so they follow the locale as
+long as the caller re-renders.
 
 Two rules for anything added:
 
@@ -153,7 +269,8 @@ Two rules for anything added:
 One trap worth knowing: **vue-i18n reads a dot in a key as a path separator**. Permission nodes
 contain dots (`fleet.chat`), so `t('permission.fleet.chat')` looks for `permission → fleet → chat`,
 finds nothing, and silently returns the key. `nodeLabel` therefore indexes the copy object directly
-rather than going through `t()`, and `i18n.spec.ts` pins that.
+rather than going through `t()` — which means picking the locale by hand too — and `i18n.spec.ts`
+pins that.
 
 ## Authorization in the UI
 
@@ -172,10 +289,11 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-79 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+98 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
-fleet store's derived state, and the cursor paging in `useFeed` — where a cursor that is not carried
-forward silently re-reads page one.
+fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
+forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
+value without erroring.
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
@@ -236,14 +354,14 @@ suite runs once instead of twice.
 
 ```
 src/api/         generated schema, typed client, token storage, live-update and feed clients
-src/components/  FormField, the add-host and add-agent modals, the server chat modal
+src/components/  FormField, the add-host and add-agent modals, the server chat modal, the language picker
 src/layouts/     AppLayout: sidebar, nav, drawer
-src/i18n/        every user-facing string
+src/i18n/        every user-facing string, one file per locale
 src/lib/         cursor-paged feeds, presentation maps for agent state, roles and permissions
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub
-src/views/       dashboard, hosts, agent detail, accounts, audit log, login
+src/views/       dashboard, map, operations, configuration, hosts, agent detail, accounts, audit, login
 ```
 
 Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.

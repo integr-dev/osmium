@@ -4,7 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { Bot as Agent, Copy, KeyRound, Plus, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
 import AddHostModal from '../components/AddHostModal.vue'
 import FormField from '../components/FormField.vue'
+import TableSkeleton from '../components/TableSkeleton.vue'
 import type { HostResponse } from '../api/client'
+import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
@@ -44,7 +46,7 @@ async function saveRename() {
     await agentStore.renameHost(renaming.value.id, renameDraft.value)
     renameDialog.value?.close()
   } catch (failure) {
-    renameError.value = failure instanceof Error ? failure.message : 'Could not rename the host'
+    renameError.value = failure instanceof Error ? failure.message : t('errors.renameHost')
   }
 }
 
@@ -62,7 +64,7 @@ async function confirmRotate() {
   try {
     rotatedToken.value = await agentStore.rotateHostToken(rotating.value.id)
   } catch (failure) {
-    rotateError.value = failure instanceof Error ? failure.message : 'Could not rotate the token'
+    rotateError.value = failure instanceof Error ? failure.message : t('errors.rotateToken')
   }
 }
 
@@ -83,7 +85,7 @@ async function confirmRemove() {
   try {
     await agentStore.removeHost(pendingRemove.value.id)
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : 'Could not remove the host'
+    error.value = failure instanceof Error ? failure.message : t('errors.removeHost')
   }
   pendingRemove.value = null
   removeDialog.value?.close()
@@ -91,14 +93,18 @@ async function confirmRemove() {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-5xl flex-col gap-6">
+  <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('hosts.title') }}</h1>
         <p class="text-sm opacity-60">
           {{ t('hosts.subtitle') }}
-          {{ agentStore.hosts.filter((host) => host.reachable).length }} of
-          {{ agentStore.hosts.length }} online.
+          {{
+            t('hosts.onlineCount', {
+              online: agentStore.hosts.filter((host) => host.reachable).length,
+              total: agentStore.hosts.length,
+            })
+          }}
         </p>
       </div>
       <button v-if="auth.can('fleet.login')" class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
@@ -124,8 +130,20 @@ async function confirmRemove() {
               <th class="text-right">{{ t('common.actions') }}</th>
             </tr>
           </thead>
-          <tbody>
-            <tr v-for="host in agentStore.hosts" :key="host.id" class="hover:bg-base-300/40">
+          <!-- Rows, not an empty state: "no hosts" is not yet known to be true. -->
+          <TableSkeleton v-if="!agentStore.loaded" :columns="5" />
+
+          <tbody v-else>
+            <!--
+              A host going unreachable takes its agents with it, and it happens on the stream with
+              nobody having pressed anything. This is the row that says so.
+            -->
+            <tr
+              v-for="host in agentStore.hosts"
+              :key="host.id"
+              v-flash="host.reachable"
+              class="hover:bg-base-300/40"
+            >
               <td>
                 <div class="flex items-center gap-3">
                   <div class="rounded-field bg-base-300/40 flex size-8 items-center justify-center">
@@ -134,7 +152,7 @@ async function confirmRemove() {
                   <div>
                     <div class="font-medium">{{ host.name }}</div>
                     <div class="font-mono text-xs opacity-50">
-                      {{ host.address ?? 'not yet connected' }}
+                      {{ host.address ?? t('hosts.notConnected') }}
                     </div>
                   </div>
                 </div>
@@ -145,7 +163,7 @@ async function confirmRemove() {
                   :class="host.reachable ? 'badge-success badge-soft' : 'badge-error badge-soft'"
                 >
                   <span class="size-1.5 rounded-full" :class="host.reachable ? 'bg-success' : 'bg-error'"></span>
-                  {{ host.reachable ? 'Online' : 'Unreachable' }}
+                  {{ host.reachable ? t('hosts.reachable') : t('hosts.unreachable') }}
                 </span>
               </td>
               <td class="font-mono text-sm opacity-70">{{ host.hostVersion ?? '—' }}</td>
@@ -247,7 +265,7 @@ async function confirmRemove() {
             <input class="font-mono text-sm" :value="rotatedToken" readonly />
             <button type="button" class="btn btn-ghost btn-xs gap-1" @click="copyToken">
               <Copy class="size-3.5" />
-              {{ copied ? 'Copied' : 'Copy' }}
+              {{ copied ? t('common.copied') : t('common.copy') }}
             </button>
           </label>
           <div class="modal-action">
@@ -266,7 +284,14 @@ async function confirmRemove() {
         </h3>
         <p class="mt-3 text-sm opacity-70">
           <template v-if="pendingRemove && agentStore.agentsOnHost(pendingRemove.id).length">
-            {{ t('hosts.removeWithAgents', { count: agentStore.agentsOnHost(pendingRemove.id).length }) }}
+            <!-- The count is passed twice: once to interpolate, once to pick the plural form. -->
+            {{
+              t(
+                'hosts.removeWithAgents',
+                { count: agentStore.agentsOnHost(pendingRemove.id).length },
+                agentStore.agentsOnHost(pendingRemove.id).length,
+              )
+            }}
           </template>
           <template v-else>{{ t('hosts.removeNoAgents') }}</template>
         </p>

@@ -12,7 +12,14 @@ import { token } from './token'
 export type UserResponse = Required<components['schemas']['UserResponse']>
 export type RoleResponse = Required<components['schemas']['RoleResponse']>
 export type HostResponse = Required<components['schemas']['HostResponse']>
-export type NearbyPlayerResponse = Required<components['schemas']['NearbyPlayerResponse']>
+/**
+ * `position` is the second genuinely nullable field, alongside `telemetry`: the host may know a
+ * player is nearby without a usable position, and null says so rather than inventing coordinates.
+ * Its own x/y/z still need asserting, since the backend sends all three or nothing.
+ */
+export type NearbyPlayerResponse = Required<components['schemas']['NearbyPlayerResponse']> & {
+  position: Required<components['schemas']['PositionResponse']> | null
+}
 
 /** Nested objects need asserting too — `Required` only reaches the top level. */
 export type AgentTelemetryResponse = Required<components['schemas']['AgentTelemetryResponse']> & {
@@ -134,9 +141,14 @@ function unreachableResponse(): Response {
   })
 }
 
-export const api = createClient<paths>({
-  baseUrl: import.meta.env.VITE_API_BASE_URL ?? '',
-})
+/**
+ * Empty in both supported deployments, which proxy `/api` and are therefore same-origin. Exported
+ * because the generated client is not the only thing that calls the API: player heads are fetched
+ * by hand, and a split-origin deployment has to send them to the same place as everything else.
+ */
+export const apiBaseUrl: string = import.meta.env.VITE_API_BASE_URL ?? ''
+
+export const api = createClient<paths>({ baseUrl: apiBaseUrl })
 
 api.use(auth)
 

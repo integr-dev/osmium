@@ -201,7 +201,8 @@ Carries two things with very different lifetimes, and **either half may be sent 
   "payload": { "state": "ONLINE",
                "health": 18, "food": 17, "pingMs": 42, "dimension": "overworld",
                "position": { "x": 128.5, "y": 71.0, "z": -344.25 },
-               "nearby": [ { "name": "Notch", "distance": 12.4 } ] } }
+               "nearby": [ { "name": "Notch", "distance": 12.4,
+                             "position": { "x": 140.0, "y": 71.0, "z": -338.0 } } ] } }
 
 // state only, when nothing else is worth reporting
 { "kind": "event", "type": "agent_status", "agentId": 42, "payload": { "state": "CONNECT_FAILED" } }
@@ -227,7 +228,7 @@ that is not in game has no vitals, and Osmium shows that as "not reporting" rath
 | `pingMs` | **with the other three** | round trip to the Minecraft server |
 | `position` | **with the other three** | `{x, y, z}`, doubles — all three coordinates |
 | `dimension` | no | defaults to `overworld` |
-| `nearby` | no | `[{ "name", "distance" }]` — **names and distances only**; defaults to empty |
+| `nearby` | no | `[{ "name", "distance", "position" }]` — `position` optional; defaults to empty |
 
 **`health`, `food`, `pingMs` and `position` are all-or-nothing.** Send all four or none of them.
 A tick carrying only some is **dropped whole** and logged, rather than having the rest filled in with
@@ -235,6 +236,12 @@ defaults — a missing `food` defaulting to 0 would render as a starving agent a
 one that is fine, and a missing `position` would place it at the world origin. Osmium would rather
 show nothing than something it made up. Sending none of the four is not an error; that is simply a
 state report.
+
+**A nearby player's `position` is optional**, unlike the agent's own. Send `{x, y, z}` when you have
+it and omit the whole object when you do not — never a partial one, which would be a point nobody was
+ever at. Omitting it costs only the coordinates; the player is still listed, and that somebody is
+there at all is the fact that matters most. Send it whenever you can: it is what lets an operator
+tell a player walking past from one standing on the build.
 
 **Do not send `isAgent` on nearby players.** Osmium decides that, because a host sees only its own
 agents and a server's fleet can span several hosts — no host can tell one of ours from a stranger.

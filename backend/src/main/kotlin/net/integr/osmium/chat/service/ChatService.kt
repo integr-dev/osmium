@@ -7,9 +7,9 @@ import net.integr.osmium.chat.dto.toResponse
 import net.integr.osmium.chat.model.ChatMessage
 import net.integr.osmium.chat.model.ChatScope
 import net.integr.osmium.chat.repository.ChatMessageRepository
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.web.PageCursor
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Limit
@@ -30,7 +30,7 @@ import java.time.Instant
 class ChatService(
     private val chatMessageRepository: ChatMessageRepository,
     private val chatProperties: ChatProperties,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -54,7 +54,7 @@ class ChatService(
             ),
         )
         broker.publish(
-            FleetEvent(type = FleetEventType.CHAT_MESSAGE, data = saved.toResponse(), agentId = agent.id),
+            LiveUpdateEvent(type = LiveUpdateType.CHAT_MESSAGE, data = saved.toResponse(), agentId = agent.id),
         )
         return saved
     }

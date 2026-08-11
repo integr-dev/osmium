@@ -305,7 +305,7 @@ export interface paths {
         patch: operations["update_1"];
         trace?: never;
     };
-    "/api/stream/fleet": {
+    "/api/stream": {
         parameters: {
             query?: never;
             header?: never;
@@ -313,10 +313,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Stream every host and agent change.
-         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat` and `activity` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
+         * Stream everything this account is entitled to see change.
+         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`, `user`, `user-removed`, `audit`, `permissions`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat`, `activity` and `audit` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
+         *
+         *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `fleet.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
          */
-        get: operations["fleet"];
+        get: operations["stream"];
         put?: never;
         post?: never;
         delete?: never;
@@ -334,7 +336,7 @@ export interface paths {
         };
         /**
          * Stream one agent's changes.
-         * @description The same events as the fleet stream, filtered to this agent. A server's global chat arrives here too, under whichever agent currently forwards it, so a view showing one agent's conversation filters on `scope`.
+         * @description The same events as the whole stream, filtered to this agent. A server's global chat arrives here too, under whichever agent currently forwards it, so a view showing one agent's conversation filters on `scope`.
          */
         get: operations["agent"];
         put?: never;
@@ -390,6 +392,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/avatars/{identifier}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A player's head.
+         * @description Accepts a Minecraft username or UUID. Fetched from a skin service and cached, so no operator's browser talks to it directly.
+         */
+        get: operations["head"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/me": {
         parameters: {
             query?: never;
@@ -423,6 +445,37 @@ export interface paths {
          *                 Entries are kept for 30 days by default and purged daily.
          */
         get: operations["list_5"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The trail for a date range, as a CSV attachment.
+         * @description `from` is inclusive and `to` exclusive, both ISO-8601 instants, so the caller decides
+         *                 what timezone a "day" means rather than having UTC assumed for it.
+         *
+         *                 The range is capped at the moment the export starts, so a `to` in the future is not an
+         *                 error and the file cannot contain the record of its own export.
+         *
+         *                 Columns are `at,account,action,target,detail`, always in English and never translated:
+         *                 an export is read by tooling and kept as a record, so its shape cannot depend on who
+         *                 pressed the button. Every field is quoted, and a value a spreadsheet would run as a
+         *                 formula keeps its text and gains a leading apostrophe.
+         *
+         *                 Writes an audit entry of its own before any row is sent.
+         */
+        get: operations["export"];
         put?: never;
         post?: never;
         delete?: never;
@@ -593,6 +646,8 @@ export interface components {
              * @example 12.4
              */
             distance?: number;
+            /** @description Where the player is, when the host reported it. */
+            position?: components["schemas"]["PositionResponse"] | null;
             isAgent?: boolean;
         };
         /** @description A position in the world. */
@@ -672,7 +727,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT";
             target?: string;
             detail?: string | null;
         };
@@ -1765,7 +1820,7 @@ export interface operations {
             };
         };
     };
-    fleet: {
+    stream: {
         parameters: {
             query?: never;
             header?: never;
@@ -1783,7 +1838,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["SseEmitter"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `user.read.self`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1814,7 +1869,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["SseEmitter"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `user.read.self`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1904,6 +1959,46 @@ export interface operations {
             };
         };
     };
+    head: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identifier: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The head, as an image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Missing node `fleet.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description No head: unknown player, malformed identifier, upstream unavailable, or avatars disabled. The caller renders its own fallback either way. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
     me: {
         parameters: {
             query?: never;
@@ -1984,6 +2079,49 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["AuditPageResponse"];
                 };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query: {
+                /**
+                 * @description Start of the range, inclusive.
+                 * @example 2026-07-12T00:00:00Z
+                 */
+                from: string;
+                /**
+                 * @description End of the range, exclusive.
+                 * @example 2026-08-12T00:00:00Z
+                 */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `from` is not before `to`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `audit.export`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

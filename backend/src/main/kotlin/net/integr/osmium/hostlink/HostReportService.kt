@@ -15,9 +15,9 @@ import net.integr.osmium.activity.service.ActivityService
 import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.chat.model.ChatScope
 import net.integr.osmium.chat.service.ChatService
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.EventType
 import net.integr.osmium.hostlink.MessageKind
@@ -40,7 +40,7 @@ class HostReportService(
     private val activityService: ActivityService,
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -171,12 +171,7 @@ class HostReportService(
         val health = payload.get("health")?.asInt()
         val food = payload.get("food")?.asInt()
         val pingMs = payload.get("pingMs")?.asInt()
-        val position = payload.get("position")?.let { at ->
-            val x = at.get("x")?.asDouble()
-            val y = at.get("y")?.asDouble()
-            val z = at.get("z")?.asDouble()
-            if (x == null || y == null || z == null) null else PositionResponse(x, y, z)
-        }
+        val position = positionFrom(payload.get("position"))
 
         // No vitals at all is the ordinary case: this was a state report.
         if (health == null && food == null && pingMs == null && position == null) return
@@ -208,7 +203,12 @@ class HostReportService(
     /**
      * Whether a nearby player is one of ours is decided **here, not by the host**. A host sees only
      * its own agents, and a server's fleet can span several hosts, so it cannot tell one of ours
-     * from a stranger. The host reports names and distances; the backend knows the fleet.
+     * from a stranger. The host reports names, distances and positions; the backend knows the fleet.
+     *
+     * A player's `position` is optional where the agent's own is required. An absent one is reported
+     * as absent rather than dropping the entry: the fact that somebody is standing there matters
+     * more than knowing exactly where, and a host can legitimately have the distance without a
+     * usable position.
      */
     private fun nearbyFrom(payload: JsonNode): List<NearbyPlayerResponse> {
         val reported = payload.get("nearby")?.takeIf { it.isArray } ?: return emptyList()
@@ -221,9 +221,22 @@ class HostReportService(
             NearbyPlayerResponse(
                 name = name,
                 distance = entry.get("distance")?.asDouble() ?: 0.0,
+                position = positionFrom(entry.get("position")),
                 isAgent = name.lowercase() in ours,
             )
         }
+    }
+
+    /**
+     * A position, or null when any part of it is missing. All three or none — two coordinates plus a
+     * guess for the third is a point nobody was ever at, and it would render as confidently as a
+     * real one.
+     */
+    private fun positionFrom(node: JsonNode?): PositionResponse? {
+        val x = node?.get("x")?.asDouble() ?: return null
+        val y = node.get("y")?.asDouble() ?: return null
+        val z = node.get("z")?.asDouble() ?: return null
+        return PositionResponse(x = x, y = y, z = z)
     }
 
     /**
@@ -280,8 +293,8 @@ class HostReportService(
     private fun publish(agent: Agent) = broker.publish(
         // Telemetry is looked up rather than omitted: this event replaces the agent in the browser,
         // so leaving it null would read as "stopped reporting" every time the state changed.
-        FleetEvent(
-            type = FleetEventType.AGENT_CHANGED,
+        LiveUpdateEvent(
+            type = LiveUpdateType.AGENT_CHANGED,
             data = agent.toResponse(telemetryStore.find(agent.id)),
             agentId = agent.id,
         ),

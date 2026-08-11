@@ -35,3 +35,61 @@
   --depth: 0;
   --noise: 0;
 }
+
+/*
+ * Motion.
+ *
+ * Two effects, one rule: movement marks the instant something changed, and nothing else. Osmium is
+ * fed by a live stream, so values move while nobody is watching them; this is the only way an
+ * operator who looked away learns that they did. See `src/lib/motion.ts`.
+ *
+ * Unlayered on purpose. Tailwind's output sits in cascade layers, and unlayered rules beat layered
+ * ones, so the flash tint wins over whatever background utility the element already carries without
+ * needing to out-specify it.
+ */
+
+/* A row, cell or badge whose value just changed. Applied by `v-flash`. */
+.osmium-flash {
+  animation: osmium-flash 1.1s ease-out;
+}
+
+@keyframes osmium-flash {
+  0% {
+    background-color: color-mix(in oklab, var(--color-primary) 32%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* A line that has just arrived on a feed, from `<TransitionGroup name="feed">`. */
+.feed-enter-from {
+  opacity: 0;
+  transform: translateY(-0.4rem);
+}
+
+.feed-enter-active {
+  transition:
+    opacity 0.25s ease-out,
+    transform 0.25s ease-out;
+}
+
+/*
+ * Honoured rather than softened. Someone who has asked their system for less motion has asked for
+ * none of this, and every effect above is decorative by construction — removing it loses nothing
+ * that is not also written down somewhere on the page.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .osmium-flash {
+    animation: none;
+  }
+
+  .feed-enter-active {
+    transition: none;
+  }
+
+  .feed-enter-from {
+    opacity: 1;
+    transform: none;
+  }
+}

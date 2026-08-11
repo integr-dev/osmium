@@ -11,6 +11,9 @@ import net.integr.osmium.account.model.Role
 import net.integr.osmium.account.model.User
 import net.integr.osmium.account.repository.RoleRepository
 import net.integr.osmium.account.repository.UserRepository
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.security.encodeRequired
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -24,6 +27,7 @@ class UserService(
     private val roleRepository: RoleRepository,
     private val passwordEncoder: PasswordEncoder,
     private val auditService: AuditService,
+    private val broker: LiveUpdateBroker,
 ) {
     fun findAll(): List<UserResponse> =
         userRepository.findAll().sortedBy { it.username }.map { it.toResponse() }
@@ -50,6 +54,7 @@ class UserService(
             target = saved.username,
             detail = "Created with role ${saved.role?.name ?: "none"}",
         )
+        publish(saved)
         return saved.toResponse()
     }
 
@@ -70,6 +75,7 @@ class UserService(
                 detail = "Renamed themselves from $previous",
             )
         }
+        publish(user)
         return user.toResponse()
     }
 
@@ -101,6 +107,7 @@ class UserService(
                 detail = changes.joinToString("; "),
             )
         }
+        publish(user)
         return user.toResponse()
     }
 
@@ -117,6 +124,7 @@ class UserService(
             target = username,
             detail = "Held role $role",
         )
+        broker.publish(LiveUpdateEvent(type = LiveUpdateType.USER_REMOVED, data = mapOf("id" to id)))
     }
 
     @Transactional
@@ -133,8 +141,36 @@ class UserService(
             target = user.username,
             detail = "$previous → ${user.role?.name ?: "none"}",
         )
+        publish(user)
+        publishPermissions(user)
         return user.toResponse()
     }
+
+    /** Keeps the account list current for whoever administers accounts. */
+    private fun publish(user: User) =
+        broker.publish(LiveUpdateEvent(type = LiveUpdateType.USER_CHANGED, data = user.toResponse()))
+
+    /**
+     * Tells one account that what it may do has changed.
+     *
+     * The backend already enforces a role change on the subject's next request, since authorities
+     * resolve from the database every time. Their browser learned what it may do once, at login, and
+     * without this keeps offering buttons that now fail — which reads as the app being broken rather
+     * than as access having changed. The payload is what `GET /api/auth/me` returns, so the client
+     * replaces its copy rather than refetching.
+     *
+     * Only from here, and deliberately not from the two paths that rename an account. A rename moves
+     * the name the subscriber is known by, so an event addressed to the new one could never reach
+     * the stream opened under the old one — and it does not need to: renaming ends the session, and
+     * the stream closes on the next tick when the old name resolves to no nodes at all.
+     */
+    private fun publishPermissions(user: User) = broker.publish(
+        LiveUpdateEvent(
+            type = LiveUpdateType.PERMISSIONS_CHANGED,
+            data = user.toResponse(),
+            username = user.username,
+        ),
+    )
 
     private fun rename(user: User, username: String) {
         if (username == user.username) return

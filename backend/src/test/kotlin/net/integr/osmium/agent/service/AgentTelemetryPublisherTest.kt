@@ -2,9 +2,9 @@ package net.integr.osmium.agent.service
 
 import net.integr.osmium.agent.dto.AgentTelemetryResponse
 import net.integr.osmium.agent.dto.PositionResponse
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Duration
@@ -31,16 +31,16 @@ class AgentTelemetryPublisherTest {
     }
 
     /** Collects instead of fanning out, so a test can assert on exactly what was published. */
-    private class RecordingBroker : FleetEventBroker {
-        val published = mutableListOf<FleetEvent>()
-        override fun publish(event: FleetEvent) {
+    private class RecordingBroker : LiveUpdateBroker {
+        val published = mutableListOf<LiveUpdateEvent>()
+        override fun publish(event: LiveUpdateEvent) {
             published += event
         }
 
-        override fun subscribe(listener: (FleetEvent) -> Unit) = Unit
+        override fun subscribe(listener: (LiveUpdateEvent) -> Unit) = Unit
 
         fun telemetryFor(agentId: Long) = published
-            .filter { it.type == FleetEventType.AGENT_TELEMETRY && it.agentId == agentId }
+            .filter { it.type == LiveUpdateType.AGENT_TELEMETRY && it.agentId == agentId }
     }
 
     private fun sample(health: Int) = AgentTelemetryResponse(
@@ -52,7 +52,7 @@ class AgentTelemetryPublisherTest {
         nearby = emptyList(),
     )
 
-    private fun healthOf(event: FleetEvent): Int {
+    private fun healthOf(event: LiveUpdateEvent): Int {
         val data = event.data as Map<*, *>
         return (data["telemetry"] as AgentTelemetryResponse).health
     }

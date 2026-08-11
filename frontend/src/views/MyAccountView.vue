@@ -83,7 +83,7 @@ async function rename() {
   renameState.value = {}
   const { error } = await api.PATCH('/api/users/me', { body: { username: username.value } })
   if (error) {
-    renameState.value = { error: errorMessage(error, 'Could not rename the account') }
+    renameState.value = { error: errorMessage(error, t('errors.renameAccount')) }
     return
   }
   // The token's subject no longer resolves, so the session is dead on the next request.
@@ -94,7 +94,7 @@ async function changePassword() {
   passwordState.value = {}
 
   if (newPassword.value !== confirmPassword.value) {
-    passwordState.value = { error: 'The new passwords do not match' }
+    passwordState.value = { error: t('errors.passwordMismatch') }
     return
   }
 
@@ -102,7 +102,7 @@ async function changePassword() {
     body: { currentPassword: currentPassword.value, newPassword: newPassword.value },
   })
   if (error) {
-    passwordState.value = { error: errorMessage(error, 'Could not change the password') }
+    passwordState.value = { error: errorMessage(error, t('errors.changePassword')) }
     return
   }
   currentPassword.value = ''

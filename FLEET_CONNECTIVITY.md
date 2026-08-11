@@ -497,7 +497,7 @@ ping/pong or close-code handling to maintain.
 
 | Endpoint | Sends | Node |
 |---|---|---|
-| `GET /api/stream/fleet` | state changes, heartbeats, aggregate counters | `fleet.read` |
+| `GET /api/stream` | state changes, heartbeats, aggregate counters | `fleet.read` |
 | `GET /api/stream/agents/{id}` | that agent's chat, telemetry and state | `fleet.read` |
 
 Fanning everything to everyone wastes the wire and leaks activity across views that an operator is

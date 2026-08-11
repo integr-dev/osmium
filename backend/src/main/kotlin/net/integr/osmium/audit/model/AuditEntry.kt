@@ -42,6 +42,13 @@ enum class AuditAction {
     USER_ROLE_CHANGE,
     /** Never carries password material, current or new. */
     USER_PASSWORD_CHANGE,
+
+    /**
+     * The trail was copied out. Recorded because an export is the one read worth keeping: every
+     * other read stays inside Osmium, where the next one is observable too, but a file leaves and
+     * nothing here sees it again. The detail carries the range asked for and the row count.
+     */
+    AUDIT_EXPORT,
 }
 
 

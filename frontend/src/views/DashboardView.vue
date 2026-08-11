@@ -16,6 +16,8 @@ import {
   Server,
   TriangleAlert,
 } from 'lucide-vue-next'
+import PlayerHead from '../components/PlayerHead.vue'
+import RollingNumber from '../components/RollingNumber.vue'
 import ServerChatModal from '../components/ServerChatModal.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
@@ -95,6 +97,8 @@ const eta = computed(() => {
 })
 
 /** Builders only, ranked by contribution, for the leaderboard bars. Still mock — see the store. */
+const blocksRemaining = computed(() => agentStore.schematic.totalBlocks - agentStore.blocksPlaced)
+
 const contributors = computed(() =>
   [...agentStore.agents]
     .filter((agent) => agent.build.blocksPlaced > 0)
@@ -115,42 +119,57 @@ function percent(part: number, whole: number): number {
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('dashboard.title') }}</h1>
-        <p class="text-sm opacity-60">
-          Building <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
-        </p>
+        <!--
+          Component interpolation rather than a bare key plus a span: the name sits mid-sentence,
+          and word order around it is not the same in every language.
+        -->
+        <i18n-t keypath="dashboard.buildingName" tag="p" class="text-sm opacity-60" scope="global">
+          <template #name>
+            <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
+          </template>
+        </i18n-t>
       </div>
       <span
         class="badge badge-sm gap-1"
         :class="agentStore.blocksPerMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
       >
-        {{ agentStore.blocksPerMinute > 0 ? 'Building' : 'Stalled' }}
+        {{ agentStore.blocksPerMinute > 0 ? t('dashboard.building') : t('dashboard.stalled') }}
       </span>
     </header>
 
+    <!--
+      These four move on their own, from the live stream, with nobody having asked for it — so the
+      three that are counts travel to their new value rather than swapping it. The remaining figure
+      is a formatted duration, and there is nothing to count through between "12m" and "2h 4m".
+    -->
     <div class="stats stats-vertical sm:stats-horizontal border-base-300 bg-base-200 w-full border">
       <div class="stat">
         <div class="stat-figure text-primary"><Agent class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.agentsOnline') }}</div>
-        <div class="stat-value text-3xl">
-          {{ agentStore.online.length }}<span class="text-lg opacity-40">/{{ agentStore.agents.length }}</span>
+        <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-20"></div>
+        <div v-else class="stat-value text-3xl">
+          <RollingNumber :value="agentStore.online.length" /><span class="text-lg opacity-40">/{{ agentStore.agents.length }}</span>
         </div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.blocksPlaced') }}</div>
-        <div class="stat-value text-3xl">{{ agentStore.blocksPlaced.toLocaleString() }}</div>
+        <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-28"></div>
+        <div v-else class="stat-value text-3xl"><RollingNumber :value="agentStore.blocksPlaced" /></div>
         <div class="stat-desc">of {{ agentStore.schematic.totalBlocks.toLocaleString() }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Gauge class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.throughput') }}</div>
-        <div class="stat-value text-3xl">{{ agentStore.blocksPerMinute }}</div>
+        <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-16"></div>
+        <div v-else class="stat-value text-3xl"><RollingNumber :value="agentStore.blocksPerMinute" /></div>
         <div class="stat-desc">{{ t('dashboard.perMinute') }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Clock class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.remaining') }}</div>
-        <div class="stat-value text-3xl">{{ eta }}</div>
+        <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-24"></div>
+        <div v-else class="stat-value text-3xl">{{ eta }}</div>
         <div class="stat-desc">{{ t('dashboard.atCurrentRate') }}</div>
       </div>
     </div>
@@ -172,10 +191,15 @@ function percent(part: number, whole: number): number {
           max="100"
         ></progress>
         <div class="flex justify-between text-xs opacity-60">
-          <span>{{ agentStore.progressPercent.toFixed(1) }}% complete</span>
+          <span>{{ t('dashboard.percentComplete', { percent: agentStore.progressPercent.toFixed(1) }) }}</span>
           <span class="tabular-nums">
-            {{ (agentStore.schematic.totalBlocks - agentStore.blocksPlaced).toLocaleString() }} blocks
-            remaining
+            {{
+              t(
+                'dashboard.blocksRemaining',
+                { count: blocksRemaining.toLocaleString() },
+                blocksRemaining,
+              )
+            }}
           </span>
         </div>
       </div>
@@ -211,6 +235,9 @@ function percent(part: number, whole: number): number {
             </RouterLink>
           </ul>
 
+          <div v-else-if="!agentStore.loaded" class="flex flex-col gap-2 py-2">
+            <div v-for="row in 2" :key="row" class="skeleton h-10 w-full"></div>
+          </div>
           <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.allHealthy') }}</p>
         </div>
       </div>
@@ -271,6 +298,7 @@ function percent(part: number, whole: number): number {
                   :to="{ name: 'agent', params: { id: agent.id } }"
                   class="flex items-center gap-2 hover:underline"
                 >
+                  <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="xs" />
                   <span
                     class="size-1.5 rounded-full"
                     :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
@@ -349,18 +377,26 @@ function percent(part: number, whole: number): number {
         </div>
 
         <div ref="activityBox" class="flex max-h-96 flex-col gap-1 overflow-y-auto">
-          <component
-            :is="line.agentId ? RouterLink : 'div'"
-            v-for="line in activity"
-            :key="line.id"
-            :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
-            class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
-          >
-            <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
-            <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
-            <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
-            <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
-          </component>
+          <!--
+            A TransitionGroup animates insertions but not the first render, which is exactly the
+            distinction that matters: an incident arriving live slides in, and a page full of
+            history simply appears. Only the list is wrapped — the sentinel below must stay put or
+            the infinite scroll would be observing something that moves.
+          -->
+          <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
+            <component
+              :is="line.agentId ? RouterLink : 'div'"
+              v-for="line in activity"
+              :key="line.id"
+              :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
+              class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
+            >
+              <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
+              <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
+              <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
+              <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
+            </component>
+          </TransitionGroup>
 
           <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
             {{ t('common.loading') }}

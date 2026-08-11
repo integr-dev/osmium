@@ -6,6 +6,9 @@ import net.integr.osmium.audit.dto.toResponse
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.model.AuditEntry
 import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.web.PageCursor
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Limit
@@ -13,6 +16,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.io.Writer
 import java.time.Instant
 import net.integr.osmium.account.service.UserService
 
@@ -21,6 +25,7 @@ import net.integr.osmium.account.service.UserService
 class AuditService(
     private val auditEntryRepository: AuditEntryRepository,
     private val auditProperties: AuditProperties,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -38,7 +43,7 @@ class AuditService(
      */
     @Transactional
     fun record(action: AuditAction, target: String, detail: String? = null) {
-        auditEntryRepository.save(
+        val entry = auditEntryRepository.save(
             AuditEntry(
                 at = Instant.now(),
                 account = currentAccount(),
@@ -47,6 +52,11 @@ class AuditService(
                 detail = detail?.take(AuditEntry.DETAIL_MAX),
             ),
         )
+
+        // Published after this transaction commits, which is what keeps the two consistent: the
+        // entry exists only if the command did, and the event is only sent if the entry exists.
+        // Reaches accounts holding `audit.read` and nobody else — the node is on the event type.
+        broker.publish(LiveUpdateEvent(type = LiveUpdateType.AUDIT_ENTRY, data = entry.toResponse()))
     }
 
     /**
@@ -87,6 +97,47 @@ class AuditService(
     }
 
     /**
+     * Writes the trail for a range to [out] as CSV, newest first, and returns how many rows it held.
+     * `from` is inclusive, `to` exclusive.
+     *
+     * **The export is recorded before a byte is written.** The entry describes the request rather
+     * than the delivery, so a download that is abandoned or dies mid-stream still leaves the trace
+     * that someone asked for a copy — which is the fact worth keeping.
+     *
+     * That puts a new entry in the trail being read: an export covering today would otherwise
+     * contain its own record, and the count taken beforehand would be one short of the rows written.
+     * The range is therefore capped at the instant the export started, which also gives the file an
+     * honest meaning — the trail as it stood when you asked.
+     *
+     * Read in batches against `idx_audit_entries_at_id` and flushed as it goes, so the response
+     * starts moving before the whole range has been read and no size of range is held in memory.
+     */
+    @Transactional
+    fun exportCsv(from: Instant, to: Instant, out: Writer): Long {
+        val startedAt = Instant.now()
+        val until = if (to.isBefore(startedAt)) to else startedAt
+        val total = auditEntryRepository.countInRange(from, until)
+
+        record(action = AuditAction.AUDIT_EXPORT, target = "$from..$until", detail = "$total entries")
+
+        AuditCsv.writeHeader(out)
+        var (beforeAt, beforeId) = PageCursor.START
+        while (true) {
+            val batch =
+                auditEntryRepository.range(from, until, beforeAt, beforeId, Limit.of(EXPORT_BATCH))
+            if (batch.isEmpty()) break
+            batch.forEach { AuditCsv.writeRow(out, it) }
+            out.flush()
+
+            val last = batch.last()
+            beforeAt = last.at
+            beforeId = checkNotNull(last.id)
+            if (batch.size < EXPORT_BATCH) break
+        }
+        return total
+    }
+
+    /**
      * Neutralises the `like` wildcards so a search for `50%` looks for that text rather than
      * matching everything. Pairs with the `escape '\'` clause on the query.
      */
@@ -116,5 +167,8 @@ class AuditService(
     private companion object {
         /** 03:30 daily: after midnight rollover, outside any plausible working window. */
         const val PURGE_CRON = "0 30 3 * * *"
+
+        /** Rows per round trip while exporting. Large enough to amortise, small enough to stream. */
+        const val EXPORT_BATCH = 500
     }
 }

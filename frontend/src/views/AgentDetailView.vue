@@ -24,10 +24,12 @@ import {
   Users,
 } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
+import PlayerHead from '../components/PlayerHead.vue'
 import type { ActivityEntryResponse, ChatMessageResponse } from '../api/client'
 import { fetchActivityPage, fetchChatPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_BADGE, stateLabel } from '../lib/agentState'
+import { vFlash } from '../lib/motion'
 import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -137,6 +139,14 @@ async function moreActivity(): Promise<void> {
 }
 
 /** Time only: chat is kept three days and activity ten, so the clock is what locates a line. */
+/**
+ * Whole blocks. A Minecraft coordinate carries more decimals than anyone reads at a glance, and the
+ * fractional part is never what an operator is looking for.
+ */
+function formatPosition(at: { x: number; y: number; z: number }): string {
+  return `${Math.round(at.x)}, ${Math.round(at.y)}, ${Math.round(at.z)}`
+}
+
 function formatTime(at: string): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
@@ -148,7 +158,7 @@ async function run(action: () => Promise<void>) {
   try {
     await action()
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : 'Command failed'
+    error.value = failure instanceof Error ? failure.message : t('errors.commandFailed')
   } finally {
     busy.value = false
   }
@@ -193,7 +203,7 @@ async function saveEdit() {
     })
     editDialog.value?.close()
   } catch (failure) {
-    editError.value = failure instanceof Error ? failure.message : 'Could not update the agent'
+    editError.value = failure instanceof Error ? failure.message : t('errors.updateAgent')
   }
 }
 
@@ -204,16 +214,18 @@ async function confirmRemove() {
     removeDialog.value?.close()
     void router.push({ name: 'dashboard' })
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : 'Could not delete the agent'
+    error.value = failure instanceof Error ? failure.message : t('errors.removeAgent')
     removeDialog.value?.close()
   }
 }
 </script>
 
 <template>
-  <div v-if="agent" class="mx-auto flex max-w-5xl flex-col gap-6">
+  <div v-if="agent" class="mx-auto flex max-w-6xl flex-col gap-6">
     <header class="flex flex-wrap items-start justify-between gap-4">
-      <div>
+      <div class="flex items-center gap-4">
+        <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="lg" />
+        <div>
         <h1 class="text-2xl leading-tight font-semibold tracking-tight">{{ agent.label }}</h1>
         <p class="flex flex-wrap items-center gap-2 text-sm opacity-60">
           <span class="flex items-center gap-1">
@@ -227,12 +239,20 @@ async function confirmRemove() {
             <span class="font-mono">{{ agent.mcUsername }}</span>
           </template>
         </p>
+        </div>
       </div>
 
       <div class="flex items-center gap-4 text-right">
         <div>
           <div class="text-xs uppercase opacity-50">{{ t('common.status') }}</div>
-          <span class="badge badge-sm" :class="STATE_BADGE[agent.state]">{{ stateLabel(agent.state) }}</span>
+          <!--
+            The state is the one thing on this page that changes without the operator doing it —
+            a host reporting a disconnect, a relink coming through. The vitals beside it change
+            every second, which is why nothing there flashes: constant motion carries no news.
+          -->
+          <span v-flash="agent.state" class="badge badge-sm" :class="STATE_BADGE[agent.state]">
+            {{ stateLabel(agent.state) }}
+          </span>
         </div>
         <div>
           <div class="text-xs uppercase opacity-50">{{ t('agents.uptime') }}</div>
@@ -319,8 +339,7 @@ async function confirmRemove() {
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.position') }}</span>
               <span class="block truncate font-mono text-sm tabular-nums">
-                {{ Math.round(vitals.position.x) }}, {{ Math.round(vitals.position.y) }},
-                {{ Math.round(vitals.position.z) }}
+                {{ formatPosition(vitals.position) }}
               </span>
             </span>
           </div>
@@ -368,7 +387,18 @@ async function confirmRemove() {
             :key="player.name"
             class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
           >
-            <span class="flex-1 truncate text-sm font-medium">{{ player.name }}</span>
+            <!-- A name is what the host reports for a nearby player; there is no UUID to key on. -->
+            <PlayerHead :id="player.name" :name="player.name" size="sm" />
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-sm font-medium">{{ player.name }}</span>
+              <!--
+                Only when the host sent one. A player without coordinates is still worth listing —
+                that somebody is there is the point — so the line simply loses its second row.
+              -->
+              <span v-if="player.position" class="block font-mono text-xs tabular-nums opacity-40">
+                {{ formatPosition(player.position) }}
+              </span>
+            </span>
             <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">{{ t('agents.agentTag') }}</span>
             <span class="text-xs tabular-nums opacity-50">{{ player.distance.toFixed(1) }} m</span>
           </li>
@@ -387,15 +417,18 @@ async function confirmRemove() {
         </h2>
 
         <div ref="activityBox" class="flex max-h-72 flex-col gap-1 overflow-y-auto">
-          <div
-            v-for="line in activity"
-            :key="line.id"
-            class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
-          >
-            <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
-            <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
-            <span class="min-w-0 flex-1">{{ line.text }}</span>
-          </div>
+          <!-- Insertions animate, the first render does not. See the dashboard for the full note. -->
+          <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
+            <div
+              v-for="line in activity"
+              :key="line.id"
+              class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
+            >
+              <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
+              <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
+              <span class="min-w-0 flex-1">{{ line.text }}</span>
+            </div>
+          </TransitionGroup>
 
           <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
             {{ t('common.loading') }}
@@ -460,11 +493,14 @@ async function confirmRemove() {
           ref="chatBox"
           class="rounded-box bg-base-300/25 flex max-h-64 flex-col gap-1 overflow-y-auto p-3"
         >
-          <p v-for="line in chat" :key="line.id" class="text-sm">
-            <span class="font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
-            <span class="ml-2 font-medium">{{ line.from }}:</span>
-            <span class="ml-1 opacity-80">{{ line.text }}</span>
-          </p>
+          <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
+            <p v-for="line in chat" :key="line.id" class="flex items-center gap-1.5 text-sm">
+              <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
+              <PlayerHead :id="line.from" :name="line.from" size="xs" />
+              <span class="shrink-0 font-medium">{{ line.from }}:</span>
+              <span class="min-w-0 opacity-80">{{ line.text }}</span>
+            </p>
+          </TransitionGroup>
 
           <p v-if="chatLoading" class="py-4 text-center text-sm opacity-50">
             {{ t('common.loading') }}
@@ -516,7 +552,7 @@ async function confirmRemove() {
           <FormField
             v-model="draft.serverAddress"
             :label="t('agents.server')"
-            placeholder="mc.example.com:25565"
+            :placeholder="t('agents.serverPlaceholder')"
             :icon="Server"
             type="text"
             required
@@ -592,7 +628,23 @@ async function confirmRemove() {
     </dialog>
   </div>
 
-  <div v-else class="mx-auto max-w-5xl">
+  <!--
+    Loading before missing. On a reload or a deep link the fleet has not arrived yet, and "not
+    found" is a claim this page is in no position to make until it has.
+  -->
+  <div v-else-if="!agentStore.loaded" class="mx-auto flex max-w-6xl flex-col gap-6">
+    <div class="flex flex-col gap-2">
+      <div class="skeleton h-8 w-64"></div>
+      <div class="skeleton h-4 w-40"></div>
+    </div>
+    <div class="skeleton h-32 w-full"></div>
+    <div class="grid gap-6 lg:grid-cols-2">
+      <div class="skeleton h-64 w-full"></div>
+      <div class="skeleton h-64 w-full"></div>
+    </div>
+  </div>
+
+  <div v-else class="mx-auto max-w-6xl">
     <div class="card border-base-300 bg-base-200 border">
       <div class="card-body items-center gap-2 py-20 text-center">
         <Agent class="size-8 opacity-30" />

@@ -9,9 +9,9 @@ import net.integr.osmium.hostlink.CommandType
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.MessageKind
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -34,7 +34,7 @@ class ChatListenerService(
     private val connections: HostConnections,
     private val telemetryStore: AgentTelemetryStore,
     private val objectMapper: ObjectMapper,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -114,8 +114,8 @@ class ChatListenerService(
         broker.publish(
             // Looked up rather than left null: this event replaces the agent in the browser, so
             // omitting telemetry would blank an agent's vitals every time the listener role moved.
-            FleetEvent(
-                type = FleetEventType.AGENT_CHANGED,
+            LiveUpdateEvent(
+                type = LiveUpdateType.AGENT_CHANGED,
                 data = agent.toResponse(telemetryStore.find(agent.id)),
                 agentId = agent.id,
             ),

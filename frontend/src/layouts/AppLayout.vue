@@ -6,21 +6,29 @@ import {
   Bot as Agent,
   LayoutDashboard,
   LogOut,
+  // Aliased: `Map` is a JavaScript built-in, and shadowing it in a template is a trap for the next
+  // person who reaches for one.
+  Map as MapIcon,
   Menu,
   Plus,
   RotateCw,
   ScrollText,
   Server,
   ServerOff,
+  SlidersHorizontal,
   TriangleAlert,
   User,
   Users,
   WifiOff,
+  Workflow,
 } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import LanguagePicker from '../components/LanguagePicker.vue'
+import PlayerHead from '../components/PlayerHead.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
-import { STATE_DOT } from '../lib/agentState'
+import { STATE_DOT, stateLabel } from '../lib/agentState'
+import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 
 const { t } = useI18n()
@@ -138,8 +146,16 @@ function logout() {
             Only shown while something is wrong. A permanent green dot is decoration nobody reads.
           -->
           <div class="ml-auto flex items-center gap-1.5">
+            <!--
+              Opens leftward and wraps: these sit at the right edge of a fixed-width sidebar that
+              clips its own overflow, so a centred one-line bubble loses its second half.
+            -->
             <!-- The more severe of the two: nothing is loading at all, so the screen is frozen. -->
-            <span v-if="degraded" class="tooltip tooltip-bottom" :data-tip="backendTip">
+            <span
+              v-if="degraded"
+              class="tooltip tooltip-left before:w-44 before:whitespace-normal"
+              :data-tip="backendTip"
+            >
               <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="retrying" @click="retry">
                 <ServerOff class="text-error size-4" :class="retrying ? 'animate-pulse' : ''" />
               </button>
@@ -148,7 +164,7 @@ function logout() {
             <!-- The narrow case: the backend answers, but events are not arriving. -->
             <span
               v-else-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
-              class="tooltip tooltip-bottom"
+              class="tooltip tooltip-left before:w-44 before:whitespace-normal"
               :data-tip="t('connection.streamLost')"
             >
               <WifiOff class="text-warning size-4" />
@@ -162,6 +178,24 @@ function logout() {
               <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
                 <LayoutDashboard class="size-4 shrink-0" />
                 {{ t('nav.dashboard') }}
+              </RouterLink>
+            </li>
+            <li>
+              <RouterLink :to="{ name: 'map' }" class="gap-3">
+                <MapIcon class="size-4 shrink-0" />
+                {{ t('nav.map') }}
+              </RouterLink>
+            </li>
+            <li v-if="auth.can('fleet.control')">
+              <RouterLink :to="{ name: 'operations' }" class="gap-3">
+                <Workflow class="size-4 shrink-0" />
+                {{ t('nav.operations') }}
+              </RouterLink>
+            </li>
+            <li v-if="auth.can('fleet.control')">
+              <RouterLink :to="{ name: 'configuration' }" class="gap-3">
+                <SlidersHorizontal class="size-4 shrink-0" />
+                {{ t('nav.configuration') }}
               </RouterLink>
             </li>
             <li>
@@ -181,13 +215,25 @@ function logout() {
                   <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
                 </summary>
                 <ul class="gap-0.5">
+                  <!--
+                    The fleet is a list of people as much as a list of rows, and this is the one
+                    place every one of them is on screen at once. `v-flash` is on the state rather
+                    than the agent: a relink or a disconnect that happened while the operator was
+                    on another page is exactly what they would otherwise miss.
+                  -->
                   <li v-for="agent in agentStore.agents" :key="agent.id">
-                    <RouterLink :to="{ name: 'agent', params: { id: agent.id } }" class="gap-2.5">
-                      <span
-                        class="size-2 shrink-0 rounded-full"
-                        :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
-                        :title="agent.state"
-                      ></span>
+                    <RouterLink
+                      v-flash="agent.state"
+                      :to="{ name: 'agent', params: { id: agent.id } }"
+                      class="gap-2.5"
+                    >
+                      <span class="relative shrink-0" :title="stateLabel(agent.state)">
+                        <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
+                        <span
+                          class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
+                          :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                        ></span>
+                      </span>
                       <span class="truncate">{{ agent.label }}</span>
                     </RouterLink>
                   </li>
@@ -205,6 +251,7 @@ function logout() {
 
         <div class="border-base-300 border-t p-3">
           <ul class="menu w-full gap-0.5 p-0">
+            <LanguagePicker />
             <li>
               <RouterLink :to="{ name: 'account' }" class="gap-3">
                 <User class="size-4 shrink-0" />

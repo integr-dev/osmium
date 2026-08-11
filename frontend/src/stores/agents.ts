@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, errorMessage, type AgentResponse, type HostResponse } from '../api/client'
+import { api, errorMessage, type AgentResponse, type HostResponse, type UserResponse } from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
+import { useAuthStore } from './auth'
 import { t } from '../i18n'
 
 /**
@@ -67,6 +68,7 @@ export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
   const agents = ref<FleetAgent[]>([])
   const loading = ref(false)
+  const loaded = ref(false)
   const error = ref<string | null>(null)
 
   // ---- mock, pending a connected agent -------------------------------------------------------
@@ -88,6 +90,14 @@ export const useAgentStore = defineStore('agents', () => {
 
   // ---- loading -------------------------------------------------------------------------------
 
+  /**
+   * `loaded` is what tells an empty fleet apart from one nobody has asked for yet.
+   *
+   * Without it every list has to render its empty state during the first request, so a fresh page
+   * says "No hosts yet." before it has any idea whether that is true. It stays true afterwards: a
+   * later refresh is a background update over content that is already on screen, and blanking it
+   * back to skeletons would be a worse lie than briefly stale numbers.
+   */
   async function refresh(): Promise<void> {
     loading.value = true
     error.value = null
@@ -95,6 +105,7 @@ export const useAgentStore = defineStore('agents', () => {
       await Promise.all([loadHosts(), loadAgents()])
     } finally {
       loading.value = false
+      loaded.value = true
     }
   }
 
@@ -133,7 +144,7 @@ export const useAgentStore = defineStore('agents', () => {
 
   function connectLiveUpdates(): void {
     if (connection) return
-    connection = openLiveUpdates('/api/stream/fleet', {
+    connection = openLiveUpdates('/api/stream', {
       onEvent: applyEvent,
       onConnect() {
         liveUpdatesConnected.value = true
@@ -172,10 +183,19 @@ export const useAgentStore = defineStore('agents', () => {
       case 'telemetry':
         applyTelemetry(data as { agentId: number; telemetry: AgentTelemetry })
         break
+      case 'permissions':
+        // Not fleet state, but there is one stream and therefore one ingest. The backend enforces a
+        // role change on the next request either way; this is what stops the UI from going on
+        // offering buttons that now fail, which reads as a bug rather than as access having changed.
+        useAuthStore().user = data as UserResponse
+        break
       case 'chat':
       case 'activity':
-        // Feeds are paged and owned by whichever view is showing one, so these are handed on rather
-        // than accumulated here: the store has no way to know which page a line belongs on.
+      case 'audit':
+      case 'user':
+      case 'user-removed':
+        // Paged lists, owned by whichever view is showing one, so these are handed on rather than
+        // accumulated here: the store has no way to know which page a line belongs on.
         for (const listener of feedListeners) listener(name, data)
         break
       // 'ready' and anything this build does not know about are ignored, so a newer backend
@@ -184,11 +204,12 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   /**
-   * Live chat and activity, for whoever is displaying them.
+   * Live lines for whoever is displaying a paged list of them — chat, activity, the audit trail and
+   * the account list.
    *
    * Returns its own unsubscribe, so a component drops the listener when it unmounts rather than the
    * store growing a registry of views. Everything else the stream carries is state the store owns,
-   * which is why this exists only for the two feeds.
+   * which is why this exists only for the paged lists.
    */
   const feedListeners = new Set<(name: string, data: unknown) => void>()
 
@@ -274,11 +295,11 @@ export const useAgentStore = defineStore('agents', () => {
     const found: Attention[] = []
     for (const agent of agents.value) {
       if (agent.state === 'STALE') {
-        found.push({ agent, reason: 'Host unreachable', severity: 'error' })
+        found.push({ agent, reason: t('attention.hostUnreachable'), severity: 'error' })
         continue
       }
       if (agent.state === 'NEEDS_RELINK') {
-        found.push({ agent, reason: 'Needs relink', severity: 'error' })
+        found.push({ agent, reason: t('attention.needsRelink'), severity: 'error' })
         continue
       }
       if (!isOnline(agent)) continue
@@ -289,13 +310,13 @@ export const useAgentStore = defineStore('agents', () => {
       if (!vitals) continue
 
       if (vitals.health <= 10) {
-        found.push({ agent, reason: `Health ${vitals.health}/20`, severity: 'error' })
+        found.push({ agent, reason: `${t('agents.health')} ${vitals.health}/20`, severity: 'error' })
       }
       if (vitals.food <= 8) {
-        found.push({ agent, reason: `Food ${vitals.food}/20`, severity: 'warning' })
+        found.push({ agent, reason: `${t('agents.food')} ${vitals.food}/20`, severity: 'warning' })
       }
       if (vitals.pingMs >= 100) {
-        found.push({ agent, reason: `Ping ${vitals.pingMs} ms`, severity: 'warning' })
+        found.push({ agent, reason: `${t('agents.ping')} ${vitals.pingMs} ms`, severity: 'warning' })
       }
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))
@@ -411,6 +432,7 @@ export const useAgentStore = defineStore('agents', () => {
     hosts,
     agents,
     loading,
+    loaded,
     error,
     liveUpdatesConnected,
     connectLiveUpdates,
@@ -453,26 +475,26 @@ function mockBuild(agent: AgentResponse): BuildProgress {
   const live = isOnline(agent)
   return {
     blocksPlaced: live ? agent.id * 1_240 : 0,
-    task: live ? 'Awaiting assignment' : describe(agent.state),
+    task: live ? t('agentTask.awaitingAssignment') : describe(agent.state),
   }
 }
 
 function describe(state: AgentResponse['state']): string {
   switch (state) {
     case 'UNLINKED':
-      return 'Not set up yet'
+      return t('agentTask.notSetUp')
     case 'SETUP_PENDING':
-      return 'Awaiting setup on host'
+      return t('agentTask.awaitingSetup')
     case 'LINKED':
-      return 'Ready to connect'
+      return t('agentTask.readyToConnect')
     case 'NEEDS_RELINK':
-      return 'Credentials rejected'
+      return t('agentTask.credentialsRejected')
     case 'CONNECT_FAILED':
-      return 'Server refused the connection'
+      return t('agentTask.serverRefused')
     case 'STALE':
-      return 'Host unreachable'
+      return t('agentTask.hostUnreachable')
     default:
-      return 'Idle'
+      return t('agentTask.idle')
   }
 }
 

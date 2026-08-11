@@ -50,6 +50,9 @@ set to `osmium`.
 | `osmium.activity.retention` | `OSMIUM_ACTIVITY_RETENTION` | `10d` | how long agent incidents are kept |
 | `osmium.chat.retention` | `OSMIUM_CHAT_RETENTION` | `3d` | how long chat is kept |
 | `osmium.chat.messages-per-minute` | `OSMIUM_CHAT_MESSAGES_PER_MINUTE` | `30` | outbound chat allowance, per agent |
+| `osmium.avatar.upstream` | `OSMIUM_AVATAR_UPSTREAM` | Minotar | skin service URL with `{id}`/`{size}`; **blank turns heads off** |
+| `osmium.avatar.size` | `OSMIUM_AVATAR_SIZE` | `64` | pixel size requested upstream |
+| `osmium.avatar.ttl` | `OSMIUM_AVATAR_TTL` | `12h` | how long a fetched head is cached |
 
 CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
 therefore same-origin. `*` is rejected outright: the configuration allows credentials, and no
@@ -82,6 +85,7 @@ model honest. A null role means no permissions at all.
 | `user.role.write` | change the role of an account |
 | `role.read` | list roles and their nodes |
 | `audit.read` | read the operator audit trail, including outbound message text |
+| `audit.export` | pull the trail out as a CSV file |
 | `fleet.read` | see hosts, agents and telemetry |
 | `fleet.control` | create, edit, delete agents; connect and disconnect them |
 | `fleet.chat` | **speak in game as an agent** |
@@ -102,7 +106,7 @@ single flat set lookup and the table is self-describing.
 |---|---|
 | `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `fleet.read` |
 | `orchestrator` | *viewer* + `fleet.control`, `fleet.chat`, `fleet.login` |
-| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read` |
+| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read`, `audit.export` |
 
 A viewer is read-only throughout: `fleet.read` gates listing hosts and agents and the live streams,
 and nothing else, so it can watch the fleet without being able to touch it. Every way to change the
@@ -133,10 +137,11 @@ changes automatically.
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
 | `GET` | `/api/audit` | `audit.read` (cursor-paged, `query` searches, `limit` clamped to 1..500) |
+| `GET` | `/api/audit/export` | `audit.export` (CSV attachment; `from` inclusive, `to` exclusive) |
 | `GET` | `/api/activity` | `fleet.read` (cursor-paged; `agentId` narrows to one agent) |
 | `GET` | `/api/chat` | `fleet.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
-| `GET` | `/api/stream/fleet` | `fleet.read` (server-sent events) |
-| `GET` | `/api/stream/agents/{id}` | `fleet.read` (server-sent events) |
+| `GET` | `/api/stream` | `user.read.self` (server-sent events; each event gated separately) |
+| `GET` | `/api/stream/agents/{id}` | `user.read.self` (server-sent events, narrowed to one agent) |
 | `GET` | `/api/hosts` | `fleet.read` |
 | `POST` | `/api/hosts` | `fleet.login` (returns the enrolment token once) |
 | `PATCH` | `/api/hosts/{id}` | `fleet.login` (rename) |
@@ -149,6 +154,7 @@ changes automatically.
 | `POST` | `/api/agents/{id}/setup` | `fleet.login` |
 | `POST` | `/api/agents/{id}/connect`, `/disconnect` | `fleet.control` |
 | `POST` | `/api/agents/{id}/chat` | `fleet.chat` (rate limited per agent; **429** when exceeded) |
+| `GET` | `/api/avatars/{name-or-uuid}` | `fleet.read` (a player's head, as an image) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -221,16 +227,20 @@ the state is genuinely unknown at that point.
 
 ## Live updates
 
-`GET /api/stream/fleet` is a server-sent event stream of everything that changes;
+`GET /api/stream` is a server-sent event stream of everything that changes;
 `/api/stream/agents/{id}` narrows it to one agent. The channel is **receive-only** — commands stay
 on REST, where they are node-gated and audited.
 
-| Event | Carries | Client does |
-|---|---|---|
-| `agent`, `host` | the resource, in the shape REST returns it | replaces it in place |
-| `agent-removed`, `host-removed` | `{ id }` | drops it |
-| `chat`, `activity` | one new line | appends it to the feed |
-| `telemetry` | `{ agentId, telemetry }` | merges the vitals into the agent |
+| Event | Node | Carries | Client does |
+|---|---|---|---|
+| `agent`, `host` | `fleet.read` | the resource, in the shape REST returns it | replaces it in place |
+| `agent-removed`, `host-removed` | `fleet.read` | `{ id }` | drops it |
+| `chat`, `activity` | `fleet.read` | one new line | appends it to the feed |
+| `telemetry` | `fleet.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
+| `user` | `user.read` | the account | replaces it in the list |
+| `user-removed` | `user.read` | `{ id }` | drops it |
+| `audit` | `audit.read` | one new entry | appends it to the trail |
+| `permissions` | `user.read.self` | the recipient's own account | replaces what it may do |
 
 Resource events carry the same shapes the REST endpoints return, so a client replaces what it holds
 rather than refetching. That is why each feature's `toResponse` is shared between its controller and
@@ -247,19 +257,38 @@ Three properties are load-bearing:
   it would announce changes a rollback then discards, and a client applying them in place has no way
   to learn it was told a lie. This is the mirror image of the audit log, which writes *inside* the
   transaction so an entry exists only if the command committed.
-- **Streams re-check authority every 30s** and close on failure. Authorities resolve per request for
-  REST, so a demotion takes effect immediately — a stream authorises once and would otherwise run for
-  hours. It also never outlives the token that opened it.
+- **Streams re-read authority every 30s**, and a demotion *narrows* one rather than only being able
+  to end it. Authorities resolve per request for REST, so a demotion bites immediately there; a
+  stream authorises once and would otherwise run for hours. Only losing `user.read.self` — the node
+  the endpoint itself is gated on — closes it. It also never outlives the token that opened it.
 - **Deleting a host announces each cascaded agent** before the host itself. Publishing only the host
   would leave every browser holding agents that no longer exist.
 
 Connect, disconnect and chat publish nothing: they change no stored state. The agent's state moves
 when the host reports back, and *that* is what reaches the browser.
 
-`InMemoryFleetEventBroker` is the only implementation. With two backend instances a host's WebSocket
+`InMemoryLiveUpdateBroker` is the only implementation. With two backend instances a host's WebSocket
 lands on one while a browser's stream sits on the other, and that browser never sees the event —
-solving it needs a shared broker or sticky routing. The `FleetEventBroker` interface exists so that
+solving it needs a shared broker or sticky routing. The `LiveUpdateBroker` interface exists so that
 becomes a second implementation rather than a rewrite.
+
+### Every event declares the node it needs
+
+`LiveUpdateType` carries the permission a subscriber must hold, alongside the SSE event name. It sits
+on the type rather than being passed at publish time because it belongs to the kind of event and not
+to the occurrence — every `agent` event needs `fleet.read`, always — so a publisher cannot forget it
+or set it wrong.
+
+**Nothing routes on it yet, on purpose.** Every current type requires `fleet.read`, which is exactly
+what the controller checks at subscribe and what `tick()` re-checks, so dispatch consulting the field
+would be a no-op. `LiveUpdateTypeTest` pins that uniformity rather than leaving it as a comment: the
+day a type arrives needing a different node — the audit trail and permission changes are the obvious
+candidates — the test fails, because at that moment one check at the door stops being sufficient.
+The fix it points at is `matches()` comparing the subscriber's nodes to `event.type.node`, and
+`tick()` refreshing each subscription's whole node set instead of probing one.
+
+They are not *fleet* events. The channel carries whatever a browser has to learn about without
+asking, and hosts and agents are only what it carries today.
 
 ## Audit log
 
@@ -293,6 +322,35 @@ Searching is server-side too: `?query=` matches the account, the target, the det
 the action. Both exist for the same reason — a filter that only saw the rows already fetched would
 search the newest hundred of a thirty-day trail and report "nothing matches", which reads as an
 answer rather than as a limit. See [Paged feeds](#paged-feeds).
+
+### Taking a copy
+
+`GET /api/audit/export?from=&to=` returns the range as a CSV attachment. `from` is inclusive and
+`to` exclusive, both ISO-8601 **instants** rather than dates, so the caller decides what timezone a
+day means instead of having UTC assumed for it — the browser sends the operator's local midnight.
+
+Three things about it are deliberate:
+
+- **It is gated on `audit.export`, not `audit.read`.** Reading is bounded and stays inside Osmium,
+  where the next read is itself observable; an export leaves as a file nothing here can see again.
+  Splitting them lets an account be trusted to look without being trusted to take.
+- **It records itself, before a single row is sent.** The entry describes the request rather than
+  the delivery, so an abandoned or failed download still leaves the trace that someone asked. That
+  puts a new row in the trail being read, so the range is capped at the instant the export started:
+  the file cannot contain the record of its own export, and the count in that record equals the rows
+  written. A `to` in the future is therefore not an error.
+- **The CSV is English and never translated.** It is read by tooling and kept as a record; a header
+  row that depended on the operator's locale could not be scripted against, and two files of the
+  same range would stop being comparable.
+
+Every field is quoted per RFC 4180. A value starting with `=`, `+`, `-`, `@`, tab or CR keeps its
+text and gains a leading apostrophe: `detail` carries in-game chat, written by whoever is on the
+Minecraft server, and without that a player typing `=HYPERLINK(…)` gets it executed when an
+administrator opens the file. That is a deliberate edit to the data — the alternative is a faithful
+file that runs code.
+
+The range is walked in batches of 500 against `idx_audit_entries_at_id` and flushed as it goes, so
+no size of range is held in memory.
 
 ### Adding a new action needs a migration
 
@@ -411,7 +469,14 @@ Two consequences worth knowing:
   to be wrong about and neither drives an alert.
 - **`isAgent` on nearby players is decided here, not by the host.** A host sees only its own agents
   and a server's fleet can span several hosts, so it cannot tell one of ours from a stranger. The
-  host reports names and distances; the backend knows the fleet.
+  host reports names, distances and positions; the backend knows the fleet.
+- **A nearby player's `position` is optional**, where the agent's own is required. The difference is
+  what an absent value would claim: a defaulted `position` on the agent puts it at the origin, which
+  is a lie, while a nearby player without coordinates is simply one whose coordinates were not
+  reported, and the interface says exactly that. A host can legitimately know the distance without a
+  usable position, and dropping the entry over it would lose the fact that matters most — that
+  somebody is standing there. A *partial* one is still discarded: two coordinates and a guess for
+  the third is a point nobody was ever at.
 
 Uptime is **not** reported. It is derived from `onlineSince`, which the backend already stamps for
 chat listener election — a second counter on the wire would be one more thing that could disagree.
@@ -466,6 +531,39 @@ A working listener is never displaced — a new agent joining does not take the 
 only happens when the incumbent is lost. `Agent.onlineSince` ranks the candidates and resets on
 every entry into `ONLINE`, so an agent that keeps reconnecting cannot out-rank a stable one.
 
+## Player heads
+
+`GET /api/avatars/{name-or-uuid}` returns a Minecraft head, fetched from a skin service and cached
+in memory. The frontend renders one for every agent, nearby player and chat line.
+
+It exists so the browser never talks to the skin service. The SPA's CSP is `img-src 'self' data:`,
+and widening it to a third-party image host would punch a hole in the layer that actually contains
+an XSS — the access token lives in `localStorage`. Proxying keeps every image same-origin, and it
+also keeps which agents exist, and how often somebody is looking at them, inside the deployment.
+
+It is gated on `fleet.read`, like every other route — a head only ever appears beside agents, chat
+or hosts, all of which already need that node. That costs the frontend the obvious implementation:
+an `<img>` cannot send an `Authorization` header and the token is not a cookie, so the SPA fetches
+each head itself and hands the element a blob URL. The alternative was leaving the route open on the
+grounds that a public Minecraft skin is not a secret — true, and it still leaves Osmium making
+outbound requests on behalf of anyone who can reach it.
+
+That last point is the abuse worth caring about, and the node alone does not answer it, so
+`AvatarService` carries three guards:
+
+- **The identifier is validated, not sanitised.** It is interpolated into a URL, so anything that is
+  not plainly a Minecraft username or a UUID is refused rather than escaped. That is what keeps the
+  proxy pointed where it was configured.
+- **Misses are cached too**, on a shorter clock than hits — otherwise a name with no skin is a fresh
+  upstream request on every page render, and a skin service having a bad minute is not a reason to
+  blank a player out for the rest of the day.
+- **Concurrent upstream fetches are capped**, so one caller cannot turn into a flood aimed at the
+  skin service or exhaust Osmium's own connections doing it.
+
+An over-long body is refused from the response headers rather than after buffering it, and a
+response that is not an image is discarded. Setting `osmium.avatar.upstream` blank disables the
+whole thing; the frontend falls back to initials, and nothing else changes.
+
 ## Schema migrations
 
 **Flyway owns the schema. Hibernate only checks it.** `ddl-auto=validate` means a mismatch between
@@ -475,6 +573,7 @@ the entities and the database is a failure to start, not a failure three screens
 src/main/resources/db/migration/
   V1__baseline.sql                 the schema as it stood when Flyway took over
   V2__drop_ddl_auto_leftovers.sql  the dead schema ddl-auto left behind
+  V3__audit_export_action.sql      AUDIT_EXPORT added to the audit action constraint
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -534,7 +633,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-200 tests across 15 classes. Most run against a real Postgres 18 through Testcontainers with
+231 tests across 18 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
@@ -550,7 +649,10 @@ composite index in that order, so paging deep costs the same as the first page.
   seconds to pass would be slow and flaky, so those never touch the container.
 
 No mocking library. The suite runs against real things — a real database, a real socket, or a plain
-object with a clock injected — which is why a fake `WebSocketSession` does not appear anywhere.
+object with a clock injected — which is why a fake `WebSocketSession` does not appear anywhere. The
+avatar proxy follows the same line: `AvatarControllerTest` runs a small HTTP server as the skin
+service and counts what it was asked for, because a cache that is not observed preventing a second
+request has not been tested.
 
 ## Docker image
 

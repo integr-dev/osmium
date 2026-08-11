@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagesSquare, TriangleAlert } from 'lucide-vue-next'
+import PlayerHead from './PlayerHead.vue'
 import type { ChatMessageResponse } from '../api/client'
 import { fetchChatPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
@@ -92,11 +93,19 @@ function formatAt(at: string): string {
       </div>
 
       <div ref="scrollBox" class="mt-3 flex max-h-96 flex-col gap-1 overflow-y-auto">
-        <p v-for="line in items" :key="line.id" class="flex gap-2 text-sm">
-          <span class="shrink-0 font-mono text-xs opacity-40">{{ formatAt(line.at) }}</span>
-          <span class="shrink-0 font-medium">{{ line.from }}</span>
-          <span class="min-w-0 flex-1 opacity-70">{{ line.text }}</span>
-        </p>
+        <!--
+          Global chat is where strangers show up, so a head is not decoration here — it is how a
+          player nobody recognises is told apart from an agent at a glance. Insertions animate and
+          the first render does not; see the dashboard for the full note.
+        -->
+        <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
+          <p v-for="line in items" :key="line.id" class="flex items-center gap-2 text-sm">
+            <span class="shrink-0 font-mono text-xs opacity-40">{{ formatAt(line.at) }}</span>
+            <PlayerHead :id="line.from" :name="line.from" size="xs" />
+            <span class="shrink-0 font-medium">{{ line.from }}</span>
+            <span class="min-w-0 flex-1 opacity-70">{{ line.text }}</span>
+          </p>
+        </TransitionGroup>
 
         <p v-if="loading" class="py-6 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
         <p v-else-if="!items.length" class="py-10 text-center text-sm opacity-50">

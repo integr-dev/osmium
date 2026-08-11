@@ -17,10 +17,15 @@ server {
     # connect-src 'self' is enough while the API is proxied same-origin below. Widen it only if the
     # frontend ever calls a different host directly.
     #
+    # img-src carries blob: for player heads. /api/avatars is gated on fleet.read and an <img> cannot
+    # send a bearer token, so the SPA fetches each head and hands the element an object URL. blob: is
+    # same-origin by construction - it can only name a blob this document already created - so this
+    # is not the third-party image host the proxy exists to avoid.
+    #
     # These are set at the server level and inherited by the locations below, which deliberately use
     # `expires` (not `add_header`) for caching, since an `add_header` in a location would drop this
     # inherited set.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
     add_header X-Frame-Options "DENY" always;

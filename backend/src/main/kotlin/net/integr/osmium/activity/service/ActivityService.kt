@@ -8,9 +8,9 @@ import net.integr.osmium.activity.model.ActivityScope
 import net.integr.osmium.activity.model.ActivitySeverity
 import net.integr.osmium.activity.repository.ActivityEntryRepository
 import net.integr.osmium.agent.model.Agent
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.web.PageCursor
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Limit
@@ -31,7 +31,7 @@ import java.time.Instant
 class ActivityService(
     private val activityEntryRepository: ActivityEntryRepository,
     private val activityProperties: ActivityProperties,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -54,7 +54,7 @@ class ActivityService(
             ),
         )
         broker.publish(
-            FleetEvent(type = FleetEventType.ACTIVITY_ENTRY, data = saved.toResponse(), agentId = agent.id),
+            LiveUpdateEvent(type = LiveUpdateType.ACTIVITY_ENTRY, data = saved.toResponse(), agentId = agent.id),
         )
         return saved
     }

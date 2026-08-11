@@ -10,9 +10,9 @@ import net.integr.osmium.host.model.Host
 import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.host.repository.HostRepository
 import net.integr.osmium.security.encodeRequired
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostConnections
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -29,7 +29,7 @@ class HostService(
     private val passwordEncoder: PasswordEncoder,
     private val registry: HostConnections,
     private val auditService: AuditService,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     fun findAll(): List<HostResponse> =
         hostRepository.findAll().sortedBy { it.name }.map { it.toResponse() }
@@ -154,18 +154,18 @@ class HostService(
         // browser holding agents that no longer exist, with nothing to tell it otherwise.
         for (agent in agents) {
             broker.publish(
-                FleetEvent(
-                    type = FleetEventType.AGENT_REMOVED,
+                LiveUpdateEvent(
+                    type = LiveUpdateType.AGENT_REMOVED,
                     data = mapOf("id" to agent.id),
                     agentId = agent.id,
                 ),
             )
         }
-        broker.publish(FleetEvent(type = FleetEventType.HOST_REMOVED, data = mapOf("id" to id)))
+        broker.publish(LiveUpdateEvent(type = LiveUpdateType.HOST_REMOVED, data = mapOf("id" to id)))
     }
 
     private fun publish(host: Host) = broker.publish(
-        FleetEvent(type = FleetEventType.HOST_CHANGED, data = host.toResponse()),
+        LiveUpdateEvent(type = LiveUpdateType.HOST_CHANGED, data = host.toResponse()),
     )
 
     /** Delegates to the shared mapper, supplying the count it deliberately does not query itself. */
