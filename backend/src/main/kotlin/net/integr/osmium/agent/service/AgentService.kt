@@ -12,9 +12,9 @@ import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.host.repository.HostRepository
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.CommandType
@@ -37,7 +37,7 @@ class AgentService(
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     fun findAll(): List<AgentResponse> =
         agentRepository.findAll().sortedBy { it.label }.map { it.toResponse(telemetryStore.find(it.id)) }
@@ -133,7 +133,7 @@ class AgentService(
             detail = "Was on $hostName; credentials cached there are not removed by this",
         )
         broker.publish(
-            FleetEvent(type = FleetEventType.AGENT_REMOVED, data = mapOf("id" to id), agentId = id),
+            LiveUpdateEvent(type = LiveUpdateType.AGENT_REMOVED, data = mapOf("id" to id), agentId = id),
         )
     }
 
@@ -254,7 +254,7 @@ class AgentService(
      * is what the browser is told about.
      */
     private fun publish(agent: Agent) = broker.publish(
-        FleetEvent(type = FleetEventType.AGENT_CHANGED, data = agent.toResponse(telemetryStore.find(agent.id)), agentId = agent.id),
+        LiveUpdateEvent(type = LiveUpdateType.AGENT_CHANGED, data = agent.toResponse(telemetryStore.find(agent.id)), agentId = agent.id),
     )
 
     /**

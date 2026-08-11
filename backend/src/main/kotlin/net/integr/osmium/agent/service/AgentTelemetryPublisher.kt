@@ -1,8 +1,8 @@
 package net.integr.osmium.agent.service
 
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Component
 class AgentTelemetryPublisher(
     private val telemetryStore: AgentTelemetryStore,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     /** Ids only. What to send is looked up at publish time, so it is never a tick out of date. */
     private val pending = ConcurrentHashMap.newKeySet<Long>()
@@ -50,8 +50,8 @@ class AgentTelemetryPublisher(
             // announcing - the agent has already stopped reporting.
             val telemetry = telemetryStore.find(agentId) ?: continue
             broker.publish(
-                FleetEvent(
-                    type = FleetEventType.AGENT_TELEMETRY,
+                LiveUpdateEvent(
+                    type = LiveUpdateType.AGENT_TELEMETRY,
                     data = mapOf("agentId" to agentId, "telemetry" to telemetry),
                     agentId = agentId,
                 ),

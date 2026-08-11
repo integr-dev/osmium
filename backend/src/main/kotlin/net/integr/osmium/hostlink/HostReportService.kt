@@ -15,9 +15,9 @@ import net.integr.osmium.activity.service.ActivityService
 import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.chat.model.ChatScope
 import net.integr.osmium.chat.service.ChatService
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.EventType
 import net.integr.osmium.hostlink.MessageKind
@@ -40,7 +40,7 @@ class HostReportService(
     private val activityService: ActivityService,
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -280,8 +280,8 @@ class HostReportService(
     private fun publish(agent: Agent) = broker.publish(
         // Telemetry is looked up rather than omitted: this event replaces the agent in the browser,
         // so leaving it null would read as "stopped reporting" every time the state changed.
-        FleetEvent(
-            type = FleetEventType.AGENT_CHANGED,
+        LiveUpdateEvent(
+            type = LiveUpdateType.AGENT_CHANGED,
             data = agent.toResponse(telemetryStore.find(agent.id)),
             agentId = agent.id,
         ),

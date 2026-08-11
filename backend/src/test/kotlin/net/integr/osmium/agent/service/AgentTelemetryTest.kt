@@ -8,9 +8,9 @@ import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.HostReportService
 import net.integr.osmium.hostlink.MessageKind
 import net.integr.osmium.host.model.Host
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.security.RoleNames
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -37,7 +37,7 @@ class AgentTelemetryTest : AbstractRestTest() {
     @Autowired private lateinit var telemetryStore: AgentTelemetryStore
     @Autowired private lateinit var telemetryPublisher: AgentTelemetryPublisher
     @Autowired private lateinit var agentService: AgentService
-    @Autowired private lateinit var broker: FleetEventBroker
+    @Autowired private lateinit var broker: LiveUpdateBroker
     @Autowired private lateinit var objectMapper: ObjectMapper
 
     private fun status(agent: Agent, payload: String) = HostEnvelope(
@@ -263,7 +263,7 @@ class AgentTelemetryTest : AbstractRestTest() {
             Agent(label = "Mason_tick", host = host, serverAddress = "mc.example.com:25565", state = AgentState.ONLINE),
         )
 
-        val seen = CopyOnWriteArrayList<FleetEvent>()
+        val seen = CopyOnWriteArrayList<LiveUpdateEvent>()
         broker.subscribe { seen += it }
 
         hostReports.onMessage(checkNotNull(host.id), status(agent, vitals))
@@ -272,7 +272,7 @@ class AgentTelemetryTest : AbstractRestTest() {
         // Scoped to this agent: the store and the pending set outlive a rolled-back transaction, so
         // agents from earlier tests can still be in flight on the scheduler's own tick.
         assertTrue(
-            seen.any { it.type == FleetEventType.AGENT_TELEMETRY && it.agentId == agent.id },
+            seen.any { it.type == LiveUpdateType.AGENT_TELEMETRY && it.agentId == agent.id },
             "the reported sample never reached the browser",
         )
 

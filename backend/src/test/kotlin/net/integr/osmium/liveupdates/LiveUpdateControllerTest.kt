@@ -1,9 +1,9 @@
 package net.integr.osmium.liveupdates
 
 import net.integr.osmium.AbstractRestTest
-import net.integr.osmium.liveupdates.FleetEvent
-import net.integr.osmium.liveupdates.FleetEventBroker
-import net.integr.osmium.liveupdates.FleetEventType
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateType
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 
 class LiveUpdateControllerTest : AbstractRestTest() {
 
-    @Autowired private lateinit var broker: FleetEventBroker
+    @Autowired private lateinit var broker: LiveUpdateBroker
     @Autowired private lateinit var transactionTemplate: TransactionTemplate
 
     // ---- authorization -------------------------------------------------------------------------
@@ -71,12 +71,12 @@ class LiveUpdateControllerTest : AbstractRestTest() {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun `an event published in a rolled back transaction is never delivered`() {
-        val delivered = CopyOnWriteArrayList<FleetEvent>()
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
         broker.subscribe { delivered += it }
 
         runCatching {
             transactionTemplate.execute {
-                broker.publish(FleetEvent(FleetEventType.HOST_CHANGED, mapOf("id" to 1L)))
+                broker.publish(LiveUpdateEvent(LiveUpdateType.HOST_CHANGED, mapOf("id" to 1L)))
                 throw IllegalStateException("rolled back on purpose")
             }
         }
@@ -87,25 +87,25 @@ class LiveUpdateControllerTest : AbstractRestTest() {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun `an event published in a committed transaction is delivered once`() {
-        val delivered = CopyOnWriteArrayList<FleetEvent>()
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
         broker.subscribe { delivered += it }
 
         transactionTemplate.execute {
-            broker.publish(FleetEvent(FleetEventType.HOST_CHANGED, mapOf("id" to 2L)))
+            broker.publish(LiveUpdateEvent(LiveUpdateType.HOST_CHANGED, mapOf("id" to 2L)))
         }
 
         assertEquals(1, delivered.size)
-        assertEquals(FleetEventType.HOST_CHANGED, delivered.single().type)
+        assertEquals(LiveUpdateType.HOST_CHANGED, delivered.single().type)
     }
 
     /** Outside a transaction there is nothing to wait for, so it goes straight out. */
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun `an event published outside a transaction is delivered immediately`() {
-        val delivered = CopyOnWriteArrayList<FleetEvent>()
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
         broker.subscribe { delivered += it }
 
-        broker.publish(FleetEvent(FleetEventType.AGENT_REMOVED, mapOf("id" to 3L), agentId = 3L))
+        broker.publish(LiveUpdateEvent(LiveUpdateType.AGENT_REMOVED, mapOf("id" to 3L), agentId = 3L))
 
         assertEquals(1, delivered.size)
     }
@@ -114,11 +114,11 @@ class LiveUpdateControllerTest : AbstractRestTest() {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun `a failing subscriber does not stop delivery to the rest`() {
-        val delivered = CopyOnWriteArrayList<FleetEvent>()
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
         broker.subscribe { throw IllegalStateException("this listener is broken") }
         broker.subscribe { delivered += it }
 
-        broker.publish(FleetEvent(FleetEventType.HOST_REMOVED, mapOf("id" to 4L)))
+        broker.publish(LiveUpdateEvent(LiveUpdateType.HOST_REMOVED, mapOf("id" to 4L)))
 
         assertEquals(1, delivered.size)
     }

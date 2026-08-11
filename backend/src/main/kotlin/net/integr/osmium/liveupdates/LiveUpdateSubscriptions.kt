@@ -21,7 +21,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @Component
 class LiveUpdateSubscriptions(
-    private val broker: FleetEventBroker,
+    private val broker: LiveUpdateBroker,
     private val userRepository: UserRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -65,7 +65,7 @@ class LiveUpdateSubscriptions(
         return emitter
     }
 
-    private fun dispatch(event: FleetEvent) {
+    private fun dispatch(event: LiveUpdateEvent) {
         for (subscription in subscriptions) {
             if (!matches(subscription, event)) continue
             send(subscription) {
@@ -75,7 +75,7 @@ class LiveUpdateSubscriptions(
     }
 
     /** A per-agent stream sees only its own agent; the fleet stream sees everything. */
-    private fun matches(subscription: Subscription, event: FleetEvent): Boolean =
+    private fun matches(subscription: Subscription, event: LiveUpdateEvent): Boolean =
         subscription.agentId == null || subscription.agentId == event.agentId
 
     /**
