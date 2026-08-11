@@ -135,12 +135,29 @@ it over a blip would cost the operator their session.
 
 ## Copy
 
-Every string the operator sees lives in `src/i18n/en.ts`. One locale — the value is not translation
-but having a single place where the product's voice is decided, instead of it accumulating in
-templates a phrase at a time.
+Every string the operator sees lives in `src/i18n/`, one file per locale — English and German. The
+value is not only translation but having a single place where the product's voice is decided,
+instead of it accumulating in templates a phrase at a time.
 
-Components read it with `useI18n()`. Code that is not a component — stores, presentation maps —
-imports `t` from `src/i18n` directly.
+English is the source. `Copy` in `en.ts` is the shape every other locale is typed against, so a key
+added there and not translated **fails the build** rather than falling back silently at runtime.
+Three things a type cannot see are tested instead: that the key sets really match, that a
+translation keeps every `{placeholder}`, and that it keeps the same number of `|` plural forms. Each
+of those fails silently — a dropped placeholder renders the phrase without the value, a dropped
+plural form loses the singular.
+
+**Nothing user-facing is written in a component.** That includes error fallbacks in `<script>` and
+the task and alert wording the fleet store derives — those were the last places English leaked
+through with a locale selected. The rule is worth stating because the compiler cannot enforce it:
+a string literal in a template is legal code.
+
+The picker is at the bottom of the sidebar. Switching is instant, since every component reads its
+copy through `useI18n()`; the choice persists in `localStorage` and moves `<html lang>` with it. A
+first visit follows `navigator.languages`, and an explicit choice outranks it from then on.
+
+Components read copy with `useI18n()`. Code that is not a component — stores, presentation maps —
+imports `t` from `src/i18n` directly. Those calls resolve at call time, so they follow the locale as
+long as the caller re-renders.
 
 Two rules for anything added:
 
@@ -153,7 +170,8 @@ Two rules for anything added:
 One trap worth knowing: **vue-i18n reads a dot in a key as a path separator**. Permission nodes
 contain dots (`fleet.chat`), so `t('permission.fleet.chat')` looks for `permission → fleet → chat`,
 finds nothing, and silently returns the key. `nodeLabel` therefore indexes the copy object directly
-rather than going through `t()`, and `i18n.spec.ts` pins that.
+rather than going through `t()` — which means picking the locale by hand too — and `i18n.spec.ts`
+pins that.
 
 ## Authorization in the UI
 
@@ -172,10 +190,11 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-79 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+84 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
-fleet store's derived state, and the cursor paging in `useFeed` — where a cursor that is not carried
-forward silently re-reads page one.
+fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
+forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
+value without erroring.
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
@@ -236,9 +255,9 @@ suite runs once instead of twice.
 
 ```
 src/api/         generated schema, typed client, token storage, live-update and feed clients
-src/components/  FormField, the add-host and add-agent modals, the server chat modal
+src/components/  FormField, the add-host and add-agent modals, the server chat modal, the language picker
 src/layouts/     AppLayout: sidebar, nav, drawer
-src/i18n/        every user-facing string
+src/i18n/        every user-facing string, one file per locale
 src/lib/         cursor-paged feeds, presentation maps for agent state, roles and permissions
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)

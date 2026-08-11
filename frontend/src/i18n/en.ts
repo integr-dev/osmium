@@ -22,9 +22,18 @@ export const en = {
     edit: 'Edit',
     loading: 'Loading…',
     none: 'None',
-    retry: 'Retry',
     save: 'Save',
     status: 'Status',
+  },
+
+  /**
+   * Language names are endonyms and stay identical in every locale — someone who has landed in a
+   * language they cannot read needs to recognise their own in the list.
+   */
+  language: {
+    label: 'Language',
+    en: 'English',
+    de: 'Deutsch',
   },
 
   nav: {
@@ -61,6 +70,9 @@ export const en = {
 
   dashboard: {
     title: 'Dashboard',
+    building: 'Building',
+    buildingName: 'Building {name}',
+    stalled: 'Stalled',
     agentsOnline: 'Agents online',
     blocksPlaced: 'Blocks placed',
     throughput: 'Throughput',
@@ -69,15 +81,21 @@ export const en = {
     atCurrentRate: 'at the current rate',
     needsAttention: 'Needs attention',
     allHealthy: 'All agents are healthy.',
-    noAgents: 'No agents yet.',
     activity: 'Agent activity',
     progress: 'Schematic progress',
+    percentComplete: '{percent}% complete',
+    blocksRemaining: '{count} block remaining | {count} blocks remaining',
     sectors: 'Sectors',
     contribution: 'Contribution',
     activityHint: 'Alerts and status changes.',
     noActivity: 'Nothing to report.',
-    chat: 'Chat',
     noChat: 'No messages yet.',
+  },
+
+  /** Why an agent is on the attention list. Shorter than its state, and about the cause. */
+  attention: {
+    hostUnreachable: 'Host unreachable',
+    needsRelink: 'Needs relink',
   },
 
   servers: {
@@ -95,11 +113,14 @@ export const en = {
   hosts: {
     title: 'Hosts',
     subtitle: 'Machines that run your agents.',
+    onlineCount: '{online} of {total} online.',
     host: 'Host',
     agents: 'Agents',
+    agentCount: '{count} agent | {count} agents',
     version: 'Version',
     reachable: 'Reachable',
     unreachable: 'Unreachable',
+    notConnected: 'not yet connected',
     none: 'No hosts yet.',
     enrol: 'Enrol host',
     enrolTitle: 'Enrol a host',
@@ -109,29 +130,24 @@ export const en = {
     rename: 'Rename host',
     renameHint: 'Only the name is yours to set. Address, version and status are recorded when the host connects.',
     rotateIntro: 'Issues a new token and invalidates the current one. The host disconnects until you give it the replacement; its agents are kept.',
-    removeWithAgents: 'This host runs {count} agent(s), which are removed with it. Its token stops working.',
+    removeWithAgents: 'This host runs {count} agent, which is removed with it. Its token stops working. | This host runs {count} agents, which are removed with it. Its token stops working.',
     removeNoAgents: 'This host has no agents. Its token stops working.',
     rotateToken: 'Rotate token',
     rotateTitle: 'Rotate the token for {name}?',
     removeAction: 'Remove',
-    rotateWarning: 'The current token stops working immediately and the host disconnects until you give it the new one.',
     rotate: 'Rotate',
     remove: 'Remove host',
     removeTitle: 'Remove {name}?',
-    removeWarning: 'Its {count} agent(s) are removed with it. Credentials stored on the machine are not affected.',
-    tokenTitle: 'Host token',
     tokenWarning: 'Copy this now. It is shown once and cannot be retrieved later.',
     tokenHint: 'Set this as OSMIUM_HOST_TOKEN on the host.',
   },
 
   agents: {
-    title: 'Agents',
     addTitle: 'Add an agent',
     identity: 'Identity',
     label: 'Name',
     labelPlaceholder: 'e.g. Mason_04',
     host: 'Host',
-    hostHint: 'The machine that will run this agent.',
     server: 'Minecraft server',
     serverPlaceholder: 'mc.example.com:25565',
     add: 'Add agent',
@@ -157,15 +173,12 @@ export const en = {
     disconnect: 'Disconnect',
     edit: 'Edit agent',
     move: 'Move to another Minecraft server',
-    moveHint: 'Only while the agent is offline.',
-    removeTitle: 'Delete {name}?',
     removeWarning: 'The agent is removed from Osmium. Credentials stored on {host} are not affected — revoke the account there if it should stop working.',
 
     uptime: 'Uptime',
     health: 'Health',
     food: 'Food',
     position: 'Position',
-    task: 'Task',
     dimension: 'Dimension',
     noTelemetry: 'This agent has not reported recently.',
     ping: 'Ping',
@@ -215,9 +228,10 @@ export const en = {
     account: 'Account',
     role: 'Role',
     noRole: 'No role',
+    nodeCount: '{count} node | {count} nodes',
     noMatches: 'No accounts match that filter.',
-    create: 'Create account',
-    createTitle: 'Create an account',
+    create: 'Create',
+    next: 'Next',
     passwordPlaceholder: '4–72 characters',
     confirmPlaceholder: 'Repeat the password',
     confirmPassword: 'Confirm password',
@@ -227,15 +241,14 @@ export const en = {
     username: 'Username',
     password: 'Password',
     noRoleHint: 'The account will have no permissions.',
-    edit: 'Edit account',
+    editTitle: 'Edit {name}',
+    renameWarning: 'Renaming ends that account’s sessions, since its token identifies it by username.',
     newAccount: 'New account',
     roleHint: 'An account holds one role. Each level includes everything below it.',
     back: 'Back',
     passwordOptional: 'Leave blank to keep the current password',
     changeRole: 'Change role',
     removeRoleHint: 'Removes all permissions.',
-    removeTitle: 'Delete {name}?',
-    removeWarning: 'The account is deleted and its session stops working immediately.',
   },
 
   audit: {
@@ -251,6 +264,21 @@ export const en = {
     noMatches: 'Nothing matches that search.',
     end: 'End of the audit log.',
     retention: 'Audit entries are kept for 30 days. Agent activity is kept for 10 days and chat for 3.',
+  },
+
+  /**
+   * What an agent is doing, shown on its row. Distinct from its state: the state says what Osmium
+   * knows about the agent, this says what it is spending its time on.
+   */
+  agentTask: {
+    awaitingAssignment: 'Awaiting assignment',
+    notSetUp: 'Not set up yet',
+    awaitingSetup: 'Awaiting setup on host',
+    readyToConnect: 'Ready to connect',
+    credentialsRejected: 'Credentials rejected',
+    serverRefused: 'Server refused the connection',
+    hostUnreachable: 'Host unreachable',
+    idle: 'Idle',
   },
 
   /** The lifecycle of an agent, as an operator reads it. */
@@ -314,7 +342,10 @@ export const en = {
     generic: 'Something went wrong.',
     unreachable: 'Cannot reach Osmium',
     invalidCredentials: 'Incorrect username or password.',
+    loginFailed: 'Could not sign in.',
     passwordMismatch: 'The passwords do not match.',
+    pickHost: 'Pick a host to run this agent.',
+    commandFailed: 'The command failed.',
     loadHosts: 'Could not load hosts.',
     loadAgents: 'Could not load agents.',
     loadAudit: 'Could not load the audit log.',
@@ -332,6 +363,7 @@ export const en = {
     connectAgent: 'Could not connect.',
     disconnectAgent: 'Could not disconnect.',
     sendMessage: 'Could not send the message.',
+    renameAccount: 'Could not change the username.',
     createAccount: 'Could not create the account.',
     updateAccount: 'Could not update the account.',
     removeAccount: 'Could not delete the account.',
@@ -339,3 +371,11 @@ export const en = {
     changePassword: 'Could not change the password.',
   },
 } as const
+
+type Translated<T> = { readonly [K in keyof T]: T[K] extends string ? string : Translated<T[K]> }
+
+/**
+ * The shape every other locale has to match. English is the source: a key added here fails the
+ * build in every translation that has not caught up, which is the only reliable reminder.
+ */
+export type Copy = Translated<typeof en>

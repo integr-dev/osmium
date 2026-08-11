@@ -18,9 +18,10 @@ import {
   WifiOff,
 } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import LanguagePicker from '../components/LanguagePicker.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
-import { STATE_DOT } from '../lib/agentState'
+import { STATE_DOT, stateLabel } from '../lib/agentState'
 import { useAgentStore } from '../stores/agents'
 
 const { t } = useI18n()
@@ -186,7 +187,7 @@ function logout() {
                       <span
                         class="size-2 shrink-0 rounded-full"
                         :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
-                        :title="agent.state"
+                        :title="stateLabel(agent.state)"
                       ></span>
                       <span class="truncate">{{ agent.label }}</span>
                     </RouterLink>
@@ -205,6 +206,7 @@ function logout() {
 
         <div class="border-base-300 border-t p-3">
           <ul class="menu w-full gap-0.5 p-0">
+            <LanguagePicker />
             <li>
               <RouterLink :to="{ name: 'account' }" class="gap-3">
                 <User class="size-4 shrink-0" />

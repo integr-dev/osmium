@@ -16,7 +16,7 @@ what needs attention, and what is being said in game.
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 200 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 79 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 84 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
@@ -71,13 +71,13 @@ So the split is "runs the agents" versus "runs the people". Details in
 
 ```bash
 cd backend && ./gradlew test     # 200 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 79 tests
+cd frontend && npm test          # 84 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
 clients over real host sockets, and unit tests on an injected clock for anything about the passage of
 time. The frontend covers the route guard, the auth store, the API client middleware, the fleet
-store's derived state and cursor paging.
+store's derived state, cursor paging, and that the English and German copy stay in step.
 
 ## CI
 
