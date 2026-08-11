@@ -9,14 +9,15 @@ what needs attention, and what is being said in game.
 > **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
 > telemetry, live updates and the host transport are built and tested. The host program itself lives
 > outside this repository — Rust on azalea, see [`host/`](host/). Those feeds stay empty until a host
-> connects and starts reporting; only build progress in the UI is still mock.
+> connects and starts reporting. Build progress and remote agent settings are the two parts of the
+> UI still running on mock data.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 218 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 85 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 87 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
@@ -71,7 +72,7 @@ So the split is "runs the agents" versus "runs the people". Details in
 
 ```bash
 cd backend && ./gradlew test     # 218 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 85 tests
+cd frontend && npm test          # 87 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real

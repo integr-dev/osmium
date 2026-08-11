@@ -74,6 +74,24 @@ describe('route guard', () => {
     expect(router.currentRoute.value.name).toBe('audit')
   })
 
+  // Configuring an agent is acting on it, so a viewer watching the fleet must not reach the screen
+  // that does it — the same split that keeps every other way to change the fleet behind its own node.
+  it('keeps agent settings from an account that can only watch', async () => {
+    signIn(['fleet.read'])
+
+    await router.push('/agent-settings')
+
+    expect(router.currentRoute.value.name).toBe('dashboard')
+  })
+
+  it('admits agent settings with fleet.control', async () => {
+    signIn(['fleet.read', 'fleet.control'])
+
+    await router.push('/agent-settings')
+
+    expect(router.currentRoute.value.name).toBe('agentSettings')
+  })
+
   it('admits routes that require no node', async () => {
     signIn([])
 

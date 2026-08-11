@@ -45,6 +45,7 @@ export const en = {
     addAgent: 'Add agent',
     myAccount: 'My account',
     allAccounts: 'All accounts',
+    agentSettings: 'Agent settings',
     auditLog: 'Audit log',
     logOut: 'Log out',
   },
@@ -192,6 +193,57 @@ export const en = {
     chatPlaceholder: 'Send a message as this agent',
     send: 'Send',
     agentTag: 'agent',
+  },
+
+  /** MOCK, pending the backend. The field list here is a placeholder, not a specification. */
+  agentSettings: {
+    title: 'Agent settings',
+    subtitle: 'Configure agents without touching the machines they run on.',
+    agents: 'Agents',
+    selectAll: 'Select all',
+    noAgents: 'No agents yet.',
+    pickOne: 'Select an agent to see its settings.',
+    selected: '{count} selected',
+    valuesFrom: 'Showing {name}’s settings.',
+    appliesTo: 'Applies to {count} agent | Applies to {count} agents',
+    update: 'Update settings',
+    updating: 'Sending…',
+    updated: 'Settings sent to {name}.',
+    updatedMany: 'Settings sent to {count} agents.',
+    unsaved: 'Unsaved changes.',
+    mock: 'Not wired to a host yet — changes are kept in the browser only.',
+    reset: 'Discard changes',
+
+    group: {
+      connection: 'Connection',
+      behaviour: 'Behaviour',
+      reporting: 'Reporting',
+    },
+
+    field: {
+      autoReconnect: 'Reconnect automatically',
+      reconnectDelay: 'Wait before reconnecting',
+      idleTimeout: 'Disconnect when idle for',
+      autoEat: 'Eat when hungry',
+      whenIdle: 'With nothing to build',
+      viewDistance: 'View distance',
+      relayChat: 'Forward server chat',
+      logLevel: 'Host log detail',
+    },
+
+    option: {
+      whenIdle: {
+        hold: 'Stay put',
+        regroup: 'Return to the build',
+        disconnect: 'Leave the server',
+      },
+      logLevel: {
+        error: 'Errors only',
+        warn: 'Warnings',
+        info: 'Normal',
+        debug: 'Everything',
+      },
+    },
   },
 
   account: {

@@ -50,9 +50,18 @@ Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**
 **telemetry** and **live updates** are real. They stay empty until a host connects and starts
 reporting, but nothing about them is faked.
 
-Only **build progress** is still mock — blocks placed, sectors, throughput, the schematic. It hangs
-off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not mixed in
-one object. Marked in `src/stores/agents.ts`.
+Two things are still mock. **Build progress** — blocks placed, sectors, throughput, the schematic —
+hangs off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not
+mixed in one object. Marked in `src/stores/agents.ts`.
+
+**Agent settings** are mock end to end: `src/lib/agentSettings.ts` holds the field list, the values
+and a `saveSettings` that writes to a map in that module and resolves. Nothing reaches a host, and
+the screen says so in a banner rather than only in a comment. It is kept out of the fleet store for
+the same reason build progress is — a mock inside real state is one that outlives its purpose.
+
+What is meant to survive that mock is the **shape**: fields are declared as a schema and rendered
+generically by type, so adding a setting later is an entry in that file plus a copy key, not another
+block of markup. The field list itself is a placeholder, not a specification.
 
 Telemetry is **absent rather than zeroed** when an agent has not reported: `agent.telemetry` is
 null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes would render as an
@@ -218,7 +227,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-85 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+87 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
@@ -290,7 +299,7 @@ src/lib/         cursor-paged feeds, presentation maps for agent state, roles an
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub
-src/views/       dashboard, hosts, agent detail, accounts, audit log, login
+src/views/       dashboard, hosts, agent detail, agent settings, accounts, audit log, login
 ```
 
 Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.

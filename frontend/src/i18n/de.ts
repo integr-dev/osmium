@@ -48,6 +48,7 @@ export const de: Copy = {
     addAgent: 'Agent hinzufügen',
     myAccount: 'Mein Konto',
     allAccounts: 'Alle Konten',
+    agentSettings: 'Agenten-Einstellungen',
     auditLog: 'Audit-Log',
     logOut: 'Abmelden',
   },
@@ -192,6 +193,56 @@ export const de: Copy = {
     chatPlaceholder: 'Nachricht als dieser Agent senden',
     send: 'Senden',
     agentTag: 'Agent',
+  },
+
+  agentSettings: {
+    title: 'Agenten-Einstellungen',
+    subtitle: 'Agenten konfigurieren, ohne die Maschinen anzufassen, auf denen sie laufen.',
+    agents: 'Agenten',
+    selectAll: 'Alle auswählen',
+    noAgents: 'Noch keine Agenten.',
+    pickOne: 'Wählen Sie einen Agenten, um seine Einstellungen zu sehen.',
+    selected: '{count} ausgewählt',
+    valuesFrom: 'Angezeigt werden die Einstellungen von {name}.',
+    appliesTo: 'Gilt für {count} Agenten | Gilt für {count} Agenten',
+    update: 'Einstellungen übernehmen',
+    updating: 'Wird gesendet…',
+    updated: 'Einstellungen an {name} gesendet.',
+    updatedMany: 'Einstellungen an {count} Agenten gesendet.',
+    unsaved: 'Nicht gespeicherte Änderungen.',
+    mock: 'Noch nicht mit einem Host verbunden — Änderungen bleiben nur im Browser.',
+    reset: 'Änderungen verwerfen',
+
+    group: {
+      connection: 'Verbindung',
+      behaviour: 'Verhalten',
+      reporting: 'Meldungen',
+    },
+
+    field: {
+      autoReconnect: 'Automatisch neu verbinden',
+      reconnectDelay: 'Wartezeit vor dem Neuverbinden',
+      idleTimeout: 'Trennen nach Untätigkeit von',
+      autoEat: 'Essen bei Hunger',
+      whenIdle: 'Wenn nichts zu bauen ist',
+      viewDistance: 'Sichtweite',
+      relayChat: 'Server-Chat weiterleiten',
+      logLevel: 'Protokolltiefe auf dem Host',
+    },
+
+    option: {
+      whenIdle: {
+        hold: 'Stehen bleiben',
+        regroup: 'Zurück zum Bau',
+        disconnect: 'Server verlassen',
+      },
+      logLevel: {
+        error: 'Nur Fehler',
+        warn: 'Warnungen',
+        info: 'Normal',
+        debug: 'Alles',
+      },
+    },
   },
 
   account: {

@@ -12,6 +12,7 @@ import {
   ScrollText,
   Server,
   ServerOff,
+  SlidersHorizontal,
   TriangleAlert,
   User,
   Users,
@@ -180,6 +181,12 @@ function logout() {
                 <span class="badge badge-xs ml-auto">
                   {{ agentStore.hosts.filter((host) => host.reachable).length }}/{{ agentStore.hosts.length }}
                 </span>
+              </RouterLink>
+            </li>
+            <li v-if="auth.can('fleet.control')">
+              <RouterLink :to="{ name: 'agentSettings' }" class="gap-3">
+                <SlidersHorizontal class="size-4 shrink-0" />
+                {{ t('nav.agentSettings') }}
               </RouterLink>
             </li>
             <li>

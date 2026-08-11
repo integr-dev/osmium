@@ -30,6 +30,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/AgentDetailView.vue'),
       },
       {
+        // Configuring an agent is acting on it, so it sits behind the same node as connecting one.
+        path: 'agent-settings',
+        name: 'agentSettings',
+        component: () => import('../views/AgentSettingsView.vue'),
+        meta: { node: 'fleet.control' },
+      },
+      {
         path: 'account',
         name: 'account',
         component: () => import('../views/MyAccountView.vue'),
