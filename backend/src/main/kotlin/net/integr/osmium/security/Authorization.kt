@@ -24,6 +24,14 @@ object Nodes {
      */
     const val AUDIT_READ = "audit.read"
 
+    /**
+     * Pull the trail out as a file. Separate from reading it because the two carry different risk:
+     * reading is bounded and stays inside Osmium, where the next read is itself observable, while an
+     * export leaves as a copy nothing here can see again. Splitting them lets an account be trusted
+     * to look without being trusted to take.
+     */
+    const val AUDIT_EXPORT = "audit.export"
+
     /** See FLEET_CONNECTIVITY.md - chat and login are deliberately not folded into control. */
     const val FLEET_READ = "fleet.read"
     const val FLEET_CONTROL = "fleet.control"
@@ -40,6 +48,7 @@ object Nodes {
         USER_ROLE_WRITE,
         ROLE_READ,
         AUDIT_READ,
+        AUDIT_EXPORT,
         FLEET_READ,
         FLEET_CONTROL,
         FLEET_CHAT,
@@ -93,6 +102,7 @@ object RoleDefinitions {
         Nodes.USER_DELETE,
         Nodes.USER_ROLE_WRITE,
         Nodes.AUDIT_READ,
+        Nodes.AUDIT_EXPORT,
     )
 
     val ALL: List<RoleDefinition> = listOf(

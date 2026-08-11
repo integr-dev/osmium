@@ -431,6 +431,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The trail for a date range, as a CSV attachment.
+         * @description `from` is inclusive and `to` exclusive, both ISO-8601 instants, so the caller decides
+         *                 what timezone a "day" means rather than having UTC assumed for it.
+         *
+         *                 The range is capped at the moment the export starts, so a `to` in the future is not an
+         *                 error and the file cannot contain the record of its own export.
+         *
+         *                 Columns are `at,account,action,target,detail`, always in English and never translated:
+         *                 an export is read by tooling and kept as a record, so its shape cannot depend on who
+         *                 pressed the button. Every field is quoted, and a value a spreadsheet would run as a
+         *                 formula keeps its text and gains a leading apostrophe.
+         *
+         *                 Writes an audit entry of its own before any row is sent.
+         */
+        get: operations["export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/activity": {
         parameters: {
             query?: never;
@@ -672,7 +703,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT";
             target?: string;
             detail?: string | null;
         };
@@ -1984,6 +2015,49 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["AuditPageResponse"];
                 };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query: {
+                /**
+                 * @description Start of the range, inclusive.
+                 * @example 2026-07-12T00:00:00Z
+                 */
+                from: string;
+                /**
+                 * @description End of the range, exclusive.
+                 * @example 2026-08-12T00:00:00Z
+                 */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `from` is not before `to`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `audit.export`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

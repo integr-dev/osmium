@@ -6,6 +6,7 @@ import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.model.AuditEntry
 import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.audit.service.AuditCsv
 import net.integr.osmium.audit.service.AuditService
 import org.hamcrest.Matchers.contains
 import org.hamcrest.Matchers.hasSize
@@ -213,6 +214,139 @@ class AuditControllerTest : AbstractRestTest() {
             status { isOk() }
             jsonPath("$.items[*].target") { value(contains("Mason_02")) }
         }
+    }
+
+    // ---- export --------------------------------------------------------------------------------
+
+    private fun exportAs(account: String, role: String = "administrator", from: String, to: String) =
+        mockMvc.get("/api/audit/export") {
+            header(HttpHeaders.AUTHORIZATION, authAs(account, role))
+            param("from", from)
+            param("to", to)
+        }
+
+    @Test
+    fun `the export is a csv attachment named for its range`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01", at = Instant.parse("2026-07-20T10:00:00Z"))
+
+        exportAs("exporter", from = "2026-07-01T00:00:00Z", to = "2026-08-01T00:00:00Z").andExpect {
+            status { isOk() }
+            header { string(HttpHeaders.CONTENT_TYPE, AuditCsv.CONTENT_TYPE) }
+            header {
+                string(
+                    HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"osmium-audit-2026-07-01-to-2026-08-01.csv\"",
+                )
+            }
+            content { string(org.hamcrest.Matchers.startsWith("at,account,action,target,detail\r\n")) }
+            content { string(org.hamcrest.Matchers.containsString("\"Mason_01\"")) }
+        }
+    }
+
+    /** `from` inclusive, `to` exclusive, so consecutive ranges neither overlap nor leave a gap. */
+    @Test
+    fun `the range includes from and excludes to`() {
+        entry("boundary", AuditAction.AGENT_CONNECT, "on_from", at = Instant.parse("2026-07-01T00:00:00Z"))
+        entry("boundary", AuditAction.AGENT_CONNECT, "inside", at = Instant.parse("2026-07-15T00:00:00Z"))
+        entry("boundary", AuditAction.AGENT_CONNECT, "on_to", at = Instant.parse("2026-08-01T00:00:00Z"))
+
+        val body = exportAs("edges", from = "2026-07-01T00:00:00Z", to = "2026-08-01T00:00:00Z")
+            .andExpect { status { isOk() } }.andReturn().response.contentAsString
+
+        assertTrue(body.contains("\"on_from\""))
+        assertTrue(body.contains("\"inside\""))
+        assertTrue(!body.contains("\"on_to\""))
+    }
+
+    @Test
+    fun `the export records who took a copy, and of what`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01", at = Instant.parse("2026-07-20T10:00:00Z"))
+
+        exportAs("taker", from = "2026-07-01T00:00:00Z", to = "2026-08-01T00:00:00Z")
+            .andExpect { status { isOk() } }
+
+        val recorded = auditEntryRepository.findAll().single { it.action == AuditAction.AUDIT_EXPORT }
+        assertEquals("taker", recorded.account)
+        assertTrue(recorded.target.startsWith("2026-07-01T00:00:00Z.."))
+        assertEquals("1 entries", recorded.detail)
+    }
+
+    /**
+     * The record is written before the rows are sent, so it lands in the trail being read. Capping
+     * the range at the moment the export started keeps it out of its own file — and keeps the count
+     * in the record equal to the rows actually written.
+     */
+    @Test
+    fun `an export covering now does not contain its own record`() {
+        entry("alice", AuditAction.AGENT_CONNECT, "Mason_01", at = Instant.now().minusSeconds(60))
+
+        val body = exportAs(
+            "recursive",
+            from = Instant.now().minusSeconds(3600).toString(),
+            to = Instant.now().plusSeconds(3600).toString(),
+        ).andExpect { status { isOk() } }.andReturn().response.contentAsString
+
+        assertTrue(body.contains("\"Mason_01\""))
+        assertTrue(!body.contains("AUDIT_EXPORT"))
+        assertEquals(1, auditEntryRepository.findAll().count { it.action == AuditAction.AUDIT_EXPORT })
+    }
+
+    /** RFC 4180: a quote doubles, and a comma or newline is why every field is quoted at all. */
+    @Test
+    fun `a comma, a quote and a newline survive the round trip`() {
+        entry(
+            "alice",
+            AuditAction.AGENT_CHAT,
+            "Mason_01",
+            at = Instant.parse("2026-07-20T10:00:00Z"),
+            detail = "say \"hi\", then\nleave",
+        )
+
+        val body = exportAs("quoting", from = "2026-07-01T00:00:00Z", to = "2026-08-01T00:00:00Z")
+            .andExpect { status { isOk() } }.andReturn().response.contentAsString
+
+        assertTrue(body.contains("\"say \"\"hi\"\", then\nleave\""))
+    }
+
+    /**
+     * `detail` carries in-game chat, which is written by whoever is on the Minecraft server. Without
+     * this, a player typing a formula into chat gets it run when an administrator opens the export.
+     */
+    @Test
+    fun `a detail a spreadsheet would run as a formula is neutralised`() {
+        entry(
+            "alice",
+            AuditAction.AGENT_CHAT,
+            "Mason_01",
+            at = Instant.parse("2026-07-20T10:00:00Z"),
+            detail = "=HYPERLINK(\"http://evil.example\")",
+        )
+
+        val body = exportAs("formula", from = "2026-07-01T00:00:00Z", to = "2026-08-01T00:00:00Z")
+            .andExpect { status { isOk() } }.andReturn().response.contentAsString
+
+        assertTrue(body.contains("\"'=HYPERLINK("))
+    }
+
+    @Test
+    fun `a range that does not move forward is rejected`() {
+        exportAs("backwards", from = "2026-08-01T00:00:00Z", to = "2026-07-01T00:00:00Z")
+            .andExpect { status { isBadRequest() } }
+    }
+
+    /** Separate node, so reading the trail in the UI does not carry the right to take it away. */
+    @Test
+    fun `an orchestrator cannot export the trail`() {
+        exportAs("orch", role = "orchestrator", from = "2026-07-01T00:00:00Z", to = "2026-08-01T00:00:00Z")
+            .andExpect { status { isForbidden() } }
+    }
+
+    @Test
+    fun `an anonymous export is rejected`() {
+        mockMvc.get("/api/audit/export") {
+            param("from", "2026-07-01T00:00:00Z")
+            param("to", "2026-08-01T00:00:00Z")
+        }.andExpect { status { isUnauthorized() } }
     }
 
     // ---- authorization -------------------------------------------------------------------------

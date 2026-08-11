@@ -264,6 +264,15 @@ export const de: Copy = {
     noMatches: 'Nichts passt zu dieser Suche.',
     end: 'Ende des Audit-Logs.',
     retention: 'Einträge im Audit-Log bleiben 30 Tage erhalten, Agenten-Aktivität 10 Tage und Chat 3 Tage.',
+
+    export: 'CSV exportieren',
+    exportTitle: 'Audit-Log exportieren',
+    exportHint: 'Beide Tage sind enthalten. Die Datei ist CSV und immer auf Englisch, damit Werkzeuge sie lesen können.',
+    exportFrom: 'Von',
+    exportTo: 'Bis',
+    exporting: 'Wird vorbereitet…',
+    exportRecorded: 'Der Export wird selbst aufgezeichnet, unter Ihrem Konto.',
+    exportOrder: 'Wählen Sie einen Starttag, der nicht nach dem Endtag liegt.',
   },
 
   agentTask: {
@@ -304,6 +313,7 @@ export const de: Copy = {
     USER_DELETE: 'Konto gelöscht',
     USER_ROLE_CHANGE: 'Rolle geändert',
     USER_PASSWORD_CHANGE: 'Passwort geändert',
+    AUDIT_EXPORT: 'Log exportiert',
   },
 
   permission: {
@@ -316,6 +326,7 @@ export const de: Copy = {
     'user.role.write': 'Rollen vergeben',
     'role.read': 'Rollen ansehen',
     'audit.read': 'Audit-Log ansehen',
+    'audit.export': 'Audit-Log exportieren',
     'fleet.read': 'Hosts und Agenten ansehen',
     'fleet.control': 'Agenten verwalten und steuern',
     'fleet.chat': 'Im Spiel als Agent sprechen',
@@ -340,6 +351,7 @@ export const de: Copy = {
     loadHosts: 'Hosts konnten nicht geladen werden.',
     loadAgents: 'Agenten konnten nicht geladen werden.',
     loadAudit: 'Das Audit-Log konnte nicht geladen werden.',
+    exportAudit: 'Das Audit-Log konnte nicht exportiert werden.',
     loadActivity: 'Die Aktivität konnte nicht geladen werden.',
     loadChat: 'Der Chat konnte nicht geladen werden.',
     loadAccounts: 'Konten konnten nicht geladen werden.',

@@ -264,6 +264,15 @@ export const en = {
     noMatches: 'Nothing matches that search.',
     end: 'End of the audit log.',
     retention: 'Audit entries are kept for 30 days. Agent activity is kept for 10 days and chat for 3.',
+
+    export: 'Export CSV',
+    exportTitle: 'Export the audit log',
+    exportHint: 'Both days are included. The file is CSV, and always in English so it stays readable by tooling.',
+    exportFrom: 'From',
+    exportTo: 'To',
+    exporting: 'Preparing…',
+    exportRecorded: 'The export is itself recorded, under your account.',
+    exportOrder: 'Choose a start day on or before the end day.',
   },
 
   /**
@@ -309,6 +318,7 @@ export const en = {
     USER_DELETE: 'Account deleted',
     USER_ROLE_CHANGE: 'Role changed',
     USER_PASSWORD_CHANGE: 'Password changed',
+    AUDIT_EXPORT: 'Log exported',
   },
 
   /**
@@ -325,6 +335,7 @@ export const en = {
     'user.role.write': 'Assign roles',
     'role.read': 'View roles',
     'audit.read': 'View the audit log',
+    'audit.export': 'Export the audit log',
     'fleet.read': 'View hosts and agents',
     'fleet.control': 'Manage and control agents',
     'fleet.chat': 'Speak in game as an agent',
@@ -349,6 +360,7 @@ export const en = {
     loadHosts: 'Could not load hosts.',
     loadAgents: 'Could not load agents.',
     loadAudit: 'Could not load the audit log.',
+    exportAudit: 'Could not export the audit log.',
     loadActivity: 'Could not load activity.',
     loadChat: 'Could not load chat.',
     loadAccounts: 'Could not load accounts.',
