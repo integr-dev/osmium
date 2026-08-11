@@ -6,6 +6,9 @@ import net.integr.osmium.audit.dto.toResponse
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.model.AuditEntry
 import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.web.PageCursor
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Limit
@@ -22,6 +25,7 @@ import net.integr.osmium.account.service.UserService
 class AuditService(
     private val auditEntryRepository: AuditEntryRepository,
     private val auditProperties: AuditProperties,
+    private val broker: LiveUpdateBroker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -39,7 +43,7 @@ class AuditService(
      */
     @Transactional
     fun record(action: AuditAction, target: String, detail: String? = null) {
-        auditEntryRepository.save(
+        val entry = auditEntryRepository.save(
             AuditEntry(
                 at = Instant.now(),
                 account = currentAccount(),
@@ -48,6 +52,11 @@ class AuditService(
                 detail = detail?.take(AuditEntry.DETAIL_MAX),
             ),
         )
+
+        // Published after this transaction commits, which is what keeps the two consistent: the
+        // entry exists only if the command did, and the event is only sent if the entry exists.
+        // Reaches accounts holding `audit.read` and nobody else — the node is on the event type.
+        broker.publish(LiveUpdateEvent(type = LiveUpdateType.AUDIT_ENTRY, data = entry.toResponse()))
     }
 
     /**

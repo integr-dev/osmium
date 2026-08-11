@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, errorMessage, type AgentResponse, type HostResponse } from '../api/client'
+import { api, errorMessage, type AgentResponse, type HostResponse, type UserResponse } from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
+import { useAuthStore } from './auth'
 import { t } from '../i18n'
 
 /**
@@ -133,7 +134,7 @@ export const useAgentStore = defineStore('agents', () => {
 
   function connectLiveUpdates(): void {
     if (connection) return
-    connection = openLiveUpdates('/api/stream/fleet', {
+    connection = openLiveUpdates('/api/stream', {
       onEvent: applyEvent,
       onConnect() {
         liveUpdatesConnected.value = true
@@ -172,10 +173,19 @@ export const useAgentStore = defineStore('agents', () => {
       case 'telemetry':
         applyTelemetry(data as { agentId: number; telemetry: AgentTelemetry })
         break
+      case 'permissions':
+        // Not fleet state, but there is one stream and therefore one ingest. The backend enforces a
+        // role change on the next request either way; this is what stops the UI from going on
+        // offering buttons that now fail, which reads as a bug rather than as access having changed.
+        useAuthStore().user = data as UserResponse
+        break
       case 'chat':
       case 'activity':
-        // Feeds are paged and owned by whichever view is showing one, so these are handed on rather
-        // than accumulated here: the store has no way to know which page a line belongs on.
+      case 'audit':
+      case 'user':
+      case 'user-removed':
+        // Paged lists, owned by whichever view is showing one, so these are handed on rather than
+        // accumulated here: the store has no way to know which page a line belongs on.
         for (const listener of feedListeners) listener(name, data)
         break
       // 'ready' and anything this build does not know about are ignored, so a newer backend
@@ -184,11 +194,12 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   /**
-   * Live chat and activity, for whoever is displaying them.
+   * Live lines for whoever is displaying a paged list of them — chat, activity, the audit trail and
+   * the account list.
    *
    * Returns its own unsubscribe, so a component drops the listener when it unmounts rather than the
    * store growing a registry of views. Everything else the stream carries is state the store owns,
-   * which is why this exists only for the two feeds.
+   * which is why this exists only for the paged lists.
    */
   const feedListeners = new Set<(name: string, data: unknown) => void>()
 

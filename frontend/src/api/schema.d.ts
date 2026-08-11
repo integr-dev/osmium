@@ -305,7 +305,7 @@ export interface paths {
         patch: operations["update_1"];
         trace?: never;
     };
-    "/api/stream/fleet": {
+    "/api/stream": {
         parameters: {
             query?: never;
             header?: never;
@@ -313,10 +313,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Stream every host and agent change.
-         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat` and `activity` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
+         * Stream everything this account is entitled to see change.
+         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`, `user`, `user-removed`, `audit`, `permissions`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat`, `activity` and `audit` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
+         *
+         *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `fleet.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
          */
-        get: operations["fleet"];
+        get: operations["stream"];
         put?: never;
         post?: never;
         delete?: never;
@@ -334,7 +336,7 @@ export interface paths {
         };
         /**
          * Stream one agent's changes.
-         * @description The same events as the fleet stream, filtered to this agent. A server's global chat arrives here too, under whichever agent currently forwards it, so a view showing one agent's conversation filters on `scope`.
+         * @description The same events as the whole stream, filtered to this agent. A server's global chat arrives here too, under whichever agent currently forwards it, so a view showing one agent's conversation filters on `scope`.
          */
         get: operations["agent"];
         put?: never;
@@ -1796,7 +1798,7 @@ export interface operations {
             };
         };
     };
-    fleet: {
+    stream: {
         parameters: {
             query?: never;
             header?: never;
@@ -1814,7 +1816,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["SseEmitter"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `user.read.self`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1845,7 +1847,7 @@ export interface operations {
                     "text/event-stream": components["schemas"]["SseEmitter"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `user.read.self`. */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -25,27 +25,27 @@ class LiveUpdateControllerTest : AbstractRestTest() {
 
     @Test
     fun `an anonymous request cannot open the fleet stream`() {
-        mockMvc.get("/api/stream/fleet").andExpect { status { isUnauthorized() } }
+        mockMvc.get("/api/stream").andExpect { status { isUnauthorized() } }
     }
 
     @Test
     fun `a viewer can open the fleet stream`() {
         // Receive-only, so it is a read like any other and a viewer is entitled to it.
-        mockMvc.get("/api/stream/fleet") {
+        mockMvc.get("/api/stream") {
             header(HttpHeaders.AUTHORIZATION, authAs("watcher", "viewer"))
         }.andExpect { status { isOk() } }
     }
 
     @Test
     fun `an account with no role cannot open the fleet stream`() {
-        mockMvc.get("/api/stream/fleet") {
+        mockMvc.get("/api/stream") {
             header(HttpHeaders.AUTHORIZATION, authAs("nobody"))
         }.andExpect { status { isForbidden() } }
     }
 
     @Test
     fun `an orchestrator opens the fleet stream as an event stream`() {
-        mockMvc.get("/api/stream/fleet") {
+        mockMvc.get("/api/stream") {
             header(HttpHeaders.AUTHORIZATION, authAs("streamer", "orchestrator"))
         }.andExpect {
             status { isOk() }

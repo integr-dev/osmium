@@ -30,12 +30,23 @@ class LiveUpdateSubscriptions(
     /**
      * @param agentId when set, the stream carries only that agent's events. Fanning everything to
      *   everyone wastes the wire and leaks activity across views nobody is looking at.
+     * @param nodes what this account may see, cached from the last [tick].
+     *
+     *   Cached rather than queried per event: dispatch runs on every publish and would otherwise put
+     *   a database round trip in front of each one. `tick` already visits every subscription, so the
+     *   refresh costs nothing new — the same query that used to answer "does this account still hold
+     *   `fleet.read`" now answers "what does it hold".
+     *
+     *   The cost is that a change takes up to one tick to reach dispatch. That was already true of
+     *   the `fleet.read` check; what changes is that the window now also decides who receives the
+     *   audit trail, so [TICK_MILLIS] is a security parameter and not only a liveness one.
      */
     private class Subscription(
         val emitter: SseEmitter,
         val username: String,
         val expiresAt: Instant?,
         val agentId: Long?,
+        @Volatile var nodes: Set<String>,
     )
 
     @PostConstruct
@@ -52,7 +63,7 @@ class LiveUpdateSubscriptions(
             ?: DEFAULT_TIMEOUT_MILLIS
         val emitter = SseEmitter(timeoutMillis)
 
-        val subscription = Subscription(emitter, username, expiresAt, agentId)
+        val subscription = Subscription(emitter, username, expiresAt, agentId, nodesOf(username))
         subscriptions += subscription
 
         emitter.onCompletion { subscriptions.remove(subscription) }
@@ -74,17 +85,38 @@ class LiveUpdateSubscriptions(
         }
     }
 
-    /** A per-agent stream sees only its own agent; the fleet stream sees everything. */
-    private fun matches(subscription: Subscription, event: LiveUpdateEvent): Boolean =
-        subscription.agentId == null || subscription.agentId == event.agentId
+    /**
+     * Three independent gates, and the middle one is the easy one to get backwards.
+     *
+     * **Node**: the subscriber must hold what the kind of event requires. This is what allows one
+     * channel to carry both the fleet and the audit trail.
+     *
+     * **Addressee**: an event naming a username is for that account only. Absence means everyone
+     * past the node gate — so the check is on the *event*, and a subscription that asked for nothing
+     * in particular is excluded rather than included.
+     *
+     * **Agent**: the mirror image. Here it is the *subscription* that narrows: a per-agent stream
+     * asked for one agent, the fleet stream asked for all of them, so an event carrying an `agentId`
+     * still reaches the fleet stream.
+     */
+    private fun matches(subscription: Subscription, event: LiveUpdateEvent): Boolean {
+        if (event.type.node !in subscription.nodes) return false
+        if (event.username != null && event.username != subscription.username) return false
+        return subscription.agentId == null || subscription.agentId == event.agentId
+    }
 
     /**
-     * Re-checks authority and keeps connections alive.
+     * Refreshes authority and keeps connections alive.
      *
      * Authorities resolve from the database on every REST request, so a demotion takes effect
      * immediately — but a stream authorises once at subscribe and then runs for hours. This is the
      * one place that guarantee would otherwise leak, so it is closed here rather than documented as
      * a caveat.
+     *
+     * The same query now also refreshes what each subscription may *see*, so a demotion narrows an
+     * open stream instead of only being able to end it. Only losing the node the endpoint itself is
+     * gated on still closes it: holding a stream open for an account that could no longer open one
+     * would be a way in through the back. Everything else is now a filter rather than a door.
      */
     @Scheduled(fixedDelay = TICK_MILLIS)
     @Transactional(readOnly = true)
@@ -95,8 +127,10 @@ class LiveUpdateSubscriptions(
                 close(subscription, "token expired")
                 continue
             }
-            if (!stillAuthorised(subscription.username)) {
-                close(subscription, "no longer holds ${Nodes.FLEET_READ}")
+
+            subscription.nodes = nodesOf(subscription.username)
+            if (Nodes.USER_READ_SELF !in subscription.nodes) {
+                close(subscription, "no longer holds ${Nodes.USER_READ_SELF}")
                 continue
             }
             // A comment frame, which SSE ignores. Without it an idle stream is indistinguishable
@@ -105,8 +139,12 @@ class LiveUpdateSubscriptions(
         }
     }
 
-    private fun stillAuthorised(username: String): Boolean =
-        userRepository.findAuthorization(username).any { it.nodeId == Nodes.FLEET_READ }
+    /**
+     * An account with no role has no nodes, and the left joins then produce one row with a null
+     * `nodeId` rather than none — filtered here so "no permissions" cannot read as one unnamed one.
+     */
+    private fun nodesOf(username: String): Set<String> =
+        userRepository.findAuthorization(username).mapNotNull { it.nodeId }.toSet()
 
     private fun close(subscription: Subscription, reason: String) {
         log.debug("Closing stream for {}: {}", subscription.username, reason)

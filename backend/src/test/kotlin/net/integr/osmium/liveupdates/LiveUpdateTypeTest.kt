@@ -12,27 +12,20 @@ import kotlin.test.assertTrue
 class LiveUpdateTypeTest {
 
     /**
-     * The tripwire for the node that nothing routes on yet.
+     * The channel is opened behind `fleet.read`, so an event needing only that reaches everyone on
+     * it. Any *other* node is a promise that `matches()` keeps — this asserts the promise is real
+     * for the types that make it, rather than trusting that dispatch was updated alongside them.
      *
-     * `LiveUpdateController` gates the stream on `fleet.read` once at subscribe, and
-     * `LiveUpdateSubscriptions.tick()` re-checks the same single node. That is sound only while
-     * every event on the channel needs exactly that node — which is true today, and is why dispatch
-     * does not consult `type.node`.
-     *
-     * If this fails, an event type has arrived that some subscribers must not receive, and the
-     * stream can no longer be authorised by one check at the door. Do not relax the assertion: make
-     * `matches()` compare the subscriber's nodes against `event.type.node`, and change `tick()` to
-     * refresh each subscription's full node set rather than probing `fleet.read`.
+     * `LiveUpdateSubscriptionsTest` proves the enforcement; this proves the catalogue still needs it.
      */
     @Test
-    fun `every event on the channel needs the node the stream is gated on`() {
-        val other = LiveUpdateType.entries.filterNot { it.node == Nodes.FLEET_READ }
+    fun `a type needing more than the stream's own node is one dispatch has to filter`() {
+        val privileged = LiveUpdateType.entries.filterNot { it.node == Nodes.FLEET_READ }
 
-        assertEquals(
-            emptyList(),
-            other,
-            "These types need a node the stream does not check. Per-subscriber routing has to land " +
-                "with them — see this test's documentation.",
+        assertTrue(
+            privileged.isNotEmpty(),
+            "No type needs more than ${Nodes.FLEET_READ}. If that is now true, the per-subscriber " +
+                "node check in matches() is untested by anything real — delete it or this test.",
         )
     }
 

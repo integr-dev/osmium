@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { formatUptime, useAgentStore } from './agents'
+import { useAuthStore } from './auth'
 import type { AgentResponse, AgentTelemetryResponse, HostResponse } from '../api/client'
 import { respondWith } from '../test/http'
 
@@ -305,7 +306,7 @@ describe('live updates', () => {
    * Chat and activity are not stored here — they are paged feeds owned by whichever view shows one —
    * so the store's whole job for them is handing them on to a listener.
    */
-  it('hands chat and activity to feed listeners', async () => {
+  it('hands every paged list to feed listeners', async () => {
     fleet()
     const store = useAgentStore()
     await store.refresh()
@@ -314,9 +315,29 @@ describe('live updates', () => {
 
     store.applyEvent('chat', { id: 1, text: 'hello' })
     store.applyEvent('activity', { id: 2, text: 'kicked' })
+    store.applyEvent('audit', { id: 3, action: 'AGENT_CHAT' })
+    store.applyEvent('user', { id: 4, username: 'someone' })
+    store.applyEvent('user-removed', { id: 4 })
     store.applyEvent('agent-removed', { id: 6 })
 
-    expect(seen).toEqual(['chat', 'activity'])
+    expect(seen).toEqual(['chat', 'activity', 'audit', 'user', 'user-removed'])
+  })
+
+  /**
+   * The one event that is not fleet state. The backend already refuses what the account may no
+   * longer do; without this the UI goes on offering it, and the resulting 403 reads as a bug.
+   */
+  it('applies a permissions event to the account, so the UI stops offering what it lost', async () => {
+    fleet()
+    const store = useAgentStore()
+    const auth = useAuthStore()
+    await store.refresh()
+    auth.user = { id: 1, username: 'demoted', role: 'administrator', nodes: ['fleet.read', 'audit.read'] }
+
+    store.applyEvent('permissions', { id: 1, username: 'demoted', role: 'viewer', nodes: ['fleet.read'] })
+
+    expect(auth.can('audit.read')).toBe(false)
+    expect(auth.can('fleet.read')).toBe(true)
   })
 
   it('stops delivering once a listener unsubscribes', async () => {

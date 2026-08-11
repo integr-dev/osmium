@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   CheckCheck,
@@ -22,9 +22,11 @@ import FormField from '../components/FormField.vue'
 import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
 import { useAuthStore } from '../stores/auth'
+import { useAgentStore } from '../stores/agents'
 
 const { t } = useI18n()
 const auth = useAuthStore()
+const agentStore = useAgentStore()
 
 const users = ref<UserResponse[]>([])
 const roles = ref<RoleResponse[]>([])
@@ -75,10 +77,31 @@ const breakdown = computed(() => {
   }
 })
 
+let stopListening: (() => void) | null = null
+
 onMounted(async () => {
   await Promise.all([loadUsers(), loadRoles()])
   loading.value = false
+
+  // Two administrators can be on this page at once. Without this, one of them acts on a row the
+  // other already deleted, and the failure looks like a bug rather than like stale information.
+  stopListening = agentStore.onFeedEvent((name, data) => {
+    if (name === 'user') upsertUser(data as UserResponse)
+    if (name === 'user-removed') {
+      const { id } = data as { id: number }
+      users.value = users.value.filter((user) => user.id !== id)
+    }
+  })
 })
+
+onBeforeUnmount(() => stopListening?.())
+
+/** Replaced in place, so the row keeps its position rather than jumping on every edit. */
+function upsertUser(user: UserResponse) {
+  const index = users.value.findIndex((held) => held.id === user.id)
+  if (index === -1) users.value = [...users.value, user].sort((a, b) => a.username.localeCompare(b.username))
+  else users.value[index] = user
+}
 
 function dialog(id: string): HTMLDialogElement | null {
   return document.getElementById(id) as HTMLDialogElement | null

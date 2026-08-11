@@ -20,9 +20,11 @@ import type { AuditEntryResponse } from '../api/client'
 import { fetchAuditPage } from '../api/feeds'
 import { downloadAuditCsv } from '../api/auditExport'
 import { useAuthStore } from '../stores/auth'
+import { useAgentStore } from '../stores/agents'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 
 const auth = useAuthStore()
+const agentStore = useAgentStore()
 
 /**
  * The operator audit trail: who triggered what, not what happened to an agent. Agent-side events
@@ -98,13 +100,22 @@ let debounce: ReturnType<typeof setTimeout> | null = null
 const feed = useFeed((cursor) => fetchAuditPage(cursor, query.value.trim()))
 const scroll = useInfiniteScroll(sentinel, () => void loadMore())
 
+let stopListening: (() => void) | null = null
+
 onMounted(async () => {
   await feed.reset()
   scroll.start()
+
+  stopListening = agentStore.onFeedEvent((name, data) => {
+    // Only while unfiltered. A live entry has not been through the server-side search, so
+    // prepending it during a search would put a row on screen that does not match what was typed.
+    if (name === 'audit' && !query.value.trim()) feed.prepend(data as AuditEntryResponse)
+  })
 })
 
 onBeforeUnmount(() => {
   if (debounce) clearTimeout(debounce)
+  stopListening?.()
 })
 
 /** Typing rewinds to the newest matching entry rather than filtering what is already on screen. */
