@@ -30,6 +30,18 @@ data class NearbyPlayerResponse(
     @field:Schema(description = "Blocks away.", example = "12.4")
     val distance: Double,
     /**
+     * **Optional**, unlike the agent's own position, which is required with the rest of the vitals.
+     *
+     * The difference is what an absent value would claim. Missing vitals get defaulted into a
+     * healthy agent standing at the origin, which is a lie; a nearby player without coordinates is
+     * just a player whose coordinates were not reported, and the interface can say exactly that.
+     * A host may know the distance without a usable position — an entity at the edge of the loaded
+     * range, or a server that hides them — and dropping the whole entry over it would lose the one
+     * fact that matters most, which is that somebody is there.
+     */
+    @field:Schema(description = "Where the player is, when the host reported it.")
+    val position: PositionResponse?,
+    /**
      * Named explicitly because Kotlin's `is` prefix becomes a getter Jackson reads as the property
      * `agent`, which would put `nearby[].agent` on the wire and read as nonsense next to `name`.
      */
