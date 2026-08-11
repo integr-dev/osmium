@@ -54,7 +54,7 @@ Two things are still mock. **Build progress** — blocks placed, sectors, throug
 hangs off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not
 mixed in one object. Marked in `src/stores/agents.ts`.
 
-**Agent settings** are mock end to end: `src/lib/agentSettings.ts` holds the field list, the values
+**Configuration** is mock end to end: `src/lib/configuration.ts` holds the field list, the values
 and a `saveSettings` that writes to a map in that module and resolves. Nothing reaches a host, and
 the screen says so in a banner rather than only in a comment. It is kept out of the fleet store for
 the same reason build progress is — a mock inside real state is one that outlives its purpose.
@@ -139,6 +139,68 @@ showing the matching list, via `onFeedEvent`, and that view prepends or replaces
 A live audit entry is only prepended **while the search box is empty**. It has not been through the
 server-side search, so prepending it during one would put a row on screen that does not match what
 was typed.
+
+## Loading states
+
+**Skeletons where the shape is known, an indicator where it is not.** A table already has its
+columns, so placeholder rows keep the header, the widths and the page height put; a spinner in the
+same place collapses the table and then shoves the page down when the data lands.
+`TableSkeleton.vue` is that, for the three tables. The tail of an infinite scroll gets an indicator
+instead — a skeleton row there reads as an entry arriving rather than as a wait.
+
+The rule this exists to enforce: **an empty state is a claim, and it must not be made before the
+answer is known.** Hosts said "No hosts yet." during its first request, the agent page said "Agent
+not found." on a reload before the fleet arrived, and the dashboard showed zeroes. All three read as
+facts. The fleet store therefore carries `loaded` alongside `loading`, since only the first tells an
+empty fleet apart from one nobody has asked for yet.
+
+`loaded` stays true once set. A later refresh is a background update over content already on screen,
+and blanking it back to skeletons would be a worse lie than briefly stale numbers.
+
+## Player heads
+
+Agents, nearby players and chat lines carry a Minecraft head. It comes from Osmium's own
+`/api/avatars/{name-or-uuid}`, never from a skin service directly — proxying is what keeps the CSP
+off a third-party image host, and it means no operator's browser tells one which agents exist or how
+often somebody is looking at them.
+
+That endpoint is gated on `fleet.read` like every other route, and an `<img src>` cannot send an
+`Authorization` header. So `src/lib/avatars.ts` fetches each head with the token and hands the
+element a blob URL — which is why `img-src` carries `blob:`. Object URLs are same-origin by
+construction; they can only name a blob this document already created.
+
+Two things that module has to get right, because a page renders the same head many times: it caches
+the **promise** rather than the result, so thirty elements mounting in one tick share one request;
+and it revokes evicted URLs, since an object URL pins its blob and a long session watching global
+chat meets a lot of names. It also does not go through the API client — that middleware logs the
+session out on a 401, and a decorative image must never be able to do that.
+
+`PlayerHead.vue` is the only component that knows about any of it. Nothing there is load-bearing:
+the name is beside the head everywhere it appears, so an agent that has never logged in, a
+deployment with `osmium.avatar.upstream` blank and a skin service having a bad minute all land on
+the same initial, and the interface reads as it did before heads existed.
+
+## Motion
+
+Two effects, one rule: **movement marks the instant something changed, and nothing else.**
+
+That is the other side of the line the sidebar already draws — a permanent green dot is decoration
+nobody reads, but Osmium is fed by a live stream, so values move while nobody is watching them.
+Without motion at the moment of change, an operator who looked away has no way to learn that they
+did.
+
+- `v-flash="someValue"` from `src/lib/motion.ts` tints a row for a moment when the bound value
+  changes. On the sidebar agents (state), the agent page's status badge, and the hosts table
+  (reachability). **Not** on telemetry: vitals move every second, and constant motion carries no
+  news.
+- `RollingNumber.vue` travels to a new figure instead of swapping it. Dashboard counts only, and
+  never on the first value — counting up from zero on load is an animation about nothing.
+- A `<TransitionGroup name="feed">` slides in newly arrived feed lines. It animates insertions but
+  not the first render, which is exactly the distinction wanted: a line arriving live moves, a page
+  of history simply appears.
+
+Every one of them is off under `prefers-reduced-motion`, honoured rather than softened. All of it is
+decorative by construction, so removing it loses nothing that is not also written on the page.
 
 ## When the backend is unreachable
 
@@ -227,7 +289,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-87 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+98 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
@@ -299,7 +361,7 @@ src/lib/         cursor-paged feeds, presentation maps for agent state, roles an
 src/router/      routes and node-based guards
 src/stores/      auth and fleet state (Pinia)
 src/test/        Vitest setup and the fetch stub
-src/views/       dashboard, hosts, agent detail, agent settings, accounts, audit log, login
+src/views/       dashboard, map, operations, configuration, hosts, agent detail, accounts, audit, login
 ```
 
 Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.

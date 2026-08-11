@@ -40,12 +40,14 @@ export const en = {
     openNavigation: 'Open navigation',
     closeNavigation: 'Close navigation',
     dashboard: 'Dashboard',
+    map: 'Map',
     hosts: 'Hosts',
     agents: 'Agents',
     addAgent: 'Add agent',
     myAccount: 'My account',
     allAccounts: 'All accounts',
-    agentSettings: 'Agent settings',
+    operations: 'Operations',
+    configuration: 'Configuration',
     auditLog: 'Audit log',
     logOut: 'Log out',
   },
@@ -195,9 +197,23 @@ export const en = {
     agentTag: 'agent',
   },
 
+  /** A placeholder screen. Nothing is built behind it yet. */
+  map: {
+    title: 'Map',
+    subtitle: 'Where the fleet is working.',
+    empty: 'Nothing here yet.',
+  },
+
+  /** A placeholder screen. Nothing is built behind it yet. */
+  operations: {
+    title: 'Operations',
+    subtitle: 'Run work across the fleet.',
+    empty: 'Nothing here yet.',
+  },
+
   /** MOCK, pending the backend. The field list here is a placeholder, not a specification. */
-  agentSettings: {
-    title: 'Agent settings',
+  configuration: {
+    title: 'Configuration',
     subtitle: 'Configure agents without touching the machines they run on.',
     agents: 'Agents',
     selectAll: 'Select all',

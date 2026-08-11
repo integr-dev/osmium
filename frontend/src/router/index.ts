@@ -30,10 +30,23 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/AgentDetailView.vue'),
       },
       {
+        // Read-only, like the dashboard and hosts, so it carries no node of its own.
+        path: 'map',
+        name: 'map',
+        component: () => import('../views/MapView.vue'),
+      },
+      {
+        // Placeholder, gated like configuration: whatever ends up here acts on the fleet.
+        path: 'operations',
+        name: 'operations',
+        component: () => import('../views/OperationsView.vue'),
+        meta: { node: 'fleet.control' },
+      },
+      {
         // Configuring an agent is acting on it, so it sits behind the same node as connecting one.
-        path: 'agent-settings',
-        name: 'agentSettings',
-        component: () => import('../views/AgentSettingsView.vue'),
+        path: 'configuration',
+        name: 'configuration',
+        component: () => import('../views/ConfigurationView.vue'),
         meta: { node: 'fleet.control' },
       },
       {

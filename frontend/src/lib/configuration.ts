@@ -99,11 +99,11 @@ export async function saveSettings(agentId: number, settings: AgentSettings): Pr
 
 /** Labels live with the rest of the copy; an unmapped key falls back to itself rather than vanishing. */
 export function settingLabel(key: string): string {
-  const label = t(`agentSettings.field.${key}`)
-  return label === `agentSettings.field.${key}` ? key : label
+  const label = t(`configuration.field.${key}`)
+  return label === `configuration.field.${key}` ? key : label
 }
 
 export function optionLabel(field: string, option: string): string {
-  const label = t(`agentSettings.option.${field}.${option}`)
-  return label === `agentSettings.option.${field}.${option}` ? option : label
+  const label = t(`configuration.option.${field}.${option}`)
+  return label === `configuration.option.${field}.${option}` ? option : label
 }

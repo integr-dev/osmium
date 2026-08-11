@@ -4,7 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { Bot as Agent, Copy, KeyRound, Plus, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
 import AddHostModal from '../components/AddHostModal.vue'
 import FormField from '../components/FormField.vue'
+import TableSkeleton from '../components/TableSkeleton.vue'
 import type { HostResponse } from '../api/client'
+import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
@@ -91,7 +93,7 @@ async function confirmRemove() {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-5xl flex-col gap-6">
+  <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('hosts.title') }}</h1>
@@ -128,8 +130,20 @@ async function confirmRemove() {
               <th class="text-right">{{ t('common.actions') }}</th>
             </tr>
           </thead>
-          <tbody>
-            <tr v-for="host in agentStore.hosts" :key="host.id" class="hover:bg-base-300/40">
+          <!-- Rows, not an empty state: "no hosts" is not yet known to be true. -->
+          <TableSkeleton v-if="!agentStore.loaded" :columns="5" />
+
+          <tbody v-else>
+            <!--
+              A host going unreachable takes its agents with it, and it happens on the stream with
+              nobody having pressed anything. This is the row that says so.
+            -->
+            <tr
+              v-for="host in agentStore.hosts"
+              :key="host.id"
+              v-flash="host.reachable"
+              class="hover:bg-base-300/40"
+            >
               <td>
                 <div class="flex items-center gap-3">
                   <div class="rounded-field bg-base-300/40 flex size-8 items-center justify-center">
@@ -138,7 +152,7 @@ async function confirmRemove() {
                   <div>
                     <div class="font-medium">{{ host.name }}</div>
                     <div class="font-mono text-xs opacity-50">
-                      {{ host.address ?? 'not yet connected' }}
+                      {{ host.address ?? t('hosts.notConnected') }}
                     </div>
                   </div>
                 </div>

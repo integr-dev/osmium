@@ -50,6 +50,9 @@ set to `osmium`.
 | `osmium.activity.retention` | `OSMIUM_ACTIVITY_RETENTION` | `10d` | how long agent incidents are kept |
 | `osmium.chat.retention` | `OSMIUM_CHAT_RETENTION` | `3d` | how long chat is kept |
 | `osmium.chat.messages-per-minute` | `OSMIUM_CHAT_MESSAGES_PER_MINUTE` | `30` | outbound chat allowance, per agent |
+| `osmium.avatar.upstream` | `OSMIUM_AVATAR_UPSTREAM` | Minotar | skin service URL with `{id}`/`{size}`; **blank turns heads off** |
+| `osmium.avatar.size` | `OSMIUM_AVATAR_SIZE` | `64` | pixel size requested upstream |
+| `osmium.avatar.ttl` | `OSMIUM_AVATAR_TTL` | `12h` | how long a fetched head is cached |
 
 CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
 therefore same-origin. `*` is rejected outright: the configuration allows credentials, and no
@@ -151,6 +154,7 @@ changes automatically.
 | `POST` | `/api/agents/{id}/setup` | `fleet.login` |
 | `POST` | `/api/agents/{id}/connect`, `/disconnect` | `fleet.control` |
 | `POST` | `/api/agents/{id}/chat` | `fleet.chat` (rate limited per agent; **429** when exceeded) |
+| `GET` | `/api/avatars/{name-or-uuid}` | `fleet.read` (a player's head, as an image) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -465,7 +469,14 @@ Two consequences worth knowing:
   to be wrong about and neither drives an alert.
 - **`isAgent` on nearby players is decided here, not by the host.** A host sees only its own agents
   and a server's fleet can span several hosts, so it cannot tell one of ours from a stranger. The
-  host reports names and distances; the backend knows the fleet.
+  host reports names, distances and positions; the backend knows the fleet.
+- **A nearby player's `position` is optional**, where the agent's own is required. The difference is
+  what an absent value would claim: a defaulted `position` on the agent puts it at the origin, which
+  is a lie, while a nearby player without coordinates is simply one whose coordinates were not
+  reported, and the interface says exactly that. A host can legitimately know the distance without a
+  usable position, and dropping the entry over it would lose the fact that matters most — that
+  somebody is standing there. A *partial* one is still discarded: two coordinates and a guess for
+  the third is a point nobody was ever at.
 
 Uptime is **not** reported. It is derived from `onlineSince`, which the backend already stamps for
 chat listener election — a second counter on the wire would be one more thing that could disagree.
@@ -519,6 +530,39 @@ Two invariants:
 A working listener is never displaced — a new agent joining does not take the role — so re-election
 only happens when the incumbent is lost. `Agent.onlineSince` ranks the candidates and resets on
 every entry into `ONLINE`, so an agent that keeps reconnecting cannot out-rank a stable one.
+
+## Player heads
+
+`GET /api/avatars/{name-or-uuid}` returns a Minecraft head, fetched from a skin service and cached
+in memory. The frontend renders one for every agent, nearby player and chat line.
+
+It exists so the browser never talks to the skin service. The SPA's CSP is `img-src 'self' data:`,
+and widening it to a third-party image host would punch a hole in the layer that actually contains
+an XSS — the access token lives in `localStorage`. Proxying keeps every image same-origin, and it
+also keeps which agents exist, and how often somebody is looking at them, inside the deployment.
+
+It is gated on `fleet.read`, like every other route — a head only ever appears beside agents, chat
+or hosts, all of which already need that node. That costs the frontend the obvious implementation:
+an `<img>` cannot send an `Authorization` header and the token is not a cookie, so the SPA fetches
+each head itself and hands the element a blob URL. The alternative was leaving the route open on the
+grounds that a public Minecraft skin is not a secret — true, and it still leaves Osmium making
+outbound requests on behalf of anyone who can reach it.
+
+That last point is the abuse worth caring about, and the node alone does not answer it, so
+`AvatarService` carries three guards:
+
+- **The identifier is validated, not sanitised.** It is interpolated into a URL, so anything that is
+  not plainly a Minecraft username or a UUID is refused rather than escaped. That is what keeps the
+  proxy pointed where it was configured.
+- **Misses are cached too**, on a shorter clock than hits — otherwise a name with no skin is a fresh
+  upstream request on every page render, and a skin service having a bad minute is not a reason to
+  blank a player out for the rest of the day.
+- **Concurrent upstream fetches are capped**, so one caller cannot turn into a flood aimed at the
+  skin service or exhaust Osmium's own connections doing it.
+
+An over-long body is refused from the response headers rather than after buffering it, and a
+response that is not an image is discarded. Setting `osmium.avatar.upstream` blank disables the
+whole thing; the frontend falls back to initials, and nothing else changes.
 
 ## Schema migrations
 
@@ -589,7 +633,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-218 tests across 17 classes. Most run against a real Postgres 18 through Testcontainers with
+231 tests across 18 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
@@ -605,7 +649,10 @@ composite index in that order, so paging deep costs the same as the first page.
   seconds to pass would be slow and flaky, so those never touch the container.
 
 No mocking library. The suite runs against real things — a real database, a real socket, or a plain
-object with a clock injected — which is why a fake `WebSocketSession` does not appear anywhere.
+object with a clock injected — which is why a fake `WebSocketSession` does not appear anywhere. The
+avatar proxy follows the same line: `AvatarControllerTest` runs a small HTTP server as the skin
+service and counts what it was asked for, because a cache that is not observed preventing a second
+request has not been tested.
 
 ## Docker image
 

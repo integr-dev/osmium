@@ -9,14 +9,15 @@ import {
   settingLabel,
   SETTING_GROUPS,
   type AgentSettings,
-} from '../lib/agentSettings'
+} from '../lib/configuration'
+import PlayerHead from '../components/PlayerHead.vue'
 import { STATE_DOT, stateLabel } from '../lib/agentState'
 import { useAgentStore } from '../stores/agents'
 
 /**
  * Remote configuration: pick agents on the left, edit on the right.
  *
- * **The settings themselves are mock** — see `src/lib/agentSettings.ts`. The screen is real so the
+ * **The settings themselves are mock** — see `src/lib/configuration.ts`. The screen is real so the
  * interaction can be argued about before the wire format is settled; nothing here reaches a host.
  *
  * The fields render from a declared schema rather than from markup per setting, so adding one is an
@@ -96,8 +97,8 @@ async function update() {
     original.value = { ...settings.value }
     saved.value =
       applyTo.length === 1
-        ? t('agentSettings.updated', { name: applyTo[0].label })
-        : t('agentSettings.updatedMany', { count: applyTo.length })
+        ? t('configuration.updated', { name: applyTo[0].label })
+        : t('configuration.updatedMany', { count: applyTo.length })
   } finally {
     busy.value = false
   }
@@ -107,13 +108,13 @@ async function update() {
 <template>
   <div class="mx-auto flex max-w-6xl flex-col gap-6">
     <header>
-      <h1 class="text-2xl font-semibold tracking-tight">{{ t('agentSettings.title') }}</h1>
-      <p class="text-sm opacity-60">{{ t('agentSettings.subtitle') }}</p>
+      <h1 class="text-2xl font-semibold tracking-tight">{{ t('configuration.title') }}</h1>
+      <p class="text-sm opacity-60">{{ t('configuration.subtitle') }}</p>
     </header>
 
     <div role="alert" class="alert alert-warning alert-soft">
       <TriangleAlert class="size-4" />
-      <span>{{ t('agentSettings.mock') }}</span>
+      <span>{{ t('configuration.mock') }}</span>
     </div>
 
     <div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
@@ -123,10 +124,10 @@ async function update() {
           <div class="flex items-center justify-between">
             <h2 class="card-title flex items-center gap-2 text-base">
               <Agent class="text-primary size-4" />
-              {{ t('agentSettings.agents') }}
+              {{ t('configuration.agents') }}
             </h2>
             <span v-if="selected.length" class="badge badge-sm">
-              {{ t('agentSettings.selected', { count: selected.length }) }}
+              {{ t('configuration.selected', { count: selected.length }) }}
             </span>
           </div>
 
@@ -140,7 +141,7 @@ async function update() {
               :checked="allSelected"
               @change="toggleAll"
             />
-            <span class="opacity-70">{{ t('agentSettings.selectAll') }}</span>
+            <span class="opacity-70">{{ t('configuration.selectAll') }}</span>
           </label>
 
           <ul class="flex flex-col gap-0.5">
@@ -149,18 +150,20 @@ async function update() {
                 class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5"
               >
                 <input v-model="selected" type="checkbox" :value="agent.id" class="checkbox checkbox-sm" />
-                <span
-                  class="size-2 shrink-0 rounded-full"
-                  :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
-                  :title="stateLabel(agent.state)"
-                ></span>
+                <span class="relative shrink-0" :title="stateLabel(agent.state)">
+                  <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
+                  <span
+                    class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
+                    :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                  ></span>
+                </span>
                 <span class="min-w-0 flex-1 truncate text-sm">{{ agent.label }}</span>
               </label>
             </li>
           </ul>
 
           <p v-if="!agentStore.agents.length" class="px-2 py-4 text-center text-sm opacity-50">
-            {{ t('agentSettings.noAgents') }}
+            {{ t('configuration.noAgents') }}
           </p>
         </div>
       </div>
@@ -175,28 +178,42 @@ async function update() {
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h2 class="card-title flex items-center gap-2 text-base">
               <SlidersHorizontal class="text-primary size-4" />
-              {{ t('agentSettings.title') }}
+              {{ t('configuration.title') }}
             </h2>
             <!--
               Which agent the values came from is stated, not implied. Editing one agent's settings
               and pushing them to five is only safe if it is obvious whose they were.
             -->
             <span v-if="primary" class="text-xs opacity-60">
-              {{ t('agentSettings.valuesFrom', { name: primary.label }) }}
+              {{ t('configuration.valuesFrom', { name: primary.label }) }}
             </span>
             <span v-if="targets.length > 1" class="badge badge-warning badge-soft badge-sm ml-auto">
-              {{ t('agentSettings.appliesTo', { count: targets.length }, targets.length) }}
+              {{ t('configuration.appliesTo', { count: targets.length }, targets.length) }}
             </span>
           </div>
 
           <p v-if="!primary" class="py-10 text-center text-sm opacity-50">
-            {{ t('agentSettings.pickOne') }}
+            {{ t('configuration.pickOne') }}
           </p>
+
+          <!--
+            The form's shape is fixed and known before its values are, so the fields stand in for
+            themselves. A spinner here would collapse the panel and then push the page back open.
+          -->
+          <div v-else-if="!settings" class="flex flex-col gap-6">
+            <div v-for="group in SETTING_GROUPS" :key="group.key" class="flex flex-col gap-3">
+              <div class="skeleton h-3 w-24"></div>
+              <div v-for="field in group.fields" :key="field.key" class="flex items-center justify-between">
+                <div class="skeleton h-4 w-44"></div>
+                <div class="skeleton h-8 w-32"></div>
+              </div>
+            </div>
+          </div>
 
           <template v-else-if="settings">
             <div v-for="group in SETTING_GROUPS" :key="group.key" class="flex flex-col gap-3">
               <h3 class="text-xs font-semibold tracking-wide uppercase opacity-50">
-                {{ t(`agentSettings.group.${group.key}`) }}
+                {{ t(`configuration.group.${group.key}`) }}
               </h3>
 
               <div
@@ -231,7 +248,7 @@ async function update() {
             </div>
 
             <div class="border-base-300 flex items-center gap-3 border-t pt-4">
-              <span v-if="dirty" class="text-warning text-xs">{{ t('agentSettings.unsaved') }}</span>
+              <span v-if="dirty" class="text-warning text-xs">{{ t('configuration.unsaved') }}</span>
               <span v-else-if="saved" class="text-success flex items-center gap-1 text-xs">
                 <Check class="size-3.5" />
                 {{ saved }}
@@ -244,7 +261,7 @@ async function update() {
                 @click="reset"
               >
                 <RotateCcw class="size-4" />
-                {{ t('agentSettings.reset') }}
+                {{ t('configuration.reset') }}
               </button>
 
               <!--
@@ -260,7 +277,7 @@ async function update() {
                 @click="update"
               >
                 <SlidersHorizontal class="size-4" />
-                {{ busy ? t('agentSettings.updating') : t('agentSettings.update') }}
+                {{ busy ? t('configuration.updating') : t('configuration.update') }}
               </button>
             </div>
           </template>

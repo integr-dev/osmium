@@ -392,6 +392,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/avatars/{identifier}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A player's head.
+         * @description Accepts a Minecraft username or UUID. Fetched from a skin service and cached, so no operator's browser talks to it directly.
+         */
+        get: operations["head"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/me": {
         parameters: {
             query?: never;
@@ -626,6 +646,8 @@ export interface components {
              * @example 12.4
              */
             distance?: number;
+            /** @description Where the player is, when the host reported it. */
+            position?: components["schemas"]["PositionResponse"] | null;
             isAgent?: boolean;
         };
         /** @description A position in the world. */
@@ -1933,6 +1955,46 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ChatPageResponse"];
+                };
+            };
+        };
+    };
+    head: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identifier: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The head, as an image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Missing node `fleet.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description No head: unknown player, malformed identifier, upstream unavailable, or avatars disabled. The caller renders its own fallback either way. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
                 };
             };
         };

@@ -43,12 +43,14 @@ export const de: Copy = {
     openNavigation: 'Navigation öffnen',
     closeNavigation: 'Navigation schließen',
     dashboard: 'Übersicht',
+    map: 'Karte',
     hosts: 'Hosts',
     agents: 'Agenten',
     addAgent: 'Agent hinzufügen',
     myAccount: 'Mein Konto',
     allAccounts: 'Alle Konten',
-    agentSettings: 'Agenten-Einstellungen',
+    operations: 'Betrieb',
+    configuration: 'Konfiguration',
     auditLog: 'Audit-Log',
     logOut: 'Abmelden',
   },
@@ -195,8 +197,20 @@ export const de: Copy = {
     agentTag: 'Agent',
   },
 
-  agentSettings: {
-    title: 'Agenten-Einstellungen',
+  map: {
+    title: 'Karte',
+    subtitle: 'Wo die Flotte arbeitet.',
+    empty: 'Hier ist noch nichts.',
+  },
+
+  operations: {
+    title: 'Betrieb',
+    subtitle: 'Arbeit über die ganze Flotte hinweg ausführen.',
+    empty: 'Hier ist noch nichts.',
+  },
+
+  configuration: {
+    title: 'Konfiguration',
     subtitle: 'Agenten konfigurieren, ohne die Maschinen anzufassen, auf denen sie laufen.',
     agents: 'Agenten',
     selectAll: 'Alle auswählen',
