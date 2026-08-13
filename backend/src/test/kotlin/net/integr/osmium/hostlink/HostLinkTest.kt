@@ -126,6 +126,26 @@ class HostLinkTest {
         assertTrue(failure.isFailure, "the handshake should have been rejected")
     }
 
+    /**
+     * The refusal above only proves nothing upgraded — a client-side failure looks the same whatever
+     * the server answered, which is how these three shipped as **200**. The status is asserted
+     * directly instead, because a host told "OK" by a socket that never opens has nothing to go on.
+     */
+    @Test
+    fun `a handshake with no credentials answers 401`() {
+        assertEquals(401, handshake(null).statusCode.value())
+    }
+
+    @Test
+    fun `a handshake with a non-Bearer scheme answers 401`() {
+        assertEquals(401, handshake("Basic aG9zdDpzZWNyZXQ=").statusCode.value())
+    }
+
+    @Test
+    fun `a handshake with a wrong token answers 401`() {
+        assertEquals(401, handshake("Bearer osm_host_${host.id}_wrong").statusCode.value())
+    }
+
     @Test
     fun `a command reaches the host only while it is connected, and its result is applied`() {
         // No host yet: the command is undeliverable and must fail fast rather than queue.
@@ -200,6 +220,20 @@ class HostLinkTest {
         .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
         .contentType(MediaType.APPLICATION_JSON)
         .body("""{"method":"device_code"}""")
+        .exchange { _, response -> response }
+
+    /**
+     * The handshake driven over plain HTTP, so the status is readable — a WebSocket client only
+     * reports that the upgrade failed.
+     *
+     * No upgrade headers: the interceptor runs before the handshake handler validates them, so this
+     * reaches the same code either way, and `java.net.http` refuses to send `Connection` and
+     * `Upgrade` as a matter of policy.
+     */
+    private fun handshake(authorization: String?) = RestClient.create()
+        .get()
+        .uri("http://localhost:$port/ws/host")
+        .headers { headers -> authorization?.let { headers.set(HttpHeaders.AUTHORIZATION, it) } }
         .exchange { _, response -> response }
 
     private fun login(username: String, password: String): String {

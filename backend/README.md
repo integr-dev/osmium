@@ -216,6 +216,14 @@ That endpoint has **its own security filter chain**, deliberately without the re
 `permitAll` alone is not enough: the bearer-token filter would still try to authenticate a host
 token as a JWT and reject the handshake with 401.
 
+`HostHandshakeAuthenticator` is therefore the only gate, and a refused handshake answers **401** —
+which it has to set itself. Aborting a handshake stops the upgrade but does not choose a status, so
+without that the refusal went out as `200` with an empty body: the socket was correctly refused and
+the host was told the opposite. That is worst exactly where it is most likely, after a token
+rotation the host has not picked up yet, and anything watching from in front reads the 200 the same
+way. `HostLinkTest` asserts the status rather than only that the client failed, which is what let it
+ship — a client-side upgrade failure looks identical whatever the server answered.
+
 One socket per host multiplexes all its agents, so every message carries an `agentId`; there is no
 destination field, because the connection *is* the host. Commands are fire-and-forget and state
 advances when the host reports back — it is the source of truth about its own agents, and is trusted
@@ -633,7 +641,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-231 tests across 18 classes. Most run against a real Postgres 18 through Testcontainers with
+234 tests across 18 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
