@@ -76,6 +76,25 @@ export const router = createRouter({
   routes,
 })
 
+/**
+ * The `?redirect=` the guard below sets, read back only if it is a path inside this app.
+ *
+ * The value reaches the login screen from the query string, so anyone can put anything in it by
+ * handing out a link. vue-router neutralises most of it on its own — `javascript:alert(1)` and
+ * `https://evil.com` both resolve to paths under this origin rather than navigating anywhere — but
+ * **`//evil.com` survives intact**, and a leading `\` is read as `/` by browsers, so `/\evil.com`
+ * is the same trick spelled differently. `history.pushState` refuses a cross-origin URL, so the
+ * likely outcome is a failed navigation rather than a working open redirect; that is not a good
+ * enough reason to hand an attacker-controlled string to the router.
+ *
+ * Returns null for anything else, and the caller falls back to the dashboard.
+ */
+export function safeRedirect(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.startsWith('/')) return null
+  if (value.startsWith('//') || value.startsWith('/\\')) return null
+  return value
+}
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 

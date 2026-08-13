@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { router } from './index'
+import { router, safeRedirect } from './index'
 import { token } from '../api/token'
 import { respondWith } from '../test/http'
 
@@ -107,5 +107,36 @@ describe('route guard', () => {
     await router.push('/hosts')
 
     expect(router.currentRoute.value.name).toBe('hosts')
+  })
+})
+
+/**
+ * The value arrives from the query string, so anyone can put anything in it by handing out a link.
+ * vue-router neutralises most hostile forms by resolving them as paths under this origin; the ones
+ * that survive are what this guards.
+ */
+describe('safeRedirect', () => {
+  it('follows a path inside the app', () => {
+    expect(safeRedirect('/accounts')).toBe('/accounts')
+    expect(safeRedirect('/agents/4?tab=chat')).toBe('/agents/4?tab=chat')
+  })
+
+  it('refuses a protocol-relative URL, which vue-router passes through intact', () => {
+    expect(safeRedirect('//evil.com')).toBeNull()
+    // A browser reads the backslash as a slash, so this is the same trick spelled differently.
+    expect(safeRedirect('/\\evil.com')).toBeNull()
+  })
+
+  it('refuses anything that is not a path', () => {
+    expect(safeRedirect('https://evil.com/x')).toBeNull()
+    expect(safeRedirect('javascript:alert(1)')).toBeNull()
+    expect(safeRedirect('accounts')).toBeNull()
+  })
+
+  it('refuses a missing or repeated parameter', () => {
+    // vue-router hands back an array when the key appears twice.
+    expect(safeRedirect(['/a', '/b'])).toBeNull()
+    expect(safeRedirect(undefined)).toBeNull()
+    expect(safeRedirect(null)).toBeNull()
   })
 })

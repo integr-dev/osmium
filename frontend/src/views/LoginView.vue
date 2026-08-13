@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { safeRedirect } from '../router'
 import { CircleAlert, KeyRound, LogIn, UserRound } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
 import { useAuthStore } from '../stores/auth'
@@ -21,8 +22,9 @@ async function submit() {
   error.value = null
   try {
     await auth.login(username.value, password.value)
-    const redirect = route.query.redirect
-    await router.push(typeof redirect === 'string' ? redirect : { name: 'dashboard' })
+    // Anyone can put anything in ?redirect=, so it is only followed when it names a path in this
+    // app. See safeRedirect.
+    await router.push(safeRedirect(route.query.redirect) ?? { name: 'dashboard' })
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : t('errors.loginFailed')
   } finally {
