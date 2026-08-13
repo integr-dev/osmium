@@ -331,6 +331,11 @@ export const de: Copy = {
     passwordOptional: 'Leer lassen, um das bisherige Passwort zu behalten',
     changeRole: 'Rolle ändern',
     removeRoleHint: 'Entfernt alle Berechtigungen.',
+    passwordResetWarning: 'Ein neues Passwort beendet zugleich alle Sitzungen dieses Kontos.',
+    signOut: 'Überall abmelden',
+    signOutTitle: '{name} von allen Sitzungen abmelden?',
+    signOutWarning: 'Jeder Browser, der als {name} angemeldet ist, wird abgemeldet, und bereits erteilte Zugriffsrechte gelten sofort nicht mehr. Das Konto selbst bleibt bestehen und kann sich neu anmelden.',
+    signedOut: '{name} wurde überall abgemeldet.',
   },
 
   audit: {

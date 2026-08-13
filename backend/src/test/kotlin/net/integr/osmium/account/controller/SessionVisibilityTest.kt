@@ -15,6 +15,7 @@ import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
+import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -222,6 +223,96 @@ class SessionVisibilityTest : AbstractRestTest() {
 
         mockMvc.get("/api/auth/me") {
             header(HttpHeaders.AUTHORIZATION, bearer(token))
+        }.andExpect { status { isUnauthorized() } }
+    }
+
+    // ---- an administrator acting for somebody else ---------------------------------------------
+
+    /**
+     * The scenario this exists for: an operator's laptop is gone and they are not around to deal
+     * with it. Everything an administrator could do before was blunt — reset the password, or
+     * delete the account.
+     */
+    @Test
+    fun `an administrator can sign another account out of everything`() {
+        val ada = createUser(username = "ada", role = RoleNames.VIEWER)
+        val session = signIn("ada")
+        val adasToken = accessToken(session)
+
+        mockMvc.post("/api/users/${ada.id}/sessions/revoke-all") {
+            header(HttpHeaders.AUTHORIZATION, authAs("boss", RoleNames.ADMINISTRATOR))
+        }.andExpect { status { isNoContent() } }
+
+        mockMvc.post("/api/auth/refresh") {
+            cookie(refreshCookie(session))
+        }.andExpect { status { isUnauthorized() } }
+        mockMvc.get("/api/auth/me") {
+            header(HttpHeaders.AUTHORIZATION, bearer(adasToken))
+        }.andExpect { status { isUnauthorized() } }
+    }
+
+    @Test
+    fun `the account itself survives being signed out`() {
+        val ada = createUser(username = "ada", role = RoleNames.VIEWER)
+        signIn("ada")
+
+        mockMvc.post("/api/users/${ada.id}/sessions/revoke-all") {
+            header(HttpHeaders.AUTHORIZATION, authAs("boss", RoleNames.ADMINISTRATOR))
+        }
+
+        // The narrow version of a power administrators already had. They can still sign back in.
+        mockMvc.post("/api/auth/login") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"username":"ada","password":"$DEFAULT_PASSWORD"}"""
+        }.andExpect { status { isOk() } }
+    }
+
+    @Test
+    fun `an operator cannot sign anybody else out`() {
+        val ada = createUser(username = "ada", role = RoleNames.VIEWER)
+
+        mockMvc.post("/api/users/${ada.id}/sessions/revoke-all") {
+            header(HttpHeaders.AUTHORIZATION, authAs("nosy", RoleNames.ORCHESTRATOR))
+        }.andExpect { status { isForbidden() } }
+    }
+
+    @Test
+    fun `it names both the account and who did it`() {
+        val ada = createUser(username = "ada", role = RoleNames.VIEWER)
+
+        mockMvc.post("/api/users/${ada.id}/sessions/revoke-all") {
+            header(HttpHeaders.AUTHORIZATION, authAs("boss", RoleNames.ADMINISTRATOR))
+        }
+
+        val entry = auditEntryRepository.findAll().single { it.action == AuditAction.SESSION_REVOKED_ALL }
+        assertEquals("ada", entry.target)
+        assertEquals("boss", entry.account)
+    }
+
+    /**
+     * The gap this closed. Changing your own password already ended every session; an administrator
+     * resetting somebody else's did not — so the response to "their laptop was stolen" left the
+     * thief another twelve hours, while the administrator believed they had dealt with it.
+     */
+    @Test
+    fun `an administrator resetting a password ends the sessions it opened`() {
+        val ada = createUser(username = "ada", role = RoleNames.VIEWER)
+        val session = signIn("ada")
+        val adasToken = accessToken(session)
+
+        mockMvc.patch("/api/users/${ada.id}") {
+            header(HttpHeaders.AUTHORIZATION, authAs("boss", RoleNames.ADMINISTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            // The username is required by the DTO and unchanged here, so only the password moves -
+            // which is the case that matters. A rename would kill the tokens as a side effect.
+            content = """{"username":"ada","password":"reset-by-an-admin"}"""
+        }.andExpect { status { isOk() } }
+
+        mockMvc.post("/api/auth/refresh") {
+            cookie(refreshCookie(session))
+        }.andExpect { status { isUnauthorized() } }
+        mockMvc.get("/api/auth/me") {
+            header(HttpHeaders.AUTHORIZATION, bearer(adasToken))
         }.andExpect { status { isUnauthorized() } }
     }
 

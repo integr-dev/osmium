@@ -352,6 +352,12 @@ The address and browser on each row are only as good as the request that carried
 is the proxy's unless the deployment passes headers through, and a browser names itself — so the
 copy presents them as recognition aids rather than as evidence.
 
+**All accounts** gets a matching action for administrators, but only the button: sign an account out
+of everything, no list. Only the person holding a session can tell which one is theirs, so showing
+an administrator another operator's devices and addresses would trade privacy for data nobody in
+that seat can read. Setting a password there ends that account's sessions too, and the dialog says
+so before the fact rather than leaving it to be discovered.
+
 The refresh cookie is `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`. The narrow path means it
 is sent to the three session endpoints and to nothing else, so the long-lived credential is on the
 wire twice an hour rather than on every request — and `SameSite=Strict` is what stops another site

@@ -94,6 +94,32 @@ class UserController(private val userService: UserService) {
         actorUsername = authentication.name,
     )
 
+    /**
+     * On `user.edit` rather than a node of its own: an administrator holding it can already reset
+     * the password or delete the account, both of which lock the operator out harder than this
+     * does. This is the narrow version of a power they have, not a new one.
+     *
+     * There is deliberately no matching **read**. Only the person holding a session can tell which
+     * of them is theirs, so listing them for an administrator would trade another operator's
+     * addresses and devices for data nobody in that seat is able to interpret.
+     */
+    @PostMapping("/{id}/sessions/revoke-all")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasAuthority('user.edit')")
+    @Operation(
+        summary = "Sign an account out of every session.",
+        description = "Revokes every refresh token and every access token already issued to it, " +
+            "leaving the account itself alone. For when somebody's laptop is gone and they are not " +
+            "around to do it themselves.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "204", description = "Every session ended."),
+        ApiResponse(responseCode = "403", description = "Missing node `user.edit`."),
+        ApiResponse(responseCode = "404", description = "No such account."),
+    )
+    fun revokeSessions(@PathVariable id: Long, authentication: Authentication) =
+        userService.revokeSessions(id = id, actorUsername = authentication.name)
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @PreAuthorize("hasAuthority('user.delete')")

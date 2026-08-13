@@ -339,6 +339,11 @@ export const en = {
     passwordOptional: 'Leave blank to keep the current password',
     changeRole: 'Change role',
     removeRoleHint: 'Removes all permissions.',
+    passwordResetWarning: 'Setting a password also ends every session that account has.',
+    signOut: 'Sign out everywhere',
+    signOutTitle: 'Sign {name} out of every session?',
+    signOutWarning: 'Every browser signed in as {name} is signed out, and access already granted stops working immediately. The account itself is untouched and they can sign in again.',
+    signedOut: '{name} has been signed out everywhere.',
   },
 
   audit: {

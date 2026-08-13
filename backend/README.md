@@ -147,6 +147,7 @@ changes automatically.
 | `POST` | `/api/users` | `user.create` |
 | `PATCH` | `/api/users/me` | `user.edit.self` |
 | `PATCH` | `/api/users/{id}` | `user.edit` |
+| `POST` | `/api/users/{id}/sessions/revoke-all` | `user.edit` (ends that account's sessions; no matching read) |
 | `DELETE` | `/api/users/{id}` | `user.delete` |
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
@@ -260,6 +261,25 @@ in rejects the token just minted. A version has no such edge.
 
 Deleting or renaming an account still kills its tokens immediately, since the subject stops
 resolving. Stripping its role leaves the token authenticating but holding nothing.
+
+An **administrator can end somebody else's sessions** —
+`POST /api/users/{id}/sessions/revoke-all`, on `user.edit`. It is on that node rather than one of
+its own because it grants nothing new: anyone who can reset a password or delete an account can
+already lock that operator out, and both are blunter than this. It exists for "their laptop is gone
+and they are asleep", and is recorded with the administrator as the actor and the account as the
+target.
+
+Resetting somebody's password through `PATCH /api/users/{id}` **also** ends their sessions. It did
+not, originally, and that was a hole worth naming: changing your own password revoked everything,
+but an administrator resetting a compromised account's password left the thief the refresh cookie
+for the rest of its twelve hours and the access token for its half hour — while the administrator
+believed they had dealt with it.
+
+There is deliberately **no way for an administrator to list** another account's sessions. Only the
+person holding them can tell which is theirs; an administrator looking at a browser and an address
+has no way to judge which one is the intruder, so a list would hand over another operator's devices
+and locations in exchange for data nobody in that seat can interpret. `audit.read` sits outside the
+`fleet.*` tier for the same reason.
 
 `GET /api/auth/sessions` lists the live ones with the caller's marked, so an operator can recognise
 a session they do not. It records the client address and user agent — both only as good as the
@@ -736,7 +756,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-264 tests across 21 classes. Most run against a real Postgres 18 through Testcontainers with
+276 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
