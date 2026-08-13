@@ -98,6 +98,12 @@ export function safeRedirect(value: unknown): string | null {
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
+  // Before any decision about who this is. The access token lives in memory only, so on a reload
+  // there is none until the refresh cookie has been exchanged for one - and this guard runs during
+  // `app.use(router)`, ahead of anything the entry point does afterwards. Memoised, so it is one
+  // request per page load rather than one per navigation.
+  await auth.restore()
+
   if (to.meta.public) {
     return auth.isAuthenticated ? { name: 'dashboard' } : true
   }

@@ -9,7 +9,9 @@ server {
     #
     # CSP is strict on scripts: the Vite production build emits external, content-hashed JS, so no
     # inline script is needed and `script-src 'self'` blocks any injected <script> or inline handler.
-    # That is the layer that actually contains an XSS given the token lives in localStorage.
+    # That is the layer that actually contains an XSS. No credential is readable by script - the
+    # access token is in memory, the refresh token is an HttpOnly cookie - but a script on the page
+    # could still act as the operator, and this is what stops one running at all.
     #
     # style-src keeps 'unsafe-inline' because Vue :style bindings and Tailwind emit inline styles;
     # inline styles are a far weaker vector than inline scripts, which stay locked to 'self'.

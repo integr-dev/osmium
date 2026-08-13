@@ -17,6 +17,30 @@ describe('route guard', () => {
     await router.isReady()
   })
 
+  /**
+   * The reload case, and the reason the restore lives in the guard rather than in `main.ts`.
+   *
+   * vue-router begins its initial navigation inside `install()`, so anything the entry point awaits
+   * happens *after* this guard has already decided who the visitor is. Restoring there let a reload
+   * bounce an operator with a live session back to the password box, with the cookie sitting in the
+   * browser the whole time.
+   */
+  it('recovers a session from the refresh cookie before deciding the visitor is a stranger', async () => {
+    respondWith((call) =>
+      call.url.endsWith('/api/auth/refresh')
+        ? { body: { token: 'minted-from-cookie' } }
+        : { body: { id: 1, username: 'op', role: 'viewer', nodes: ['fleet.read'] } },
+    )
+    // A store that has not tried yet. The restore is memoised per page load, and the navigation in
+    // `beforeEach` above has already spent the previous store's one attempt.
+    setActivePinia(createPinia())
+
+    // No token, which is exactly what a reload starts with: the access token is memory-only.
+    await router.push('/hosts')
+
+    expect(router.currentRoute.value.name).toBe('hosts')
+  })
+
   it('sends a signed-out visitor to the login screen, remembering where they were going', async () => {
     await router.push('/accounts')
 

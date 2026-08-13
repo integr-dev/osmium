@@ -12,6 +12,7 @@ import {
   UserRound,
 } from 'lucide-vue-next'
 import { api, errorMessage, type RoleResponse } from '../api/client'
+import AccountSessions from '../components/AccountSessions.vue'
 import FormField from '../components/FormField.vue'
 import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
@@ -174,7 +175,7 @@ async function changePassword() {
             <li
               v-for="tier in tiers"
               :key="tier.name"
-              class="rounded-box flex items-start gap-3 border p-3 transition-colors"
+              class="rounded-box flex items-center gap-3 border p-3 transition-colors"
               :class="
                 tier.current
                   ? 'border-primary/50 bg-primary/5'
@@ -189,23 +190,15 @@ async function changePassword() {
               >
                 <component :is="roleIcon(tier.name)" class="size-4.5" />
               </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-medium capitalize">{{ tier.name }}</span>
-                  <span v-if="tier.current" class="badge badge-primary badge-xs">{{ t('account.current') }}</span>
-                  <span v-else-if="tier.held" class="text-xs opacity-50">{{ t('account.included') }}</span>
-                </div>
-                <div v-if="tier.nodes.length" class="mt-1.5 flex flex-wrap gap-1">
-                  <span
-                    v-for="node in tier.nodes"
-                    :key="node"
-                    class="badge badge-ghost badge-sm"
-                    :title="node"
-                  >
-                    {{ nodeLabel(node) }}
-                  </span>
-                </div>
-                <div v-else class="mt-1 text-xs opacity-50">{{ t('account.permissionsHidden') }}</div>
+              <!--
+                The tier and whether it is held, and nothing else. What the account can actually do
+                is the Permissions card below, and repeating every node inside each tier said the
+                same thing three times over — the administrator row alone listed twelve.
+              -->
+              <div class="flex min-w-0 flex-1 items-center gap-2">
+                <span class="font-medium capitalize">{{ tier.name }}</span>
+                <span v-if="tier.current" class="badge badge-primary badge-xs">{{ t('account.current') }}</span>
+                <span v-else-if="tier.held" class="text-xs opacity-50">{{ t('account.included') }}</span>
               </div>
             </li>
           </ul>
@@ -217,6 +210,8 @@ async function changePassword() {
         </div>
       </div>
     </div>
+
+    <AccountSessions />
 
     <div class="card border-base-300 bg-base-200 border">
       <div class="card-body gap-3">

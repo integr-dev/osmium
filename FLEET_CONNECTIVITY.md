@@ -505,12 +505,17 @@ not looking at.
 
 ### Four things that will bite
 
-**`EventSource` cannot set an `Authorization` header.** The access token is held in `localStorage`
-and sent as a Bearer header, which the browser's native SSE API has no way to do. Putting the token
-in the query string lands it in access logs and referrers; switching to cookies reintroduces CSRF.
-The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer pattern
-unchanged. A browser WebSocket has the same limitation and solves it differently, by authenticating
-in the first frame.
+**`EventSource` cannot set an `Authorization` header.** The access token is held in memory and sent
+as a Bearer header, which the browser's native SSE API has no way to do. Putting the token in the
+query string lands it in access logs and referrers; moving it to a cookie would reintroduce CSRF on
+every route, which is why the refresh cookie is scoped to `/api/auth` and the access token is not a
+cookie at all. The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer
+pattern unchanged. A browser WebSocket has the same limitation and solves it differently, by
+authenticating in the first frame.
+
+Two further reasons it stays hand-rolled now that a cookie does exist: `EventSource` never surfaces
+keep-alive comments to JavaScript, and the idle watchdog re-arms on them; and it retries forever,
+where this client gives up on a 403 that reconnecting cannot fix.
 
 **A long-lived stream breaks instant revocation.** Authorities resolve from the database on every
 REST request, so a demotion takes effect immediately — but a stream authorises once at subscribe and
@@ -869,10 +874,13 @@ standing right to read every other operator's actions, or the text they had an a
 
 - **Host host compromise means account compromise.** Encryption at rest does not help if the key
   is reachable from the same box. Contained, not eliminated.
-- **The frontend stores its access token in `localStorage`** (see `frontend/src/api/token.ts`).
-  Before this design ships, that raises the stakes of an XSS from "attacker reads the user table"
-  to "attacker drives Minecraft accounts and speaks as them". The CSP and the `v-html` lint ban move
-  from advisable to required.
+- **An XSS can still act as the operator.** No credential is readable by script any more — the
+  access token is in memory, the refresh token is an `HttpOnly` cookie (see
+  `frontend/src/api/token.ts` and `session.ts`) — so a session can no longer be carried off the
+  machine and used later. But a script on the page can call the API, and call refresh, for as long
+  as the tab is open. Once this design ships that is the difference between "attacker reads the user
+  table" and "attacker drives Minecraft accounts and speaks as them", so the CSP and the `v-html`
+  lint ban are required rather than advisable: they are what stops a script running at all.
 - **Automation is against the spirit of Microsoft's terms.** Use alternate accounts that can be
   lost, not anyone's main.
 - **Break-glass revocation** is the account owner's Microsoft security page, which kills all

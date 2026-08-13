@@ -71,10 +71,14 @@ panel.
 ## Live updates
 
 `src/api/liveUpdates.ts` is a small fetch-based SSE client. The browser's native `EventSource`
-cannot set an `Authorization` header, and the token is a Bearer token — putting it in the query string would
-land it in access logs and referrers, and cookies would reintroduce CSRF. Reading the stream from a
-`fetch` body keeps the Bearer pattern unchanged. The cost is that reconnection is ours to write, so
-it backs off from 1s to 30s and gives up entirely on 401 or 403, which retrying cannot fix.
+cannot set an `Authorization` header, and the access token is a Bearer token — putting it in the
+query string would land it in access logs and referrers, and moving it to a cookie would reintroduce
+CSRF on every route. Reading the stream from a `fetch` body keeps the Bearer pattern unchanged. The
+cost is that reconnection is ours to write, so it backs off from 1s to 30s.
+
+A **401 is retried once** after a refresh. The token is checked when the request arrives and never
+again, so a stream outlives its own access token and only discovers it on the next connect — that is
+routine, not an expiry. A second 401, or a 403, is not fixed by reconnecting and stops the loop.
 
 `AppLayout` holds one stream open for the session. Events land in the store's `applyEvent`, which is
 the seam between transport and state — exported so the ingest is testable without a socket.
@@ -121,9 +125,9 @@ over only the rows already fetched would search the newest hundred of a thirty-d
 ### Exporting the audit log
 
 `src/api/auditExport.ts` is deliberately not built on the generated client: openapi-fetch parses
-the body, which is the point of it everywhere else and exactly wrong for an attachment. The token is
-a header, so the browser cannot simply be navigated to the URL — the blob is assembled and handed to
-a synthetic anchor instead.
+the body, which is the point of it everywhere else and exactly wrong for an attachment. The access
+token is a header, so the browser cannot simply be navigated to the URL — the blob is assembled and
+handed to a synthetic anchor instead.
 
 The pickers hold a **day**, not an instant, and each is converted to the matching local instant
 before it is sent. `toISOString` on a picked date would shift the day for anyone not on UTC, and the
@@ -289,7 +293,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-113 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+127 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
@@ -305,11 +309,21 @@ never be seen. Tests declare responses through `respondWith` and inspect what wa
 
 ## Security posture
 
-The access token lives in **`localStorage`**. That is a deliberate trade: it survives a reload, but
-an XSS would expose a token valid for its full TTL. There are no refresh tokens, so the alternative
-was re-authenticating on every reload.
+**No credential is readable by script.** The access token lives in a module-scoped ref and is never
+written to storage; the refresh token is an `HttpOnly` cookie this code could not read if it tried.
+A reload therefore starts with no access token, and `src/api/session.ts` mints a fresh one from the
+cookie. That happens in the **route guard**, not in `main.ts`: vue-router begins its initial
+navigation inside `install()` — the `app.use(router)` line — so anything the entry point awaits runs
+after the guard has already decided who the visitor is. Restoring there let a reload bounce an
+operator with a live session back to the password box while the cookie sat in the browser the whole
+time. `restore()` is memoised, so it costs one request per page load rather than one per navigation.
 
-Two mitigations carry that decision, and both matter more once real agent credentials are in play:
+Be clear about what that buys. An XSS on an open page can still call the API as the operator, and
+can call refresh itself; moving the credential out of reach shortens what an attacker keeps **after
+the tab closes**, it does not stop them acting inside it. The layer that stops a script running at
+all is still the CSP.
+
+Two things carry that, and both matter more once real agent credentials are in play:
 
 - **A strict CSP** — `script-src 'self'` with no `unsafe-inline`, so an injected script simply does
   not execute. See `nginx.conf.template`.
@@ -328,12 +342,28 @@ than adding to it, which would silently drop every header for that path. The cac
 locations use `expires` and `proxy_set_header` for exactly that reason. Verified against a running
 container: the policy ships on `/`, on `/assets/` and on the SPA fallback alike.
 
-What none of that stops is an XSS **using** the session rather than stealing the token — script on
-the page can make authenticated requests whatever holds the credential. Moving to an `httpOnly`
-cookie would remove the token from reach of JavaScript, and would incidentally delete the reason
-`src/api/liveUpdates.ts`, `src/lib/avatars.ts` and `src/api/auditExport.ts` are hand-rolled: all
-three exist only because `EventSource`, `<img>` and navigation cannot send a header. It has not been
-done, and it would need CSRF handling.
+**My account lists the live sessions** (`AccountSessions.vue`), with this browser's marked, and can
+end any one of them or all of them. "Sign out everywhere" deliberately ends the current session too:
+somebody pressing it believes they are compromised, and the version that spares the current session
+spares the attacker's if the attacker is the one pressing it. It clears the local session whatever
+the request returns, for the same reason.
+
+The address and browser on each row are only as good as the request that carried them — an address
+is the proxy's unless the deployment passes headers through, and a browser names itself — so the
+copy presents them as recognition aids rather than as evidence.
+
+The refresh cookie is `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`. The narrow path means it
+is sent to the three session endpoints and to nothing else, so the long-lived credential is on the
+wire twice an hour rather than on every request — and `SameSite=Strict` is what stops another site
+POSTing to `refresh` or `logout` from an operator's browser, since those are authenticated by the
+cookie alone.
+
+`liveUpdates.ts`, `avatars.ts` and `auditExport.ts` stay hand-rolled. They exist because
+`EventSource`, `<img>` and navigation cannot send a header, and the **access** token is still a
+header — moving it to a cookie as well would reintroduce CSRF on every route. Native `EventSource`
+would also be a downgrade for its own reasons: it never surfaces keep-alive comments, which is what
+the idle watchdog re-arms on, and it retries forever, where this client deliberately gives up on a
+403.
 
 `?redirect=` on the login screen is the one piece of URL a visitor controls. vue-router neutralises
 most hostile values by resolving them as paths under this origin, but `//evil.com` survives intact,

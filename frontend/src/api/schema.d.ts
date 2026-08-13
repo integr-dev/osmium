@@ -83,6 +83,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sessions/revoke-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign out of every session, everywhere.
+         * @description Revokes every refresh token **and** every access token already issued — the latter is what a password change alone did not do.
+         */
+        post: operations["revokeAllSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a new access token from the refresh cookie.
+         * @description Rotates: the presented token is spent and a successor replaces the cookie. The session expiry does not move, so refreshing cannot extend a session past its login.
+         */
+        post: operations["refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/password": {
         parameters: {
             query?: never;
@@ -103,6 +143,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End the current session.
+         * @description Revokes the refresh token and every successor of it, then clears the cookie.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/login": {
         parameters: {
             query?: never;
@@ -112,7 +172,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exchange credentials for an access token. */
+        /**
+         * Exchange credentials for a session.
+         * @description The access token comes back in the body, for the caller to hold in memory. The refresh token is set as an HttpOnly cookie and never reaches JavaScript.
+         */
         post: operations["login"];
         delete?: never;
         options?: never;
@@ -412,6 +475,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The account's own live sessions.
+         * @description Only the tip of each rotation chain, with the caller's own marked. The address is only meaningful where the deployment's proxy headers are trusted, and the user agent is self-declared by the browser.
+         */
+        get: operations["sessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/me": {
         parameters: {
             query?: never;
@@ -507,6 +590,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * End one of your own sessions.
+         * @description Ending the current one leaves this browser signed out at the next refresh.
+         */
+        delete: operations["endSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -559,6 +662,13 @@ export interface components {
             /** Format: int64 */
             agentCount?: number;
         };
+        /** @description A freshly issued access token. */
+        LoginResponse: {
+            /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
+            token?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
         /** @description Rotates the password of the authenticated account. */
         PasswordChangeRequest: {
             currentPassword: string;
@@ -570,13 +680,6 @@ export interface components {
             username: string;
             /** @example admin */
             password: string;
-        };
-        /** @description A freshly issued access token. */
-        LoginResponse: {
-            /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
-            token?: string;
-            /** Format: date-time */
-            expiresAt?: string;
         };
         /** @description Creates an agent slot. Nothing has touched Minecraft at this point. */
         CreateAgentRequest: {
@@ -719,6 +822,30 @@ export interface components {
             items?: components["schemas"]["ChatMessageResponse"][];
             nextCursor?: string | null;
         };
+        /** @description One live session. Only the tip of each rotation chain is listed — a spent token is a step in a chain, not something an operator would recognise. */
+        SessionResponse: {
+            /** Format: int64 */
+            id?: number;
+            /**
+             * Format: date-time
+             * @description When this link in the chain was issued.
+             */
+            startedAt?: string;
+            /**
+             * Format: date-time
+             * @description When the session ends regardless of use. Refreshing does not move it.
+             */
+            expiresAt?: string;
+            /**
+             * @description Where it was last seen from, or null when the request carried nothing usable. Only meaningful where the deployment's proxy headers are trusted.
+             * @example 203.0.113.7
+             */
+            clientIp?: string | null;
+            /** @description Self-declared by the browser, and not evidence of anything. */
+            userAgent?: string | null;
+            /** @description True for the session making this request - the one not to end by accident. */
+            current?: boolean;
+        };
         /** @description One operator action: who did what, to which agent or host. */
         AuditEntryResponse: {
             /** Format: int64 */
@@ -727,7 +854,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL";
             target?: string;
             detail?: string | null;
         };
@@ -1027,6 +1154,55 @@ export interface operations {
             };
         };
     };
+    revokeAllSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                osmium_refresh?: string;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A new access token, and a rotated cookie. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description No cookie, or a token that is unknown, expired, revoked or replayed. A replay revokes every session descended from that login. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LoginResponse"];
+                };
+            };
+        };
+    };
     changePassword: {
         parameters: {
             query?: never;
@@ -1063,6 +1239,26 @@ export interface operations {
             };
         };
     };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                osmium_refresh?: string;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session ended, cookie cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -1076,7 +1272,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Token issued. */
+            /** @description Session started. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1999,6 +2195,37 @@ export interface operations {
             };
         };
     };
+    sessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                osmium_refresh?: string;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live sessions, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SessionResponse"][];
+                };
+            };
+            /** @description Missing or invalid token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SessionResponse"][];
+                };
+            };
+        };
+    };
     me: {
         parameters: {
             query?: never;
@@ -2167,6 +2394,33 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["ActivityPageResponse"];
                 };
+            };
+        };
+    };
+    endSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such session **for this account**. Another operator's session is reported the same way as one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -1,17 +1,19 @@
-import { ref, watch } from 'vue'
-
-const STORAGE_KEY = 'osmium.token'
+import { ref } from 'vue'
 
 /**
- * The access token, persisted so a reload does not log the user out.
+ * The access token — **in memory only, never persisted**.
  *
- * Deliberate tradeoff: localStorage survives reloads, but an XSS bug would expose a token valid
- * for its full TTL. The backend issues no refresh tokens, so the alternative was re-authenticating
- * on every reload. No CSP or lint guard is configured yet - both are still outstanding.
+ * It used to live in `localStorage`, which survived a reload at the cost of being readable by any
+ * script that got a foothold: an XSS could take the token off the machine and use it elsewhere for
+ * its full lifetime. Nothing here is written to storage, so there is nothing on disk to steal and
+ * nothing left behind on a shared machine.
+ *
+ * A reload therefore starts with no token. `src/api/session.ts` gets one back from the refresh
+ * cookie before the app renders — that cookie is `HttpOnly`, so this module could not read it even
+ * if it wanted to, which is the entire point.
+ *
+ * What this does **not** buy: an XSS on an open page can still call the API as the user, and can
+ * call refresh itself. Moving the credential out of reach shortens what an attacker keeps after
+ * the tab closes; it does not stop them acting inside it.
  */
-export const token = ref<string | null>(localStorage.getItem(STORAGE_KEY))
-
-watch(token, (value) => {
-  if (value) localStorage.setItem(STORAGE_KEY, value)
-  else localStorage.removeItem(STORAGE_KEY)
-})
+export const token = ref<string | null>(null)

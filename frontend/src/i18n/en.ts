@@ -269,7 +269,6 @@ export const en = {
     role: 'Role',
     noRole: 'No role',
     permissions: 'Permissions',
-    permissionsHidden: 'You do not have permission to view this.',
     noPermissions: 'This account has no permissions.',
     current: 'current',
     included: 'included',
@@ -285,7 +284,30 @@ export const en = {
     confirmPassword: 'Confirm new password',
     confirmPlaceholder: 'Repeat the new password',
     passwordHint: 'Requires your current password. 4–72 characters.',
-    passwordChanged: 'Password changed.',
+    passwordChanged: 'Password changed. Every other session has been signed out.',
+  },
+
+  /**
+   * Deliberately plain about what these values are worth. An address is only the operator's if the
+   * deployment is set up to pass it through, and a browser names itself — neither is evidence, and
+   * copy that implied otherwise would invite someone to conclude too much from a row.
+   */
+  sessions: {
+    title: 'Signed in on',
+    hint: 'Where this account is signed in. A session ends 12 hours after it began, however much it is used.',
+    none: 'No other sessions.',
+    thisDevice: 'This device',
+    startedAt: 'Signed in {when}',
+    endsAt: 'Ends {when}',
+    unknownDevice: 'Unknown browser',
+    unknownAddress: 'Address not recorded',
+    end: 'Sign out',
+    ending: 'Signing out…',
+    endAll: 'Sign out everywhere',
+    endAllHint: 'Ends every session including this one, and immediately invalidates access already granted. Use this if you think someone else has your session.',
+    endAllConfirm: 'Sign out of every session?',
+    endAllWarning: 'Every browser signed in as you is signed out, this one included. You will need to sign in again.',
+    failed: 'Could not end that session.',
   },
 
   accounts: {
@@ -387,6 +409,8 @@ export const en = {
     USER_ROLE_CHANGE: 'Role changed',
     USER_PASSWORD_CHANGE: 'Password changed',
     AUDIT_EXPORT: 'Log exported',
+    SESSION_REUSE_DETECTED: 'Session token replayed',
+    SESSION_REVOKED_ALL: 'Signed out everywhere',
   },
 
   /**
@@ -418,6 +442,7 @@ export const en = {
   },
 
   errors: {
+    loadSessions: 'Could not load your sessions.',
     generic: 'Something went wrong.',
     unreachable: 'Cannot reach Osmium',
     invalidCredentials: 'Incorrect username or password.',

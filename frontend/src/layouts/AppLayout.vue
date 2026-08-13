@@ -78,10 +78,12 @@ onMounted(() => {
 
 onUnmounted(() => agentStore.disconnectLiveUpdates())
 
-function logout() {
+async function logout() {
   // Closed before the token is dropped, so the stream does not reconnect with a dead credential.
   agentStore.disconnectLiveUpdates()
-  auth.logout()
+  // Awaited: this revokes the refresh token at the backend, and leaving before it lands would let
+  // the cookie outlive the logout.
+  await auth.logout()
   void router.push({ name: 'login' })
 }
 </script>

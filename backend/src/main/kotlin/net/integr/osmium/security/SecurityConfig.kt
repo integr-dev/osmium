@@ -69,6 +69,11 @@ class SecurityConfig(
         .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
         .authorizeHttpRequests {
             it.requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+            // Both are authenticated by the refresh cookie rather than by a Bearer token, and
+            // requiring one here would defeat the point: refresh exists for the moment the access
+            // token has expired, and a logout must work from a session that is already gone.
+            it.requestMatchers(HttpMethod.POST, "/api/auth/refresh").permitAll()
+            it.requestMatchers(HttpMethod.POST, "/api/auth/logout").permitAll()
             it.requestMatchers(*OPENAPI_PATHS).permitAll()
             // Everything else is gated by @PreAuthorize on a permission node, except
             // POST /api/auth/password which any authenticated account may call for itself.

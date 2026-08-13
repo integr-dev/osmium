@@ -30,10 +30,11 @@ class AvatarController(
      * one of them.
      *
      * That costs the frontend the obvious implementation. An `<img>` cannot send an `Authorization`
-     * header and Osmium's token is in `localStorage` rather than a cookie, so the SPA fetches each
-     * head itself and hands the `<img>` a blob — see `src/lib/avatars.ts`. The alternative was
-     * leaving this endpoint open on the grounds that a public Minecraft skin is not a secret, which
-     * is true and still makes the fleet's outbound requests answerable to nobody.
+     * header, and the access token is not a cookie — the only cookie in this app is the refresh
+     * token, scoped to `/api/auth` — so the SPA fetches each head itself and hands the `<img>` a
+     * blob; see `src/lib/avatars.ts`. The alternative was leaving this endpoint open on the grounds
+     * that a public Minecraft skin is not a secret, which is true and still makes the fleet's
+     * outbound requests answerable to nobody.
      */
     // No `produces`: the content type is whatever the skin service sent, and pinning it to PNG here
     // would turn a JPEG upstream into a 406 rather than into a head.

@@ -7,9 +7,9 @@ import java.time.Duration
  * The Minecraft avatar proxy.
  *
  * Osmium fetches player heads itself rather than letting the browser do it. The frontend's CSP is
- * `img-src 'self' data:`, and widening it to a third-party image host would punch a hole in the one
- * layer that actually contains an XSS given the token lives in `localStorage`. Proxying keeps every
- * image same-origin, so the policy stays as narrow as it is.
+ * `img-src 'self' data: blob:`, and widening it to a third-party image host would punch a hole in
+ * the one layer that actually contains an XSS. Proxying keeps every image same-origin, so the
+ * policy stays as narrow as it is.
  *
  * It also means the operator's browsers never talk to the skin service. Which agents exist, and how
  * often somebody is looking at them, stays inside the deployment.

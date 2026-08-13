@@ -1,12 +1,16 @@
+import { apiBaseUrl } from './base'
+import { refreshSession } from './session'
 import { token } from './token'
 
 /**
  * A minimal server-sent-events client built on `fetch`.
  *
  * The browser's native `EventSource` cannot set an `Authorization` header, and the access token is
- * a Bearer token. Putting it in the query string would land it in access logs and referrers, and
- * moving to cookies would reintroduce CSRF — so the stream is read from a `fetch` body instead,
- * which keeps the Bearer pattern unchanged. See FLEET_CONNECTIVITY.md.
+ * a Bearer token. Putting it in the query string would land it in access logs and referrers, so the
+ * stream is read from a `fetch` body instead. The refresh token is a cookie now, but the access
+ * token is not and will not be — `EventSource` also swallows keep-alive comments and retries
+ * forever, and this client depends on seeing the first and refusing the second.
+ * See FLEET_CONNECTIVITY.md.
  */
 export interface LiveUpdateHandlers {
   /** Called per event, with the SSE `event:` name and the parsed `data:` payload. */
@@ -61,6 +65,17 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
     watchdog = setTimeout(() => attempt.abort(), IDLE_TIMEOUT_MS)
   }
 
+  /** Opens the stream with whatever access token is current. Read at call time, not captured. */
+  function open(attempt: AbortController): Promise<Response> {
+    return fetch(`${apiBaseUrl}${path}`, {
+      headers: {
+        Accept: 'text/event-stream',
+        ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
+      },
+      signal: attempt.signal,
+    })
+  }
+
   async function connect(): Promise<void> {
     if (closed) return
 
@@ -70,17 +85,18 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
     controller = attempt
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}${path}`, {
-        headers: {
-          Accept: 'text/event-stream',
-          ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
-        },
-        signal: attempt.signal,
-      })
+      let response = await open(attempt)
 
-      // A 401 or 403 will not fix itself by retrying: the session is gone or the account lost the
-      // node. Give up and let the next REST call drive the user back to the login screen.
+      // A 401 here is usually just an access token that aged out. The token is checked when the
+      // request arrives and never again, so a stream outlives its own token and only finds out on
+      // the next connect. One refresh, one retry.
+      if (response.status === 401 && (await refreshSession())) response = await open(attempt)
+
+      // Still refused. A 403 means the account lost the node and a second 401 means the session is
+      // genuinely over; neither is fixed by reconnecting, so give up and let the next REST call
+      // drive the user back to the login screen.
       if (response.status === 401 || response.status === 403) return
+
       if (!response.ok || !response.body) throw new Error(`Stream failed: ${response.status}`)
 
       retryMs = BASE_RETRY_MS

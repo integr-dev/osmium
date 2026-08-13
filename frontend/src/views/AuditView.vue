@@ -9,6 +9,8 @@ import {
   Power,
   ScrollText,
   Server,
+  ShieldAlert,
+  ShieldCheck,
   SquarePen,
   Trash2,
   TriangleAlert,
@@ -57,6 +59,8 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
   USER_ROLE_CHANGE: Users,
   USER_PASSWORD_CHANGE: KeyRound,
   AUDIT_EXPORT: Download,
+  SESSION_REUSE_DETECTED: ShieldAlert,
+  SESSION_REVOKED_ALL: ShieldCheck,
 }
 
 /**
@@ -83,6 +87,11 @@ const ACTION_BADGE: Record<AuditAction, string> = {
   USER_PASSWORD_CHANGE: 'badge-warning badge-soft',
   // Red: a copy of the trail left the system, and nothing here can see it again.
   AUDIT_EXPORT: 'badge-error badge-soft',
+  // Red, and the only entry here that nobody chose to cause: a session token was presented twice,
+  // which means a copy of it exists somewhere it should not.
+  SESSION_REUSE_DETECTED: 'badge-error badge-soft',
+  // Not an incident: somebody deliberately ending their own sessions, which is the response to one.
+  SESSION_REVOKED_ALL: 'badge-warning badge-soft',
 }
 
 

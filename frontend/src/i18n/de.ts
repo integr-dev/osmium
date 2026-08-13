@@ -266,7 +266,6 @@ export const de: Copy = {
     role: 'Rolle',
     noRole: 'Keine Rolle',
     permissions: 'Berechtigungen',
-    permissionsHidden: 'Ihnen fehlt die Berechtigung, dies zu sehen.',
     noPermissions: 'Dieses Konto hat keine Berechtigungen.',
     current: 'aktuell',
     included: 'enthalten',
@@ -282,7 +281,25 @@ export const de: Copy = {
     confirmPassword: 'Neues Passwort bestätigen',
     confirmPlaceholder: 'Neues Passwort wiederholen',
     passwordHint: 'Erfordert Ihr aktuelles Passwort. 4–72 Zeichen.',
-    passwordChanged: 'Passwort geändert.',
+    passwordChanged: 'Passwort geändert. Alle anderen Sitzungen wurden abgemeldet.',
+  },
+
+  sessions: {
+    title: 'Angemeldet auf',
+    hint: 'Wo dieses Konto angemeldet ist. Eine Sitzung endet 12 Stunden nach dem Anmelden, unabhängig davon, wie viel Sie arbeiten.',
+    none: 'Keine weiteren Sitzungen.',
+    thisDevice: 'Dieses Gerät',
+    startedAt: 'Angemeldet {when}',
+    endsAt: 'Endet {when}',
+    unknownDevice: 'Unbekannter Browser',
+    unknownAddress: 'Adresse nicht erfasst',
+    end: 'Abmelden',
+    ending: 'Wird abgemeldet …',
+    endAll: 'Überall abmelden',
+    endAllHint: 'Beendet alle Sitzungen einschließlich dieser und entzieht sofort bereits erteilte Zugriffsrechte. Verwenden Sie dies, wenn Ihre Sitzung in fremde Hände geraten sein könnte.',
+    endAllConfirm: 'Von allen Sitzungen abmelden?',
+    endAllWarning: 'Jeder Browser, der als Sie angemeldet ist, wird abgemeldet — dieser eingeschlossen. Sie müssen sich danach neu anmelden.',
+    failed: 'Diese Sitzung konnte nicht beendet werden.',
   },
 
   accounts: {
@@ -379,6 +396,8 @@ export const de: Copy = {
     USER_ROLE_CHANGE: 'Rolle geändert',
     USER_PASSWORD_CHANGE: 'Passwort geändert',
     AUDIT_EXPORT: 'Log exportiert',
+    SESSION_REUSE_DETECTED: 'Sitzungstoken erneut vorgelegt',
+    SESSION_REVOKED_ALL: 'Überall abgemeldet',
   },
 
   permission: {
@@ -406,6 +425,7 @@ export const de: Copy = {
   },
 
   errors: {
+    loadSessions: 'Ihre Sitzungen konnten nicht geladen werden.',
     generic: 'Etwas ist schiefgelaufen.',
     unreachable: 'Osmium nicht erreichbar',
     invalidCredentials: 'Benutzername oder Passwort falsch.',

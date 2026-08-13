@@ -42,7 +42,9 @@ set to `osmium`.
 | Property | Env var | Default | Notes |
 |---|---|---|---|
 | `osmium.jwt.secret` | `OSMIUM_JWT_SECRET` | dev key in `application.properties` | HS256, needs ≥ 32 bytes |
-| `osmium.jwt.ttl` | `OSMIUM_JWT_TTL` | `1h` | access token lifetime |
+| `osmium.jwt.ttl` | `OSMIUM_JWT_TTL` | `30m` | access token lifetime, i.e. the interval between silent refreshes |
+| `osmium.jwt.refresh-ttl` | `OSMIUM_JWT_REFRESH_TTL` | `12h` | session length, from **login**; refreshing does not extend it |
+| `osmium.jwt.cookie-secure` | `OSMIUM_JWT_COOKIE_SECURE` | `true` (**`false` in `application.properties`**, for development) | `Secure` on the refresh cookie |
 | `osmium.bootstrap.username` | `OSMIUM_BOOTSTRAP_USERNAME` | `admin` | seeded account |
 | `osmium.bootstrap.password` | `OSMIUM_BOOTSTRAP_PASSWORD` | `admin` | seeded account |
 | `osmium.cors.origins` | `OSMIUM_CORS_ORIGINS` | empty | comma-separated exact origins for `/api/**` |
@@ -61,7 +63,14 @@ browser accepts that combination.
 > The committed JWT secret and the `admin`/`admin` bootstrap credentials are development defaults.
 > The bootstrap account is a full administrator from the first boot and **nothing forces a password
 > rotation**, so both must be overridden before the first boot of anything that is not local
-> development.
+> development. `osmium.jwt.cookie-secure` is the third of these: it ships `false` in
+> `application.properties` and must be `true` anywhere with TLS.
+
+A browser refuses a `Secure` cookie over plain HTTP unless the origin is `localhost` or `127.0.0.1`,
+and Safari refuses it even there. That is why development turns it off: reaching the dev server by
+LAN address, machine hostname or Safari otherwise makes the browser discard the refresh cookie
+silently — the `Set-Cookie` arrives, nothing stores it, and the session quietly lasts only as long
+as one access token.
 
 ## Authorization model
 
@@ -126,8 +135,13 @@ changes automatically.
 
 | Method | Path | Required node |
 |---|---|---|
-| `POST` | `/api/auth/login` | — (public) |
-| `POST` | `/api/auth/password` | authenticated (rotates your own password, requires the current one) |
+| `POST` | `/api/auth/login` | — (public; access token in the body, refresh token in a cookie) |
+| `POST` | `/api/auth/refresh` | — (the refresh cookie is the credential; rotates it) |
+| `POST` | `/api/auth/logout` | — (revokes the session family and clears the cookie) |
+| `GET` | `/api/auth/sessions` | `user.read.self` (own live sessions, caller's marked) |
+| `DELETE` | `/api/auth/sessions/{id}` | `user.read.self` (own only; another account's reads as 404) |
+| `POST` | `/api/auth/sessions/revoke-all` | `user.read.self` (every session **and** every access token) |
+| `POST` | `/api/auth/password` | authenticated (rotates your own password, requires the current one; revokes every session) |
 | `GET` | `/api/auth/me` | `user.read.self` |
 | `GET` | `/api/users` | `user.read` |
 | `POST` | `/api/users` | `user.create` |
@@ -185,6 +199,87 @@ curl -s -X POST localhost:8080/api/auth/login \
 Send it as `Authorization: Bearer <token>`.
 
 ## How authentication works
+
+A session is **two credentials, held in different places**.
+
+The **access token** is the JWT above, sent as `Authorization: Bearer`. It is short-lived — 30
+minutes — and the browser keeps it in memory only, so a reload loses it and nothing on disk holds
+it. The **refresh token** is an opaque 32-byte random value in an `HttpOnly` cookie scoped to
+`/api/auth`, which JavaScript cannot read and which is not sent on ordinary API calls at all.
+
+That split is the point: an XSS can act as the operator while the page is open, whatever holds the
+credential, but it cannot carry a session off the machine to use later.
+
+```
+POST /api/auth/login     → access token in the body, refresh token in a Set-Cookie
+POST /api/auth/refresh   → a new access token, and a rotated cookie
+POST /api/auth/logout    → revokes the family, clears the cookie
+```
+
+**Rotation is one-time.** Every refresh mints a successor and marks its predecessor spent, so a
+token is only ever valid once. The legitimate holder replaces its cookie and never presents the old
+value again — so a second presentation means a copy exists somewhere it should not. The answer is to
+revoke the whole *family*, every token descended from that login, because there is no way to tell
+whether the replay came from the thief or the victim. It is recorded as `SESSION_REUSE_DETECTED` in
+the audit trail, the one entry there that nobody chose to cause.
+
+That revocation commits in **its own transaction** (`SessionRevocation`, `REQUIRES_NEW`). Refusing
+the replay means throwing, and a throw rolls back the transaction it happened in — sharing one would
+undo the revocation and leave the stolen family alive, which is the single outcome the detection
+exists to prevent. Worth knowing because a test inside the suite's usual rolled-back transaction
+cannot see the difference: nothing commits there either way. `SessionRefreshTest` opts out for the
+reuse cases.
+
+**Sessions do not slide.** A successor inherits its predecessor's expiry unchanged, so a session
+ends a fixed span after the login that began it — `osmium.jwt.refresh-ttl`, 12 hours by default —
+however much it is used. Operators re-enter a password on that schedule whether or not they have
+been active. Changing a password revokes every session the account has, and deleting an account
+takes its sessions with it.
+
+### What an operator can do about a stolen session
+
+The two credentials need different answers, and the difference is worth knowing before an incident
+rather than during one.
+
+A **refresh token** is a stored row, so it can simply be revoked: logging out ends its family,
+`POST /api/auth/sessions/{id}` ends any one of the account's sessions, and rotation catches theft on
+its own as soon as both parties use it. The case rotation misses is an attacker who steals the
+cookie while the victim never refreshes again — no second presentation, so nothing fires. What
+bounds that is the fixed expiry, which no amount of rotating extends.
+
+An **access token** is a stateless JWT with nothing recording that it exists, so revoking one needs
+a comparison at authentication time. That is `users.token_version`: it is stamped into every token
+as the `ver` claim and checked on every request, so incrementing it refuses every token issued so
+far. `POST /api/auth/sessions/revoke-all` and a password change both do that, and both therefore
+close the whole session rather than only stopping renewal.
+
+It is a counter and not a "valid from" timestamp, which is what it was first written as. A JWT's
+`iat` is whole seconds, so a timestamp has to round, and both directions are wrong: round down and a
+token issued earlier in the same second survives the revocation, round up and signing straight back
+in rejects the token just minted. A version has no such edge.
+
+Deleting or renaming an account still kills its tokens immediately, since the subject stops
+resolving. Stripping its role leaves the token authenticating but holding nothing.
+
+`GET /api/auth/sessions` lists the live ones with the caller's marked, so an operator can recognise
+a session they do not. It records the client address and user agent — both only as good as the
+request that carried them, which is why the interface says so rather than presenting them as fact.
+
+**Behind a proxy that address is the proxy's**, unless something is configured. `getRemoteAddr()`
+returns whoever opened the connection, and in both supported deployments that is nginx — so every
+session would carry the same useless address. `server.forward-headers-strategy=native` installs
+Tomcat's `RemoteIpValve`, which rewrites the address from `X-Forwarded-For` **only when the peer is
+itself a private address**. A client on the internet forging that header is therefore ignored,
+because the connection did not come from a proxy. The same setting fixes the address the host socket
+records on connect, which had the identical problem.
+
+Refresh tokens are stored **hashed** (SHA-256), so a database dump yields no usable session. Not
+BCrypt: this is CSPRNG output rather than a password, so there is nothing to brute-force, no reason
+to pay a work factor on every refresh, and BCrypt would silently truncate at 72 bytes.
+
+`/api/auth/refresh` and `/api/auth/logout` are `permitAll`, because the cookie *is* the credential —
+requiring a Bearer token would defeat refresh, which exists precisely for when the access token has
+expired.
 
 The token carries only the subject — no permission claims. On every request
 `DatabaseJwtAuthenticationConverter` resolves the account's nodes from the database via a scalar
@@ -544,10 +639,10 @@ every entry into `ONLINE`, so an agent that keeps reconnecting cannot out-rank a
 `GET /api/avatars/{name-or-uuid}` returns a Minecraft head, fetched from a skin service and cached
 in memory. The frontend renders one for every agent, nearby player and chat line.
 
-It exists so the browser never talks to the skin service. The SPA's CSP is `img-src 'self' data:`,
-and widening it to a third-party image host would punch a hole in the layer that actually contains
-an XSS — the access token lives in `localStorage`. Proxying keeps every image same-origin, and it
-also keeps which agents exist, and how often somebody is looking at them, inside the deployment.
+It exists so the browser never talks to the skin service. The SPA's CSP is
+`img-src 'self' data: blob:`, and widening it to a third-party image host would punch a hole in the
+layer that actually contains an XSS. Proxying keeps every image same-origin, and it also keeps which
+agents exist, and how often somebody is looking at them, inside the deployment.
 
 It is gated on `fleet.read`, like every other route — a head only ever appears beside agents, chat
 or hosts, all of which already need that node. That costs the frontend the obvious implementation:
@@ -641,7 +736,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-234 tests across 18 classes. Most run against a real Postgres 18 through Testcontainers with
+264 tests across 21 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

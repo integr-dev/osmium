@@ -13,8 +13,15 @@ app.use(i18n)
 app.use(router)
 
 setUnauthorizedHandler(() => {
-  useAuthStore().logout()
+  void useAuthStore().logout()
   void router.push({ name: 'login' })
 })
 
+/**
+ * Resuming the session is the **route guard's** job, not this file's.
+ *
+ * `app.use(router)` above already started vue-router's initial navigation, so anything awaited here
+ * would land after the guard had already decided the operator was signed out. See
+ * `router.beforeEach`.
+ */
 app.mount('#app')

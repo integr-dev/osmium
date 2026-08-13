@@ -118,6 +118,7 @@ class UserService(
 
         val username = user.username
         val role = user.role?.name ?: "none"
+        // Sessions go with the account, by the cascade mapped on User.refreshTokens.
         userRepository.delete(user)
         auditService.record(
             action = AuditAction.USER_DELETE,

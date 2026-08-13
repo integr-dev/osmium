@@ -7,9 +7,10 @@ import config from '../../nginx.conf.template?raw'
  * The deployed security headers, pinned.
  *
  * `nginx.conf.template` is the **only** place these exist, and the Content-Security-Policy in it is
- * what the decision to keep the access token in `localStorage` leans on — see `src/api/token.ts`.
- * A policy that lives in one config file nobody checks is a mitigation on paper, so the shape of it
- * is asserted here rather than trusted.
+ * the layer that actually contains an XSS: no credential is readable by script any more, but a
+ * script on the page can still act as the operator for as long as the tab is open. A policy that
+ * lives in one config file nobody checks is a mitigation on paper, so its shape is asserted here
+ * rather than trusted.
  *
  * What this cannot check is that the bundle is served by nginx at all. That is a deployment
  * decision, recorded in the README: `dist/` on a static host has no CSP whatsoever, and no signal
