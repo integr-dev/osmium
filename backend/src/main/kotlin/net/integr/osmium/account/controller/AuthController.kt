@@ -130,6 +130,21 @@ class AuthController(
         authentication: Authentication,
     ) = authService.changePassword(username = authentication.name, request = request)
 
+    /**
+     * The only way the person a replay happened to ever hears about it. The trail records it behind
+     * `audit.read`, which reaches an administrator and not them.
+     */
+    @PostMapping("/session-alert/acknowledge")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasAuthority('user.read.self')")
+    @Operation(
+        summary = "Dismiss the replayed-session notice.",
+        description = "Marks it read. A later replay raises it again.",
+    )
+    @ApiResponses(ApiResponse(responseCode = "204", description = "Notice dismissed."))
+    fun acknowledgeSessionAlert(authentication: Authentication) =
+        authService.acknowledgeSessionAlert(authentication.name)
+
     @GetMapping("/sessions")
     @PreAuthorize("hasAuthority('user.read.self')")
     @Operation(

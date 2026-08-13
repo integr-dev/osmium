@@ -1,6 +1,7 @@
 package net.integr.osmium.account.service
 
 import net.integr.osmium.account.repository.RefreshTokenRepository
+import net.integr.osmium.account.repository.UserRepository
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.service.AuditService
 import org.slf4j.LoggerFactory
@@ -26,6 +27,7 @@ import java.util.UUID
 @Service
 class SessionRevocation(
     private val refreshTokenRepository: RefreshTokenRepository,
+    private val userRepository: UserRepository,
     private val auditService: AuditService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -39,5 +41,10 @@ class SessionRevocation(
             target = account,
             detail = "Replayed refresh token; $revoked session tokens revoked",
         )
+        // The trail reaches whoever holds `audit.read`, which is not the person this happened to.
+        // They have just been signed out with no explanation, so the notice waits on the account
+        // until they come back. Stamped after the bulk update above, which clears the persistence
+        // context and would otherwise discard this.
+        userRepository.findByUsername(account)?.sessionAlertAt = at
     }
 }

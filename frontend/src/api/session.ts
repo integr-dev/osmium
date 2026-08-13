@@ -17,20 +17,38 @@ import { token } from './token'
 /**
  * In flight, if one is. Ten calls that all 401 at once must produce **one** refresh, not ten: each
  * rotation spends the cookie and mints a successor, so ten concurrent rotations would have nine of
- * them presenting a token that had already been spent — which the backend correctly reads as theft
- * and answers by ending the session.
+ * them presenting a token that had already been spent.
  */
 let inFlight: Promise<boolean> | null = null
+
+/** Named so every tab of this app contends for the same one. */
+const REFRESH_LOCK = 'osmium.session.refresh'
 
 /**
  * Exchanges the refresh cookie for a new access token. Resolves false when there is no session to
  * resume, which is the ordinary state on a first visit and after an expiry — not an error.
+ *
+ * Serialised **across tabs**, not only within one. The guard above is module state, and a second
+ * tab is a second module instance sharing the same cookie — so two tabs waking together would each
+ * present the value the browser last stored, one would win, and the other would look to the backend
+ * exactly like a replayed token. That ends the session and writes a security incident, for two tabs
+ * being open.
+ *
+ * The lock makes the second tab wait and then refresh from the cookie the first one left behind,
+ * which is an ordinary rotation. `navigator.locks` is absent in jsdom and in older browsers, so its
+ * absence falls through to the single-tab behaviour rather than failing; the backend's retry grace
+ * window is what covers the cases a lock cannot reach anyway — a dropped connection, a restored
+ * session, a second browser entirely.
  */
 export function refreshSession(): Promise<boolean> {
-  inFlight ??= exchange().finally(() => {
+  inFlight ??= withLock(exchange).finally(() => {
     inFlight = null
   })
   return inFlight
+}
+
+function withLock(work: () => Promise<boolean>): Promise<boolean> {
+  return navigator.locks?.request(REFRESH_LOCK, work) ?? work()
 }
 
 async function exchange(): Promise<boolean> {

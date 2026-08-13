@@ -78,6 +78,21 @@ export const useAuthStore = defineStore('auth', () => {
     return restoring
   }
 
+  /**
+   * When a refresh token for this account was replayed and the operator has not been shown it yet.
+   *
+   * The only route by which the person it happened to learns about it: the audit trail needs
+   * `audit.read`, so it reaches an administrator and not them.
+   */
+  const sessionAlertAt = computed(() => user.value?.sessionAlertAt ?? null)
+
+  async function dismissSessionAlert(): Promise<void> {
+    // Cleared locally first: the banner should go on the click, and a failed acknowledgement means
+    // it comes back on the next load, which is the right way round for a notice like this.
+    if (user.value) user.value = { ...user.value, sessionAlertAt: null }
+    await api.POST('/api/auth/session-alert/acknowledge')
+  }
+
   /** The account's live sessions, newest first, with this browser's marked. */
   async function sessions(): Promise<SessionResponse[]> {
     const { data, error } = await api.GET('/api/auth/sessions')
@@ -128,6 +143,8 @@ export const useAuthStore = defineStore('auth', () => {
     loadUser,
     ensureLoaded,
     restore,
+    sessionAlertAt,
+    dismissSessionAlert,
     sessions,
     endOtherSession,
     endAllSessions,

@@ -123,6 +123,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/session-alert/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the replayed-session notice.
+         * @description Marks it read. A later replay raises it again.
+         */
+        post: operations["acknowledgeSessionAlert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/refresh": {
         parameters: {
             query?: never;
@@ -650,6 +670,11 @@ export interface components {
             role?: string | null;
             /** @description Permission nodes granted by the assigned role. */
             nodes?: string[];
+            /**
+             * Format: date-time
+             * @description When a refresh token for this account was replayed, if the operator has not been shown it yet. Null the rest of the time, which is nearly always.
+             */
+            sessionAlertAt?: string | null;
         };
         /** @description Creates an account with an administrator-chosen username and password. */
         CreateUserRequest: {
@@ -1218,6 +1243,24 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Every session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    acknowledgeSessionAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notice dismissed. */
             204: {
                 headers: {
                     [name: string]: unknown;

@@ -352,6 +352,18 @@ The address and browser on each row are only as good as the request that carried
 is the proxy's unless the deployment passes headers through, and a browser names itself — so the
 copy presents them as recognition aids rather than as evidence.
 
+When a refresh token for the account is replayed, a **banner appears on every page** after the next
+sign-in. It is the only way the person it happened to hears about it — the audit trail needs
+`audit.read`, so it reaches an administrator and not them, and they were simply signed out. The copy
+says a token was used twice and what to do about it; it does not assert an attack, because "presented
+twice" is what the system knows and theft is only the usual explanation.
+
+`src/api/session.ts` takes a `navigator.locks` lock around the refresh for the same reason. The
+single-flight guard is module state, so a second tab is a second instance sharing one cookie: two
+tabs waking together would both present the value the browser last stored, one would win, and the
+other would look like a replay — ending the session and filing an incident because somebody had two
+tabs open. The backend's fifteen-second grace window covers what a lock cannot reach.
+
 **All accounts** gets a matching action for administrators, but only the button: sign an account out
 of everything, no list. Only the person holding a session can tell which one is theirs, so showing
 an administrator another operator's devices and addresses would trade privacy for data nobody in

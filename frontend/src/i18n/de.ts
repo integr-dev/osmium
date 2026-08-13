@@ -300,6 +300,9 @@ export const de: Copy = {
     endAllConfirm: 'Von allen Sitzungen abmelden?',
     endAllWarning: 'Jeder Browser, der als Sie angemeldet ist, wird abgemeldet — dieser eingeschlossen. Sie müssen sich danach neu anmelden.',
     failed: 'Diese Sitzung konnte nicht beendet werden.',
+    alertTitle: 'Ein Anmeldetoken Ihres Kontos wurde zweimal verwendet',
+    alertBody: 'Das bedeutet in der Regel, dass eine Kopie davon an unbefugter Stelle liegt. Alle Sitzungen wurden deshalb am {when} abgemeldet. Waren Sie das nicht, ändern Sie Ihr Passwort.',
+    alertDismiss: 'Ausblenden',
   },
 
   accounts: {

@@ -15,6 +15,7 @@ import {
   ScrollText,
   Server,
   ServerOff,
+  ShieldAlert,
   SlidersHorizontal,
   TriangleAlert,
   User,
@@ -78,6 +79,16 @@ onMounted(() => {
 
 onUnmounted(() => agentStore.disconnectLiveUpdates())
 
+/** Date and time both: this is a security notice, and "which day" is the first thing asked of it. */
+function formatAlert(at: string): string {
+  return new Date(at).toLocaleString(undefined, {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 async function logout() {
   // Closed before the token is dropped, so the stream does not reconnect with a dead credential.
   agentStore.disconnectLiveUpdates()
@@ -126,6 +137,29 @@ async function logout() {
       </div>
 
       <main class="flex-1 px-6 py-8">
+        <!--
+          On every page rather than tucked into My account. It is the only way the person it
+          happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
+          administrator and not them — and somebody who has just been signed out with no explanation
+          should not have to go looking.
+        -->
+        <div
+          v-if="auth.sessionAlertAt"
+          role="alert"
+          class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+        >
+          <ShieldAlert class="mt-0.5 size-5 shrink-0" />
+          <span class="min-w-0 flex-1">
+            <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
+            <span class="block text-sm opacity-80">
+              {{ t('sessions.alertBody', { when: formatAlert(auth.sessionAlertAt) }) }}
+            </span>
+          </span>
+          <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
+            {{ t('sessions.alertDismiss') }}
+          </button>
+        </div>
+
         <RouterView />
       </main>
     </div>

@@ -5,6 +5,7 @@ import net.integr.osmium.account.model.User
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import net.integr.osmium.account.model.Role
+import java.time.Instant
 
 @Schema(description = "A user account. Passwords are never returned.")
 data class UserResponse(
@@ -14,6 +15,17 @@ data class UserResponse(
     val role: String?,
     @field:Schema(description = "Permission nodes granted by the assigned role.")
     val nodes: List<String>,
+
+    /**
+     * On the shared response rather than only on `/api/auth/me`: it costs nothing there, the
+     * alternative is a second shape for one field, and it tells an administrator reading the account
+     * list nothing the audit trail would not.
+     */
+    @field:Schema(
+        description = "When a refresh token for this account was replayed, if the operator has not " +
+            "been shown it yet. Null the rest of the time, which is nearly always.",
+    )
+    val sessionAlertAt: Instant?,
 )
 
 @Schema(description = "Creates an account with an administrator-chosen username and password.")
@@ -57,6 +69,7 @@ fun User.toResponse(): UserResponse = UserResponse(
     username = username,
     role = role?.name,
     nodes = nodes().sorted(),
+    sessionAlertAt = unreadSessionAlert(),
 )
 
 /** Matches the `users.username` column length. */

@@ -58,6 +58,25 @@ class User(
     var tokenVersion: Int = 0,
 
     /**
+     * When a refresh token belonging to this account was last replayed, and when the operator was
+     * shown that it had been.
+     *
+     * The incident already goes to the audit trail, but that needs `audit.read` — so it reaches an
+     * administrator and not the person it happened to, who is simply signed out and left to assume
+     * the app broke. There is no channel to reach them on, so the notice waits here until they sign
+     * in again.
+     *
+     * Kept as two timestamps rather than clearing the first on acknowledgement: "this happened" and
+     * "they were told" are different facts, and a later replay has to be able to raise the notice
+     * again without losing the earlier one.
+     */
+    @Column(name = "session_alert_at")
+    var sessionAlertAt: Instant? = null,
+
+    @Column(name = "session_alert_seen_at")
+    var sessionAlertSeenAt: Instant? = null,
+
+    /**
      * The account's sessions, live and spent.
      *
      * Mapped for exactly one reason: **deleting an account deletes its sessions**, wherever the
@@ -73,4 +92,11 @@ class User(
 ) {
     /** Node ids granted by the assigned role. */
     fun nodes(): Set<String> = role?.nodes?.mapTo(mutableSetOf()) { it.id } ?: emptySet()
+
+    /** The replay this account has not been told about yet, if there is one. */
+    fun unreadSessionAlert(): Instant? {
+        val raised = sessionAlertAt ?: return null
+        val seen = sessionAlertSeenAt
+        return if (seen == null || seen.isBefore(raised)) raised else null
+    }
 }

@@ -60,9 +60,35 @@ class RefreshTokenService(
         val presented = refreshTokenRepository.findByTokenHash(hash(rawToken))
             ?: throw BadCredentialsException(INVALID_SESSION)
 
-        // Presented twice. The holder of a live session never does this, so a copy is in circulation
-        // and there is no way to know whether this call is the thief or the victim.
-        if (presented.usedAt != null) {
+        // Already dead. Nothing to detect and nothing to revoke — the family has been dealt with.
+        if (presented.revokedAt != null) throw BadCredentialsException(INVALID_SESSION)
+
+        val spentAt = presented.usedAt
+        if (spentAt != null) {
+            // Presented twice, but moments after its own rotation, which is what a **retry** looks
+            // like rather than a theft. Two tabs waking together, a request replayed after a dropped
+            // connection, a browser restoring a session - all of them re-send the cookie the client
+            // last knew about, and all of them arrive immediately.
+            //
+            // A thief is not impossible inside this window, but treating every retry as a break-in
+            // is worse than missing the narrow case: an alarm that cries wolf is one nobody reads,
+            // and the cost of a false positive here is throwing an operator out of their work.
+            //
+            // The successor's value cannot be handed back - only its hash was kept - so the retry
+            // gets a successor of its own in the same family. Both are legitimate tips of one
+            // session, and either being replayed later still takes the whole family down.
+            if (spentAt.isAfter(now.minus(RETRY_GRACE))) {
+                log.debug("Refresh token for {} replayed within the grace window; treated as a retry", presented.user.username)
+                return presented.user to persist(
+                    user = presented.user,
+                    family = presented.family,
+                    expiresAt = presented.expiresAt,
+                )
+            }
+
+            // Long enough after that no client would still be holding it. A copy is in circulation,
+            // and there is no way to know whether this call is the thief or the victim.
+            //
             // Read before revoking: the bulk update clears the persistence context, which detaches
             // `presented` and makes its lazy user unreachable.
             //
@@ -182,6 +208,18 @@ class RefreshTokenService(
             .joinToString("") { "%02x".format(it) }
 
     private companion object {
+        /**
+         * How soon after its own rotation a token may be presented again and still be read as a
+         * retry rather than a theft.
+         *
+         * Fifteen seconds is chosen against what a client does, not what an attacker does: retries
+         * are immediate — a woken laptop, a dropped connection, two tabs racing — and a thief
+         * working from a copied cookie is not usually in the same breath as the victim. Longer
+         * would widen a real hole; shorter would start calling ordinary browser behaviour an
+         * incident, which is the failure that makes the alarm worthless.
+         */
+        val RETRY_GRACE: java.time.Duration = java.time.Duration.ofSeconds(15)
+
         const val TOKEN_BYTES = 32
         const val INVALID_SESSION = "Session expired"
 

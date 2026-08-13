@@ -138,6 +138,7 @@ changes automatically.
 | `POST` | `/api/auth/login` | — (public; access token in the body, refresh token in a cookie) |
 | `POST` | `/api/auth/refresh` | — (the refresh cookie is the credential; rotates it) |
 | `POST` | `/api/auth/logout` | — (revokes the session family and clears the cookie) |
+| `POST` | `/api/auth/session-alert/acknowledge` | `user.read.self` (dismisses the replayed-session notice) |
 | `GET` | `/api/auth/sessions` | `user.read.self` (own live sessions, caller's marked) |
 | `DELETE` | `/api/auth/sessions/{id}` | `user.read.self` (own only; another account's reads as 404) |
 | `POST` | `/api/auth/sessions/revoke-all` | `user.read.self` (every session **and** every access token) |
@@ -223,6 +224,23 @@ value again — so a second presentation means a copy exists somewhere it should
 revoke the whole *family*, every token descended from that login, because there is no way to tell
 whether the replay came from the thief or the victim. It is recorded as `SESSION_REUSE_DETECTED` in
 the audit trail, the one entry there that nobody chose to cause.
+
+**Except within fifteen seconds of the rotation**, where a replay is read as a retry and gets a
+successor of its own. That window is not a concession — it is what makes the alarm worth listening
+to. Two tabs share one cookie and not the single-flight guard in front of it, so a woken laptop had
+both presenting the value the browser last stored: one won, the other looked exactly like theft, and
+the session ended with an incident filed because somebody had two tabs open. A detector that fires
+on ordinary browser behaviour is one nobody reads. The frontend also takes a `navigator.locks` lock
+so tabs queue rather than race; the window covers what a lock cannot reach — a retried request, a
+restored session, a second browser. A retry can leave a family with more than one live tip, which is
+why the session list takes the newest per family rather than per token: one browser, one row.
+
+**The person it happened to is told.** The trail needs `audit.read`, so it reaches an administrator
+and not them — they were simply signed out with no explanation. There is no channel to reach them on,
+no email and no push, so `users.session_alert_at` carries the notice and the interface raises it the
+next time they sign in, cleared through `POST /api/auth/session-alert/acknowledge`. It cannot be
+shown at the login screen: before authentication that would confirm both that a username exists and
+that something happened to it.
 
 That revocation commits in **its own transaction** (`SessionRevocation`, `REQUIRES_NEW`). Refusing
 the replay means throwing, and a throw rolls back the transaction it happened in — sharing one would
@@ -756,7 +774,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-276 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
+281 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

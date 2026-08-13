@@ -332,7 +332,13 @@ describe('live updates', () => {
     const store = useAgentStore()
     const auth = useAuthStore()
     await store.refresh()
-    auth.user = { id: 1, username: 'demoted', role: 'administrator', nodes: ['fleet.read', 'audit.read'] }
+    auth.user = {
+      id: 1,
+      username: 'demoted',
+      role: 'administrator',
+      nodes: ['fleet.read', 'audit.read'],
+      sessionAlertAt: null,
+    }
 
     store.applyEvent('permissions', { id: 1, username: 'demoted', role: 'viewer', nodes: ['fleet.read'] })
 

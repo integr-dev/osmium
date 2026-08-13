@@ -308,6 +308,16 @@ export const en = {
     endAllConfirm: 'Sign out of every session?',
     endAllWarning: 'Every browser signed in as you is signed out, this one included. You will need to sign in again.',
     failed: 'Could not end that session.',
+
+    /**
+     * Says what happened and what to do, and stops there. The signal is "a token was presented
+     * twice", which is usually theft and is not proof of it — copy that asserted an attack would be
+     * claiming more than the system knows, and would read as crying wolf the first time it was
+     * something duller.
+     */
+    alertTitle: 'A sign-in token for your account was used twice',
+    alertBody: 'That normally means a copy of it exists somewhere it should not, so every session was signed out on {when}. If this was not you, change your password.',
+    alertDismiss: 'Dismiss',
   },
 
   accounts: {

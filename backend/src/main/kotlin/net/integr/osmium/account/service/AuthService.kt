@@ -12,6 +12,7 @@ import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 import net.integr.osmium.audit.service.AuditService
 
 /**
@@ -63,6 +64,19 @@ class AuthService(
             access = LoginResponse(token = access.value, expiresAt = access.expiresAt),
             refresh = refreshed,
         )
+    }
+
+    /**
+     * Marks the replay notice as read.
+     *
+     * The alert timestamp is left alone and a second one is written beside it, so a later replay
+     * raises the notice again without erasing that the first one happened.
+     */
+    @Transactional
+    fun acknowledgeSessionAlert(username: String) {
+        val user = userRepository.findByUsername(username)
+            ?: throw NoSuchElementException("No user named '$username'")
+        user.sessionAlertSeenAt = Instant.now()
     }
 
     /** Ends the session a token belongs to. An unknown token is a no-op — see [RefreshTokenService]. */

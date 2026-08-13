@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath
 import jakarta.servlet.http.Cookie
 import net.integr.osmium.AbstractRestTest
 import net.integr.osmium.account.repository.RefreshTokenRepository
+import net.integr.osmium.account.service.RefreshTokenService
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.repository.AuditEntryRepository
 import net.integr.osmium.security.RefreshCookie
@@ -30,6 +31,7 @@ import kotlin.test.assertTrue
 class SessionRefreshTest : AbstractRestTest() {
 
     @Autowired private lateinit var refreshTokenRepository: RefreshTokenRepository
+    @Autowired private lateinit var refreshTokenService: RefreshTokenService
     @Autowired private lateinit var auditEntryRepository: AuditEntryRepository
 
     // ---- login ---------------------------------------------------------------------------------
@@ -154,9 +156,10 @@ class SessionRefreshTest : AbstractRestTest() {
             createUser(username = "replayed", role = RoleNames.VIEWER)
             val session = signIn("replayed")
             val successor = refresh(session)
+            ageBeyondRetryWindow(session)
 
             // The legitimate holder replaces its cookie and never presents the old value again, so
-            // a second presentation means a copy is in circulation.
+            // a second presentation this long afterwards means a copy is in circulation.
             mockMvc.post("/api/auth/refresh") {
                 cookie(refreshCookie(session))
             }.andExpect { status { isUnauthorized() } }
@@ -171,6 +174,62 @@ class SessionRefreshTest : AbstractRestTest() {
         }
     }
 
+    /**
+     * The false positive this grace window exists for. Two tabs share one cookie and not the
+     * single-flight guard in front of it, so a laptop waking up has both of them presenting the
+     * value the browser last stored — one wins and the other looks exactly like a replay.
+     *
+     * Ending the session over that, and writing a security incident about it, is worse than missing
+     * a thief who happens to arrive in the same fifteen seconds: an alarm that fires on two tabs
+     * being open is one nobody reads.
+     */
+    @Test
+    fun `a token replayed immediately is a retry, not a theft`() {
+        createUser(username = "ada", role = RoleNames.VIEWER)
+        val session = signIn("ada")
+        val first = refresh(session)
+
+        // The second tab, still holding the cookie from before the first tab rotated it.
+        val second = mockMvc.post("/api/auth/refresh") {
+            cookie(refreshCookie(session))
+        }.andExpect { status { isOk() } }.andReturn().response
+
+        // Both tabs end up with a working session, and neither has been signed out.
+        mockMvc.post("/api/auth/refresh") { cookie(refreshCookie(first)) }.andExpect { status { isOk() } }
+        mockMvc.post("/api/auth/refresh") { cookie(refreshCookie(second)) }.andExpect { status { isOk() } }
+    }
+
+    @Test
+    fun `a retry inside the window is not recorded as an incident`() {
+        createUser(username = "ada", role = RoleNames.VIEWER)
+        val session = signIn("ada")
+        refresh(session)
+
+        mockMvc.post("/api/auth/refresh") { cookie(refreshCookie(session)) }
+
+        assertTrue(
+            auditEntryRepository.findAll().none { it.action == AuditAction.SESSION_REUSE_DETECTED },
+            "an ordinary retry was written to the trail as a stolen token",
+        )
+    }
+
+    /** Two tabs are still one session, however many live tips the retry left behind. */
+    @Test
+    fun `a retry does not turn one session into two on the list`() {
+        createUser(username = "ada", role = RoleNames.VIEWER)
+        val session = signIn("ada")
+        val first = refresh(session)
+        mockMvc.post("/api/auth/refresh") { cookie(refreshCookie(session)) }
+
+        mockMvc.get("/api/auth/sessions") {
+            header(HttpHeaders.AUTHORIZATION, bearer(accessToken(first)))
+            cookie(refreshCookie(first))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$") { value(org.hamcrest.Matchers.hasSize<Any>(1)) }
+        }
+    }
+
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun `reuse is written to the audit trail, naming the account it happened to`() {
@@ -178,6 +237,7 @@ class SessionRefreshTest : AbstractRestTest() {
             createUser(username = "replayed", role = RoleNames.VIEWER)
             val session = signIn("replayed")
             refresh(session)
+            ageBeyondRetryWindow(session)
 
             mockMvc.post("/api/auth/refresh") { cookie(refreshCookie(session)) }
 
@@ -188,6 +248,68 @@ class SessionRefreshTest : AbstractRestTest() {
             cleanUpReplayed()
         }
     }
+
+    /**
+     * The person it happened to is the one who cannot see the audit trail. They are signed out with
+     * no explanation and left to assume the app broke, so the notice waits on the account.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `the account is told, the next time it signs in`() {
+        try {
+            createUser(username = "replayed", role = RoleNames.VIEWER)
+            val session = signIn("replayed")
+            refresh(session)
+            ageBeyondRetryWindow(session)
+            mockMvc.post("/api/auth/refresh") { cookie(refreshCookie(session)) }
+
+            // Signed out by the replay, so this is a fresh login - which is the only moment there
+            // is to tell them.
+            val back = signIn("replayed")
+            mockMvc.get("/api/auth/me") {
+                header(HttpHeaders.AUTHORIZATION, bearer(accessToken(back)))
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.sessionAlertAt") { exists() }
+            }
+
+            mockMvc.post("/api/auth/session-alert/acknowledge") {
+                header(HttpHeaders.AUTHORIZATION, bearer(accessToken(back)))
+            }.andExpect { status { isNoContent() } }
+
+            // Dismissed for good, not until the next page load.
+            mockMvc.get("/api/auth/me") {
+                header(HttpHeaders.AUTHORIZATION, bearer(accessToken(back)))
+            }.andExpect { jsonPath("$.sessionAlertAt") { doesNotExist() } }
+        } finally {
+            cleanUpReplayed()
+        }
+    }
+
+    @Test
+    fun `an account nothing has happened to is told nothing`() {
+        createUser(username = "ada", role = RoleNames.VIEWER)
+        val session = signIn("ada")
+
+        mockMvc.get("/api/auth/me") {
+            header(HttpHeaders.AUTHORIZATION, bearer(accessToken(session)))
+        }.andExpect { jsonPath("$.sessionAlertAt") { doesNotExist() } }
+    }
+
+    /**
+     * Pushes a spent token's rotation far enough into the past that presenting it again is read as
+     * theft rather than as a retry. Moving the clock is the only honest way to test the far side of
+     * the grace window; the alternative is a test that sleeps for fifteen seconds.
+     */
+    private fun ageBeyondRetryWindow(session: MockHttpServletResponse) {
+        val spent = refreshTokenRepository.findAll()
+            .single { it.usedAt != null && it.tokenHash == fingerprintOf(session) }
+        spent.usedAt = Instant.now().minusSeconds(120)
+        refreshTokenRepository.saveAndFlush(spent)
+    }
+
+    private fun fingerprintOf(session: MockHttpServletResponse): String =
+        refreshTokenService.fingerprint(refreshCookie(session).value)
 
     /** No rollback to lean on, so the two committing tests tidy up after themselves. */
     private fun cleanUpReplayed() {

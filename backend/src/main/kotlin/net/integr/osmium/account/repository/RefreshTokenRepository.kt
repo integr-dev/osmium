@@ -22,11 +22,14 @@ interface RefreshTokenRepository : JpaRepository<RefreshToken, Long> {
     fun findByTokenHash(tokenHash: String): RefreshToken?
 
     /**
-     * The account's live sessions, newest first.
+     * The account's live sessions, newest first — **one row per family**, which is what a session
+     * actually is.
      *
-     * Only the tip of each family: a spent token is a step in a rotation chain, not a session an
-     * operator would recognise, and listing all twenty-four of a day's refreshes would bury the one
-     * row that matters.
+     * Spent tokens are excluded because they are steps in a rotation chain rather than anything an
+     * operator would recognise; listing all twenty-four of a day's refreshes would bury the one row
+     * that matters. And a family can briefly have more than one live tip, when a retry inside the
+     * grace window is given a successor of its own, so the newest of each is taken: one browser is
+     * one row, not two.
      */
     @Query(
         """
@@ -35,6 +38,10 @@ interface RefreshTokenRepository : JpaRepository<RefreshToken, Long> {
           and t.usedAt is null
           and t.revokedAt is null
           and t.expiresAt > :now
+          and t.issuedAt = (
+            select max(newest.issuedAt) from RefreshToken newest
+            where newest.family = t.family and newest.usedAt is null and newest.revokedAt is null
+          )
         order by t.issuedAt desc
         """,
     )
