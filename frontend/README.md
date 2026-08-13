@@ -289,7 +289,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-98 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+113 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
@@ -311,9 +311,33 @@ was re-authenticating on every reload.
 
 Two mitigations carry that decision, and both matter more once real agent credentials are in play:
 
-- **A strict CSP** is served by nginx in production — `script-src 'self'` with no `unsafe-inline`,
-  so an injected script simply does not execute. See `nginx.conf.template`.
+- **A strict CSP** — `script-src 'self'` with no `unsafe-inline`, so an injected script simply does
+  not execute. See `nginx.conf.template`.
 - **`vue/no-v-html` is an error**, not a warning. `v-html` is the main XSS vector in a Vue app.
+  There is no `v-html` in the app, and no `innerHTML`, `eval` or `new Function` either.
+
+**The CSP is a property of the nginx image, not of the bundle.** It exists in exactly one file, so
+serving `dist/` any other way — a static bucket, a CDN, `vite preview` — ships no policy at all and
+gives no signal that it is missing. The image is therefore the only supported way to serve this,
+and that is a deployment constraint rather than a preference.
+
+`src/test/securityHeaders.spec.ts` pins the policy so it cannot be weakened without a failing test:
+`script-src` stays exactly `'self'`, no directive names an external host or a wildcard, and no
+`add_header` appears inside a `location` block — in nginx that **replaces** the inherited set rather
+than adding to it, which would silently drop every header for that path. The caching and proxy
+locations use `expires` and `proxy_set_header` for exactly that reason. Verified against a running
+container: the policy ships on `/`, on `/assets/` and on the SPA fallback alike.
+
+What none of that stops is an XSS **using** the session rather than stealing the token — script on
+the page can make authenticated requests whatever holds the credential. Moving to an `httpOnly`
+cookie would remove the token from reach of JavaScript, and would incidentally delete the reason
+`src/api/liveUpdates.ts`, `src/lib/avatars.ts` and `src/api/auditExport.ts` are hand-rolled: all
+three exist only because `EventSource`, `<img>` and navigation cannot send a header. It has not been
+done, and it would need CSRF handling.
+
+`?redirect=` on the login screen is the one piece of URL a visitor controls. vue-router neutralises
+most hostile values by resolving them as paths under this origin, but `//evil.com` survives intact,
+so `safeRedirect` in `src/router/index.ts` accepts a single-slash path and nothing else.
 
 ## Theme
 
