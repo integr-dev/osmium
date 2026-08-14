@@ -15,7 +15,6 @@ import {
   MessageSquare,
   Power,
   RotateCw,
-  Send,
   Server,
   Signal,
   SquarePen,
@@ -25,22 +24,23 @@ import {
 } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
 import PlayerHead from '../components/PlayerHead.vue'
-import type { ActivityEntryResponse, ChatMessageResponse } from '../api/client'
-import { fetchActivityPage, fetchChatPage } from '../api/feeds'
+import type { ActivityEntryResponse } from '../api/client'
+import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_BADGE, stateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
+const chat = useChatStore()
 
-const message = ref('')
 const error = ref<string | null>(null)
 const busy = ref(false)
 
@@ -76,33 +76,25 @@ const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
 }
 
 /**
- * This agent's own feeds. Chat here is what was said **to or about this agent**; the server's global
- * chat is on the dashboard, since it is identical for every agent on the server and would bury the
- * lines that are actually about this one.
+ * This agent's incidents. Its chat is a scope of the rail rather than a panel here — one
+ * conversation shown in one place, pointed at whatever is being looked at.
  *
- * Both are fixed-height panels rather than the whole page, so each scrolls its own older pages in.
+ * A fixed-height panel rather than the whole page, so it scrolls its own older pages in.
  */
 const agentId = computed(() => Number(route.params.id))
 
-const chatBox = ref<HTMLElement | null>(null)
-const chatSentinel = ref<HTMLElement | null>(null)
 const activityBox = ref<HTMLElement | null>(null)
 const activitySentinel = ref<HTMLElement | null>(null)
 
-const chatFeed = useFeed<ChatMessageResponse>((cursor) =>
-  fetchChatPage(cursor, { agentId: agentId.value }),
-)
 const activityFeed = useFeed<ActivityEntryResponse>((cursor) =>
   fetchActivityPage(cursor, agentId.value),
 )
-const { items: chat, loading: chatLoading, exhausted: chatExhausted } = chatFeed
 const {
   items: activity,
   loading: activityLoading,
   exhausted: activityExhausted,
 } = activityFeed
 
-const chatScroll = useInfiniteScroll(chatSentinel, () => void moreChat(), chatBox)
 const activityScroll = useInfiniteScroll(activitySentinel, () => void moreActivity(), activityBox)
 
 let stopListening: (() => void) | null = null
@@ -110,28 +102,18 @@ let stopListening: (() => void) | null = null
 onMounted(async () => {
   if (!agent.value) void agentStore.refresh()
 
-  await Promise.all([chatFeed.reset(), activityFeed.reset()])
-  chatScroll.start()
+  await activityFeed.reset()
   activityScroll.start()
 
+  // Chat is the panel's own business; this is only activity. See ChatPanel.
   stopListening = agentStore.onFeedEvent((name, data) => {
-    if (name === 'chat') {
-      const line = data as ChatMessageResponse
-      // Global arrives under whichever agent forwards it, and belongs to the server, not here.
-      if (line.agentId === agentId.value && line.scope !== 'GLOBAL') chatFeed.prepend(line)
-      return
-    }
+    if (name !== 'activity') return
     const entry = data as ActivityEntryResponse
     if (entry.agentId === agentId.value) activityFeed.prepend(entry)
   })
 })
 
 onBeforeUnmount(() => stopListening?.())
-
-async function moreChat(): Promise<void> {
-  await chatFeed.more()
-  if (!chatExhausted.value) await chatScroll.rearm()
-}
 
 async function moreActivity(): Promise<void> {
   await activityFeed.more()
@@ -162,13 +144,6 @@ async function run(action: () => Promise<void>) {
   } finally {
     busy.value = false
   }
-}
-
-async function send() {
-  if (!agent.value) return
-  const text = message.value
-  await run(() => agentStore.say(agent.value!.id, text))
-  if (!error.value) message.value = ''
 }
 
 /**
@@ -515,57 +490,21 @@ async function confirmRemove() {
             <Power class="size-4" />
             {{ t('agents.disconnect') }}
           </button>
-        </div>
 
-        <div class="divider my-0"></div>
-
-        <div class="flex items-center gap-2 text-sm font-medium opacity-70">
-          <MessageSquare class="size-4" />
-          {{ t('agents.chat') }}
-          <span class="text-xs font-normal opacity-60">{{ t('agents.chatHint') }}</span>
-        </div>
-
-        <div
-          ref="chatBox"
-          class="rounded-box bg-base-300/25 flex max-h-64 flex-col gap-1 overflow-y-auto p-3"
-        >
-          <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
-            <p v-for="line in chat" :key="line.id" class="flex items-center gap-1.5 text-sm">
-              <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
-              <PlayerHead :id="line.from" :name="line.from" size="xs" />
-              <span class="shrink-0 font-medium">{{ line.from }}:</span>
-              <span class="min-w-0 opacity-80">{{ line.text }}</span>
-            </p>
-          </TransitionGroup>
-
-          <p v-if="chatLoading" class="py-4 text-center text-sm opacity-50">
-            {{ t('common.loading') }}
-          </p>
-          <p v-else-if="!chat.length" class="py-4 text-center text-sm opacity-50">
-            {{ t('dashboard.noChat') }}
-          </p>
-
-          <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
-          <div ref="chatSentinel" aria-hidden="true" class="h-px shrink-0"></div>
-        </div>
-
-        <form v-if="auth.can('fleet.chat')" class="flex gap-2" @submit.prevent="send">
-          <input
-            v-model="message"
-            class="input w-full"
-            type="text"
-            :placeholder="t('agents.chatPlaceholder')"
-            :disabled="busy || !hostReachable || !isOnline(agent)"
-          />
+          <!--
+            The conversation itself is the rail's, not this page's — one panel, wherever it is
+            pointed. This aims it here, so the page still leads to the chat without carrying a
+            second copy of it.
+          -->
           <button
-            class="btn btn-primary gap-2"
-            type="submit"
-            :disabled="busy || !hostReachable || !isOnline(agent) || !message.trim()"
+            v-if="auth.can('fleet.read')"
+            class="btn btn-soft btn-sm gap-2"
+            @click="chat.show({ kind: 'agent', id: agent.id })"
           >
-            <Send class="size-4" />
-            {{ t('agents.send') }}
+            <MessageSquare class="size-4" />
+            {{ t('agents.chat') }}
           </button>
-        </form>
+        </div>
       </div>
     </div>
 

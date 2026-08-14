@@ -2,6 +2,7 @@ import type { RouteLocationRaw } from 'vue-router'
 import type { FleetAgent } from '../stores/agents'
 import { isOnline } from '../stores/agents'
 import type { HostResponse } from '../api/client'
+import { shortcutLabel } from './shortcuts'
 import { t } from '../i18n'
 
 /**
@@ -35,6 +36,7 @@ export interface CommandContext {
   hostReachable: (hostId: number) => boolean
   connect: (id: number) => Promise<void>
   disconnect: (id: number) => Promise<void>
+  toggleChat: () => void
   logout: () => Promise<void>
 }
 
@@ -118,6 +120,17 @@ export function buildCommands(context: CommandContext): Command[] {
         })
       }
     }
+  }
+
+  // Reading chat is what the rail does, so it is gated where reading is.
+  if (context.can('fleet.read')) {
+    commands.push({
+      id: 'action:chat',
+      section: 'actions',
+      label: t('palette.toggleChat'),
+      hint: shortcutLabel('J'),
+      run: context.toggleChat,
+    })
   }
 
   commands.push({ id: 'action:logout', section: 'actions', label: t('nav.logOut'), run: context.logout })

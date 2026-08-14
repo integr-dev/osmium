@@ -33,6 +33,7 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     hostReachable: () => true,
     connect: vi.fn(),
     disconnect: vi.fn(),
+    toggleChat: vi.fn(),
     logout: vi.fn(),
     ...overrides,
   }
@@ -50,6 +51,13 @@ describe('what the palette offers', () => {
     expect(offered).not.toContain('go:accounts')
     expect(offered).not.toContain('go:configuration')
     expect(offered).toContain('go:dashboard')
+  })
+
+  it('offers the chat rail only to an account that can read the fleet', () => {
+    expect(ids(buildCommands(context({ can: () => true })))).toContain('action:chat')
+    expect(ids(buildCommands(context({ can: (node) => node !== 'fleet.read' })))).not.toContain(
+      'action:chat',
+    )
   })
 
   it('offers connect for an agent that could connect', () => {

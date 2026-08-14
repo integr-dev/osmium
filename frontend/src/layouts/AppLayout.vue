@@ -10,6 +10,7 @@ import {
   // person who reaches for one.
   Map as MapIcon,
   Menu,
+  MessagesSquare,
   Plus,
   RotateCw,
   ScrollText,
@@ -25,6 +26,7 @@ import {
   Workflow,
 } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import ChatRail from '../components/ChatRail.vue'
 import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
 import PlayerHead from '../components/PlayerHead.vue'
@@ -32,11 +34,15 @@ import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { STATE_DOT, stateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
+import { useResizable } from '../lib/resizable'
+import { isShortcut, shortcutLabel } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
+import { useChatStore } from '../stores/chat'
 
 const { t } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
+const chat = useChatStore()
 const router = useRouter()
 
 const addAgentOpen = ref(false)
@@ -48,11 +54,32 @@ function openPalette() {
   palette.value?.open()
 }
 
+const paletteKeys = shortcutLabel('K')
+const chatKeys = shortcutLabel('J')
+
 /**
- * The keys as this machine spells them. Showing `Ctrl K` to somebody on a Mac teaches a shortcut
- * that does not work there, which is worse than showing nothing.
+ * Agent rows carry a label, an account name and a server address, and how much of that fits is a
+ * judgement only the person reading it can make. The floor keeps the nav legible; the ceiling stops
+ * the sidebar from eating the page it is navigating.
  */
-const paletteKeys = computed(() => (/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K'))
+const {
+  width: sidebarWidth,
+  start: startSidebarResize,
+  nudge: nudgeSidebar,
+} = useResizable({ key: 'osmium.layout.sidebar', initial: 288, min: 224, max: 440, edge: 'right' })
+
+/**
+ * Ctrl/⌘-J opens the rail. Prevented because Chrome binds it to its own downloads panel, and this is
+ * the more specific claim while the app has focus. Ctrl/⌘-K is the palette's own, in that component.
+ */
+function onKeydown(event: KeyboardEvent) {
+  if (!isShortcut(event, 'J') || !auth.can('fleet.read')) return
+  event.preventDefault()
+  chat.toggle()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 /**
  * Two different failures, two different treatments.
@@ -65,6 +92,15 @@ const paletteKeys = computed(() => (/Mac|iPhone|iPad/.test(navigator.userAgent) 
  */
 const blocked = computed(() => !backendEverReached.value && !backendReachable.value)
 const degraded = computed(() => backendEverReached.value && !backendReachable.value)
+
+/**
+ * Whether either status icon is showing. They share the right edge with the palette hint, and the
+ * hint gives it up: something is wrong is worth more of the operator's attention than a shortcut
+ * they will learn on any other day.
+ */
+const statusShown = computed(
+  () => degraded.value || (auth.can('fleet.read') && !agentStore.liveUpdatesConnected),
+)
 
 const backendTip = computed(() =>
   retrying.value
@@ -150,32 +186,40 @@ async function logout() {
         <span class="ml-2 font-semibold">Osmium</span>
       </div>
 
-      <main class="flex-1 px-6 py-8">
-        <!--
-          On every page rather than tucked into My account. It is the only way the person it
-          happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
-          administrator and not them — and somebody who has just been signed out with no explanation
-          should not have to go looking.
-        -->
-        <div
-          v-if="auth.sessionAlertAt"
-          role="alert"
-          class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
-        >
-          <ShieldAlert class="mt-0.5 size-5 shrink-0" />
-          <span class="min-w-0 flex-1">
-            <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
-            <span class="block text-sm opacity-80">
-              {{ t('sessions.alertBody', { when: formatAlert(auth.sessionAlertAt) }) }}
+      <!--
+        The page and the chat rail share the width. `min-w-0` on the page, or a wide table inside it
+        pushes the rail off the screen instead of scrolling itself.
+      -->
+      <div class="flex flex-1 items-start">
+        <main class="min-w-0 flex-1 px-6 py-8">
+          <!--
+            On every page rather than tucked into My account. It is the only way the person it
+            happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
+            administrator and not them — and somebody who has just been signed out with no
+            explanation should not have to go looking.
+          -->
+          <div
+            v-if="auth.sessionAlertAt"
+            role="alert"
+            class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+          >
+            <ShieldAlert class="mt-0.5 size-5 shrink-0" />
+            <span class="min-w-0 flex-1">
+              <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
+              <span class="block text-sm opacity-80">
+                {{ t('sessions.alertBody', { when: formatAlert(auth.sessionAlertAt) }) }}
+              </span>
             </span>
-          </span>
-          <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
-            {{ t('sessions.alertDismiss') }}
-          </button>
-        </div>
+            <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
+              {{ t('sessions.alertDismiss') }}
+            </button>
+          </div>
 
-        <RouterView />
-      </main>
+          <RouterView />
+        </main>
+
+        <ChatRail v-if="chat.open" />
+      </div>
     </div>
 
     <AddAgentModal v-model:open="addAgentOpen" />
@@ -186,7 +230,26 @@ async function logout() {
       <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
 
       <!-- Wider than the default drawer: agent rows now carry an account name and a server address. -->
-      <aside class="border-base-300 bg-base-200 flex min-h-full w-72 flex-col border-r">
+      <aside
+        class="border-base-300 bg-base-200 relative flex min-h-full max-w-full flex-col border-r"
+        :style="{ width: `${sidebarWidth}px` }"
+      >
+        <!--
+          Pointer only, and hidden where the sidebar is a drawer: a 4px target is not something to
+          hand somebody on a touchscreen, and a panel that slides over the page has no edge to drag.
+          Focusable with arrow keys anyway, so the width is not a mouse-only setting.
+        -->
+        <div
+          class="hover:bg-primary/40 focus-visible:bg-primary/40 absolute inset-y-0 right-0 z-10 hidden w-1 cursor-col-resize outline-none lg:block"
+          role="separator"
+          aria-orientation="vertical"
+          :aria-label="t('nav.resizeSidebar')"
+          tabindex="0"
+          @pointerdown="startSidebarResize"
+          @keydown.left.prevent="nudgeSidebar(-16)"
+          @keydown.right.prevent="nudgeSidebar(16)"
+        ></div>
+
         <div class="flex items-center gap-3 px-5 py-6">
           <img src="/logo.svg" alt="" class="size-8" />
           <span class="text-lg font-semibold tracking-tight">Osmium</span>
@@ -223,22 +286,27 @@ async function logout() {
               <WifiOff class="text-warning size-4" />
             </span>
           </div>
-        </div>
 
-        <!--
-          The palette is worth nothing if nobody knows it is there, and a shortcut is invisible by
-          nature. This is a real button — clicking it opens the same thing — with the keys shown
-          beside it, so it teaches the shortcut rather than only advertising it.
-        -->
-        <div class="px-3 pb-3">
+          <!--
+            Says the palette exists and opens it, so the shortcut is discoverable without being the
+            only way in. Gives up the right edge the moment a status icon needs it, so the two never
+            compete for the same corner.
+
+            `-mr-2` cancels the button's own padding: without it the label sits inset from the edge
+            everything else in the sidebar lines up against.
+
+            The icon carries the meaning and the keys carry the instruction, so the sentence lives
+            in the title: an icon on its own says nothing to a screen reader.
+          -->
           <button
+            v-if="!statusShown"
             type="button"
-            class="btn btn-ghost btn-sm border-base-300 w-full justify-start gap-2 border font-normal"
+            class="btn btn-ghost btn-xs -mr-2 gap-1.5 px-2 font-normal opacity-50 hover:opacity-100"
+            :title="t('palette.hint', { keys: paletteKeys })"
             @click="openPalette"
           >
-            <Search class="size-4 shrink-0 opacity-60" />
-            <span class="opacity-60">{{ t('palette.open') }}</span>
-            <kbd class="kbd kbd-xs ml-auto">{{ paletteKeys }}</kbd>
+            <Search class="size-3.5 shrink-0" />
+            {{ paletteKeys }}
           </button>
         </div>
 
@@ -334,6 +402,25 @@ async function logout() {
             </li>
           </ul>
         </div>
+
+        <!--
+          Not a nav item — it opens a panel beside the page rather than going anywhere — so it sits
+          on the separator between the pages and the account menu instead of among the links. The
+          badge is the only place the fleet's chatter is visible while the rail is shut, which is
+          also why it takes the corner the keys otherwise occupy.
+        -->
+        <ul v-if="auth.can('fleet.read')" class="menu w-full gap-0.5 px-3 pb-3">
+          <li>
+            <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
+              <MessagesSquare class="size-4 shrink-0" />
+              {{ t('chat.title') }}
+              <span v-if="chat.unread" class="badge badge-primary badge-xs ml-auto">
+                {{ chat.unread > 99 ? '99+' : chat.unread }}
+              </span>
+              <kbd v-else class="kbd kbd-xs ml-auto">{{ chatKeys }}</kbd>
+            </button>
+          </li>
+        </ul>
 
         <div class="border-base-300 border-t p-3">
           <ul class="menu w-full gap-0.5 p-0">

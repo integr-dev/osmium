@@ -157,6 +157,13 @@ Two things there exist because of a real failure mode:
   that is not answering, on every scroll event. Scrolling away and back re-arms it, which is the
   retry.
 
+**Chat is the exception to newest-first.** The audit log and activity are logs being read, so
+downwards means older. Chat has a send box under it, which makes it a conversation — and a
+conversation whose newest line is nowhere near the box you type into is one nobody can follow. The
+panel gets that from `flex-col-reverse`: the array stays newest-first like every other feed, the
+browser pins the view to the bottom as lines arrive, and the sentinel ends up visually at the top
+without `useInfiniteScroll` knowing anything changed.
+
 Search is **server-side**, which came with paging rather than as a separate improvement: a filter
 over only the rows already fetched would search the newest hundred of a thirty-day trail and report
 "nothing matches", which reads as an answer rather than as a limit.
@@ -174,6 +181,37 @@ operator asking for "the 11th" means their own. The end day is inclusive on scre
 the wire, so the request asks for the start of the day after.
 
 The CSV itself is English whatever the interface is set to — see the backend README for why.
+
+## Chat
+
+Chat lives in a **rail** beside the page, not behind a click. It is the ambient texture of a live
+server and the only place a person talks to the fleet, so it stays open across navigation with its
+scope and open state in `localStorage`, and a badge on the sidebar button counts what arrived while
+it was shut. Ctrl/⌘-J toggles it, and the palette offers the same under Actions.
+
+Both the rail and the sidebar are **draggable**, and both remember their width — `src/lib/resizable.ts`
+owns the sign, since the two are mirror images and dragging right widens one while narrowing the
+other. The handles are pointer-only but focusable, so arrow keys set the width too.
+
+It is the **only** place chat is shown. There was a modal on the dashboard and a card on the agent
+page; both are gone, along with the dashboard's server list, whose counts and listener status now
+ride on the rail's own picker. The agent page keeps a button that points the rail at that agent —
+an entry point, not a second copy.
+
+The **scope is chosen, not inferred from the route** — a panel that rewrites itself every time the
+operator navigates is one nobody can read. `src/lib/chat.ts` holds what that means: which live lines
+belong in which scope, and who may speak into one.
+
+Two scopes, kept apart because the backend keeps them apart. A **server** scope is the global chat
+everyone standing there saw, forwarded once by the elected listener; an **agent** scope is the
+conversation to or about that agent. Global lines arrive tagged with whichever agent forwarded them,
+so an agent scope has to exclude them explicitly or the listener's conversation quietly becomes the
+whole server's.
+
+Sending is impersonation through one agent, so a server scope names which — the listener first,
+since it is the one already forwarding the conversation being read. A server nobody is forwarding
+has no global feed at all, so the rail says so rather than showing an empty panel, which would read
+as a quiet server instead of a missing one.
 
 Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
 store hands `chat`, `activity`, `audit`, `user` and `user-removed` events to whichever view is
@@ -465,7 +503,7 @@ suite runs once instead of twice.
 
 ```
 src/api/         generated schema, typed client, token storage, live-update and feed clients
-src/components/  FormField, the add-host and add-agent modals, the server chat modal, the language picker
+src/components/  FormField, the add-host and add-agent modals, the chat rail and panel, the language picker
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string, one file per locale
 src/lib/         cursor-paged feeds, presentation maps for agent state, roles and permissions

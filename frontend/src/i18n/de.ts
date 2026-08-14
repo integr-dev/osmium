@@ -42,6 +42,7 @@ export const de: Copy = {
   nav: {
     openNavigation: 'Navigation öffnen',
     closeNavigation: 'Navigation schließen',
+    resizeSidebar: 'Seitenleiste in der Breite ändern',
     dashboard: 'Übersicht',
     map: 'Karte',
     hosts: 'Hosts',
@@ -55,12 +56,30 @@ export const de: Copy = {
     logOut: 'Abmelden',
   },
 
+  chat: {
+    title: 'Chat',
+    toggle: 'Chat ein-/ausblenden ({keys})',
+    resize: 'Chat-Leiste in der Breite ändern',
+    scope: 'Was angezeigt wird',
+    servers: 'Server',
+    agents: 'Agenten',
+    speakAs: 'Sprechen als',
+    listening: 'hört mit',
+    notListening: 'niemand hört mit',
+    noListener: 'Auf diesem Server ist kein Agent online, daher wird sein Chat nicht weitergeleitet.',
+    noServers: 'Noch keine Server. Weise einem Agenten einen zu, um seinen Chat zu lesen.',
+    noSpeaker: 'Hier ist niemand im Spiel, durch den gesprochen werden könnte.',
+    speakerOffline: '{name} ist nicht im Spiel.',
+    hostOffline: 'Host {host} ist nicht erreichbar.',
+  },
+
   palette: {
-    open: 'Suchen',
+    hint: '{keys} zum Suchen',
     placeholder: 'Agenten, Hosts und Seiten durchsuchen …',
     noMatches: 'Dazu passt nichts.',
     connectAgent: '{name} verbinden',
     disconnectAgent: '{name} trennen',
+    toggleChat: 'Chat ein-/ausblenden',
     section: {
       navigate: 'Seiten',
       agents: 'Agenten',
@@ -113,18 +132,6 @@ export const de: Copy = {
   attention: {
     hostUnreachable: 'Host nicht erreichbar',
     needsRelink: 'Neue Anmeldung nötig',
-  },
-
-  servers: {
-    title: 'Aktive Server',
-    hint: 'Server auswählen, um den Chat zu lesen.',
-    online: '{online} von {total} online',
-    listening: 'Chat aktiv',
-    noListenerShort: 'Kein Chat',
-    noListener: 'Auf diesem Server ist kein Agent online, daher wird sein Chat nicht weitergeleitet.',
-    via: 'Weitergeleitet von {name}.',
-    chatTitle: 'Server-Chat',
-    none: 'Noch keine Server. Legen Sie einen Agenten an, um zu beginnen.',
   },
 
   hosts: {
@@ -214,7 +221,6 @@ export const de: Copy = {
     activity: 'Aktivität',
     noActivity: 'Nichts zu berichten.',
     chat: 'Chat',
-    chatHint: '— an und von diesem Agenten. Den Server-Chat finden Sie auf der Übersicht.',
     chatPlaceholder: 'Nachricht als dieser Agent senden',
     send: 'Senden',
     agentTag: 'Agent',

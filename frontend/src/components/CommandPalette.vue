@@ -4,8 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { Bot as Agent, CornerDownLeft, Search, Server, TriangleAlert, Zap } from 'lucide-vue-next'
 import { buildCommands, rank, type Command, type CommandSection } from '../lib/commands'
+import { isShortcut } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 
 /**
  * Ctrl/⌘-K: go anywhere, or act on an agent, without reaching for the mouse.
@@ -18,6 +20,7 @@ const { t } = useI18n()
 const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
+const chat = useChatStore()
 
 const dialog = ref<HTMLDialogElement | null>(null)
 const input = ref<HTMLInputElement | null>(null)
@@ -66,6 +69,7 @@ function open() {
     hostReachable: (hostId) => agentStore.hostById(hostId)?.reachable === true,
     connect: agentStore.connect,
     disconnect: agentStore.disconnect,
+    toggleChat: chat.toggle,
     logout: async () => {
       agentStore.disconnectLiveUpdates()
       await auth.logout()
@@ -126,19 +130,18 @@ function move(delta: number) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  // Ctrl on Windows and Linux, ⌘ on macOS. Prevented because both browsers bind Ctrl-K to their
-  // own address bar, and this is the more specific claim while the app has focus.
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-    event.preventDefault()
-    if (dialog.value?.open) dialog.value.close()
-    else open()
-  }
+  // Prevented because both browsers bind Ctrl-K to their own address bar, and this is the more
+  // specific claim while the app has focus.
+  if (!isShortcut(event, 'K')) return
+  event.preventDefault()
+  if (dialog.value?.open) dialog.value.close()
+  else open()
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
-/** So the sidebar button opens the same palette rather than duplicating any of this. */
+/** So the sidebar hint opens the same palette rather than duplicating any of this. */
 defineExpose({ open })
 </script>
 
@@ -147,13 +150,17 @@ defineExpose({ open })
     Top-aligned rather than centred: a palette that grows downwards keeps its input under the
     cursor, where a centred one moves the thing being typed into as results arrive.
   -->
-  <dialog ref="dialog" class="modal items-start pt-[12vh]">
+  <dialog ref="dialog" class="modal items-start">
     <!--
+      The offset is a margin on the box, not padding on the modal. Padding sits outside the grid's
+      content box, so the backdrop cannot reach into it — the top of the screen stopped dismissing
+      the palette, which is the first place anyone clicks to get rid of it.
+
       Border and shadow stated outright. The theme runs `--depth: 0`, so daisyUI's box gives a modal
       no elevation at all — which is right for a dialog that fills the view, and wrong for a panel
       floating over a page the operator is still reading behind it.
     -->
-    <div class="modal-box border-base-300 max-w-xl border p-0 shadow-2xl shadow-black/50">
+    <div class="modal-box border-base-300 mt-[12vh] max-w-xl border p-0 shadow-2xl shadow-black/50">
       <label class="border-base-300 flex items-center gap-3 border-b px-4 py-3">
         <Search class="size-4 shrink-0 opacity-50" />
         <input

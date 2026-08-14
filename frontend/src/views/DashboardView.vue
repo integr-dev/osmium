@@ -12,25 +12,19 @@ import {
   Hammer,
   Layers,
   Map,
-  MessagesSquare,
-  Server,
   TriangleAlert,
 } from 'lucide-vue-next'
 import PlayerHead from '../components/PlayerHead.vue'
 import RollingNumber from '../components/RollingNumber.vue'
-import ServerChatModal from '../components/ServerChatModal.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_DOT } from '../lib/agentState'
-import type { Sector, ServerSummary } from '../stores/agents'
+import type { Sector } from '../stores/agents'
 import { useAgentStore } from '../stores/agents'
 
 const { t } = useI18n()
 const agentStore = useAgentStore()
-
-/** Which server's chat is open. Null closes the modal. */
-const openServer = ref<ServerSummary | null>(null)
 
 const activityBox = ref<HTMLElement | null>(null)
 const activitySentinel = ref<HTMLElement | null>(null)
@@ -283,83 +277,36 @@ function percent(part: number, whole: number): number {
       </div>
     </div>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <div class="card border-base-300 bg-base-200 border">
-        <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <Blocks class="text-primary size-4" />
-            {{ t('dashboard.contribution') }}
-          </h2>
+    <div class="card border-base-300 bg-base-200 border">
+      <div class="card-body gap-3">
+        <h2 class="card-title flex items-center gap-2 text-base">
+          <Blocks class="text-primary size-4" />
+          {{ t('dashboard.contribution') }}
+        </h2>
 
-          <ul class="flex flex-col gap-3">
-            <li v-for="agent in contributors" :key="agent.id">
-              <div class="flex items-center justify-between text-xs">
-                <RouterLink
-                  :to="{ name: 'agent', params: { id: agent.id } }"
-                  class="flex items-center gap-2 hover:underline"
-                >
-                  <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="xs" />
-                  <span
-                    class="size-1.5 rounded-full"
-                    :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
-                  ></span>
-                  {{ agent.label }}
-                </RouterLink>
-                <span class="tabular-nums opacity-60">{{ agent.build.blocksPlaced.toLocaleString() }}</span>
-              </div>
-              <progress
-                class="progress progress-primary mt-1 w-full"
-                :value="percent(agent.build.blocksPlaced, topContribution)"
-                max="100"
-              ></progress>
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="card border-base-300 bg-base-200 border">
-        <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <Server class="text-primary size-4" />
-            {{ t('servers.title') }}
-            <span class="badge badge-ghost badge-sm">{{ agentStore.serverSummaries.length }}</span>
-          </h2>
-          <p class="text-xs opacity-50">{{ t('servers.hint') }}</p>
-
-          <!--
-            One row per server rather than every server's chat stacked. A fleet can span servers and
-            each feed is long, so the card lists them and the conversation opens on demand.
-          -->
-          <ul v-if="agentStore.serverSummaries.length" class="flex flex-col gap-1">
-            <li v-for="server in agentStore.serverSummaries" :key="server.address">
-              <!-- Tailwind 4's preflight gives buttons cursor: default, so the row asks for it back. -->
-              <button
-                class="rounded-field hover:bg-base-300/50 flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left"
-                @click="openServer = server"
+        <ul class="flex flex-col gap-3">
+          <li v-for="agent in contributors" :key="agent.id">
+            <div class="flex items-center justify-between text-xs">
+              <RouterLink
+                :to="{ name: 'agent', params: { id: agent.id } }"
+                class="flex items-center gap-2 hover:underline"
               >
-                <MessagesSquare class="size-4 shrink-0 opacity-50" />
-                <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ server.address }}</span>
-
-                <span class="shrink-0 text-xs tabular-nums opacity-60">
-                  {{ t('servers.online', { online: server.online, total: server.total }) }}
-                </span>
-
+                <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="xs" />
                 <span
-                  v-if="server.listener"
-                  class="badge badge-success badge-soft badge-xs shrink-0"
-                >
-                  {{ t('servers.listening') }}
-                </span>
-                <span v-else class="badge badge-warning badge-soft badge-xs shrink-0 gap-1">
-                  <TriangleAlert class="size-3" />
-                  {{ t('servers.noListenerShort') }}
-                </span>
-              </button>
-            </li>
-          </ul>
-
-          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('servers.none') }}</p>
-        </div>
+                  class="size-1.5 rounded-full"
+                  :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                ></span>
+                {{ agent.label }}
+              </RouterLink>
+              <span class="tabular-nums opacity-60">{{ agent.build.blocksPlaced.toLocaleString() }}</span>
+            </div>
+            <progress
+              class="progress progress-primary mt-1 w-full"
+              :value="percent(agent.build.blocksPlaced, topContribution)"
+              max="100"
+            ></progress>
+          </li>
+        </ul>
       </div>
     </div>
 
@@ -410,7 +357,5 @@ function percent(part: number, whole: number): number {
         </div>
       </div>
     </div>
-
-    <ServerChatModal :server="openServer" @close="openServer = null" />
   </div>
 </template>

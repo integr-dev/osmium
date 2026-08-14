@@ -39,6 +39,7 @@ export const en = {
   nav: {
     openNavigation: 'Open navigation',
     closeNavigation: 'Close navigation',
+    resizeSidebar: 'Resize the sidebar',
     dashboard: 'Dashboard',
     map: 'Map',
     hosts: 'Hosts',
@@ -57,17 +58,39 @@ export const en = {
    * what you are being told to do.
    */
   palette: {
-    open: 'Search',
+    hint: '{keys} to search',
     placeholder: 'Search agents, hosts and pages…',
     noMatches: 'Nothing matches that.',
     connectAgent: 'Connect {name}',
     disconnectAgent: 'Disconnect {name}',
+    toggleChat: 'Toggle chat',
     section: {
       navigate: 'Pages',
       agents: 'Agents',
       hosts: 'Hosts',
       actions: 'Actions',
     },
+  },
+
+  /**
+   * The rail beside the page. "Speak as" rather than "send as": the message goes out under a
+   * Minecraft account, and everyone in game reads it as that player talking.
+   */
+  chat: {
+    title: 'Chat',
+    toggle: 'Toggle chat ({keys})',
+    resize: 'Resize the chat rail',
+    scope: 'What to show',
+    servers: 'Servers',
+    agents: 'Agents',
+    speakAs: 'Speak as',
+    listening: 'listening',
+    notListening: 'no listener',
+    noListener: 'No agent is online here, so nothing is forwarding this server’s chat.',
+    noServers: 'No servers yet. Assign an agent to one to read its chat.',
+    noSpeaker: 'Nobody is in game here to speak through.',
+    speakerOffline: '{name} is not in game.',
+    hostOffline: 'Host {host} is unreachable.',
   },
 
   connection: {
@@ -117,18 +140,6 @@ export const en = {
   attention: {
     hostUnreachable: 'Host unreachable',
     needsRelink: 'Needs relink',
-  },
-
-  servers: {
-    title: 'Active servers',
-    hint: 'Select a server to read its chat.',
-    online: '{online} of {total} online',
-    listening: 'Chat on',
-    noListenerShort: 'No chat',
-    noListener: 'No agent is online here, so nothing is forwarding this server’s chat.',
-    via: 'Forwarded by {name}.',
-    chatTitle: 'Server chat',
-    none: 'No servers yet. Add an agent to get started.',
   },
 
   hosts: {
@@ -223,7 +234,6 @@ export const en = {
     activity: 'Activity',
     noActivity: 'Nothing to report.',
     chat: 'Chat',
-    chatHint: '— to and from this agent. Server chat is on the dashboard.',
     chatPlaceholder: 'Send a message as this agent',
     send: 'Send',
     agentTag: 'agent',
