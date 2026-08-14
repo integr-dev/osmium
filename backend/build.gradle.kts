@@ -79,3 +79,38 @@ allOpen {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+/**
+ * The mock host: a development tool that dials into this backend and reports invented agents,
+ * telemetry, chat and incidents, so the interface can be worked on without a Minecraft account, a
+ * server, or the real host.
+ *
+ * Its own source set rather than a file in `main` or `test`. It shares the wire protocol types with
+ * the application deliberately — renaming a command breaks its compilation instead of letting the
+ * two drift apart — while staying off the application's classpath, so it cannot reach the published
+ * image, and out of `test`, so it never runs in CI.
+ *
+ *     OSMIUM_HOST_TOKEN=osm_host_1_… ./gradlew mockHost
+ */
+sourceSets {
+    create("mockhost") {
+        // Classes, deliberately **not** `output`: that includes the processed resources, which makes
+        // this task depend on `processResources` and `bootBuildInfo`. Those rewrite `build/`, and
+        // devtools tears down a running `bootRun` the moment it does — so starting the mock host
+        // killed the backend it had just connected to. It needs none of those resources anyway.
+        compileClasspath += sourceSets["main"].output.classesDirs
+        runtimeClasspath += sourceSets["main"].output.classesDirs
+    }
+}
+
+configurations["mockhostImplementation"].extendsFrom(configurations["implementation"])
+configurations["mockhostRuntimeOnly"].extendsFrom(configurations["runtimeOnly"])
+
+tasks.register<JavaExec>("mockHost") {
+    group = "application"
+    description = "Runs a fake host reporting invented agents, telemetry, chat and incidents."
+    mainClass = "net.integr.osmium.mockhost.MockHostKt"
+    classpath = sourceSets["mockhost"].runtimeClasspath
+    // Its whole job is saying what it sent and received.
+    standardOutput = System.out
+}

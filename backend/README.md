@@ -594,9 +594,16 @@ the raw packet types, and the backend cannot infer scope from message text. A sc
 not recognise is dropped rather than guessed at: filing a kick into chat is worse than losing it.
 
 `/api/chat` takes **exactly one** of `agentId` or `server`, and that is the whole design in one
-parameter. A server's global chat is identical for every agent on it, so it is forwarded once by an
-elected listener and read per *server*; an agent's feed is only what was said to or about that
-agent. Serving both from one endpoint would put the same message on every agent page.
+parameter.
+
+A **server** feed is everything that happened there: the global channel, whispers to an agent,
+proximity chat, and the agents' own outbound lines. An **agent** feed is what was said to or about
+that one agent, and excludes the global channel.
+
+**The two are not mirror images, on purpose.** Global chat is identical for every agent standing on
+the server, so folding it into one agent's conversation would put the same message on every agent
+page and bury the lines that are actually about that agent. The reverse does not hold: a whisper to
+one agent is still something that happened on that server, so the server feed keeps it.
 
 Rows reference the agent by **id and label as plain columns, not a relation**, like audit entries.
 The listener role moves between agents, so a server's history must not disappear with whichever one
@@ -818,6 +825,46 @@ composite index in that order, so paging deep costs the same as the first page.
 
 `PageCursor` is the shared piece. A malformed cursor is a 400, not a silent restart from the top.
 
+## The mock host
+
+Nothing reported by a host exists until one dials in — telemetry, nearby players, chat, activity and
+the dashboard trends all stay empty. `src/mockhost` is a fake host that connects, answers commands
+and reports invented data, so the interface can be worked on without a Minecraft account, a server,
+or the real host.
+
+```bash
+# Enrol a host in the interface and copy the token it shows once.
+OSMIUM_HOST_TOKEN=osm_host_8_… ./gradlew mockHost
+```
+
+That is the whole toggle: it is a separate process, so it runs when you run it and stops when you
+stop it. `OSMIUM_HOST_URL` overrides `ws://localhost:8080/ws/host`. Everything else is the ordinary
+flow — add agents to that host, set them up, connect them — and the mock answers each command the
+way a host would.
+
+It **shares the wire protocol types with the application**, which is the point: rename a command and
+the mock stops compiling, instead of drifting and being discovered by whoever maintains the real
+host. It is a second implementation of a protocol that otherwise has one, and the only thing
+exercising `HostEnvelope` outside the tests that assert on it.
+
+Two details are load-bearing rather than tidy:
+
+- **Its own source set, not `main` or `test`.** It is on neither the application's classpath — so it
+  cannot reach the published image — nor the test one, so it never runs in CI.
+- **Its classpath takes `main` *classes*, not `main` *output*.** Output includes processed resources,
+  which drags `processResources` and `bootBuildInfo` into the task graph; those rewrite `build/`, and
+  devtools tears down a running `bootRun` the moment they do. Starting the mock host killed the
+  backend it had just connected to.
+
+It reconnects with backoff, because the backend it talks to restarts on every save, and re-announces
+any agent it had online — the backend does not reissue commands on reconnect, so an agent would
+otherwise sit in the interface as `ONLINE` with vitals that had stopped arriving.
+
+What it does **not** do: log in to anything, hold a credential, or model Minecraft. Setup succeeds
+because it was asked to, and reports an invented identity. It cannot tell you whether a real login
+works — that is the host's business, and the backend never observes it.
+
+
 ## Tests
 
 ```bash
@@ -903,6 +950,10 @@ web/          cross-cutting HTTP: exception handling, OpenAPI setup
 The six feature packages each contain `controller/`, `service/`, `repository/`, `model/` and
 `dto/`. The four below the gap are not features and stay flat: two are channels, one is framework
 wiring, one is cross-cutting HTTP.
+
+All of that is `src/main`. `src/mockhost` sits beside it as a source set of its own — a development
+tool that speaks the host protocol, on neither the application classpath nor the test one. See
+[The mock host](#the-mock-host).
 
 Naming follows what a class *does*, not how it does it — `HostConnections`, not
 `HostSessionRegistry`; `HostMessageHandler`, not `HostWebSocketHandler`. The transport is visible
