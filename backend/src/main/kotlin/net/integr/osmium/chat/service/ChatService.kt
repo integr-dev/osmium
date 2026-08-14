@@ -83,7 +83,10 @@ class ChatService(
         )
     }
 
-    /** A server's global feed, attributed to the server rather than to whichever agent forwarded it. */
+    /**
+     * Everything said on one server: global chat, whispers, proximity chat and the agents' own
+     * outbound lines. Attributed to the server rather than to whichever agent forwarded it.
+     */
     fun findForServer(serverAddress: String, limit: Int, cursor: String?): ChatPageResponse {
         val (beforeAt, beforeId) = PageCursor.decode(cursor)
         return page(
@@ -124,7 +127,21 @@ class ChatService(
         const val UNASSIGNED_SERVER = "(unassigned)"
 
         val PER_AGENT_SCOPES = listOf(ChatScope.OUTBOUND, ChatScope.DIRECT, ChatScope.LOCAL)
-        val SERVER_SCOPES = listOf(ChatScope.GLOBAL)
+
+        /**
+         * **Every scope.** A server's feed is everything the fleet heard and said there - the global
+         * channel, whispers to an agent, proximity chat, and the agents' own lines - not the global
+         * channel alone.
+         *
+         * The asymmetry with [PER_AGENT_SCOPES] is deliberate and only looks lopsided. Global chat
+         * is identical for every agent on the server, so folding it into one agent's conversation
+         * buries the lines that are actually about that agent; the reverse does not hold, because a
+         * whisper to one agent is still something that happened on that server.
+         *
+         * Derived from the enum rather than listed, so a scope added later is included by default -
+         * "everything that happened here" is the definition, not a list that has to be maintained.
+         */
+        val SERVER_SCOPES = ChatScope.entries.toList()
 
         /** 03:40 daily, ten minutes behind the audit purge so the two do not contend. */
         const val PURGE_CRON = "0 40 3 * * *"

@@ -33,13 +33,18 @@ export function scopeFilter(scope: ChatScope): { agentId: number } | { server: s
 /**
  * Whether a line arriving on the live stream belongs in a panel showing [scope].
  *
- * Global lines arrive tagged with whichever agent forwarded them, so an agent-scoped panel has to
- * exclude them explicitly — otherwise the elected listener's conversation quietly becomes the whole
+ * The two are not mirror images. A **server** takes everything that happened there — the global
+ * channel, whispers to an agent, proximity chat, the agents' own lines — because all of it happened
+ * on that server. An **agent** excludes the global channel, which is identical for every agent
+ * standing there and would bury the lines that are actually about this one.
+ *
+ * Global lines arrive tagged with whichever agent forwarded them, which is why the agent side has to
+ * say so explicitly: otherwise the elected listener's conversation quietly becomes the whole
  * server's.
  */
 export function belongsTo(line: ChatMessageResponse, scope: ChatScope): boolean {
   return scope.kind === 'server'
-    ? line.serverAddress === scope.address && line.scope === 'GLOBAL'
+    ? line.serverAddress === scope.address
     : line.agentId === scope.id && line.scope !== 'GLOBAL'
 }
 

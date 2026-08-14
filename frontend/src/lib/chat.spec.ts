@@ -46,9 +46,15 @@ describe('which panel a line belongs in', () => {
     expect(belongsTo(global, AGENT)).toBe(false)
   })
 
-  it('puts an agent’s own conversation on the agent, not on the server', () => {
+  /** Not the mirror of the above: a whisper to one agent still happened on that server. */
+  it('puts every scope on the server, not only the global channel', () => {
+    for (const scope of ['GLOBAL', 'DIRECT', 'LOCAL', 'OUTBOUND'] as const) {
+      expect(belongsTo(line({ scope }), SERVER)).toBe(true)
+    }
+  })
+
+  it('puts an agent’s own conversation on the agent as well', () => {
     expect(belongsTo(line({ scope: 'DIRECT' }), AGENT)).toBe(true)
-    expect(belongsTo(line({ scope: 'DIRECT' }), SERVER)).toBe(false)
   })
 
   it('keeps servers apart', () => {

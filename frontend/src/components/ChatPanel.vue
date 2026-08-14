@@ -100,6 +100,14 @@ async function send(): Promise<void> {
   }
 }
 
+/**
+ * Whether to name the agent beside a line. See the template: only on a server feed, and only for
+ * lines that are not the public channel.
+ */
+function involvesAgent(line: ChatMessageResponse): boolean {
+  return props.scope.kind === 'server' && line.scope !== 'GLOBAL'
+}
+
 /** Time only: chat is kept three days, so the clock is what locates a line. */
 function formatAt(at: string): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
@@ -130,6 +138,15 @@ function formatAt(at: string): string {
           <!-- What we said, rather than what was said to us. The one line in the feed we caused. -->
           <span class="shrink-0 font-medium" :class="line.scope === 'OUTBOUND' ? 'text-primary' : ''">
             {{ line.from }}
+          </span>
+          <!--
+            Which agent a line involves, on a server feed only. Everything said on the server is
+            here, so a whisper to one agent would otherwise be indistinguishable from public chat -
+            and "who was this to" is the whole question a private line raises. On an agent feed it
+            would be the same name on every row.
+          -->
+          <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
+            {{ line.agentLabel }}
           </span>
           <span class="min-w-0 flex-1 break-words opacity-80">{{ line.text }}</span>
         </p>

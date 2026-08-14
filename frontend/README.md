@@ -241,11 +241,17 @@ The **scope is chosen, not inferred from the route** — a panel that rewrites i
 operator navigates is one nobody can read. `src/lib/chat.ts` holds what that means: which live lines
 belong in which scope, and who may speak into one.
 
-Two scopes, kept apart because the backend keeps them apart. A **server** scope is the global chat
-everyone standing there saw, forwarded once by the elected listener; an **agent** scope is the
-conversation to or about that agent. Global lines arrive tagged with whichever agent forwarded them,
-so an agent scope has to exclude them explicitly or the listener's conversation quietly becomes the
-whole server's.
+Two scopes, and they are **not mirror images**. A **server** scope is everything that happened
+there — the global channel forwarded once by the elected listener, plus whispers, proximity chat and
+the agents' own lines — because all of it happened on that server. An **agent** scope is the
+conversation to or about that agent, and excludes the global channel, which is identical for every
+agent standing there and would bury the lines actually about this one.
+
+Global lines arrive tagged with whichever agent forwarded them, which is why the agent side has to
+exclude them explicitly, or the listener's conversation quietly becomes the whole server's. On a
+server feed the agent is named beside any line that is not public: everything is in there, so a
+whisper would otherwise be indistinguishable from public chat, and "who was this to" is the whole
+question a private line raises.
 
 Sending is impersonation through one agent, so a server scope names which — the listener first,
 since it is the one already forwarding the conversation being read. A server nobody is forwarding

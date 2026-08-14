@@ -30,10 +30,14 @@ class ChatController(private val chatService: ChatService) {
         description = """
             Pass exactly one of `agentId` or `server`.
 
-            `agentId` gives the conversation to or about that agent. `server` gives what everyone on
-            that server saw, forwarded once by the elected listener - deliberately separate, because
-            the server's chat is identical for every agent on it and would otherwise bury the lines
-            that are actually about the agent you are looking at.
+            `agentId` gives the conversation to or about that agent, and excludes the global
+            channel: that is identical for every agent on the server and would bury the lines that
+            are actually about the one you are looking at.
+
+            `server` gives everything that happened there - the global channel forwarded once by the
+            elected listener, plus whispers, proximity chat and the agents' own outbound lines. Not
+            the mirror of the above: a whisper to one agent is still something that happened on that
+            server.
 
             Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
             from the previous response to continue. Kept for 3 days.

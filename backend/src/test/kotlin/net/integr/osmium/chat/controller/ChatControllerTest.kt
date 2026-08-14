@@ -12,6 +12,7 @@ import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.HostReportService
 import net.integr.osmium.hostlink.MessageKind
 import org.hamcrest.Matchers.contains
+import org.hamcrest.Matchers.containsInAnyOrder
 import org.hamcrest.Matchers.hasSize
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -74,20 +75,36 @@ class ChatControllerTest : AbstractRestTest() {
         }
     }
 
+    /**
+     * Everything that happened on the server, not the global channel alone: a whisper to one agent
+     * is still something that happened there. The one thing it must not include is another server.
+     */
     @Test
-    fun `a server's feed is exactly the global chat, whichever agent forwarded it`() {
+    fun `a server's feed is everything said there, whichever agent heard it`() {
         val host = reachableHost()
         val listener = createAgent("Mason_01", host, server = "mc.example.com:25565")
-        val other = createAgent("Mason_02", host, server = "other.example.com:25565")
+        val second = createAgent("Mason_02", host, server = "mc.example.com:25565")
+        val elsewhere = createAgent("Mason_03", host, server = "other.example.com:25565")
         line(listener, ChatScope.GLOBAL, "seen on mc")
         line(listener, ChatScope.DIRECT, "whispered to the listener")
-        line(other, ChatScope.GLOBAL, "seen on other")
+        line(second, ChatScope.OUTBOUND, "said by the second agent")
+        line(second, ChatScope.LOCAL, "muttered nearby")
+        line(elsewhere, ChatScope.GLOBAL, "seen on other")
 
         mockMvc.get("/api/chat?server=mc.example.com:25565") {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "viewer"))
         }.andExpect {
             status { isOk() }
-            jsonPath("$.items[*].text") { value(contains("seen on mc")) }
+            jsonPath("$.items[*].text") {
+                value(
+                    containsInAnyOrder(
+                        "seen on mc",
+                        "whispered to the listener",
+                        "said by the second agent",
+                        "muttered nearby",
+                    ),
+                )
+            }
         }
     }
 
