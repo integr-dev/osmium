@@ -47,7 +47,10 @@ class ChatService(
                 at = Instant.now(),
                 agentId = agent.id,
                 agentLabel = agent.label,
-                serverAddress = agent.serverAddress,
+                // An agent that spoke was in game, which needs a server — so this is effectively
+                // unreachable. It is not `!!` because the line is worth keeping either way, and a
+                // placeholder says which case happened rather than inventing an address.
+                serverAddress = agent.serverAddress ?: UNASSIGNED_SERVER,
                 scope = scope,
                 sender = from.take(ChatMessage.SENDER_MAX),
                 text = text.take(ChatMessage.TEXT_MAX),
@@ -113,6 +116,13 @@ class ChatService(
     )
 
     private companion object {
+        /**
+         * Stands in when a line arrives from an agent that is somehow assigned nowhere. It cannot
+         * match a real address, so such a line never surfaces in a server feed — which is right,
+         * since there is no server it belongs to.
+         */
+        const val UNASSIGNED_SERVER = "(unassigned)"
+
         val PER_AGENT_SCOPES = listOf(ChatScope.OUTBOUND, ChatScope.DIRECT, ChatScope.LOCAL)
         val SERVER_SCOPES = listOf(ChatScope.GLOBAL)
 

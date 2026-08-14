@@ -44,7 +44,9 @@ class ChatControllerTest : AbstractRestTest() {
             at = at,
             agentId = agent.id,
             agentLabel = agent.label,
-            serverAddress = agent.serverAddress,
+            // Every agent these tests build is assigned to one, and an unassigned agent could not
+            // have said anything in the first place.
+            serverAddress = checkNotNull(agent.serverAddress),
             scope = scope,
             sender = from,
             text = text,

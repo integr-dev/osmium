@@ -63,6 +63,23 @@ What is meant to survive that mock is the **shape**: fields are declared as a sc
 generically by type, so adding a setting later is an entry in that file plus a copy key, not another
 block of markup. The field list itself is a placeholder, not a specification.
 
+**Operations** holds the first real fleet-wide action: assigning a server to a group of agents. It
+lives there rather than on Configuration deliberately — Configuration is mock end to end, and one
+real field among invented ones is how a mock stops being obvious. Both screens share
+`AgentPicker.vue`, so the two lists cannot drift apart.
+
+### An agent may have no server
+
+`serverAddress` is nullable. An agent assigned nowhere is set up and idle: it cannot connect, the
+button is disabled, and it contributes no entry to **Active servers**. That state used to be faked
+by pointing an agent at a server it was not connected to, which then appeared in that list with
+nobody on it.
+
+Assignment is its own action — a dialog on the agent page, and in bulk on Operations — rather than a
+field on the edit, because it is a different kind of change: a rename is cosmetic and always
+allowed, while this decides what the next connection targets and is refused while the agent is
+online. Every place the address is displayed names the empty case rather than showing a blank.
+
 Telemetry is **absent rather than zeroed** when an agent has not reported: `agent.telemetry` is
 null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes would render as an
 agent on no health standing at the world origin, which is a much more convincing lie than an empty

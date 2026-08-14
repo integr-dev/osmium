@@ -331,9 +331,10 @@ across the top level**.
 
 ```jsonc
 // backend → host
+// No server address: setting an agent up is acquiring a credential, and a Minecraft account can
+// join any server. `connect` carries the address, which is where it is needed. See host/README.md.
 { "id": "cmd-7f3a", "kind": "command", "type": "setup_agent", "agentId": 42,
-  "payload": { "label": "Mason_04", "serverAddress": "mc.example.com:25565",
-               "method": "device_code" } }
+  "payload": { "label": "Mason_04", "method": "device_code" } }
 
 // host → backend, answering it
 { "id": "cmd-7f3a", "kind": "result", "type": "setup_agent", "agentId": 42,

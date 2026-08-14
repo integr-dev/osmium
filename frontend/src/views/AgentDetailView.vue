@@ -47,7 +47,7 @@ const busy = ref(false)
 const editDialog = ref<HTMLDialogElement | null>(null)
 const removeDialog = ref<HTMLDialogElement | null>(null)
 const setupDialog = ref<HTMLDialogElement | null>(null)
-const draft = ref({ label: '', serverAddress: '' })
+const draft = ref({ label: '' })
 const editError = ref<string | null>(null)
 const setupMethod = ref(LOGIN_METHOD_IDS[0])
 
@@ -188,9 +188,38 @@ async function confirmSetup() {
 
 function openEdit() {
   if (!agent.value) return
-  draft.value = { label: agent.value.label, serverAddress: agent.value.serverAddress }
+  draft.value = { label: agent.value.label }
   editError.value = null
   editDialog.value?.showModal()
+}
+
+/**
+ * Where the agent plays, as its own dialog.
+ *
+ * Separate from the rename because it is a different kind of change: it decides what the next
+ * connection targets, so the backend refuses it while the agent is online, where a rename is always
+ * allowed. Clearing the field unassigns, which leaves the agent set up and idle.
+ */
+const serverDialog = ref<HTMLDialogElement | null>(null)
+const serverDraft = ref('')
+const serverError = ref<string | null>(null)
+
+function openServer() {
+  if (!agent.value) return
+  serverDraft.value = agent.value.serverAddress ?? ''
+  serverError.value = null
+  serverDialog.value?.showModal()
+}
+
+async function saveServer() {
+  if (!agent.value) return
+  serverError.value = null
+  try {
+    await agentStore.assignServer(agent.value.id, serverDraft.value.trim() || null)
+    serverDialog.value?.close()
+  } catch (failure) {
+    serverError.value = failure instanceof Error ? failure.message : t('errors.assignServer')
+  }
 }
 
 async function saveEdit() {
@@ -199,7 +228,6 @@ async function saveEdit() {
   try {
     await agentStore.updateAgent(agent.value.id, {
       label: draft.value.label,
-      serverAddress: draft.value.serverAddress,
     })
     editDialog.value?.close()
   } catch (failure) {
@@ -227,17 +255,20 @@ async function confirmRemove() {
         <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="lg" />
         <div>
         <h1 class="text-2xl leading-tight font-semibold tracking-tight">{{ agent.label }}</h1>
+        <!--
+          One line: the Minecraft account, where it plays, and the host running it. Each is named
+          when absent rather than dropped — before setup there is no account and an agent assigned
+          nowhere has no server, and both are answers somebody is looking for rather than gaps.
+        -->
         <p class="flex flex-wrap items-center gap-2 text-sm opacity-60">
-          <span class="flex items-center gap-1">
-            <Server class="size-3.5" />
-            {{ agent.serverAddress }}
+          <span v-if="agent.mcUsername" class="font-mono">{{ agent.mcUsername }}</span>
+          <span v-else class="italic">{{ t('agents.notLinked') }}</span>
+          <span>·</span>
+          <span :class="agent.serverAddress ? '' : 'italic'">
+            {{ agent.serverAddress ?? t('agents.noServer') }}
           </span>
           <span>·</span>
           <span>{{ agent.hostName }}</span>
-          <template v-if="agent.mcUsername">
-            <span>·</span>
-            <span class="font-mono">{{ agent.mcUsername }}</span>
-          </template>
         </p>
         </div>
       </div>
@@ -262,6 +293,10 @@ async function confirmRemove() {
           </div>
         </div>
         <div v-if="auth.can('fleet.control')" class="flex gap-1">
+          <button class="btn btn-ghost btn-sm gap-1" @click="openServer">
+            <Server class="size-4" />
+            {{ t('agents.setServer') }}
+          </button>
           <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
             <SquarePen class="size-4" />
             {{ t('common.edit') }}
@@ -461,10 +496,11 @@ async function confirmRemove() {
             <KeyRound class="size-4" />
             {{ t('agents.setUp') }}
           </button>
+          <!-- No server is nowhere to connect to, and the backend refuses it with a 409. -->
           <button
             v-if="auth.can('fleet.control')"
             class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || !hostReachable || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING'"
+            :disabled="busy || !hostReachable || !agent.serverAddress || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING'"
             @click="run(() => agentStore.connect(agent!.id))"
           >
             <RotateCw class="size-4" />
@@ -549,19 +585,6 @@ async function confirmRemove() {
             maxlength="64"
             required
           />
-          <FormField
-            v-model="draft.serverAddress"
-            :label="t('agents.server')"
-            :placeholder="t('agents.serverPlaceholder')"
-            :icon="Server"
-            type="text"
-            required
-            :disabled="isOnline(agent)"
-          />
-          <p v-if="isOnline(agent)" class="text-xs opacity-60">
-            {{ t('agents.moveOffline') }}
-          </p>
-
           <div v-if="editError" role="alert" class="alert alert-error alert-soft">
             <TriangleAlert class="size-4" />
             <span>{{ editError }}</span>
@@ -570,6 +593,43 @@ async function confirmRemove() {
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
             <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+          </div>
+        </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+    </dialog>
+
+    <dialog ref="serverDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <Server class="text-primary size-5" />
+          {{ t('agents.setServerTitle', { name: agent.label }) }}
+        </h3>
+        <p class="mt-1 text-sm opacity-60">{{ t('agents.setServerHint') }}</p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveServer">
+          <FormField
+            v-model="serverDraft"
+            :label="t('agents.server')"
+            :placeholder="t('agents.serverPlaceholder')"
+            :icon="Server"
+            type="text"
+            :disabled="isOnline(agent)"
+          />
+          <!-- Emptying the field is how an agent is taken off a server, so it is said out loud. -->
+          <p class="text-xs opacity-60">
+            {{ isOnline(agent) ? t('agents.moveOffline') : t('agents.unassignHint') }}
+          </p>
+
+          <div v-if="serverError" role="alert" class="alert alert-error alert-soft">
+            <TriangleAlert class="size-4" />
+            <span>{{ serverError }}</span>
+          </div>
+
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent)">
+              {{ t('common.save') }}
+            </button>
           </div>
         </form>
       </div>

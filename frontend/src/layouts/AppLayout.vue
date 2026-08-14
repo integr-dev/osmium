@@ -169,7 +169,8 @@ async function logout() {
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
 
-      <aside class="border-base-300 bg-base-200 flex min-h-full w-64 flex-col border-r">
+      <!-- Wider than the default drawer: agent rows now carry an account name and a server address. -->
+      <aside class="border-base-300 bg-base-200 flex min-h-full w-72 flex-col border-r">
         <div class="flex items-center gap-3 px-5 py-6">
           <img src="/logo.svg" alt="" class="size-8" />
           <span class="text-lg font-semibold tracking-tight">Osmium</span>
@@ -270,7 +271,23 @@ async function logout() {
                           :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
                         ></span>
                       </span>
-                      <span class="truncate">{{ agent.label }}</span>
+                      <!--
+                        The same second line the agent picker carries: the Minecraft account, then
+                        where it plays. Each is named when absent rather than left blank — before
+                        setup there is no account, and an agent assigned nowhere has no server, and
+                        both are things an operator is looking for when they scan this list.
+                      -->
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate">{{ agent.label }}</span>
+                        <span class="block truncate text-xs opacity-50">
+                          <span v-if="agent.mcUsername" class="font-mono">{{ agent.mcUsername }}</span>
+                          <span v-else class="italic">{{ t('agents.notLinked') }}</span>
+                          <span class="opacity-60"> · </span>
+                          <span :class="agent.serverAddress ? 'font-mono' : 'italic'">
+                            {{ agent.serverAddress ?? t('agents.noServer') }}
+                          </span>
+                        </span>
+                      </span>
                     </RouterLink>
                   </li>
                   <li v-if="auth.can('fleet.control')">

@@ -164,8 +164,9 @@ changes automatically.
 | `POST` | `/api/hosts/{id}/rotate-token` | `fleet.login` |
 | `DELETE` | `/api/hosts/{id}` | `fleet.login` (cascades to its agents) |
 | `GET` | `/api/agents`, `/api/agents/{id}` | `fleet.read` |
-| `POST` | `/api/agents` | `fleet.control` |
-| `PATCH` | `/api/agents/{id}` | `fleet.control` (rename, move server) |
+| `POST` | `/api/agents` | `fleet.control` (`serverAddress` optional) |
+| `PATCH` | `/api/agents/{id}` | `fleet.control` (rename) |
+| `PUT` | `/api/agents/{id}/server` | `fleet.control` (assign a server, or null for none; offline only) |
 | `DELETE` | `/api/agents/{id}` | `fleet.control` |
 | `POST` | `/api/agents/{id}/setup` | `fleet.login` |
 | `POST` | `/api/agents/{id}/connect`, `/disconnect` | `fleet.control` |
@@ -361,6 +362,30 @@ One socket per host multiplexes all its agents, so every message carries an `age
 destination field, because the connection *is* the host. Commands are fire-and-forget and state
 advances when the host reports back — it is the source of truth about its own agents, and is trusted
 only for the agents it owns.
+
+### Where an agent plays is separate from setting it up
+
+`setup_agent` **does not carry the server address**, and an agent may be assigned to **no server at
+all**. Both follow from the same fact: a Minecraft account can join any server, so acquiring a
+credential and deciding where to use it are different decisions.
+
+Sending the address at setup handed the host a value that went stale the moment the agent was
+reassigned, and it was never needed — `connect` carries the address, which is where it matters.
+Requiring one at creation was worse: it made an operator choose where an agent would play before it
+had been set up, and therefore before anyone knew the credential worked. The natural order is
+create, set up, assign, connect.
+
+Null is a real state, not a gap. An agent assigned nowhere is set up and idle: it cannot connect,
+and it is not a candidate to forward any server's chat. Previously that was faked by pointing an
+agent at a server it was not connected to, which then showed up under Active servers with nobody on
+it.
+
+Assignment is `PUT /api/agents/{id}/server`, on `fleet.control` — configuration, not credential work
+— and refused while the agent is online, since the address decides what the next connection targets.
+Renaming stayed on `PATCH` and is allowed at any time, because it is cosmetic.
+
+**This changed the host protocol.** See [`../host/README.md`](../host/README.md), which documents the
+removed field.
 
 Reachability is **derived** from the heartbeat rather than stored, so a backend restart cannot leave
 a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
@@ -774,7 +799,7 @@ composite index in that order, so paging deep costs the same as the first page.
 ./gradlew test
 ```
 
-281 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
+285 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

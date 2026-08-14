@@ -2,6 +2,7 @@ package net.integr.osmium.agent.service
 
 import net.integr.osmium.agent.dto.AgentResponse
 import net.integr.osmium.agent.dto.ChatRequest
+import net.integr.osmium.agent.dto.AssignServerRequest
 import net.integr.osmium.agent.dto.CreateAgentRequest
 import net.integr.osmium.agent.dto.SetupAgentRequest
 import net.integr.osmium.agent.dto.UpdateAgentRequest
@@ -55,25 +56,60 @@ class AgentService(
         val agent = Agent(
             label = request.label,
             host = host,
-            serverAddress = normalizeServer(request.serverAddress),
+            serverAddress = request.serverAddress?.takeIf { it.isNotBlank() }?.let(::normalizeServer),
             state = AgentState.UNLINKED,
         )
         val saved = agentRepository.save(agent)
         auditService.record(
             action = AuditAction.AGENT_CREATE,
             target = saved.label,
-            detail = "On ${host.name}, for ${saved.serverAddress}",
+            detail = "On ${host.name}, for ${saved.serverAddress ?: "no server yet"}",
         )
         publish(saved)
         return saved.toResponse(telemetryStore.find(saved.id))
     }
 
     /**
-     * Renames an agent and/or moves it to another Minecraft server.
+     * Points an agent at a Minecraft server, or at none.
      *
-     * A move leaves credentials untouched: the account is the same account whichever server it
-     * joins. It does require the agent to be offline, because the server address is what the next
-     * connection targets, and an agent is one session on one server.
+     * Its own operation rather than a field on the edit, because it is a different kind of change:
+     * a rename is cosmetic and can happen at any time, while where an agent plays decides what the
+     * next connection targets. Offline only, for that reason — an agent is one session on one
+     * server, and moving the target under a live one would describe a session that is not happening.
+     *
+     * Credentials are untouched either way. The account is the same account wherever it joins,
+     * which is the whole reason this is separable from setup.
+     */
+    @Transactional
+    fun assignServer(id: Long, request: AssignServerRequest): AgentResponse {
+        val agent = require(id)
+        val target = request.serverAddress?.takeIf { it.isNotBlank() }?.let(::normalizeServer)
+        if (target == agent.serverAddress) return agent.toResponse(telemetryStore.find(agent.id))
+
+        check(agent.state != AgentState.ONLINE) {
+            "Disconnect '${agent.label}' before changing the server it plays on"
+        }
+
+        val previous = agent.serverAddress
+        agent.serverAddress = target
+        auditService.record(
+            action = AuditAction.AGENT_UPDATE,
+            target = agent.label,
+            detail = when {
+                target == null -> "unassigned from $previous"
+                previous == null -> "assigned to $target"
+                else -> "moved from $previous to $target"
+            },
+        )
+        publish(agent)
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /**
+     * Renames an agent.
+     *
+     * Where it plays is [assignServer]: that decides what the next connection targets and is only
+     * allowed offline, where a rename is cosmetic and always allowed.
      */
     @Transactional
     fun update(id: Long, request: UpdateAgentRequest): AgentResponse {
@@ -86,18 +122,6 @@ class AgentService(
                 check(!agentRepository.existsByLabel(label)) { "Agent '$label' already exists" }
                 changes += "renamed from ${agent.label}"
                 agent.label = label
-            }
-        }
-
-        request.serverAddress?.let { address ->
-            require(address.isNotBlank()) { "Server address must not be blank" }
-            val moved = normalizeServer(address)
-            if (moved != agent.serverAddress) {
-                check(agent.state != AgentState.ONLINE) {
-                    "Disconnect '${agent.label}' before moving it to another server"
-                }
-                changes += "moved from ${agent.serverAddress} to $moved"
-                agent.serverAddress = moved
             }
         }
 
@@ -153,9 +177,12 @@ class AgentService(
         dispatch(
             agent = agent,
             type = CommandType.SETUP_AGENT,
+            // No server address. Setting an agent up is acquiring a credential, and a Minecraft
+            // account can join any server — telling the host which one at this point would hand it
+            // a value that goes stale the moment the agent is reassigned. `connect` carries it,
+            // which is where it is actually needed. See host/README.md.
             payload = mapOf(
                 "label" to agent.label,
-                "serverAddress" to agent.serverAddress,
                 "method" to request.method,
             ),
         )
@@ -176,11 +203,16 @@ class AgentService(
         check(agent.state in CONNECTABLE) {
             "'${agent.label}' cannot connect from ${agent.state}; it must be set up first"
         }
-        dispatch(agent, CommandType.CONNECT, mapOf("serverAddress" to agent.serverAddress))
+        // An agent assigned nowhere has nowhere to connect to. Refused here rather than sent to the
+        // host with a blank address, which it could only fail on.
+        val server = checkNotNull(agent.serverAddress) {
+            "'${agent.label}' is not assigned to a server"
+        }
+        dispatch(agent, CommandType.CONNECT, mapOf("serverAddress" to server))
         auditService.record(
             action = AuditAction.AGENT_CONNECT,
             target = agent.label,
-            detail = agent.serverAddress,
+            detail = server,
         )
         return agent.toResponse(telemetryStore.find(agent.id))
     }

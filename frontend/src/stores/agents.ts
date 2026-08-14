@@ -267,8 +267,16 @@ export const useAgentStore = defineStore('agents', () => {
     return Math.max(0, Math.round(remaining / blocksPerMinute.value))
   })
 
-  /** Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it. */
-  const servers = computed(() => [...new Set(agents.value.map((agent) => agent.serverAddress))].sort())
+  /**
+   * Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it.
+   *
+   * Agents assigned nowhere contribute none. That is the point of allowing it — an agent that is set
+   * up and waiting for work used to be parked on a server it was not connected to, which then
+   * appeared here with nobody on it.
+   */
+  const servers = computed(() =>
+    [...new Set(agents.value.map((agent) => agent.serverAddress).filter((it) => it !== null))].sort(),
+  )
 
   /**
    * Each server with its share of the fleet, and the agent forwarding its global chat.
@@ -375,23 +383,34 @@ export const useAgentStore = defineStore('agents', () => {
   async function addAgent(input: {
     label: string
     hostId: number
-    serverAddress: string
+    serverAddress: string | null
   }): Promise<AgentResponse> {
     const { data, error: failure } = await api.POST('/api/agents', { body: input })
     if (failure || !data) throw new Error(errorMessage(failure, t('errors.createAgent')))
     return data as AgentResponse
   }
 
-  /** Rename and/or move to another server. Omitted fields are left alone by the backend. */
-  async function updateAgent(
-    id: number,
-    changes: { label?: string; serverAddress?: string },
-  ): Promise<void> {
+  /** Rename. Where an agent plays is [assignServer], which has its own preconditions. */
+  async function updateAgent(id: number, changes: { label?: string }): Promise<void> {
     const { error: failure } = await api.PATCH('/api/agents/{id}', {
       params: { path: { id } },
       body: changes,
     })
     if (failure) throw new Error(errorMessage(failure, t('errors.updateAgent')))
+  }
+
+  /**
+   * Points an agent at a Minecraft server, or at none — pass null to unassign.
+   *
+   * Separate from the rename because it is a different kind of change: it decides what the next
+   * connection targets, so the backend refuses it while the agent is online.
+   */
+  async function assignServer(id: number, serverAddress: string | null): Promise<void> {
+    const { error: failure } = await api.PUT('/api/agents/{id}/server', {
+      params: { path: { id } },
+      body: { serverAddress },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.assignServer')))
   }
 
   async function removeAgent(id: number): Promise<void> {
@@ -459,6 +478,7 @@ export const useAgentStore = defineStore('agents', () => {
     removeHost,
     addAgent,
     updateAgent,
+    assignServer,
     removeAgent,
     setupAgent,
     connect,

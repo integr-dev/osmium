@@ -55,9 +55,20 @@ class Agent(
     @JoinColumn(name = "host_id", nullable = false)
     var host: Host = Host(),
 
-    /** Target Minecraft server. Configuration, not a credential, so the backend owns it. */
-    @Column(name = "server_address", nullable = false, length = 128)
-    var serverAddress: String = "",
+    /**
+     * Target Minecraft server, or null when the agent is assigned nowhere.
+     *
+     * Configuration rather than a credential, so the backend owns it — and deliberately **not** part
+     * of setting the agent up. A Minecraft account can join any server, so which one this agent
+     * points at is a separate decision from acquiring the credential, and changing it later touches
+     * nothing about the account.
+     *
+     * Null is a real state rather than a gap: an agent that is set up and waiting for work has
+     * nowhere to be. It cannot connect from there, and it is not a candidate to forward any
+     * server's chat.
+     */
+    @Column(name = "server_address", length = 128)
+    var serverAddress: String? = null,
 
     @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false, length = 32)

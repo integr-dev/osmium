@@ -94,14 +94,24 @@ answer with a `result`.
 ```jsonc
 // backend → host
 { "id": "cmd-7f3a", "kind": "command", "type": "setup_agent", "agentId": 42,
-  "payload": { "label": "Mason_04", "serverAddress": "mc.example.com:25565", "method": "method_a" } }
+  "payload": { "label": "Mason_04", "method": "method_a" } }
 ```
 
 | Field | Meaning |
 |---|---|
 | `label` | The operator's name for this agent. Not a Minecraft account name. |
-| `serverAddress` | Where it will play. Already normalised, lowercase, usually with a port. |
 | `method` | The login **mechanism** the operator chose, relayed uninterpreted. |
+
+> ⚠️ **Changed — this payload no longer carries `serverAddress`.** A host must not expect it.
+>
+> Setting an agent up is acquiring a credential, and a Minecraft account can join any server, so
+> where an agent plays is a separate decision that can change afterwards without touching the
+> account. Sending it here handed the host a value that went stale the moment the agent was
+> reassigned — and it was never needed, because `connect` carries the address, which is the point at
+> which it matters.
+>
+> An agent may now also be assigned to **no server at all**. It can still be set up from there;
+> it simply cannot be told to connect until one is chosen.
 
 `method` is currently one of four placeholders, `method_a`–`method_d`, until real mechanisms are
 chosen. The backend has no idea what any of them mean and stores nothing about them.
@@ -134,6 +144,11 @@ support, deliberately.
 { "id": "cmd-…", "kind": "command", "type": "connect", "agentId": 42,
   "payload": { "serverAddress": "mc.example.com:25565" } }
 ```
+
+`serverAddress` is **always present and never empty**. It is the authority on where this agent plays:
+it is not sent at setup, it can change between one connect and the next, and an agent assigned to no
+server is refused by the backend before any command is dispatched. A host should use the address in
+this payload rather than anything it remembers.
 
 Fire and forget: **do not send a result.** Report the outcome as an `agent_status` event instead —
 `ONLINE` on success, `CONNECT_FAILED` if the server refused, `NEEDS_RELINK` if the stored credential

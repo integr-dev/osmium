@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import net.integr.osmium.agent.dto.AgentResponse
+import net.integr.osmium.agent.dto.AssignServerRequest
 import net.integr.osmium.agent.dto.ChatRequest
 import net.integr.osmium.agent.dto.CreateAgentRequest
 import net.integr.osmium.agent.dto.SetupAgentRequest
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
@@ -66,21 +68,46 @@ class AgentController(private val agentService: AgentService) {
     @PatchMapping("/{id}")
     @PreAuthorize("hasAuthority('fleet.control')")
     @Operation(
-        summary = "Rename an agent or move it to another server.",
-        description = "Omitted fields are left alone. Moving does not affect credentials - the " +
-            "account is the same wherever it joins - but the agent must be offline first.",
+        summary = "Rename an agent.",
+        description = "Omitted fields are left alone. Where an agent plays is set through " +
+            "`PUT /api/agents/{id}/server`, which has its own preconditions.",
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated agent."),
         ApiResponse(responseCode = "400", description = "Blank or over-long field."),
         ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
-        ApiResponse(responseCode = "409", description = "Label taken, or the agent is online."),
+        ApiResponse(responseCode = "409", description = "Label already taken."),
     )
     fun update(
         @PathVariable id: Long,
         @Valid @RequestBody request: UpdateAgentRequest,
     ): AgentResponse = agentService.update(id, request)
+
+    /**
+     * `fleet.control`, not `fleet.login`: this is configuration, and no credential is involved.
+     * Which server an agent plays on is separable from setting it up precisely because the account
+     * is the same account wherever it joins.
+     */
+    @PutMapping("/{id}/server")
+    @PreAuthorize("hasAuthority('fleet.control')")
+    @Operation(
+        summary = "Point the agent at a Minecraft server, or at none.",
+        description = "Null unassigns it, leaving it set up and idle. Offline only: this decides " +
+            "what the next connection targets, and changing it under a live session would describe " +
+            "a session that is not happening. Credentials are untouched either way.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Updated agent."),
+        ApiResponse(responseCode = "400", description = "Over-long address."),
+        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is online."),
+    )
+    fun assignServer(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: AssignServerRequest,
+    ): AgentResponse = agentService.assignServer(id, request)
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -119,7 +146,10 @@ class AgentController(private val agentService: AgentService) {
         ApiResponse(responseCode = "200", description = "Command accepted."),
         ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
-        ApiResponse(responseCode = "409", description = "The agent has not been set up."),
+        ApiResponse(
+            responseCode = "409",
+            description = "The agent has not been set up, or is assigned to no server.",
+        ),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )
     fun connect(@PathVariable id: Long): AgentResponse = agentService.connect(id)

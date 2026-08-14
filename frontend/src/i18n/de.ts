@@ -176,6 +176,15 @@ export const de: Copy = {
     disconnect: 'Trennen',
     edit: 'Agent bearbeiten',
     move: 'Auf einen anderen Minecraft-Server verschieben',
+    serverOptional: 'Minecraft-Server (optional)',
+    serverLaterHint: 'Leer lassen und später entscheiden. Ein Agent lässt sich einrichten, bevor feststeht, wo er spielt.',
+    noServer: 'Kein Server',
+    notLinked: 'Nicht eingerichtet',
+    setServer: 'Server',
+    setServerTitle: 'Wo soll {name} spielen?',
+    setServerHint: 'Das Konto bleibt dasselbe, egal welchem Server es beitritt — an den Zugangsdaten ändert sich dadurch nichts.',
+    unassignHint: 'Leer lassen, um den Agenten von seinem Server zu nehmen. Er bleibt eingerichtet und kann später wieder zugewiesen werden.',
+    needsServer: 'Weisen Sie vor dem Verbinden einen Server zu.',
     removeWarning: 'Der Agent wird aus Osmium entfernt. Zugangsdaten auf {host} bleiben bestehen — sperren Sie das Konto dort, wenn es nicht mehr funktionieren soll.',
 
     uptime: 'Laufzeit',
@@ -207,6 +216,16 @@ export const de: Copy = {
     title: 'Betrieb',
     subtitle: 'Arbeit über die ganze Flotte hinweg ausführen.',
     empty: 'Hier ist noch nichts.',
+    agents: 'Agenten',
+    assignTitle: 'Server zuweisen',
+    assignHint: 'Richtet alle ausgewählten Agenten auf einen Minecraft-Server aus. Die Zugangsdaten bleiben unberührt — ein Konto bleibt dasselbe, egal welchem Server es beitritt.',
+    pickAgents: 'Wählen Sie die Agenten aus, die geändert werden sollen.',
+    assign: 'Zuweisen',
+    applying: 'Wird angewendet …',
+    clearServer: 'Vom Server nehmen',
+    assigned: '{count} Agenten wurden {server} zugewiesen.',
+    cleared: '{count} Agenten wurden von ihrem Server genommen.',
+    onlineExcluded: 'Agenten, die online sind, lassen sich nicht verschieben. Trennen Sie sie zuerst.',
   },
 
   configuration: {
@@ -434,6 +453,7 @@ export const de: Copy = {
 
   errors: {
     loadSessions: 'Ihre Sitzungen konnten nicht geladen werden.',
+    assignServer: 'Der Server konnte nicht geändert werden.',
     generic: 'Etwas ist schiefgelaufen.',
     unreachable: 'Osmium nicht erreichbar',
     invalidCredentials: 'Benutzername oder Passwort falsch.',

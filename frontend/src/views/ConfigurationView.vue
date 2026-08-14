@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot as Agent, Check, RotateCcw, SlidersHorizontal, TriangleAlert } from 'lucide-vue-next'
+import { Check, RotateCcw, SlidersHorizontal, TriangleAlert } from 'lucide-vue-next'
 import {
   loadSettings,
   optionLabel,
@@ -10,8 +10,7 @@ import {
   SETTING_GROUPS,
   type AgentSettings,
 } from '../lib/configuration'
-import PlayerHead from '../components/PlayerHead.vue'
-import { STATE_DOT, stateLabel } from '../lib/agentState'
+import AgentPicker from '../components/AgentPicker.vue'
 import { useAgentStore } from '../stores/agents'
 
 /**
@@ -49,10 +48,6 @@ const dirty = computed(
     JSON.stringify(settings.value) !== JSON.stringify(original.value),
 )
 
-const allSelected = computed(
-  () => agentStore.agents.length > 0 && selected.value.length === agentStore.agents.length,
-)
-
 onMounted(() => {
   // Reachable by deep link, where the sidebar has not loaded the fleet yet.
   if (!agentStore.agents.length) void agentStore.refresh()
@@ -77,10 +72,6 @@ watch(
   },
   { immediate: true },
 )
-
-function toggleAll() {
-  selected.value = allSelected.value ? [] : agentStore.agents.map((agent) => agent.id)
-}
 
 function reset() {
   if (original.value) settings.value = { ...original.value }
@@ -118,55 +109,8 @@ async function update() {
     </div>
 
     <div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
-      <!-- Left: who to configure. -->
-      <div class="card border-base-300 bg-base-200 h-fit border">
-        <div class="card-body gap-3">
-          <div class="flex items-center justify-between">
-            <h2 class="card-title flex items-center gap-2 text-base">
-              <Agent class="text-primary size-4" />
-              {{ t('configuration.agents') }}
-            </h2>
-            <span v-if="selected.length" class="badge badge-sm">
-              {{ t('configuration.selected', { count: selected.length }) }}
-            </span>
-          </div>
-
-          <label
-            v-if="agentStore.agents.length"
-            class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5 text-sm"
-          >
-            <input
-              type="checkbox"
-              class="checkbox checkbox-sm"
-              :checked="allSelected"
-              @change="toggleAll"
-            />
-            <span class="opacity-70">{{ t('configuration.selectAll') }}</span>
-          </label>
-
-          <ul class="flex flex-col gap-0.5">
-            <li v-for="agent in agentStore.agents" :key="agent.id">
-              <label
-                class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5"
-              >
-                <input v-model="selected" type="checkbox" :value="agent.id" class="checkbox checkbox-sm" />
-                <span class="relative shrink-0" :title="stateLabel(agent.state)">
-                  <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
-                  <span
-                    class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                    :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
-                  ></span>
-                </span>
-                <span class="min-w-0 flex-1 truncate text-sm">{{ agent.label }}</span>
-              </label>
-            </li>
-          </ul>
-
-          <p v-if="!agentStore.agents.length" class="px-2 py-4 text-center text-sm opacity-50">
-            {{ t('configuration.noAgents') }}
-          </p>
-        </div>
-      </div>
+      <!-- Left: who to configure. Shared with Operations, so the two cannot drift apart. -->
+      <AgentPicker v-model="selected" :agents="agentStore.agents" />
 
       <!-- Right: what to set. -->
       <div class="card border-base-300 bg-base-200 border">

@@ -176,6 +176,20 @@ export const en = {
     disconnect: 'Disconnect',
     edit: 'Edit agent',
     move: 'Move to another Minecraft server',
+
+    /**
+     * Where an agent plays is its own action, not a field on the edit: a rename is cosmetic and
+     * always allowed, while this decides what the next connection targets and is offline-only.
+     */
+    serverOptional: 'Minecraft server (optional)',
+    serverLaterHint: 'Leave blank to decide later. An agent can be set up before it has anywhere to play.',
+    noServer: 'No server',
+    notLinked: 'Not set up',
+    setServer: 'Server',
+    setServerTitle: 'Where should {name} play?',
+    setServerHint: 'The account is the same account wherever it joins, so this changes nothing about its credentials.',
+    unassignHint: 'Leave blank to take it off its server. It stays set up and can be assigned again later.',
+    needsServer: 'Assign a server before connecting.',
     removeWarning: 'The agent is removed from Osmium. Credentials stored on {host} are not affected — revoke the account there if it should stop working.',
 
     uptime: 'Uptime',
@@ -209,6 +223,16 @@ export const en = {
     title: 'Operations',
     subtitle: 'Run work across the fleet.',
     empty: 'Nothing here yet.',
+    agents: 'Agents',
+    assignTitle: 'Assign a server',
+    assignHint: 'Points every selected agent at one Minecraft server. Credentials are untouched — an account is the same account wherever it joins.',
+    pickAgents: 'Select the agents to change.',
+    assign: 'Assign',
+    applying: 'Applying…',
+    clearServer: 'Take off server',
+    assigned: 'Assigned {count} agents to {server}.',
+    cleared: 'Took {count} agents off their server.',
+    onlineExcluded: 'Online agents cannot be moved. Disconnect them first.',
   },
 
   /** MOCK, pending the backend. The field list here is a placeholder, not a specification. */
@@ -458,6 +482,7 @@ export const en = {
 
   errors: {
     loadSessions: 'Could not load your sessions.',
+    assignServer: 'Could not change the server.',
     generic: 'Something went wrong.',
     unreachable: 'Cannot reach Osmium',
     invalidCredentials: 'Incorrect username or password.',

@@ -454,7 +454,7 @@ class AuditControllerTest : AbstractRestTest() {
     fun `moving an agent to another server records where it came from`() {
         val agent = createAgent("Mason_21", reachableHost(), server = "old.example.com:25565")
 
-        mockMvc.patch("/api/agents/${agent.id}") {
+        mockMvc.put("/api/agents/${agent.id}/server") {
             header(HttpHeaders.AUTHORIZATION, authAs("mover", "orchestrator"))
             contentType = MediaType.APPLICATION_JSON
             content = """{"serverAddress":"new.example.com"}"""
@@ -463,6 +463,21 @@ class AuditControllerTest : AbstractRestTest() {
         val recorded = auditEntryRepository.findAll().single()
         assertEquals(AuditAction.AGENT_UPDATE, recorded.action)
         assertTrue(recorded.detail!!.contains("old.example.com:25565"))
+    }
+
+    /** Unassigning is a change worth recording too, and the entry has to say what was given up. */
+    @Test
+    fun `unassigning an agent records the server it left`() {
+        val agent = createAgent("Mason_22", reachableHost(), server = "old.example.com:25565")
+
+        mockMvc.put("/api/agents/${agent.id}/server") {
+            header(HttpHeaders.AUTHORIZATION, authAs("mover", "orchestrator"))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":null}"""
+        }.andExpect { status { isOk() } }
+
+        val recorded = auditEntryRepository.findAll().single()
+        assertTrue(recorded.detail!!.contains("unassigned from old.example.com:25565"))
     }
 
     /** A patch that changes nothing is a no-op, and a "was edited into its own shape" row is noise. */

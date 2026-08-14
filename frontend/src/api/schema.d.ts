@@ -24,6 +24,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{id}/server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Point the agent at a Minecraft server, or at none.
+         * @description Null unassigns it, leaving it set up and idle. Offline only: this decides what the next connection targets, and changing it under a live session would describe a session that is not happening. Credentials are untouched either way.
+         */
+        put: operations["assignServer"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users": {
         parameters: {
             query?: never;
@@ -402,8 +422,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Rename an agent or move it to another server.
-         * @description Omitted fields are left alone. Moving does not affect credentials - the account is the same wherever it joins - but the agent must be offline first.
+         * Rename an agent.
+         * @description Omitted fields are left alone. Where an agent plays is set through `PUT /api/agents/{id}/server`, which has its own preconditions.
          */
         patch: operations["update_1"];
         trace?: never;
@@ -676,63 +696,13 @@ export interface components {
              */
             sessionAlertAt?: string | null;
         };
-        /** @description Creates an account with an administrator-chosen username and password. */
-        CreateUserRequest: {
-            username: string;
-            password?: string;
-            /** @description Role name to assign. Must already exist. Omit for no permissions. */
-            role?: string | null;
-        };
-        /** @description Enrols a host. No address: the host dials in, so its location is observed. */
-        CreateHostRequest: {
-            name: string;
-        };
-        /** @description A freshly enrolled host, with its enrolment token shown exactly once. */
-        HostEnrolledResponse: {
-            host?: components["schemas"]["HostResponse"];
-            /** @description Give this to the host. It is hashed on the server and never shown again. */
-            token?: string;
-        };
-        /** @description A host. Reachability is derived from the heartbeat, not stored. */
-        HostResponse: {
-            /** Format: int64 */
-            id?: number;
-            name?: string;
-            /** @description Observed when the host connects. Null until it first dials in. */
-            address?: string | null;
-            hostVersion?: string | null;
-            /** Format: date-time */
-            lastSeenAt?: string | null;
-            reachable?: boolean;
-            /** Format: int64 */
-            agentCount?: number;
-        };
-        /** @description A freshly issued access token. */
-        LoginResponse: {
-            /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
-            token?: string;
-            /** Format: date-time */
-            expiresAt?: string;
-        };
-        /** @description Rotates the password of the authenticated account. */
-        PasswordChangeRequest: {
-            currentPassword: string;
-            newPassword?: string;
-        };
-        /** @description Credentials for a login attempt. */
-        LoginRequest: {
-            /** @example admin */
-            username: string;
-            /** @example admin */
-            password: string;
-        };
-        /** @description Creates an agent slot. Nothing has touched Minecraft at this point. */
-        CreateAgentRequest: {
-            label: string;
-            /** Format: int64 */
-            hostId?: number;
-            /** @example mc.example.com:25565 */
-            serverAddress: string;
+        /** @description Points an agent at a Minecraft server, or at none. Separate from both setup and editing: the account is the same account wherever it joins, so where it plays is its own decision and changing it touches no credential. */
+        AssignServerRequest: {
+            /**
+             * @description Null unassigns it, leaving the agent set up and idle.
+             * @example mc.example.com:25565
+             */
+            serverAddress?: string | null;
         };
         /** @description An agent. Only its Minecraft identity is stored, never a credential. */
         AgentResponse: {
@@ -742,7 +712,8 @@ export interface components {
             /** Format: int64 */
             hostId?: number;
             hostName?: string;
-            serverAddress?: string;
+            /** @description Where it plays, or null when it is assigned nowhere and cannot connect. */
+            serverAddress?: string | null;
             /**
              * @description Stored state, adjusted to STALE when the owning host is unreachable.
              * @enum {string}
@@ -807,6 +778,67 @@ export interface components {
             /** Format: double */
             z?: number;
         };
+        /** @description Creates an account with an administrator-chosen username and password. */
+        CreateUserRequest: {
+            username: string;
+            password?: string;
+            /** @description Role name to assign. Must already exist. Omit for no permissions. */
+            role?: string | null;
+        };
+        /** @description Enrols a host. No address: the host dials in, so its location is observed. */
+        CreateHostRequest: {
+            name: string;
+        };
+        /** @description A freshly enrolled host, with its enrolment token shown exactly once. */
+        HostEnrolledResponse: {
+            host?: components["schemas"]["HostResponse"];
+            /** @description Give this to the host. It is hashed on the server and never shown again. */
+            token?: string;
+        };
+        /** @description A host. Reachability is derived from the heartbeat, not stored. */
+        HostResponse: {
+            /** Format: int64 */
+            id?: number;
+            name?: string;
+            /** @description Observed when the host connects. Null until it first dials in. */
+            address?: string | null;
+            hostVersion?: string | null;
+            /** Format: date-time */
+            lastSeenAt?: string | null;
+            reachable?: boolean;
+            /** Format: int64 */
+            agentCount?: number;
+        };
+        /** @description A freshly issued access token. */
+        LoginResponse: {
+            /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
+            token?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        /** @description Rotates the password of the authenticated account. */
+        PasswordChangeRequest: {
+            currentPassword: string;
+            newPassword?: string;
+        };
+        /** @description Credentials for a login attempt. */
+        LoginRequest: {
+            /** @example admin */
+            username: string;
+            /** @example admin */
+            password: string;
+        };
+        /** @description Creates an agent slot. Nothing has touched Minecraft at this point. */
+        CreateAgentRequest: {
+            label: string;
+            /** Format: int64 */
+            hostId?: number;
+            /**
+             * @description Where it should play, if that is already known.
+             * @example mc.example.com:25565
+             */
+            serverAddress?: string | null;
+        };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
             /** @example method_a */
@@ -830,11 +862,9 @@ export interface components {
         UpdateHostRequest: {
             name: string;
         };
-        /** @description Edits an agent. Omitted fields are left alone. Moving an agent to another Minecraft server does not affect its credentials - the account is the account, whichever server it joins - but it must not be connected at the time. */
+        /** @description Renames an agent. Where it plays is set through `PUT /api/agents/{id}/server`, which is a different kind of change and has its own preconditions. */
         UpdateAgentRequest: {
             label?: string | null;
-            /** @description Move the agent to this server. Only while it is not online. */
-            serverAddress?: string | null;
         };
         SseEmitter: {
             /** Format: int64 */
@@ -995,6 +1025,68 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    assignServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignServerRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated agent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Over-long address. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `fleet.control`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
                 };
             };
         };
@@ -1627,7 +1719,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description The agent has not been set up. */
+            /** @description The agent has not been set up, or is assigned to no server. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2102,7 +2194,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Label taken, or the agent is online. */
+            /** @description Label already taken. */
             409: {
                 headers: {
                     [name: string]: unknown;
