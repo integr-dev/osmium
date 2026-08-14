@@ -9,18 +9,18 @@ import {
   Clock,
   Gauge,
   Hammer,
+  Heart,
   Layers,
   Map,
   TriangleAlert,
 } from 'lucide-vue-next'
 import HourlyBars from '../components/HourlyBars.vue'
-import PlayerHead from '../components/PlayerHead.vue'
 import TrendLine from '../components/TrendLine.vue'
 import RollingNumber from '../components/RollingNumber.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
-import { STATE_DOT } from '../lib/agentState'
+import { summariseVitals } from '../lib/vitals'
 import type { Sector } from '../stores/agents'
 import { bucketByHour } from '../lib/series'
 import { useAgentStore } from '../stores/agents'
@@ -100,28 +100,60 @@ const blocksRemaining = computed(() => agentStore.schematic.totalBlocks - agentS
 /**
  * Incidents per hour, from the page of activity already on screen.
  *
- * The window stops at the oldest entry loaded rather than running a fixed twelve hours back: the
- * feed is paged, so hours before that one are not empty, they are unread — and drawing them as
- * empty bars would state something the client cannot know. Once the feed is exhausted the oldest
- * entry really is the oldest there is, and the window covers everything.
+ * A **fixed** twelve hours, always. Sizing the window to what happened to be loaded meant a busy
+ * last hour produced a one-bucket chart, and one bar is a number rather than a comparison.
+ *
+ * What varies is how much of it is known. The feed is paged, so hours before the oldest entry
+ * loaded are not empty, they are unread; `knownSince` marks that line and those hours are drawn as
+ * unknown rather than as zero. Once the feed is exhausted the oldest entry really is the oldest
+ * there is, and nothing is unknown.
  */
 const HOURS = 12
 
-/** Says how much past there is, so an empty chart reads as ''no data yet'' rather than as a flat fleet. */
+/** Says how much past there is, so an empty chart reads as "no data yet" rather than a flat fleet. */
 const trendCaption = computed(() =>
   history.minutes < 1
-    ? t(`dashboard.trendStarting`)
-    : t(`dashboard.trendSession`, { minutes: history.minutes }),
+    ? t('dashboard.trendStarting')
+    : t('dashboard.trendSession', { minutes: history.minutes }),
 )
 
-const incidentHours = computed(() => {
-  const times = activity.value.map((entry) => Date.parse(entry.at))
-  if (!times.length) return []
+const incidentTimes = computed(() => activity.value.map((entry) => Date.parse(entry.at)))
 
-  const now = Date.now()
-  const loaded = Math.ceil((now - Math.min(...times)) / 3_600_000)
-  return bucketByHour(times, now, Math.max(1, Math.min(HOURS, loaded)))
-})
+const incidentHours = computed(() =>
+  incidentTimes.value.length ? bucketByHour(incidentTimes.value, Date.now(), HOURS) : [],
+)
+
+const knownSince = computed(() =>
+  activityExhausted.value || !incidentTimes.value.length ? 0 : Math.min(...incidentTimes.value),
+)
+
+/**
+ * The worst reading of each kind and whose it is — an average would hide the one agent about to die
+ * in a fleet that is otherwise fine. See `summariseVitals`.
+ */
+const vitals = computed(() => summariseVitals(agentStore.agents))
+
+/**
+ * The three readings as rows, so the template loops once instead of repeating the same markup with
+ * different fields. Ping is a duration rather than a proportion, so its bar is scaled against a
+ * ceiling past which the number is simply "bad" — 300ms and 3000ms are the same problem.
+ */
+const vitalRows = computed(() =>
+  [
+    { key: 'health', extreme: vitals.value.lowestHealth, bar: 'progress-success', of: 20 },
+    { key: 'food', extreme: vitals.value.lowestFood, bar: 'progress-warning', of: 20 },
+    { key: 'ping', extreme: vitals.value.worstPing, bar: 'progress-info', of: 300 },
+  ]
+    .filter((row) => row.extreme !== null)
+    .map((row) => ({
+      key: row.key,
+      bar: row.bar,
+      agent: row.extreme!.agent,
+      label: t('dashboard.vital.' + row.key),
+      reading: row.key === 'ping' ? '' + row.extreme!.value + ' ms' : row.extreme!.value + '/20',
+      percent: Math.min(100, (row.extreme!.value / row.of) * 100),
+    })),
+)
 
 function percent(part: number, whole: number): number {
   return Math.min(100, (part / whole) * 100)
@@ -232,39 +264,87 @@ function percent(part: number, whole: number): number {
     </div>
 
     <div class="grid gap-6 lg:grid-cols-2">
-      <div class="card border-base-300 bg-base-200 border">
-        <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <TriangleAlert class="text-warning size-4" />
-            {{ t('dashboard.needsAttention') }}
-            <span class="badge badge-ghost badge-sm">{{ agentStore.attention.length }}</span>
-          </h2>
+      <div class="flex h-full flex-col gap-6">
+        <div class="card border-base-300 bg-base-200 flex min-h-0 flex-1 flex-col border">
+          <div class="card-body min-h-0 flex-1 gap-3">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <TriangleAlert class="text-warning size-4" />
+              {{ t('dashboard.needsAttention') }}
+              <span class="badge badge-ghost badge-sm">{{ agentStore.attention.length }}</span>
+            </h2>
 
-          <ul v-if="agentStore.attention.length" class="flex flex-col gap-1">
-            <RouterLink
-              v-for="(item, index) in agentStore.attention"
-              :key="`${item.agent.id}-${index}`"
-              :to="{ name: 'agent', params: { id: item.agent.id } }"
-              class="rounded-field hover:bg-base-300/50 flex items-center gap-3 px-3 py-2"
-            >
-              <CircleAlert
-                class="size-4 shrink-0"
-                :class="item.severity === 'error' ? 'text-error' : 'text-warning'"
-              />
-              <span class="flex-1 truncate text-sm font-medium">{{ item.agent.label }}</span>
-              <span
-                class="badge badge-xs"
-                :class="item.severity === 'error' ? 'badge-error badge-soft' : 'badge-warning badge-soft'"
+            <ul v-if="agentStore.attention.length" class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+              <RouterLink
+                v-for="(item, index) in agentStore.attention"
+                :key="`${item.agent.id}-${index}`"
+                :to="{ name: 'agent', params: { id: item.agent.id } }"
+                class="rounded-field hover:bg-base-300/50 flex items-center gap-3 px-3 py-2"
               >
-                {{ item.reason }}
-              </span>
-            </RouterLink>
-          </ul>
+                <CircleAlert
+                  class="size-4 shrink-0"
+                  :class="item.severity === 'error' ? 'text-error' : 'text-warning'"
+                />
+                <span class="flex-1 truncate text-sm font-medium">{{ item.agent.label }}</span>
+                <span
+                  class="badge badge-xs"
+                  :class="item.severity === 'error' ? 'badge-error badge-soft' : 'badge-warning badge-soft'"
+                >
+                  {{ item.reason }}
+                </span>
+              </RouterLink>
+            </ul>
 
-          <div v-else-if="!agentStore.loaded" class="flex flex-col gap-2 py-2">
-            <div v-for="row in 2" :key="row" class="skeleton h-10 w-full"></div>
+            <div v-else-if="!agentStore.loaded" class="flex min-h-0 flex-1 flex-col gap-2">
+              <div v-for="row in 2" :key="row" class="skeleton h-9 w-full"></div>
+            </div>
+            <p v-else class="flex-1 text-sm opacity-50">{{ t('dashboard.allHealthy') }}</p>
           </div>
-          <p v-else class="py-8 text-center text-sm opacity-50">{{ t('dashboard.allHealthy') }}</p>
+        </div>
+
+        <!--
+          The worst of each reading rather than an average, and whose it is: a fleet averaging 18
+          health with one agent on 2 is a fleet with a problem, and the average hides exactly that.
+          Every row links to the agent you would open next.
+        -->
+        <div class="card border-base-300 bg-base-200 shrink-0 border">
+          <div class="card-body gap-3">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <Heart class="text-primary size-4" />
+              {{ t('dashboard.vitals') }}
+              <span class="badge badge-ghost badge-sm">
+                {{ t('dashboard.reporting', { reporting: vitals.reporting, online: vitals.online }) }}
+              </span>
+            </h2>
+
+            <div v-if="!agentStore.loaded" class="flex h-28 flex-col gap-3">
+              <div v-for="row in 3" :key="row" class="skeleton h-7 w-full"></div>
+            </div>
+
+            <!--
+              Absent rather than zeroed when nobody is reporting. A zero here reads as an agent on no
+              health standing at the origin, which is the one lie the vitals panel exists to avoid.
+              Same height either way, so an arriving reading moves nothing.
+            -->
+            <p v-else-if="!vitals.reporting" class="flex h-28 items-center text-sm opacity-50">
+              {{ t('dashboard.noVitals') }}
+            </p>
+
+            <div v-else class="flex h-28 flex-col justify-between">
+              <RouterLink
+                v-for="row in vitalRows"
+                :key="row.key"
+                :to="{ name: 'agent', params: { id: row.agent.id } }"
+                class="flex flex-col gap-1"
+              >
+                <span class="flex items-center gap-2 text-xs">
+                  <span class="flex-1 truncate opacity-60">{{ row.label }}</span>
+                  <span class="max-w-32 truncate font-medium">{{ row.agent.label }}</span>
+                  <span class="tabular-nums opacity-60">{{ row.reading }}</span>
+                </span>
+                <progress class="progress w-full" :class="row.bar" :value="row.percent" max="100"></progress>
+              </RouterLink>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -281,12 +361,12 @@ function percent(part: number, whole: number): number {
             that nothing measured. Above the feed rather than beside it, because it is the same data
             at a different resolution.
           -->
-          <div v-if="activity.length" class="flex flex-col gap-1">
-            <HourlyBars :buckets="incidentHours" :empty-label="t('dashboard.noActivity')" />
-            <p class="text-xs opacity-40">
-              {{ t('dashboard.incidentsPerHour', { hours: incidentHours.length }) }}
-            </p>
-          </div>
+          <HourlyBars
+            v-if="activity.length"
+            :buckets="incidentHours"
+            :known-since="knownSince"
+            :empty-label="t('dashboard.noActivity')"
+          />
 
           <div v-if="activityError" role="alert" class="alert alert-error alert-soft">
             <TriangleAlert class="size-4" />

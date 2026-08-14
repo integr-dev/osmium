@@ -180,7 +180,7 @@ async function logout() {
   <div v-else class="drawer lg:drawer-open">
     <input id="app-drawer" type="checkbox" class="drawer-toggle" />
 
-    <div class="drawer-content flex min-h-screen flex-col">
+    <div class="drawer-content flex h-screen flex-col overflow-hidden">
       <!-- Only reachable below lg, where the sidebar is collapsed. -->
       <div class="navbar border-base-300 bg-base-200 border-b lg:hidden">
         <label for="app-drawer" class="btn btn-square btn-ghost btn-sm" :aria-label="t('nav.openNavigation')">
@@ -191,11 +191,16 @@ async function logout() {
       </div>
 
       <!--
-        The page and the chat rail share the width. `min-w-0` on the page, or a wide table inside it
-        pushes the rail off the screen instead of scrolling itself.
+        The page and the chat rail share the width, and **each scrolls itself**. The document used to
+        scroll instead, which put the scrollbar on the viewport edge — to the right of the rail,
+        past the content it was actually scrolling.
+
+        `min-w-0` on the page, or a wide table inside it pushes the rail off the screen rather than
+        scrolling itself. `min-h-0` on the row, or neither pane may shrink below its content and both
+        overflow the frame instead of scrolling inside it.
       -->
-      <div class="flex flex-1 items-start">
-        <main class="min-w-0 flex-1 px-6 py-8">
+      <div class="flex min-h-0 flex-1">
+        <main class="min-w-0 flex-1 overflow-y-auto px-6 py-8">
           <!--
             On every page rather than tucked into My account. It is the only way the person it
             happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
@@ -235,7 +240,7 @@ async function logout() {
 
       <!-- Wider than the default drawer: agent rows now carry an account name and a server address. -->
       <aside
-        class="border-base-300 bg-base-200 relative flex min-h-full max-w-full flex-col border-r"
+        class="border-base-300 bg-base-200 relative flex min-h-full max-w-[85vw] flex-col border-r lg:max-w-none"
         :style="{ width: `${sidebarWidth}px` }"
       >
         <!--
