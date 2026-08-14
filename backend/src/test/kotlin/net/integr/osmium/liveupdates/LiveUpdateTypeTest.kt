@@ -12,7 +12,8 @@ import kotlin.test.assertTrue
 class LiveUpdateTypeTest {
 
     /**
-     * The channel is opened behind `fleet.read`, so an event needing only that reaches everyone on
+     * The channel is opened behind a session alone, so an event needing only `agent.read` reaches
+     * most of the people on
      * it. Any *other* node is a promise that `matches()` keeps — this asserts the promise is real
      * for the types that make it, rather than trusting that dispatch was updated alongside them.
      *
@@ -20,11 +21,11 @@ class LiveUpdateTypeTest {
      */
     @Test
     fun `a type needing more than the stream's own node is one dispatch has to filter`() {
-        val privileged = LiveUpdateType.entries.filterNot { it.node == Nodes.FLEET_READ }
+        val privileged = LiveUpdateType.entries.filterNot { it.node == Nodes.AGENT_READ }
 
         assertTrue(
             privileged.isNotEmpty(),
-            "No type needs more than ${Nodes.FLEET_READ}. If that is now true, the per-subscriber " +
+            "No type needs more than ${Nodes.AGENT_READ}. If that is now true, the per-subscriber " +
                 "node check in matches() is untested by anything real — delete it or this test.",
         )
     }

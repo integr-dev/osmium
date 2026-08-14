@@ -144,7 +144,7 @@ function formatAt(at: string): string {
       <div ref="sentinel" aria-hidden="true" class="h-px shrink-0"></div>
     </div>
 
-    <div v-if="auth.can('fleet.chat')" class="flex flex-col gap-1">
+    <div v-if="auth.can('chat.speak')" class="flex flex-col gap-1">
       <div v-if="sendError" role="alert" class="alert alert-error alert-soft py-2">
         <TriangleAlert class="size-4" />
         <span>{{ sendError }}</span>

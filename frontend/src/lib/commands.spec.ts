@@ -29,11 +29,17 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
   return {
     agents: [],
     hosts: [],
+    servers: [],
     can: () => true,
     hostReachable: () => true,
     connect: vi.fn(),
     disconnect: vi.fn(),
     toggleChat: vi.fn(),
+    showChat: vi.fn(),
+    addAgent: vi.fn(),
+    refresh: vi.fn(),
+    locale: 'en',
+    setLocale: vi.fn(),
     logout: vi.fn(),
     ...overrides,
   }
@@ -43,7 +49,7 @@ const ids = (commands: Command[]) => commands.map((command) => command.id)
 
 describe('what the palette offers', () => {
   it('hides pages the account cannot open', () => {
-    const offered = ids(buildCommands(context({ can: (node) => node === 'fleet.read' })))
+    const offered = ids(buildCommands(context({ can: (node) => node === 'agent.read' })))
 
     // The same nodes the route guard checks. Offering these would turn a keystroke into a bounce
     // back to the dashboard, which reads as a bug.
@@ -53,9 +59,9 @@ describe('what the palette offers', () => {
     expect(offered).toContain('go:dashboard')
   })
 
-  it('offers the chat rail only to an account that can read the fleet', () => {
+  it('offers the chat rail only to an account that can read chat', () => {
     expect(ids(buildCommands(context({ can: () => true })))).toContain('action:chat')
-    expect(ids(buildCommands(context({ can: (node) => node !== 'fleet.read' })))).not.toContain(
+    expect(ids(buildCommands(context({ can: (node) => node !== 'chat.read' })))).not.toContain(
       'action:chat',
     )
   })
@@ -83,12 +89,40 @@ describe('what the palette offers', () => {
     ).not.toContain('connect:1')
   })
 
-  it('offers no agent commands without fleet.control', () => {
-    const offered = ids(buildCommands(context({ agents: [agent()], can: (node) => node !== 'fleet.control' })))
+  it('offers no agent commands without agent.run', () => {
+    const offered = ids(buildCommands(context({ agents: [agent()], can: (node) => node !== 'agent.run' })))
 
     // The agent is still reachable as a destination — reading is a different node from acting.
     expect(offered).toContain('agent:1')
     expect(offered).not.toContain('connect:1')
+  })
+
+  it('offers one chat scope per server, and none without the node', () => {
+    const servers = { servers: ['mc.example.com:25565', 'eu.example.com:25565'] }
+
+    expect(ids(buildCommands(context(servers)))).toEqual(
+      expect.arrayContaining(['chat:mc.example.com:25565', 'chat:eu.example.com:25565']),
+    )
+    expect(
+      ids(buildCommands(context({ ...servers, can: (node) => node !== 'chat.read' }))),
+    ).not.toContain('chat:mc.example.com:25565')
+  })
+
+  it('gates adding an agent and reloading on their own nodes', () => {
+    expect(ids(buildCommands(context({ can: (node) => node !== 'agent.write' })))).not.toContain(
+      'action:add-agent',
+    )
+    expect(ids(buildCommands(context({ can: (node) => node !== 'agent.read' })))).not.toContain(
+      'action:refresh',
+    )
+  })
+
+  /** A command that would do nothing is worse than one that is missing. */
+  it('offers only the languages that are not already in use', () => {
+    const offered = ids(buildCommands(context({ locale: 'en' })))
+
+    expect(offered).toContain('locale:de')
+    expect(offered).not.toContain('locale:en')
   })
 
   /** A palette is for fast, reversible moves. One wrong Enter must not destroy anything. */

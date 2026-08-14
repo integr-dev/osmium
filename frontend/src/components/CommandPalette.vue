@@ -8,6 +8,7 @@ import { isShortcut } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
+import { setLocale, type Locale } from '../i18n'
 
 /**
  * Ctrl/⌘-K: go anywhere, or act on an agent, without reaching for the mouse.
@@ -16,7 +17,10 @@ import { useChatStore } from '../stores/chat'
  * stale list would offer to connect an agent that is already online. Ranking and gating live in
  * `src/lib/commands.ts`, which is where the tests are.
  */
-const { t } = useI18n()
+const { t, locale } = useI18n()
+
+// Opening the add-agent modal is the layout's business; the palette only asks for it.
+const emit = defineEmits<{ addAgent: [] }>()
 const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
@@ -65,11 +69,17 @@ function open() {
   commands.value = buildCommands({
     agents: agentStore.agents,
     hosts: agentStore.hosts,
+    servers: agentStore.servers,
     can: auth.can,
     hostReachable: (hostId) => agentStore.hostById(hostId)?.reachable === true,
     connect: agentStore.connect,
     disconnect: agentStore.disconnect,
     toggleChat: chat.toggle,
+    showChat: (server) => chat.show({ kind: 'server', address: server }),
+    addAgent: () => emit('addAgent'),
+    refresh: agentStore.refresh,
+    locale: locale.value as Locale,
+    setLocale,
     logout: async () => {
       agentStore.disconnectLiveUpdates()
       await auth.logout()

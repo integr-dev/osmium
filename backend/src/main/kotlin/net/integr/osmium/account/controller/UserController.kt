@@ -105,7 +105,7 @@ class UserController(private val userService: UserService) {
      */
     @PostMapping("/{id}/sessions/revoke-all")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('user.edit')")
+    @PreAuthorize("hasAuthority('user.sessions.revoke')")
     @Operation(
         summary = "Sign an account out of every session.",
         description = "Revokes every refresh token and every access token already issued to it, " +

@@ -92,18 +92,33 @@ model honest. A null role means no permissions at all.
 | `user.create` | create accounts |
 | `user.delete` | delete accounts |
 | `user.role.write` | change the role of an account |
+| `user.sessions.revoke` | end every session an account holds |
 | `role.read` | list roles and their nodes |
 | `audit.read` | read the operator audit trail, including outbound message text |
 | `audit.export` | pull the trail out as a CSV file |
-| `fleet.read` | see hosts, agents and telemetry |
-| `fleet.control` | create, edit, delete agents; connect and disconnect them |
-| `fleet.chat` | **speak in game as an agent** |
-| `fleet.login` | enrol hosts, rotate tokens, trigger `setup_agent` |
+| `agent.read` | see agents, their telemetry and player heads |
+| `host.read` | see the hosts that run them |
+| `activity.read` | read the incident feed |
+| `chat.read` | read what was said in game |
+| `chat.speak` | **speak in game as an agent** |
+| `agent.run` | connect and disconnect agents |
+| `agent.write` | create and rename agents, and place them on a server |
+| `agent.delete` | delete an agent, and its history with it |
+| `agent.setup` | trigger `setup_agent` on a host |
+| `host.write` | enrol and rename hosts |
+| `host.token` | rotate a host's enrolment token |
+| `host.delete` | remove a host, and every agent on it |
 
-`fleet.chat` and `fleet.login` stay separate from `fleet.control` even though one tier currently
-holds all four: the first is impersonation under an account you own, the second is credential
-acquisition. Collapsing them would make that distinction unrecoverable if a narrower tier is ever
-wanted.
+**The split is by what an act costs, not by which resource it touches.** `run` is the all-day verb
+and undoes itself — an agent connected by mistake is disconnected again. `write` reshapes the fleet
+but leaves it recoverable. `delete` does not. Reading chat is separated from `agent.read` for a
+different reason: chat is content rather than state, and knowing which agents are online is not the
+same as reading what everyone on the server said.
+
+Speaking and setting up stay apart from everything else because of what they are rather than what
+they cost. `chat.speak` is impersonation under an account you own; `agent.setup` decides
+which Microsoft account gets linked. Collapsing either into a general write node would make that
+distinction unrecoverable.
 
 ### Roles
 
@@ -113,13 +128,19 @@ single flat set lookup and the table is self-describing.
 
 | Role | Nodes |
 |---|---|
-| `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `fleet.read` |
-| `orchestrator` | *viewer* + `fleet.control`, `fleet.chat`, `fleet.login` |
-| `administrator` | *orchestrator* + `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `audit.read`, `audit.export` |
+| `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `agent.read`, `host.read`, `chat.read`, `activity.read` |
+| `orchestrator` | *viewer* + `agent.run`, `agent.write`, `agent.setup`, `chat.speak`, `host.write`, `host.token` |
+| `administrator` | *orchestrator* + `agent.delete`, `host.delete`, `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `user.sessions.revoke`, `audit.read`, `audit.export` |
 
-A viewer is read-only throughout: `fleet.read` gates listing hosts and agents and the live streams,
-and nothing else, so it can watch the fleet without being able to touch it. Every way to change the
-fleet is a separate node, which is what makes that tier possible without a second set of routes.
+A viewer is read-only throughout: the three read nodes gate listing hosts and agents, the feeds and
+the live streams, and nothing else, so it can watch the fleet without being able to touch it. Every
+way to change the fleet is a separate node, which is what makes that tier possible without a second
+set of routes.
+
+**An orchestrator holds neither deletion.** It runs the fleet all day and has no need to destroy part
+of it — an agent is gone with its history, and a host takes every agent on it — so both sit with the
+tier that already carries the irreversible operations. That is the point of the split: the tier that
+does the work no longer has to be trusted with the things that cannot be undone.
 
 Above that the division is "runs the agents" versus "runs the people": an orchestrator adds acting
 on the fleet, and what an administrator adds is user management plus the audit trail.
@@ -148,30 +169,30 @@ changes automatically.
 | `POST` | `/api/users` | `user.create` |
 | `PATCH` | `/api/users/me` | `user.edit.self` |
 | `PATCH` | `/api/users/{id}` | `user.edit` |
-| `POST` | `/api/users/{id}/sessions/revoke-all` | `user.edit` (ends that account's sessions; no matching read) |
+| `POST` | `/api/users/{id}/sessions/revoke-all` | `user.sessions.revoke` (ends that account's sessions; no matching read) |
 | `DELETE` | `/api/users/{id}` | `user.delete` |
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
 | `GET` | `/api/audit` | `audit.read` (cursor-paged, `query` searches, `limit` clamped to 1..500) |
 | `GET` | `/api/audit/export` | `audit.export` (CSV attachment; `from` inclusive, `to` exclusive) |
-| `GET` | `/api/activity` | `fleet.read` (cursor-paged; `agentId` narrows to one agent) |
-| `GET` | `/api/chat` | `fleet.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
+| `GET` | `/api/activity` | `activity.read` (cursor-paged; `agentId` narrows to one agent) |
+| `GET` | `/api/chat` | `chat.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
 | `GET` | `/api/stream` | `user.read.self` (server-sent events; each event gated separately) |
 | `GET` | `/api/stream/agents/{id}` | `user.read.self` (server-sent events, narrowed to one agent) |
-| `GET` | `/api/hosts` | `fleet.read` |
-| `POST` | `/api/hosts` | `fleet.login` (returns the enrolment token once) |
-| `PATCH` | `/api/hosts/{id}` | `fleet.login` (rename) |
-| `POST` | `/api/hosts/{id}/rotate-token` | `fleet.login` |
-| `DELETE` | `/api/hosts/{id}` | `fleet.login` (cascades to its agents) |
-| `GET` | `/api/agents`, `/api/agents/{id}` | `fleet.read` |
-| `POST` | `/api/agents` | `fleet.control` (`serverAddress` optional) |
-| `PATCH` | `/api/agents/{id}` | `fleet.control` (rename) |
-| `PUT` | `/api/agents/{id}/server` | `fleet.control` (assign a server, or null for none; offline only) |
-| `DELETE` | `/api/agents/{id}` | `fleet.control` |
-| `POST` | `/api/agents/{id}/setup` | `fleet.login` |
-| `POST` | `/api/agents/{id}/connect`, `/disconnect` | `fleet.control` |
-| `POST` | `/api/agents/{id}/chat` | `fleet.chat` (rate limited per agent; **429** when exceeded) |
-| `GET` | `/api/avatars/{name-or-uuid}` | `fleet.read` (a player's head, as an image) |
+| `GET` | `/api/hosts` | `host.read` |
+| `POST` | `/api/hosts` | `host.write` (returns the enrolment token once) |
+| `PATCH` | `/api/hosts/{id}` | `host.write` (rename) |
+| `POST` | `/api/hosts/{id}/rotate-token` | `host.token` |
+| `DELETE` | `/api/hosts/{id}` | `host.delete` (cascades to its agents) |
+| `GET` | `/api/agents`, `/api/agents/{id}` | `agent.read` |
+| `POST` | `/api/agents` | `agent.write` (`serverAddress` optional) |
+| `PATCH` | `/api/agents/{id}` | `agent.write` (rename) |
+| `PUT` | `/api/agents/{id}/server` | `agent.write` (assign a server, or null for none; offline only) |
+| `DELETE` | `/api/agents/{id}` | `agent.delete` |
+| `POST` | `/api/agents/{id}/setup` | `agent.setup` |
+| `POST` | `/api/agents/{id}/connect`, `/disconnect` | `agent.run` |
+| `POST` | `/api/agents/{id}/chat` | `chat.speak` (rate limited per agent; **429** when exceeded) |
+| `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -282,7 +303,7 @@ Deleting or renaming an account still kills its tokens immediately, since the su
 resolving. Stripping its role leaves the token authenticating but holding nothing.
 
 An **administrator can end somebody else's sessions** —
-`POST /api/users/{id}/sessions/revoke-all`, on `user.edit`. It is on that node rather than one of
+`POST /api/users/{id}/sessions/revoke-all`, on `user.sessions.revoke`. It is its own node rather than one of
 its own because it grants nothing new: anyone who can reset a password or delete an account can
 already lock that operator out, and both are blunter than this. It exists for "their laptop is gone
 and they are asleep", and is recorded with the administrator as the actor and the account as the
@@ -380,7 +401,7 @@ and it is not a candidate to forward any server's chat. Previously that was fake
 agent at a server it was not connected to, which then showed up under Active servers with nobody on
 it.
 
-Assignment is `PUT /api/agents/{id}/server`, on `fleet.control` — configuration, not credential work
+Assignment is `PUT /api/agents/{id}/server`, on `agent.write` — configuration, not credential work
 — and refused while the agent is online, since the address decides what the next connection targets.
 Renaming stayed on `PATCH` and is allowed at any time, because it is cosmetic.
 
@@ -399,10 +420,13 @@ on REST, where they are node-gated and audited.
 
 | Event | Node | Carries | Client does |
 |---|---|---|---|
-| `agent`, `host` | `fleet.read` | the resource, in the shape REST returns it | replaces it in place |
-| `agent-removed`, `host-removed` | `fleet.read` | `{ id }` | drops it |
-| `chat`, `activity` | `fleet.read` | one new line | appends it to the feed |
-| `telemetry` | `fleet.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
+| `agent` | `agent.read` | the resource, in the shape REST returns it | replaces it in place |
+| `host` | `host.read` | the resource, in the shape REST returns it | replaces it in place |
+| `agent-removed` | `agent.read` | `{ id }` | drops it |
+| `host-removed` | `host.read` | `{ id }` | drops it |
+| `chat` | `chat.read` | one new line | appends it to the feed |
+| `activity` | `activity.read` | one new line | appends it to the feed |
+| `telemetry` | `agent.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
 | `user` | `user.read` | the account | replaces it in the list |
 | `user-removed` | `user.read` | `{ id }` | drops it |
 | `audit` | `audit.read` | one new entry | appends it to the trail |
@@ -442,10 +466,11 @@ becomes a second implementation rather than a rewrite.
 
 `LiveUpdateType` carries the permission a subscriber must hold, alongside the SSE event name. It sits
 on the type rather than being passed at publish time because it belongs to the kind of event and not
-to the occurrence — every `agent` event needs `fleet.read`, always — so a publisher cannot forget it
+to the occurrence — every `agent` event needs `agent.read`, always — so a publisher cannot forget it
 or set it wrong.
 
-**Nothing routes on it yet, on purpose.** Every current type requires `fleet.read`, which is exactly
+**Not every type routes the same way.** `chat`, `activity` and the host events each need a node of
+their own, which is exactly
 what the controller checks at subscribe and what `tick()` re-checks, so dispatch consulting the field
 would be a no-op. `LiveUpdateTypeTest` pins that uniformity rather than leaving it as a comment: the
 day a type arrives needing a different node — the audit trail and permission changes are the obvious
@@ -653,7 +678,7 @@ chat listener election — a second counter on the wire would be one more thing 
 
 Per agent rather than per operator, because the consequence lands on the account: two operators
 sharing an agent share its budget, and one operator driving ten agents is not throttled across all
-of them. It is also what contains a stolen session holding `fleet.chat` — it can speak, but it
+of them. It is also what contains a stolen session holding `chat.speak` — it can speak, but it
 cannot spam, and chat spam is the one consequence in this system that is permanent and
 unrecoverable.
 
@@ -707,7 +732,7 @@ It exists so the browser never talks to the skin service. The SPA's CSP is
 layer that actually contains an XSS. Proxying keeps every image same-origin, and it also keeps which
 agents exist, and how often somebody is looking at them, inside the deployment.
 
-It is gated on `fleet.read`, like every other route — a head only ever appears beside agents, chat
+It is gated on `agent.read`, like every other route — a head only ever appears beside agents, chat
 or hosts, all of which already need that node. That costs the frontend the obvious implementation:
 an `<img>` cannot send an `Authorization` header and the token is not a cookie, so the SPA fetches
 each head itself and hands the element a blob URL. The alternative was leaving the route open on the

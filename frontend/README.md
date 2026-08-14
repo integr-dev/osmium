@@ -87,8 +87,8 @@ panel.
 
 ## Command palette
 
-**Ctrl/⌘-K** from anywhere in the app: jump to a page, an agent or a host, or connect and disconnect
-an agent without leaving the keyboard. The sidebar carries a button showing the shortcut for the
+**Ctrl/⌘-K** from anywhere in the app: jump to a page, an agent or a host; connect and disconnect an
+agent; point the chat rail at a server; add an agent; reload the fleet; switch language. The sidebar carries a button showing the shortcut for the
 platform it is running on — a shortcut is invisible by nature, and one nobody knows about is one
 nobody uses.
 
@@ -263,7 +263,7 @@ Agents, nearby players and chat lines carry a Minecraft head. It comes from Osmi
 off a third-party image host, and it means no operator's browser tells one which agents exist or how
 often somebody is looking at them.
 
-That endpoint is gated on `fleet.read` like every other route, and an `<img src>` cannot send an
+That endpoint is gated on `agent.read` like every other route, and an `<img src>` cannot send an
 `Authorization` header. So `src/lib/avatars.ts` fetches each head with the token and hands the
 element a blob URL — which is why `img-src` carries `blob:`. Object URLs are same-origin by
 construction; they can only name a blob this document already created.
@@ -366,7 +366,8 @@ Two rules for anything added:
   named directly and its parts are hosts and agents.
 
 One trap worth knowing: **vue-i18n reads a dot in a key as a path separator**. Permission nodes
-contain dots (`fleet.chat`), so `t('permission.fleet.chat')` looks for `permission → fleet → chat`,
+contain dots (`chat.speak`), so `t('permission.chat.speak')` looks for
+`permission → fleet → chat → speak`,
 finds nothing, and silently returns the key. `nodeLabel` therefore indexes the copy object directly
 rather than going through `t()` — which means picking the locale by hand too — and `i18n.spec.ts`
 pins that.
@@ -377,7 +378,7 @@ pins that.
 strings the backend checks:
 
 ```ts
-v-if="auth.can('fleet.chat')"      // hides what @PreAuthorize would reject
+v-if="auth.can('chat.speak')"      // hides what @PreAuthorize would reject
 ```
 
 Same source of truth, so there is no duplicated role logic. Route guards use `meta.node`.

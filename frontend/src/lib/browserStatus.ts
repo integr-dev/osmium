@@ -15,7 +15,7 @@ export type ConnectionStatus = 'ok' | 'stale' | 'offline'
 
 export interface FleetSummary {
   reachable: boolean
-  /** False before sign-in, or for an account without `fleet.read`: there is nothing to report. */
+  /** False before sign-in, or for an account without `agent.read`: there is nothing to report. */
   hasFleet: boolean
   online: number
   total: number
@@ -101,14 +101,14 @@ export function useBrowserStatus(): void {
   const status = computed<ConnectionStatus>(() => {
     if (!backendReachable.value) return 'offline'
     // Only meaningful once there is a session to stream to; a signed-out tab has no stream by design.
-    if (auth.can('fleet.read') && !agents.liveUpdatesConnected) return 'stale'
+    if (auth.can('agent.read') && !agents.liveUpdatesConnected) return 'stale'
     return 'ok'
   })
 
   const frames = computed(() =>
     titleFrames({
       reachable: backendReachable.value,
-      hasFleet: auth.can('fleet.read'),
+      hasFleet: auth.can('agent.read'),
       online: agents.online.length,
       total: agents.agents.length,
       percent: Math.round(agents.progressPercent),

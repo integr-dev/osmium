@@ -24,7 +24,7 @@ import kotlin.test.assertEquals
  */
 class AvatarControllerTest : AbstractRestTest() {
 
-    /** A head only ever appears beside something `fleet.read` already covers, which a viewer has. */
+    /** A head only ever appears beside something `agent.read` already covers, which a viewer has. */
     private fun asViewer(name: String) = authAs(name, "viewer")
 
     @Test

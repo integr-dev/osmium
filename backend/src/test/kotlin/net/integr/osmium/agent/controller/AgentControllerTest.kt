@@ -440,8 +440,8 @@ class AgentControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `orchestrator deletes an agent`() {
-        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+    fun `administrator deletes an agent`() {
+        val auth = authAs("agent", RoleNames.ADMINISTRATOR)
         val agent = createAgent(label = "Mason_01", host = reachableHost())
 
         mockMvc.delete("/api/agents/${agent.id}") {
@@ -454,7 +454,25 @@ class AgentControllerTest : AbstractRestTest() {
     }
 
     /**
-     * A viewer watches the fleet but cannot touch it. `fleet.read` gates listing and the live
+     * The point of splitting the old single control node: the tier that runs the fleet all day is
+     * not the tier trusted to destroy part of it. An orchestrator connects, renames and sets up
+     * agents, and is refused the one action that takes an agent and its history with it.
+     */
+    @Test
+    fun `an orchestrator cannot delete an agent`() {
+        val agent = createAgent(label = "Mason_88", host = reachableHost())
+
+        mockMvc.delete("/api/agents/${agent.id}") {
+            header(HttpHeaders.AUTHORIZATION, authAs("runner", RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isForbidden() }
+        }
+
+        assert(agentRepository.findAll().isNotEmpty())
+    }
+
+    /**
+     * A viewer watches the fleet but cannot touch it. `agent.read` gates listing and the live
      * streams only; every way to change an agent is a separate node, which is what makes a
      * read-only tier possible without a second set of routes.
      */

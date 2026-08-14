@@ -425,7 +425,7 @@ class AuditControllerTest : AbstractRestTest() {
         createAgent("Mason_09", host)
 
         mockMvc.delete("/api/hosts/${host.id}") {
-            header(HttpHeaders.AUTHORIZATION, authAs("remover", "orchestrator"))
+            header(HttpHeaders.AUTHORIZATION, authAs("remover", "administrator"))
         }.andExpect { status { isNoContent() } }
 
         val recorded = auditEntryRepository.findAll().single()

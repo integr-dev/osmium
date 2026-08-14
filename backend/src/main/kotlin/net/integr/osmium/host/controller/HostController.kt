@@ -29,17 +29,17 @@ import net.integr.osmium.host.model.Host
 class HostController(private val hostService: HostService) {
 
     @GetMapping
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('host.read')")
     @Operation(summary = "List hosts.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "All hosts."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `host.read`."),
     )
     fun list(): List<HostResponse> = hostService.findAll()
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAuthority('fleet.login')")
+    @PreAuthorize("hasAuthority('host.write')")
     @Operation(
         summary = "Enrol a host.",
         description = "Returns the enrolment token once. Only its hash is stored, so it cannot be " +
@@ -49,14 +49,14 @@ class HostController(private val hostService: HostService) {
     @ApiResponses(
         ApiResponse(responseCode = "201", description = "Host enrolled; token returned once."),
         ApiResponse(responseCode = "400", description = "Blank or over-long name."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.login`."),
+        ApiResponse(responseCode = "403", description = "Missing node `host.write`."),
         ApiResponse(responseCode = "409", description = "Name already enrolled."),
     )
     fun enrol(@Valid @RequestBody request: CreateHostRequest): HostEnrolledResponse =
         hostService.enrol(request)
 
     @PatchMapping("/{id}")
-    @PreAuthorize("hasAuthority('fleet.login')")
+    @PreAuthorize("hasAuthority('host.write')")
     @Operation(
         summary = "Rename a host.",
         description = "Only the name is editable; address, version and reachability are observed " +
@@ -65,7 +65,7 @@ class HostController(private val hostService: HostService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated host."),
         ApiResponse(responseCode = "400", description = "Blank or over-long name."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.login`."),
+        ApiResponse(responseCode = "403", description = "Missing node `host.write`."),
         ApiResponse(responseCode = "404", description = "No such host."),
         ApiResponse(responseCode = "409", description = "Name already enrolled."),
     )
@@ -75,7 +75,7 @@ class HostController(private val hostService: HostService) {
     ): HostResponse = hostService.rename(id, request)
 
     @PostMapping("/{id}/rotate-token")
-    @PreAuthorize("hasAuthority('fleet.login')")
+    @PreAuthorize("hasAuthority('host.token')")
     @Operation(
         summary = "Issue a new enrolment token.",
         description = "Invalidates the previous token and closes the host's current connection, so " +
@@ -84,21 +84,21 @@ class HostController(private val hostService: HostService) {
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "New token, returned once."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.login`."),
+        ApiResponse(responseCode = "403", description = "Missing node `host.token`."),
         ApiResponse(responseCode = "404", description = "No such host."),
     )
     fun rotateToken(@PathVariable id: Long): HostEnrolledResponse = hostService.rotateToken(id)
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('fleet.login')")
+    @PreAuthorize("hasAuthority('host.delete')")
     @Operation(
         summary = "Remove a host.",
         description = "Cascades to its agents, which cannot run without it. Invalidates the token.",
     )
     @ApiResponses(
         ApiResponse(responseCode = "204", description = "Host and its agents removed."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.login`."),
+        ApiResponse(responseCode = "403", description = "Missing node `host.delete`."),
         ApiResponse(responseCode = "404", description = "No such host."),
     )
     fun delete(@PathVariable id: Long) = hostService.delete(id)

@@ -32,7 +32,7 @@ describe('copy lookups', () => {
   })
 
   /**
-   * Node ids contain dots, which vue-i18n reads as a path separator — `permission.fleet.chat` looks
+   * Node ids contain dots, which vue-i18n reads as a path separator — `permission.chat.read` looks
    * for `permission → fleet → chat` and falls back silently. That is why `nodeLabel` indexes the
    * copy directly instead of going through `t()`, and this is the test that keeps it that way.
    */

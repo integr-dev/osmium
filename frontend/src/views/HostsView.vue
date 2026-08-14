@@ -107,7 +107,7 @@ async function confirmRemove() {
           }}
         </p>
       </div>
-      <button v-if="auth.can('fleet.login')" class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
+      <button v-if="auth.can('host.write')" class="btn btn-primary btn-sm gap-2" @click="addOpen = true">
         <Plus class="size-4" />
         {{ t('hosts.enrol') }}
       </button>
@@ -174,16 +174,32 @@ async function confirmRemove() {
                 </span>
               </td>
               <td>
-                <div v-if="auth.can('fleet.login')" class="flex justify-end gap-1">
-                  <button class="btn btn-ghost btn-xs gap-1" @click="openRename(host)">
+                <!--
+                  Three authorities, not one: renaming is administration, rotating replaces the
+                  credential the host authenticates with, and removing takes every agent on it.
+                -->
+                <div class="flex justify-end gap-1">
+                  <button
+                    v-if="auth.can('host.write')"
+                    class="btn btn-ghost btn-xs gap-1"
+                    @click="openRename(host)"
+                  >
                     <SquarePen class="size-3.5" />
                     {{ t('hosts.rename') }}
                   </button>
-                  <button class="btn btn-ghost btn-xs gap-1" @click="openRotate(host)">
+                  <button
+                    v-if="auth.can('host.token')"
+                    class="btn btn-ghost btn-xs gap-1"
+                    @click="openRotate(host)"
+                  >
                     <KeyRound class="size-3.5" />
                     {{ t('hosts.rotateToken') }}
                   </button>
-                  <button class="btn btn-ghost btn-xs text-error gap-1" @click="askRemove(host)">
+                  <button
+                    v-if="auth.can('host.delete')"
+                    class="btn btn-ghost btn-xs text-error gap-1"
+                    @click="askRemove(host)"
+                  >
                     <Trash2 class="size-3.5" />
                     {{ t('hosts.removeAction') }}
                   </button>

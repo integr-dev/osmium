@@ -24,7 +24,17 @@ class RoleControllerTest : AbstractRestTest() {
             }
             jsonPath("$[?(@.name == 'viewer')].nodes[*]") {
                 // A viewer sees the fleet as well as its own account; every node here is a read.
-                value(contains(Nodes.FLEET_READ, Nodes.ROLE_READ, Nodes.USER_EDIT_SELF, Nodes.USER_READ_SELF))
+                value(
+                    contains(
+                        Nodes.ACTIVITY_READ,
+                        Nodes.AGENT_READ,
+                        Nodes.CHAT_READ,
+                        Nodes.HOST_READ,
+                        Nodes.ROLE_READ,
+                        Nodes.USER_EDIT_SELF,
+                        Nodes.USER_READ_SELF,
+                    ),
+                )
             }
             jsonPath("$[?(@.name == 'administrator')].nodes[*]") {
                 value(contains(*Nodes.ALL.sorted().toTypedArray()))
@@ -40,15 +50,21 @@ class RoleControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, auth)
         }.andExpect {
             status { isOk() }
-            // orchestrator holds every viewer node plus full authority over the fleet; the only
-            // thing administrator adds on top is user management.
+            // orchestrator holds every viewer node plus running the fleet. What administrator adds
+            // on top is user management, the audit trail and the two deletions.
             jsonPath("$[?(@.name == 'orchestrator')].nodes[*]") {
                 value(
                     contains(
-                        Nodes.FLEET_CHAT,
-                        Nodes.FLEET_CONTROL,
-                        Nodes.FLEET_LOGIN,
-                        Nodes.FLEET_READ,
+                        Nodes.ACTIVITY_READ,
+                        Nodes.AGENT_READ,
+                        Nodes.AGENT_RUN,
+                        Nodes.AGENT_SETUP,
+                        Nodes.AGENT_WRITE,
+                        Nodes.CHAT_READ,
+                        Nodes.CHAT_SPEAK,
+                        Nodes.HOST_READ,
+                        Nodes.HOST_TOKEN,
+                        Nodes.HOST_WRITE,
                         Nodes.ROLE_READ,
                         Nodes.USER_EDIT_SELF,
                         Nodes.USER_READ_SELF,

@@ -36,18 +36,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/MapView.vue'),
       },
       {
-        // Placeholder, gated like configuration: whatever ends up here acts on the fleet.
+        // Placeholder: whatever ends up here drives agents, which is the run node.
         path: 'operations',
         name: 'operations',
         component: () => import('../views/OperationsView.vue'),
-        meta: { node: 'fleet.control' },
+        meta: { node: 'agent.run' },
       },
       {
-        // Configuring an agent is acting on it, so it sits behind the same node as connecting one.
+        // Configuring an agent reshapes it rather than driving it, which is the write node.
         path: 'configuration',
         name: 'configuration',
         component: () => import('../views/ConfigurationView.vue'),
-        meta: { node: 'fleet.control' },
+        meta: { node: 'agent.write' },
       },
       {
         path: 'account',

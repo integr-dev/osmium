@@ -4,7 +4,7 @@ import { useAuthStore } from './auth'
 import { token } from '../api/token'
 import { calls, respondWith } from '../test/http'
 
-const ACCOUNT = { id: 1, username: 'admin', role: 'administrator', nodes: ['user.read', 'fleet.chat'] }
+const ACCOUNT = { id: 1, username: 'admin', role: 'administrator', nodes: ['user.read', 'chat.speak'] }
 
 /** Answers /api/auth/login and /api/auth/me; anything else is a test bug. */
 function backend(options: { meStatus?: number } = {}) {
@@ -80,7 +80,7 @@ describe('auth store', () => {
     await auth.login('admin', 'admin')
 
     expect(auth.can('user.read')).toBe(true)
-    expect(auth.can('fleet.chat')).toBe(true)
+    expect(auth.can('chat.speak')).toBe(true)
     expect(auth.can('user.delete')).toBe(false)
   })
 

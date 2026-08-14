@@ -336,14 +336,14 @@ describe('live updates', () => {
       id: 1,
       username: 'demoted',
       role: 'administrator',
-      nodes: ['fleet.read', 'audit.read'],
+      nodes: ['agent.read', 'audit.read'],
       sessionAlertAt: null,
     }
 
-    store.applyEvent('permissions', { id: 1, username: 'demoted', role: 'viewer', nodes: ['fleet.read'] })
+    store.applyEvent('permissions', { id: 1, username: 'demoted', role: 'viewer', nodes: ['agent.read'] })
 
     expect(auth.can('audit.read')).toBe(false)
-    expect(auth.can('fleet.read')).toBe(true)
+    expect(auth.can('agent.read')).toBe(true)
   })
 
   it('stops delivering once a listener unsubscribes', async () => {

@@ -35,10 +35,10 @@ class LiveUpdateSubscriptions(
      *   Cached rather than queried per event: dispatch runs on every publish and would otherwise put
      *   a database round trip in front of each one. `tick` already visits every subscription, so the
      *   refresh costs nothing new — the same query that used to answer "does this account still hold
-     *   `fleet.read`" now answers "what does it hold".
+     *   `agent.read`" now answers "what does it hold".
      *
      *   The cost is that a change takes up to one tick to reach dispatch. That was already true of
-     *   the `fleet.read` check; what changes is that the window now also decides who receives the
+     *   the read check; what changes is that the window now also decides who receives the
      *   audit trail, so [TICK_MILLIS] is a security parameter and not only a liveness one.
      */
     private class Subscription(

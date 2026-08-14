@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController
 class ChatController(private val chatService: ChatService) {
 
     @GetMapping
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('chat.read')")
     @Operation(
         summary = "One page of chat, newest first.",
         description = """
@@ -42,7 +42,7 @@ class ChatController(private val chatService: ChatService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "A page of chat."),
         ApiResponse(responseCode = "400", description = "Neither or both filters given, or a malformed `cursor`."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `chat.read`."),
     )
     fun list(
         @Parameter(description = "Conversation to or about this agent. Excludes the server's global chat.")

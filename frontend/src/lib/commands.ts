@@ -3,7 +3,7 @@ import type { FleetAgent } from '../stores/agents'
 import { isOnline } from '../stores/agents'
 import type { HostResponse } from '../api/client'
 import { shortcutLabel } from './shortcuts'
-import { t } from '../i18n'
+import { LOCALES, t, type Locale } from '../i18n'
 
 /**
  * What the command palette can do, and how a query picks among it.
@@ -31,12 +31,22 @@ export interface Command {
 export interface CommandContext {
   agents: FleetAgent[]
   hosts: HostResponse[]
+  /** Distinct server addresses in the fleet — one chat scope each. */
+  servers: string[]
   can: (node: string) => boolean
   /** True when the agent's host has been heard from, so a command could actually be delivered. */
   hostReachable: (hostId: number) => boolean
   connect: (id: number) => Promise<void>
   disconnect: (id: number) => Promise<void>
   toggleChat: () => void
+  /** Points the rail at one server rather than only opening it wherever it was left. */
+  showChat: (server: string) => void
+  addAgent: () => void
+  refresh: () => Promise<void>
+  /** The locale in use, and how to change it. Injected rather than read from the i18n singleton so
+   *  this stays a pure function of its input. */
+  locale: Locale
+  setLocale: (locale: Locale) => void
   logout: () => Promise<void>
 }
 
@@ -55,11 +65,16 @@ export function buildCommands(context: CommandContext): Command[] {
   ]
 
   // The same nodes the route guard checks, so the palette never lands somewhere it bounces off.
-  if (context.can('fleet.control')) {
-    commands.push(
-      { id: 'go:operations', section: 'navigate', label: t('nav.operations'), to: { name: 'operations' } },
-      { id: 'go:configuration', section: 'navigate', label: t('nav.configuration'), to: { name: 'configuration' } },
-    )
+  if (context.can('agent.run')) {
+    commands.push({ id: 'go:operations', section: 'navigate', label: t('nav.operations'), to: { name: 'operations' } })
+  }
+  if (context.can('agent.write')) {
+    commands.push({
+      id: 'go:configuration',
+      section: 'navigate',
+      label: t('nav.configuration'),
+      to: { name: 'configuration' },
+    })
   }
   if (context.can('user.read')) {
     commands.push({ id: 'go:accounts', section: 'navigate', label: t('nav.allAccounts'), to: { name: 'accounts' } })
@@ -98,7 +113,7 @@ export function buildCommands(context: CommandContext): Command[] {
    * Deleting an agent is deliberately absent. A palette is a place for fast, reversible moves, and
    * one wrong Enter should not be able to destroy something.
    */
-  if (context.can('fleet.control')) {
+  if (context.can('agent.run')) {
     for (const agent of context.agents) {
       if (!context.hostReachable(agent.hostId)) continue
 
@@ -122,14 +137,50 @@ export function buildCommands(context: CommandContext): Command[] {
     }
   }
 
-  // Reading chat is what the rail does, so it is gated where reading is.
-  if (context.can('fleet.read')) {
+  // Reading chat is what the rail does, so it is gated where reading it is.
+  if (context.can('chat.read')) {
     commands.push({
       id: 'action:chat',
       section: 'actions',
       label: t('palette.toggleChat'),
       hint: shortcutLabel('J'),
       run: context.toggleChat,
+    })
+
+    // One per server, because pointing the rail somewhere is the part that takes two clicks
+    // otherwise: open it, then find the server in its picker.
+    for (const server of context.servers) {
+      commands.push({
+        id: `chat:${server}`,
+        section: 'actions',
+        label: t('palette.chatServer', { server }),
+        run: () => context.showChat(server),
+      })
+    }
+  }
+
+  if (context.can('agent.write')) {
+    commands.push({ id: 'action:add-agent', section: 'actions', label: t('nav.addAgent'), run: context.addAgent })
+  }
+
+  // Everything arrives on the stream, so this is for the case where the stream did not: a reconnect
+  // that missed something, or a tab that was asleep.
+  if (context.can('agent.read')) {
+    commands.push({ id: 'action:refresh', section: 'actions', label: t('palette.refresh'), run: context.refresh })
+  }
+
+  /**
+   * The language picker is in the sidebar footer, which is the furthest thing on screen from
+   * wherever the operator is working. Only the languages not currently in use are offered — a
+   * command that does nothing is worse than one that is missing.
+   */
+  for (const locale of Object.keys(LOCALES) as Locale[]) {
+    if (locale === context.locale) continue
+    commands.push({
+      id: `locale:${locale}`,
+      section: 'actions',
+      label: t('palette.language', { name: t(`language.${locale}`) }),
+      run: () => context.setLocale(locale),
     })
   }
 

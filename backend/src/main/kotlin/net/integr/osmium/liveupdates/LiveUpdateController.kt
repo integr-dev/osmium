@@ -24,7 +24,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
  * handling to maintain. See FLEET_CONNECTIVITY.md.
  *
  * **The door is deliberately wider than what comes through it.** Once the channel carries an
- * account's own permission changes, gating it on `fleet.read` would mean an account had to be
+ * account's own permission changes, gating it on `agent.read` would mean an account had to be
  * entitled to watch the fleet before it could be told its role had moved. `user.read.self` is what
  * every account holds and the least this can require; everything past that is decided per event
  * against the subscriber's own nodes, in `LiveUpdateSubscriptions`.
@@ -46,7 +46,7 @@ class LiveUpdateController(private val liveUpdates: LiveUpdateSubscriptions) {
             "than per reported sample.\n\n" +
             "**Each event carries its own permission.** Opening the stream needs only " +
             "`user.read.self`, since every account has to be able to hear about itself; what " +
-            "actually arrives is decided per event, so `agent` reaches only `fleet.read` and " +
+            "actually arrives is decided per event, so `agent` reaches only `agent.read` and " +
             "`audit` only `audit.read`. `permissions` is " +
             "addressed to a single account when its own role changes and carries what " +
             "`/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an " +

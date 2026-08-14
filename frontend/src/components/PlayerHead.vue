@@ -7,7 +7,7 @@ import { avatarUrl } from '../lib/avatars'
  *
  * The image comes from Osmium's own `/api/avatars`, never from a skin service directly: the CSP is
  * `img-src 'self' blob:`, and the point of proxying is that it stays that way. That endpoint is
- * gated on `fleet.read`, so the bytes are fetched with the token and arrive as a blob URL — see
+ * gated on `agent.read`, so the bytes are fetched with the token and arrive as a blob URL — see
  * `src/lib/avatars.ts`.
  *
  * **Nothing here is load-bearing.** A head is identity, not information — every place one appears,

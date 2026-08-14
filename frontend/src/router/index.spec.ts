@@ -29,7 +29,7 @@ describe('route guard', () => {
     respondWith((call) =>
       call.url.endsWith('/api/auth/refresh')
         ? { body: { token: 'minted-from-cookie' } }
-        : { body: { id: 1, username: 'op', role: 'viewer', nodes: ['fleet.read'] } },
+        : { body: { id: 1, username: 'op', role: 'viewer', nodes: ['agent.read'] } },
     )
     // A store that has not tried yet. The restore is memoised per page load, and the navigation in
     // `beforeEach` above has already spent the previous store's one attempt.
@@ -83,7 +83,7 @@ describe('route guard', () => {
   // audit.read is administrator-only and deliberately outside the agent.* tier, so an orchestrator
   // running the whole fleet still cannot read what other operators did.
   it('keeps the audit log from an account without audit.read', async () => {
-    signIn(['fleet.read', 'fleet.control', 'fleet.chat', 'fleet.login'])
+    signIn(['agent.read', 'agent.run', 'agent.write', 'chat.read'])
 
     await router.push('/audit')
 
@@ -101,15 +101,15 @@ describe('route guard', () => {
   // Configuring an agent is acting on it, so a viewer watching the fleet must not reach the screen
   // that does it — the same split that keeps every other way to change the fleet behind its own node.
   it('keeps configuration from an account that can only watch', async () => {
-    signIn(['fleet.read'])
+    signIn(['agent.read'])
 
     await router.push('/configuration')
 
     expect(router.currentRoute.value.name).toBe('dashboard')
   })
 
-  it('admits configuration with fleet.control', async () => {
-    signIn(['fleet.read', 'fleet.control'])
+  it('admits configuration with agent.write', async () => {
+    signIn(['agent.read', 'agent.write'])
 
     await router.push('/configuration')
 
@@ -118,7 +118,7 @@ describe('route guard', () => {
 
   /** Empty today, but gated from the start: a route that opens up later is a permission bug. */
   it('keeps operations from an account that can only watch', async () => {
-    signIn(['fleet.read'])
+    signIn(['agent.read'])
 
     await router.push('/operations')
 

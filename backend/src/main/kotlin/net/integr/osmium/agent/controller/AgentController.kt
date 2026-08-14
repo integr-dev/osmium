@@ -32,27 +32,27 @@ import net.integr.osmium.agent.model.Agent
 class AgentController(private val agentService: AgentService) {
 
     @GetMapping
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('agent.read')")
     @Operation(summary = "List every agent.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "All agents."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
     )
     fun list(): List<AgentResponse> = agentService.findAll()
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('agent.read')")
     @Operation(summary = "Read one agent.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "The agent."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
     )
     fun get(@PathVariable id: Long): AgentResponse = agentService.findById(id)
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAuthority('fleet.control')")
+    @PreAuthorize("hasAuthority('agent.write')")
     @Operation(
         summary = "Create an agent slot.",
         description = "Nothing has touched Minecraft at this point; the agent starts UNLINKED.",
@@ -60,13 +60,13 @@ class AgentController(private val agentService: AgentService) {
     @ApiResponses(
         ApiResponse(responseCode = "201", description = "Agent created."),
         ApiResponse(responseCode = "400", description = "Invalid fields, or unknown host."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.write`."),
         ApiResponse(responseCode = "409", description = "Label already in use."),
     )
     fun create(@Valid @RequestBody request: CreateAgentRequest): AgentResponse = agentService.create(request)
 
     @PatchMapping("/{id}")
-    @PreAuthorize("hasAuthority('fleet.control')")
+    @PreAuthorize("hasAuthority('agent.write')")
     @Operation(
         summary = "Rename an agent.",
         description = "Omitted fields are left alone. Where an agent plays is set through " +
@@ -75,7 +75,7 @@ class AgentController(private val agentService: AgentService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated agent."),
         ApiResponse(responseCode = "400", description = "Blank or over-long field."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.write`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(responseCode = "409", description = "Label already taken."),
     )
@@ -85,12 +85,13 @@ class AgentController(private val agentService: AgentService) {
     ): AgentResponse = agentService.update(id, request)
 
     /**
-     * `fleet.control`, not `fleet.login`: this is configuration, and no credential is involved.
+     * `agent.write`, not `agent.setup`: this is configuration, and no credential is
+     * involved.
      * Which server an agent plays on is separable from setting it up precisely because the account
      * is the same account wherever it joins.
      */
     @PutMapping("/{id}/server")
-    @PreAuthorize("hasAuthority('fleet.control')")
+    @PreAuthorize("hasAuthority('agent.write')")
     @Operation(
         summary = "Point the agent at a Minecraft server, or at none.",
         description = "Null unassigns it, leaving it set up and idle. Offline only: this decides " +
@@ -100,7 +101,7 @@ class AgentController(private val agentService: AgentService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Updated agent."),
         ApiResponse(responseCode = "400", description = "Over-long address."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.write`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(responseCode = "409", description = "The agent is online."),
     )
@@ -111,17 +112,17 @@ class AgentController(private val agentService: AgentService) {
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('fleet.control')")
+    @PreAuthorize("hasAuthority('agent.delete')")
     @Operation(summary = "Delete an agent.")
     @ApiResponses(
         ApiResponse(responseCode = "204", description = "Agent deleted."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.delete`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
     )
     fun delete(@PathVariable id: Long) = agentService.delete(id)
 
     @PostMapping("/{id}/setup")
-    @PreAuthorize("hasAuthority('fleet.login')")
+    @PreAuthorize("hasAuthority('agent.setup')")
     @Operation(
         summary = "Ask the host to set this agent up.",
         description = "Sends `setup_agent` and moves the agent to SETUP_PENDING. Osmium does not " +
@@ -129,7 +130,7 @@ class AgentController(private val agentService: AgentService) {
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted; agent is SETUP_PENDING."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.login`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.setup`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(responseCode = "409", description = "Setup already running, or the agent is online."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
@@ -140,11 +141,11 @@ class AgentController(private val agentService: AgentService) {
     ): AgentResponse = agentService.setup(id, request)
 
     @PostMapping("/{id}/connect")
-    @PreAuthorize("hasAuthority('fleet.control')")
+    @PreAuthorize("hasAuthority('agent.run')")
     @Operation(summary = "Connect the agent to its Minecraft server.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(
             responseCode = "409",
@@ -155,11 +156,11 @@ class AgentController(private val agentService: AgentService) {
     fun connect(@PathVariable id: Long): AgentResponse = agentService.connect(id)
 
     @PostMapping("/{id}/disconnect")
-    @PreAuthorize("hasAuthority('fleet.control')")
+    @PreAuthorize("hasAuthority('agent.run')")
     @Operation(summary = "Disconnect the agent from its Minecraft server.")
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.control`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(responseCode = "409", description = "The agent is not online."),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
@@ -167,17 +168,17 @@ class AgentController(private val agentService: AgentService) {
     fun disconnect(@PathVariable id: Long): AgentResponse = agentService.disconnect(id)
 
     @PostMapping("/{id}/chat")
-    @PreAuthorize("hasAuthority('fleet.chat')")
+    @PreAuthorize("hasAuthority('chat.speak')")
     @Operation(
         summary = "Speak in game as this agent.",
         description = "Impersonation: this says something under an account you own, so it is gated " +
-            "separately from fleet.control. Rate limited per agent, because chat spam is the " +
+            "separately from every other verb. Rate limited per agent, because chat spam is the " +
             "fastest route to a Minecraft ban and the ban lands on the account, not the operator.",
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "Command accepted."),
         ApiResponse(responseCode = "400", description = "Blank or over-long message."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.chat`."),
+        ApiResponse(responseCode = "403", description = "Missing node `chat.speak`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(responseCode = "409", description = "The agent is not online."),
         ApiResponse(responseCode = "429", description = "This agent has been made to speak too often."),

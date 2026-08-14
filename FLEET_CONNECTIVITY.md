@@ -62,7 +62,7 @@ artefact, so there is nothing to audit, leak, or get subtly wrong.
 | Backend or database compromised | No credentials stored there, and no code path that handles one | Attacker learns *which* accounts exist, and can trigger `setup_agent` |
 | Osmium used to phish an operator | The backend never displays an auth prompt or code, so there is nothing to imitate | — |
 | Host host compromised | Token cache encrypted at rest; revocation path documented | Root on that host gets the tokens |
-| Malicious authenticated operator | Node gating + audit trail | An operator with `fleet.chat` can still act in-game |
+| Malicious authenticated operator | Node gating + audit trail | An operator with `chat.speak` can still act in-game |
 | Stolen frontend session (XSS) | Node gating limits which accounts can act | Session can drive agents until the token expires |
 | Host token leaked | Stored hashed, rotatable, revocable | Valid until revoked |
 
@@ -312,7 +312,7 @@ and disconnect an agent that is deliberately running.
 ### Authorization is backend-side only
 
 The host authenticated once with its enrolment token and trusts what the backend sends; it performs
-no permission checks of its own. `fleet.control`, `fleet.chat` and the rest are therefore enforced
+no permission checks of its own. `agent.run`, `chat.speak` and the rest are therefore enforced
 **before dispatch**. The consequence is that a compromised backend can drive every agent — accepted
 in exchange for the backend never holding credentials, which keeps the accounts themselves out of
 reach.
@@ -498,8 +498,8 @@ ping/pong or close-code handling to maintain.
 
 | Endpoint | Sends | Node |
 |---|---|---|
-| `GET /api/stream` | state changes, heartbeats, aggregate counters | `fleet.read` |
-| `GET /api/stream/agents/{id}` | that agent's chat, telemetry and state | `fleet.read` |
+| `GET /api/stream` | state changes, heartbeats, aggregate counters | a session; per event type |
+| `GET /api/stream/agents/{id}` | that agent's chat, telemetry and state | a session; per event type |
 
 Fanning everything to everyone wastes the wire and leaks activity across views that an operator is
 not looking at.
@@ -683,7 +683,7 @@ third-party conversation rather than no store at all.
 Outbound chat is limited **per agent** — 30 messages a minute — enforced backend-side before
 dispatch, and refused with a 429.
 
-Two concrete reasons: a stolen operator session holding `fleet.chat` can otherwise spam under
+Two concrete reasons: a stolen operator session holding `chat.speak` can otherwise spam under
 accounts you own, and chat spam is the fastest route to a Minecraft ban. It is the one control here
 whose in-game consequence is permanent and unrecoverable.
 
@@ -811,25 +811,36 @@ New nodes, following the existing convention of authorizing routes on nodes and 
 
 | Node | Grants | Tier |
 |---|---|---|
-| `fleet.read` | View agents, telemetry, nearby players | orchestrator |
-| `fleet.control` | Create agents, connect, disconnect, assign work | orchestrator |
-| `fleet.chat` | **Speak in-game as an agent** | orchestrator |
-| `fleet.login` | Enrol hosts, trigger `setup_agent` on a host | orchestrator |
+| `agent.read` | View agents, telemetry, nearby players | viewer |
+| `host.read` | View the hosts that run them | viewer |
+| `activity.read` | Read the incident feed | viewer |
+| `chat.read` | Read what was said in game | viewer |
+| `agent.run` | Connect and disconnect agents | orchestrator |
+| `agent.write` | Create and rename agents, place them on a server | orchestrator |
+| `agent.setup` | Trigger `setup_agent` on a host | orchestrator |
+| `chat.speak` | **Speak in-game as an agent** | orchestrator |
+| `host.write` | Enrol and rename hosts | orchestrator |
+| `host.token` | Rotate a host enrolment token | orchestrator |
+| `agent.delete` | Delete an agent, and its history | administrator |
+| `host.delete` | Remove a host, and every agent on it | administrator |
 
-**`orchestrator` holds full authority over the fleet.** The only thing `administrator` adds is user
-management, so the tiers divide along "runs the agents" versus "runs the people".
+**`orchestrator` runs the fleet; it does not get to destroy part of it.** The two deletions sit with
+`administrator`, which already carries the irreversible operations, so the tiers divide along "runs
+the agents" versus "runs the people and the things that cannot be undone".
 
-The four nodes stay **separate anyway**, even though one tier currently holds them all, because two
-of them are meaningfully more dangerous than the others and a future tier may need less:
+The nodes are split by **what an act costs**, not by which resource it touches: `run` undoes itself,
+`write` is recoverable, `delete` is not. Two are separated for what they *are* rather than what they
+cost:
 
-- **`fleet.chat` is impersonation.** It permits saying anything in-game under an account you own — a
-  griefing and social-engineering vector, and the action most likely to get an account banned.
-- **`fleet.login` is credential acquisition.** It decides which Microsoft account becomes linked to
-  your infrastructure.
+- **`chat.speak` is impersonation.** It permits saying anything in-game under an account you
+  own — a griefing and social-engineering vector, and the action most likely to get an account
+  banned. Reading chat is a different node again: content, not state.
+- **`agent.setup` is credential acquisition.** It decides which Microsoft account becomes
+  linked to your infrastructure.
 
-Collapsing them into `fleet.control` would make that distinction unrecoverable; keeping them apart
-costs nothing today and leaves room for, say, a build-only tier that can connect agents but not
-speak as them.
+Collapsing either into a general write node would make that distinction unrecoverable, and keeping
+them apart is what makes a build-only tier possible — one that can connect agents but not speak as
+them.
 
 ## Audit
 

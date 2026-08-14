@@ -11,7 +11,7 @@ import java.time.Duration
  *
  * @param messagesPerMinute how often one agent can be made to speak. Enforced per agent rather than
  *   per operator, because a ban lands on the account. It is also what contains a stolen session
- *   holding `fleet.chat`: it can speak, but it cannot spam — and chat spam is the one consequence
+ *   holding `chat.speak`: it can speak, but it cannot spam — and chat spam is the one consequence
  *   here that is permanent and unrecoverable.
  */
 @ConfigurationProperties(prefix = "osmium.chat")

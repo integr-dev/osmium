@@ -267,16 +267,26 @@ async function confirmRemove() {
             {{ uptimeOf(agent) }}
           </div>
         </div>
-        <div v-if="auth.can('fleet.control')" class="flex gap-1">
-          <button class="btn btn-ghost btn-sm gap-1" @click="openServer">
-            <Server class="size-4" />
-            {{ t('agents.setServer') }}
-          </button>
-          <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
-            <SquarePen class="size-4" />
-            {{ t('common.edit') }}
-          </button>
-          <button class="btn btn-ghost btn-sm text-error gap-1" @click="removeDialog?.showModal()">
+        <!-- Reshaping and destroying are separate authorities, so they are separate checks. -->
+        <div
+          v-if="auth.can('agent.write') || auth.can('agent.delete')"
+          class="flex gap-1"
+        >
+          <template v-if="auth.can('agent.write')">
+            <button class="btn btn-ghost btn-sm gap-1" @click="openServer">
+              <Server class="size-4" />
+              {{ t('agents.setServer') }}
+            </button>
+            <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
+              <SquarePen class="size-4" />
+              {{ t('common.edit') }}
+            </button>
+          </template>
+          <button
+            v-if="auth.can('agent.delete')"
+            class="btn btn-ghost btn-sm text-error gap-1"
+            @click="removeDialog?.showModal()"
+          >
             <Trash2 class="size-4" />
             {{ t('common.delete') }}
           </button>
@@ -463,7 +473,7 @@ async function confirmRemove() {
 
         <div class="flex flex-wrap gap-2">
           <button
-            v-if="auth.can('fleet.login')"
+            v-if="auth.can('agent.setup')"
             class="btn btn-soft btn-sm gap-2"
             :disabled="busy || !hostReachable || agent.state === 'SETUP_PENDING' || isOnline(agent)"
             @click="openSetup"
@@ -473,7 +483,7 @@ async function confirmRemove() {
           </button>
           <!-- No server is nowhere to connect to, and the backend refuses it with a 409. -->
           <button
-            v-if="auth.can('fleet.control')"
+            v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
             :disabled="busy || !hostReachable || !agent.serverAddress || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING'"
             @click="run(() => agentStore.connect(agent!.id))"
@@ -482,7 +492,7 @@ async function confirmRemove() {
             {{ t('agents.connect') }}
           </button>
           <button
-            v-if="auth.can('fleet.control')"
+            v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
             :disabled="busy || !hostReachable || !isOnline(agent)"
             @click="run(() => agentStore.disconnect(agent!.id))"
@@ -497,7 +507,7 @@ async function confirmRemove() {
             second copy of it.
           -->
           <button
-            v-if="auth.can('fleet.read')"
+            v-if="auth.can('chat.read')"
             class="btn btn-soft btn-sm gap-2"
             @click="chat.show({ kind: 'agent', id: agent.id })"
           >

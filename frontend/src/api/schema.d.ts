@@ -329,7 +329,7 @@ export interface paths {
         put?: never;
         /**
          * Speak in game as this agent.
-         * @description Impersonation: this says something under an account you own, so it is gated separately from fleet.control. Rate limited per agent, because chat spam is the fastest route to a Minecraft ban and the ban lands on the account, not the operator.
+         * @description Impersonation: this says something under an account you own, so it is gated separately from every other verb. Rate limited per agent, because chat spam is the fastest route to a Minecraft ban and the ban lands on the account, not the operator.
          */
         post: operations["chat"];
         delete?: never;
@@ -439,7 +439,7 @@ export interface paths {
          * Stream everything this account is entitled to see change.
          * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`, `user`, `user-removed`, `audit`, `permissions`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat`, `activity` and `audit` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
          *
-         *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `fleet.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
+         *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `agent.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
          */
         get: operations["stream"];
         put?: never;
@@ -844,7 +844,7 @@ export interface components {
             /** @example method_a */
             method: string;
         };
-        /** @description Sends a chat message as an agent. This is impersonation - gated on fleet.chat. */
+        /** @description Sends a chat message as an agent. This is impersonation - gated on chat. */
         ChatRequest: {
             message: string;
         };
@@ -1062,7 +1062,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1223,7 +1223,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostResponse"][];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `host.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1265,7 +1265,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostEnrolledResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1305,7 +1305,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostEnrolledResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.token`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1499,7 +1499,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"][];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `agent.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1541,7 +1541,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1585,7 +1585,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `agent.setup`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1643,7 +1643,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.run`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1701,7 +1701,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.run`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1772,7 +1772,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.chat`. */
+            /** @description Missing node `chat.speak`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1991,7 +1991,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.delete`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2040,7 +2040,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2089,7 +2089,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `agent.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2127,7 +2127,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.delete`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2176,7 +2176,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2333,7 +2333,7 @@ export interface operations {
                     "*/*": components["schemas"]["ChatPageResponse"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `chat.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2364,7 +2364,7 @@ export interface operations {
                     "*/*": string;
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `agent.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2575,7 +2575,7 @@ export interface operations {
                     "*/*": components["schemas"]["ActivityPageResponse"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `activity.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;

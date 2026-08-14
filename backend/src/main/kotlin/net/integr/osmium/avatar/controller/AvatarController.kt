@@ -26,7 +26,7 @@ class AvatarController(
 
     /**
      * Gated like every other route, on the node the caller must already hold to be looking at a
-     * head at all: agents, chat and hosts are all `fleet.read`, and a head only ever appears beside
+     * head at all: agents, chat and hosts are all `agent.read`, and a head only ever appears beside
      * one of them.
      *
      * That costs the frontend the obvious implementation. An `<img>` cannot send an `Authorization`
@@ -39,7 +39,7 @@ class AvatarController(
     // No `produces`: the content type is whatever the skin service sent, and pinning it to PNG here
     // would turn a JPEG upstream into a 406 rather than into a head.
     @GetMapping("/{identifier}")
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('agent.read')")
     @Operation(
         summary = "A player's head.",
         description = "Accepts a Minecraft username or UUID. Fetched from a skin service and " +
@@ -47,7 +47,7 @@ class AvatarController(
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "The head, as an image."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
         ApiResponse(
             responseCode = "404",
             description = "No head: unknown player, malformed identifier, upstream unavailable, or " +

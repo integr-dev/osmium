@@ -385,7 +385,23 @@ class UserControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isOk() }
             jsonPath("$.role") { value(RoleNames.ORCHESTRATOR) }
-            jsonPath("$.nodes") { value(contains("fleet.chat", "fleet.control", "fleet.login", "fleet.read", "role.read", "user.edit.self", "user.read.self")) }
+            jsonPath("$.nodes") { value(
+                contains(
+                    "activity.read",
+                    "agent.read",
+                    "agent.run",
+                    "agent.setup",
+                    "agent.write",
+                    "chat.read",
+                    "chat.speak",
+                    "host.read",
+                    "host.token",
+                    "host.write",
+                    "role.read",
+                    "user.edit.self",
+                    "user.read.self",
+                ),
+            ) }
         }
     }
 

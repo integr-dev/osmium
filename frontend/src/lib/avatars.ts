@@ -5,7 +5,7 @@ import { token } from '../api/token'
 /**
  * Player heads, fetched with the access token and handed to an `<img>` as a blob URL.
  *
- * `/api/avatars` is gated on `fleet.read` like everything else, and an `<img src>` cannot send an
+ * `/api/avatars` is gated on `agent.read` like everything else, and an `<img src>` cannot send an
  * `Authorization` header. The access token is not a cookie — the only cookie in this app is the
  * refresh token, scoped to `/api/auth` — so the head is fetched here and the element is given an
  * object URL instead. That is the cost of not leaving the endpoint open, and it is worth paying:

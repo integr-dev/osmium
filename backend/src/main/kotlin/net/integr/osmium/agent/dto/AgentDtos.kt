@@ -138,7 +138,7 @@ data class SetupAgentRequest(
     val method: String,
 )
 
-@Schema(description = "Sends a chat message as an agent. This is impersonation - gated on fleet.chat.")
+@Schema(description = "Sends a chat message as an agent. This is impersonation - gated on chat.")
 data class ChatRequest(
     @field:NotBlank
     @field:Size(max = CHAT_MAX_LENGTH)

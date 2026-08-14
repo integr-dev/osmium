@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController
 class ActivityController(private val activityService: ActivityService) {
 
     @GetMapping
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('activity.read')")
     @Operation(
         summary = "One page of agent incidents, newest first.",
         description = """
@@ -35,7 +35,7 @@ class ActivityController(private val activityService: ActivityService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "A page of activity."),
         ApiResponse(responseCode = "400", description = "Malformed `cursor`."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `activity.read`."),
     )
     fun list(
         @Parameter(description = "Narrow to one agent. Omit for the whole fleet.")

@@ -7,14 +7,14 @@ import { nodeLabel } from './nodeLabel'
 describe('nodeLabel', () => {
   it('names a known node', () => {
     // Compared against the copy file, not a literal, so rewording does not break the test.
-    expect(nodeLabel('fleet.chat')).toBe(en.permission['fleet.chat'])
+    expect(nodeLabel('chat.speak')).toBe(en.permission['chat.speak'])
   })
 
   // It bypasses t() to get past vue-i18n's dot handling, so following the locale is its own job.
   it('names it in the selected locale', () => {
     try {
       i18n.global.locale.value = 'de'
-      expect(nodeLabel('fleet.chat')).toBe(de.permission['fleet.chat'])
+      expect(nodeLabel('chat.speak')).toBe(de.permission['chat.speak'])
     } finally {
       i18n.global.locale.value = 'en'
     }

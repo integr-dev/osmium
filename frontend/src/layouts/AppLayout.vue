@@ -73,7 +73,7 @@ const {
  * the more specific claim while the app has focus. Ctrl/⌘-K is the palette's own, in that component.
  */
 function onKeydown(event: KeyboardEvent) {
-  if (!isShortcut(event, 'J') || !auth.can('fleet.read')) return
+  if (!isShortcut(event, 'J') || !auth.can('chat.read')) return
   event.preventDefault()
   chat.toggle()
 }
@@ -99,7 +99,7 @@ const degraded = computed(() => backendEverReached.value && !backendReachable.va
  * they will learn on any other day.
  */
 const statusShown = computed(
-  () => degraded.value || (auth.can('fleet.read') && !agentStore.liveUpdatesConnected),
+  () => degraded.value || (auth.can('agent.read') && !agentStore.liveUpdatesConnected),
 )
 
 const backendTip = computed(() =>
@@ -112,7 +112,7 @@ async function retry() {
   retrying.value = true
   try {
     await auth.loadUser()
-    if (auth.can('fleet.read')) await agentStore.refresh()
+    if (auth.can('agent.read')) await agentStore.refresh()
     if (backendReachable.value) agentStore.connectLiveUpdates()
   } finally {
     retrying.value = false
@@ -122,7 +122,7 @@ async function retry() {
 // The sidebar is present on every authenticated page, so it is the natural place to load the fleet
 // and to hold the live stream open: one connection for the whole session rather than one per view.
 onMounted(() => {
-  if (!auth.can('fleet.read')) return
+  if (!auth.can('agent.read')) return
   void agentStore.refresh()
   agentStore.connectLiveUpdates()
 })
@@ -224,7 +224,7 @@ async function logout() {
 
     <AddAgentModal v-model:open="addAgentOpen" />
     <!-- Listens on the window, so it opens from anywhere inside the app. -->
-    <CommandPalette ref="palette" />
+    <CommandPalette ref="palette" @add-agent="addAgentOpen = true" />
 
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
@@ -279,7 +279,7 @@ async function logout() {
 
             <!-- The narrow case: the backend answers, but events are not arriving. -->
             <span
-              v-else-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
+              v-else-if="auth.can('agent.read') && !agentStore.liveUpdatesConnected"
               class="tooltip tooltip-left before:w-44 before:whitespace-normal"
               :data-tip="t('connection.streamLost')"
             >
@@ -324,13 +324,13 @@ async function logout() {
                 {{ t('nav.map') }}
               </RouterLink>
             </li>
-            <li v-if="auth.can('fleet.control')">
+            <li v-if="auth.can('agent.run')">
               <RouterLink :to="{ name: 'operations' }" class="gap-3">
                 <Workflow class="size-4 shrink-0" />
                 {{ t('nav.operations') }}
               </RouterLink>
             </li>
-            <li v-if="auth.can('fleet.control')">
+            <li v-if="auth.can('agent.write')">
               <RouterLink :to="{ name: 'configuration' }" class="gap-3">
                 <SlidersHorizontal class="size-4 shrink-0" />
                 {{ t('nav.configuration') }}
@@ -391,7 +391,7 @@ async function logout() {
                       </span>
                     </RouterLink>
                   </li>
-                  <li v-if="auth.can('fleet.control')">
+                  <li v-if="auth.can('agent.write')">
                     <button type="button" class="gap-2.5 opacity-70" @click="addAgentOpen = true">
                       <Plus class="size-4 shrink-0" />
                       {{ t('nav.addAgent') }}
@@ -409,7 +409,7 @@ async function logout() {
           badge is the only place the fleet's chatter is visible while the rail is shut, which is
           also why it takes the corner the keys otherwise occupy.
         -->
-        <ul v-if="auth.can('fleet.read')" class="menu w-full gap-0.5 px-3 pb-3">
+        <ul v-if="auth.can('chat.read')" class="menu w-full gap-0.5 px-3 pb-3">
           <li>
             <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
               <MessagesSquare class="size-4 shrink-0" />
