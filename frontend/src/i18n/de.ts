@@ -56,6 +56,15 @@ export const de: Copy = {
     logOut: 'Abmelden',
   },
 
+  title: {
+    plain: 'Osmium',
+    prefixed: 'Osmium · {text}',
+    offline: 'offline',
+    online: '{online}/{total} im Spiel',
+    built: '{percent} % gebaut',
+    eta: 'noch {minutes} Min.',
+  },
+
   chat: {
     title: 'Chat',
     toggle: 'Chat ein-/ausblenden ({keys})',

@@ -93,6 +93,20 @@ export const en = {
     hostOffline: 'Host {host} is unreachable.',
   },
 
+  /**
+   * The browser tab, rotated through every few seconds. Short: a tab shows about twenty characters
+   * before the browser truncates it, and a truncated fact is worse than a shorter one.
+   */
+  title: {
+    plain: 'Osmium',
+    /** The name stays in front, so the tab is identifiable whichever fact is showing. */
+    prefixed: 'Osmium · {text}',
+    offline: 'offline',
+    online: '{online}/{total} in game',
+    built: '{percent}% built',
+    eta: 'ETA {minutes}m',
+  },
+
   connection: {
     /** Shown instead of the app when nothing has loaded yet. */
     blockedTitle: 'Cannot reach Osmium',

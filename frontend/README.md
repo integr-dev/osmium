@@ -182,6 +182,24 @@ the wire, so the request asks for the start of the day after.
 
 The CSV itself is English whatever the interface is set to — see the backend README for why.
 
+## The tab
+
+A fleet is watched out of the corner of an eye, so `src/lib/browserStatus.ts` uses the two things a
+browser shows a background tab. The **title** rotates every five seconds through what is worth a
+glance — `Osmium · 3/4 in game`, `Osmium · 62% built`, `Osmium · ETA 14m` — and collapses to one
+frame when the backend stops answering, because a title cycling through numbers that stopped being
+true reads as a live fleet. The name stays in front of every frame: a tab reading "62% built" on its
+own says nothing about which of a dozen tabs it is, which is the first thing a tab has to answer.
+
+The **favicon** carries a connection dot: green, amber for a lost event stream, red for a backend
+that is not answering. It is built by splicing a `<circle>` into `logo.svg` rather than by drawing on
+a canvas, so it stays sharp on a scaled display. This is the one place a permanent green dot earns
+its keep — a tab sits in a strip of other tabs with nothing else to say, and an absent dot would read
+as an icon that failed to load rather than as a fleet that is fine.
+
+It is mounted at the root, not in `AppLayout`, so it covers the login screen too: somebody who cannot
+sign in because the backend is down should be able to read that off the tab.
+
 ## Chat
 
 Chat lives in a **rail** beside the page, not behind a click. It is the ambient texture of a live
