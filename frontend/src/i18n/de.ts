@@ -55,6 +55,20 @@ export const de: Copy = {
     logOut: 'Abmelden',
   },
 
+  palette: {
+    open: 'Suchen',
+    placeholder: 'Agenten, Hosts und Seiten durchsuchen …',
+    noMatches: 'Dazu passt nichts.',
+    connectAgent: '{name} verbinden',
+    disconnectAgent: '{name} trennen',
+    section: {
+      navigate: 'Seiten',
+      agents: 'Agenten',
+      hosts: 'Hosts',
+      actions: 'Aktionen',
+    },
+  },
+
   connection: {
     blockedTitle: 'Osmium nicht erreichbar',
     blockedBody: 'Osmium antwortet nicht. Ihre Sitzung läuft weiter — versuchen Sie es gleich noch einmal.',

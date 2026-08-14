@@ -85,6 +85,28 @@ null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes w
 agent on no health standing at the world origin, which is a much more convincing lie than an empty
 panel.
 
+## Command palette
+
+**Ctrl/⌘-K** from anywhere in the app: jump to a page, an agent or a host, or connect and disconnect
+an agent without leaving the keyboard. The sidebar carries a button showing the shortcut for the
+platform it is running on — a shortcut is invisible by nature, and one nobody knows about is one
+nobody uses.
+
+`src/lib/commands.ts` holds both parts worth testing, away from the component:
+
+- **What is offered.** Gated on exactly the nodes the route guard and the API check, so the palette
+  never hands back a 403 for a keystroke that looked like it should work. Actions appear only when
+  they would currently go through — right state, a server to connect to, a host that has been heard
+  from — and **deleting is deliberately absent**: a palette is for fast reversible moves, and one
+  wrong Enter should not destroy anything.
+- **What ranks first.** Matching is a **subsequence**, not a substring, so `eu1a1` finds
+  `eu-1-agent-1` — which is the shape of name a fleet actually gets and exactly what substring
+  search misses. The score is how far the match had to travel, so tight hits beat scattered ones,
+  and a hit on the name always beats one on the second line.
+
+The list is rebuilt on every open rather than cached: the fleet moves underneath it, and a stale
+list would offer to connect an agent that is already online.
+
 ## Live updates
 
 `src/api/liveUpdates.ts` is a small fetch-based SSE client. The browser's native `EventSource`
@@ -310,7 +332,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-127 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
+138 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
 locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
 fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
 forward silently re-reads page one — and translation parity, where a missing placeholder swallows a

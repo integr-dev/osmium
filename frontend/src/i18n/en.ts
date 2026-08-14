@@ -52,6 +52,24 @@ export const en = {
     logOut: 'Log out',
   },
 
+  /**
+   * Ctrl/⌘-K. The section names are nouns rather than verbs — the list is what you can reach, not
+   * what you are being told to do.
+   */
+  palette: {
+    open: 'Search',
+    placeholder: 'Search agents, hosts and pages…',
+    noMatches: 'Nothing matches that.',
+    connectAgent: 'Connect {name}',
+    disconnectAgent: 'Disconnect {name}',
+    section: {
+      navigate: 'Pages',
+      agents: 'Agents',
+      hosts: 'Hosts',
+      actions: 'Actions',
+    },
+  },
+
   connection: {
     /** Shown instead of the app when nothing has loaded yet. */
     blockedTitle: 'Cannot reach Osmium',

@@ -13,6 +13,7 @@ import {
   Plus,
   RotateCw,
   ScrollText,
+  Search,
   Server,
   ServerOff,
   ShieldAlert,
@@ -24,6 +25,7 @@ import {
   Workflow,
 } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
 import PlayerHead from '../components/PlayerHead.vue'
 import { backendEverReached, backendReachable } from '../api/client'
@@ -39,6 +41,18 @@ const router = useRouter()
 
 const addAgentOpen = ref(false)
 const retrying = ref(false)
+
+const palette = ref<InstanceType<typeof CommandPalette> | null>(null)
+
+function openPalette() {
+  palette.value?.open()
+}
+
+/**
+ * The keys as this machine spells them. Showing `Ctrl K` to somebody on a Mac teaches a shortcut
+ * that does not work there, which is worse than showing nothing.
+ */
+const paletteKeys = computed(() => (/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K'))
 
 /**
  * Two different failures, two different treatments.
@@ -165,6 +179,8 @@ async function logout() {
     </div>
 
     <AddAgentModal v-model:open="addAgentOpen" />
+    <!-- Listens on the window, so it opens from anywhere inside the app. -->
+    <CommandPalette ref="palette" />
 
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
@@ -207,6 +223,23 @@ async function logout() {
               <WifiOff class="text-warning size-4" />
             </span>
           </div>
+        </div>
+
+        <!--
+          The palette is worth nothing if nobody knows it is there, and a shortcut is invisible by
+          nature. This is a real button — clicking it opens the same thing — with the keys shown
+          beside it, so it teaches the shortcut rather than only advertising it.
+        -->
+        <div class="px-3 pb-3">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm border-base-300 w-full justify-start gap-2 border font-normal"
+            @click="openPalette"
+          >
+            <Search class="size-4 shrink-0 opacity-60" />
+            <span class="opacity-60">{{ t('palette.open') }}</span>
+            <kbd class="kbd kbd-xs ml-auto">{{ paletteKeys }}</kbd>
+          </button>
         </div>
 
         <div class="flex-1 overflow-y-auto px-3">
