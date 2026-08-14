@@ -100,7 +100,7 @@ export function buildCommands(context: CommandContext): Command[] {
       id: `host:${host.id}`,
       section: 'hosts',
       label: host.name,
-      hint: host.address ?? t('hosts.notConnected'),
+      hint: host.hostVersion ?? t('hosts.notConnected'),
       to: { name: 'hosts' },
     })
   }

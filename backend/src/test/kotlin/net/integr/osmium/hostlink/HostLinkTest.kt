@@ -114,7 +114,8 @@ class HostLinkTest {
 
         val refreshed = hostRepository.findById(host.id!!).orElseThrow()
         assertEquals("0.9.9-probe", refreshed.hostVersion)
-        // The address is observed on connect, which is why enrolment never asks for one.
+        // Observed on connect, which is why enrolment never asks for one. Recorded on the host
+        // and deliberately absent from HostResponse — see HostDtos.
         assertTrue(refreshed.address != null)
 
         socket.close()

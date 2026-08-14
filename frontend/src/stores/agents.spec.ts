@@ -6,8 +6,8 @@ import type { AgentResponse, AgentTelemetryResponse, HostResponse } from '../api
 import { respondWith } from '../test/http'
 
 const HOSTS: HostResponse[] = [
-  { id: 1, name: 'eu-1', address: '10.0.0.4', hostVersion: '0.1.0', lastSeenAt: null, reachable: true, agentCount: 4 },
-  { id: 2, name: 'eu-2', address: null, hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1 },
+  { id: 1, name: 'eu-1', hostVersion: '0.1.0', lastSeenAt: null, reachable: true, agentCount: 4 },
+  { id: 2, name: 'eu-2', hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1 },
 ]
 
 /**

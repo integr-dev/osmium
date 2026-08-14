@@ -33,7 +33,6 @@ class HostControllerTest : AbstractRestTest() {
             status { isCreated() }
             jsonPath("$.host.name") { value("host-eu-1") }
             jsonPath("$.host.reachable") { value(false) }
-            jsonPath("$.host.address") { value(null) }
             jsonPath("$.host.agentCount") { value(0) }
             jsonPath("$.token") { value(startsWith("osm_host_")) }
         }

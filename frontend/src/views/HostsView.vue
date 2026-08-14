@@ -149,12 +149,7 @@ async function confirmRemove() {
                   <div class="rounded-field bg-base-300/40 flex size-8 items-center justify-center">
                     <Server class="size-4 opacity-70" />
                   </div>
-                  <div>
-                    <div class="font-medium">{{ host.name }}</div>
-                    <div class="font-mono text-xs opacity-50">
-                      {{ host.address ?? t('hosts.notConnected') }}
-                    </div>
-                  </div>
+                  <div class="font-medium">{{ host.name }}</div>
                 </div>
               </td>
               <td>

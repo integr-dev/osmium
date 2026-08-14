@@ -115,12 +115,7 @@ async function submit() {
                   class="size-2 shrink-0 rounded-full"
                   :class="host.reachable ? 'bg-success' : 'bg-error'"
                 ></span>
-                <span class="min-w-0 flex-1">
-                  <span class="block font-medium">{{ host.name }}</span>
-                  <span class="block font-mono text-xs opacity-50">
-                    {{ host.address ?? t('hosts.notConnected') }}
-                  </span>
-                </span>
+                <span class="min-w-0 flex-1 font-medium">{{ host.name }}</span>
                 <span class="text-xs opacity-50">
                   {{ t('hosts.agentCount', { count: host.agentCount }, host.agentCount) }}
                 </span>
