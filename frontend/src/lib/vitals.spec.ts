@@ -103,3 +103,33 @@ describe('how far apart the fleet is standing', () => {
     expect(summariseVitals([]).spread).toBeNull()
   })
 })
+
+/**
+ * The same error as the nether one, one level up: a different Minecraft server is a different map,
+ * so two agents at spawn on two servers are not zero blocks apart — they are incomparable.
+ */
+describe('spread never leaves one world', () => {
+  const on = (id: number, server: string, x: number) =>
+    agent({
+      id,
+      label: `a${id}`,
+      serverAddress: server,
+      telemetry: { ...agent().telemetry!, position: { x, y: 64, z: 0 } },
+    })
+
+  it('never measures across servers', () => {
+    expect(summariseVitals([on(1, 'a:25565', 0), on(2, 'b:25565', 900)]).spread).toBeNull()
+  })
+
+  it('takes the widest gap inside a single server', () => {
+    const summary = summariseVitals([
+      on(1, 'a:25565', 0),
+      on(2, 'a:25565', 20),
+      on(3, 'b:25565', 0),
+      on(4, 'b:25565', 500),
+    ])
+
+    expect(summary.spread?.blocks).toBe(500)
+    expect(summary.spread?.server).toBe('b:25565')
+  })
+})

@@ -1,4 +1,5 @@
-import { isOnline, type FleetAgent } from '../stores/agents'
+import type { FleetAgent } from '../stores/agents'
+import { isOnline } from './agentState'
 
 /**
  * The fleet's vitals, reduced to the agents worth looking at first.
@@ -28,6 +29,7 @@ export interface Spread {
   to: FleetAgent
   blocks: number
   dimension: string
+  server: string | null
 }
 
 export function summariseVitals(agents: FleetAgent[]): VitalsSummary {
@@ -73,30 +75,38 @@ function extreme(
 /**
  * How far apart the fleet is standing, as the widest gap between any two agents.
  *
- * **Compared only within a dimension.** The nether is 1:8 to the overworld, so the distance between
- * an agent in one and an agent in the other is not a distance at all — it is two coordinate systems
- * subtracted from each other. Agents are grouped by dimension and the widest gap found in any one
- * of them is reported, rather than a number that would be quietly wrong the moment somebody built
- * a portal.
+ * **Compared only within one world.** A position means nothing outside the world it was taken in,
+ * and there are two ways to leave one: the nether is 1:8 to the overworld, and a different Minecraft
+ * server is a different map entirely. Two agents standing at spawn on two servers are not zero
+ * blocks apart, they are incomparable. So agents are grouped by server *and* dimension, and the
+ * widest gap inside any one of those groups is what gets reported.
  *
  * Every pair, rather than a bounding box: a fleet is tens of agents, and the exact pair is what
  * makes the number actionable — it names who to look at.
  */
 function widestGap(agents: FleetAgent[]): Spread | null {
-  const byDimension = new Map<string, FleetAgent[]>()
+  // Keyed on both, joined by a character neither an address nor a dimension can contain, so two
+  // different pairs cannot collide into one group.
+  const byWorld = new Map<string, FleetAgent[]>()
   for (const agent of agents) {
-    const dimension = agent.telemetry!.dimension
-    byDimension.set(dimension, [...(byDimension.get(dimension) ?? []), agent])
+    const key = [agent.serverAddress ?? '', agent.telemetry!.dimension].join('\u0000')
+    byWorld.set(key, [...(byWorld.get(key) ?? []), agent])
   }
 
   let widest: Spread | null = null
 
-  for (const [dimension, here] of byDimension) {
+  for (const here of byWorld.values()) {
     for (let i = 0; i < here.length; i += 1) {
       for (let j = i + 1; j < here.length; j += 1) {
         const blocks = Math.round(distance(here[i]!, here[j]!))
         if (!widest || blocks > widest.blocks) {
-          widest = { from: here[i]!, to: here[j]!, blocks, dimension }
+          widest = {
+            from: here[i]!,
+            to: here[j]!,
+            blocks,
+            dimension: here[i]!.telemetry!.dimension,
+            server: here[i]!.serverAddress,
+          }
         }
       }
     }
