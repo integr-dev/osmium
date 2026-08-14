@@ -132,10 +132,12 @@ export const de: Copy = {
     vitals: 'Zustand',
     reporting: '{reporting}/{online} melden',
     noVitals: 'Kein Agent ist im Spiel und meldet.',
+    blocksApart: '{blocks} Blöcke',
     vital: {
       health: 'Niedrigste Gesundheit',
       food: 'Niedrigste Sättigung',
       ping: 'Schlechtester Ping',
+      spread: 'Größter Abstand',
     },
     allHealthy: 'Allen Agenten geht es gut.',
     activity: 'Agenten-Aktivität',

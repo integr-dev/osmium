@@ -144,10 +144,12 @@ export const en = {
     vitals: 'Vitals',
     reporting: '{reporting}/{online} reporting',
     noVitals: 'No agent is in game and reporting.',
+    blocksApart: '{blocks} blocks',
     vital: {
       health: 'Lowest health',
       food: 'Lowest food',
       ping: 'Worst ping',
+      spread: 'Furthest apart',
     },
     allHealthy: 'All agents are healthy.',
     activity: 'Agent activity',

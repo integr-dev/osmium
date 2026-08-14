@@ -60,3 +60,46 @@ describe('the fleet at its worst', () => {
     expect(summariseVitals([first, second]).lowestFood?.agent.label).toBe('a')
   })
 })
+
+describe('how far apart the fleet is standing', () => {
+  const at = (id: number, x: number, z: number, dimension = 'overworld') =>
+    agent({
+      id,
+      label: `a${id}`,
+      telemetry: { ...agent().telemetry!, dimension, position: { x, y: 64, z } },
+    })
+
+  it('reports the widest gap and both agents in it', () => {
+    const summary = summariseVitals([at(1, 0, 0), at(2, 30, 40), at(3, 3, 4)])
+
+    expect(summary.spread?.blocks).toBe(50)
+    expect([summary.spread?.from.id, summary.spread?.to.id]).toEqual([1, 2])
+  })
+
+  /**
+   * The nether is 1:8 to the overworld, so subtracting one from the other is two coordinate systems
+   * subtracted, not a distance. A portal must not invent a spread of thousands of blocks.
+   */
+  it('never measures across dimensions', () => {
+    const summary = summariseVitals([at(1, 0, 0), at(2, 5000, 0, 'the_nether')])
+
+    expect(summary.spread).toBeNull()
+  })
+
+  it('takes the widest gap found inside any one dimension', () => {
+    const summary = summariseVitals([
+      at(1, 0, 0),
+      at(2, 10, 0),
+      at(3, 0, 0, 'the_nether'),
+      at(4, 400, 0, 'the_nether'),
+    ])
+
+    expect(summary.spread?.blocks).toBe(400)
+    expect(summary.spread?.dimension).toBe('the_nether')
+  })
+
+  it('has nothing to report about one agent, or none', () => {
+    expect(summariseVitals([at(1, 0, 0)]).spread).toBeNull()
+    expect(summariseVitals([]).spread).toBeNull()
+  })
+})

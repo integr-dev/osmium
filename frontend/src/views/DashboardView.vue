@@ -316,8 +316,8 @@ function percent(part: number, whole: number): number {
               </span>
             </h2>
 
-            <div v-if="!agentStore.loaded" class="flex h-28 flex-col gap-3">
-              <div v-for="row in 3" :key="row" class="skeleton h-7 w-full"></div>
+            <div v-if="!agentStore.loaded" class="flex h-36 flex-col gap-3">
+              <div v-for="row in 4" :key="row" class="skeleton h-7 w-full"></div>
             </div>
 
             <!--
@@ -325,11 +325,11 @@ function percent(part: number, whole: number): number {
               health standing at the origin, which is the one lie the vitals panel exists to avoid.
               Same height either way, so an arriving reading moves nothing.
             -->
-            <p v-else-if="!vitals.reporting" class="flex h-28 items-center text-sm opacity-50">
+            <p v-else-if="!vitals.reporting" class="flex h-36 items-center text-sm opacity-50">
               {{ t('dashboard.noVitals') }}
             </p>
 
-            <div v-else class="flex h-28 flex-col justify-between">
+            <div v-else class="flex h-36 flex-col justify-between">
               <RouterLink
                 v-for="row in vitalRows"
                 :key="row.key"
@@ -343,6 +343,20 @@ function percent(part: number, whole: number): number {
                 </span>
                 <progress class="progress w-full" :class="row.bar" :value="row.percent" max="100"></progress>
               </RouterLink>
+
+              <span
+                v-if="vitals.spread"
+                class="flex items-center gap-2 text-xs"
+                :title="vitals.spread.dimension"
+              >
+                <span class="flex-1 truncate opacity-60">{{ t('dashboard.vital.spread') }}</span>
+                <span class="max-w-40 truncate font-medium">
+                  {{ vitals.spread.from.label }} ↔ {{ vitals.spread.to.label }}
+                </span>
+                <span class="tabular-nums opacity-60">
+                  {{ t('dashboard.blocksApart', { blocks: vitals.spread.blocks }) }}
+                </span>
+              </span>
             </div>
           </div>
         </div>

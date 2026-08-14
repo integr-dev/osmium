@@ -19,6 +19,15 @@ export interface VitalsSummary {
   lowestHealth: VitalsExtreme | null
   lowestFood: VitalsExtreme | null
   worstPing: VitalsExtreme | null
+  spread: Spread | null
+}
+
+/** The two agents standing furthest apart, and how far that is. */
+export interface Spread {
+  from: FleetAgent
+  to: FleetAgent
+  blocks: number
+  dimension: string
 }
 
 export function summariseVitals(agents: FleetAgent[]): VitalsSummary {
@@ -39,6 +48,7 @@ export function summariseVitals(agents: FleetAgent[]): VitalsSummary {
     lowestHealth: extreme(reporting, (agent) => agent.telemetry!.health, Math.min),
     lowestFood: extreme(reporting, (agent) => agent.telemetry!.food, Math.min),
     worstPing: extreme(reporting, (agent) => agent.telemetry!.pingMs, Math.max),
+    spread: widestGap(reporting),
   }
 }
 
@@ -58,4 +68,45 @@ function extreme(
   const target = pick(...agents.map(read))
   const found = agents.find((agent) => read(agent) === target)
   return found ? { agent: found, value: target } : null
+}
+
+/**
+ * How far apart the fleet is standing, as the widest gap between any two agents.
+ *
+ * **Compared only within a dimension.** The nether is 1:8 to the overworld, so the distance between
+ * an agent in one and an agent in the other is not a distance at all — it is two coordinate systems
+ * subtracted from each other. Agents are grouped by dimension and the widest gap found in any one
+ * of them is reported, rather than a number that would be quietly wrong the moment somebody built
+ * a portal.
+ *
+ * Every pair, rather than a bounding box: a fleet is tens of agents, and the exact pair is what
+ * makes the number actionable — it names who to look at.
+ */
+function widestGap(agents: FleetAgent[]): Spread | null {
+  const byDimension = new Map<string, FleetAgent[]>()
+  for (const agent of agents) {
+    const dimension = agent.telemetry!.dimension
+    byDimension.set(dimension, [...(byDimension.get(dimension) ?? []), agent])
+  }
+
+  let widest: Spread | null = null
+
+  for (const [dimension, here] of byDimension) {
+    for (let i = 0; i < here.length; i += 1) {
+      for (let j = i + 1; j < here.length; j += 1) {
+        const blocks = Math.round(distance(here[i]!, here[j]!))
+        if (!widest || blocks > widest.blocks) {
+          widest = { from: here[i]!, to: here[j]!, blocks, dimension }
+        }
+      }
+    }
+  }
+
+  return widest
+}
+
+function distance(one: FleetAgent, other: FleetAgent): number {
+  const a = one.telemetry!.position
+  const b = other.telemetry!.position
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
 }
