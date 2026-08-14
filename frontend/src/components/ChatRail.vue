@@ -95,7 +95,7 @@ function choose(key: string): void {
     dashboard do not both fit on a laptop held sideways.
   -->
   <aside
-    class="border-base-300 bg-base-200 fixed inset-y-0 right-0 z-40 flex max-w-full flex-col border-l lg:static lg:z-auto lg:h-full"
+    class="border-base-300 bg-base-200 fixed inset-y-0 right-0 z-40 flex max-w-full flex-col border-l lg:relative lg:z-auto lg:h-full"
     :style="{ width: `${width}px` }"
   >
     <!-- The mirror of the sidebar's: dragging left widens a panel anchored to the right. -->
