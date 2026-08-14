@@ -38,11 +38,15 @@ import { useResizable } from '../lib/resizable'
 import { isShortcut, shortcutLabel } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
 import { useChatStore } from '../stores/chat'
+import { useHistoryStore } from '../stores/history'
 
 const { t } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 const chat = useChatStore()
+// Started here rather than on the dashboard, so the series covers the session instead of only the
+// stretches somebody happened to be looking at it.
+useHistoryStore()
 const router = useRouter()
 
 const addAgentOpen = ref(false)

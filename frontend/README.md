@@ -85,6 +85,27 @@ null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes w
 agent on no health standing at the world origin, which is a much more convincing lie than an empty
 panel.
 
+## Charts
+
+Every figure the API reports is **instantaneous** — how many agents are online, what the throughput
+is, where an agent is standing. There is no series to ask for, because nothing stores one.
+
+So the browser keeps its own. `src/stores/history.ts` samples the live figures every ten seconds and
+holds the last half hour, which is what the sparklines under the stat tiles draw. That makes them
+**session-scoped by construction**: a reload starts an empty chart, and the caption says how much
+past there is rather than letting an empty chart read as an idle fleet. A durable series would be a
+table, an endpoint and a retention policy — this is the version that pays for itself immediately.
+
+**Incidents per hour** is different: it is real stored data, bucketed client-side from the activity
+page already on screen. The window stops at the oldest entry loaded rather than running a fixed
+twelve hours back — the feed is paged, so earlier hours are not empty, they are *unread*, and
+drawing them as empty bars would state something the client cannot know.
+
+`src/lib/series.ts` holds the geometry, away from the components, because the cases that actually
+break a sparkline are arithmetic: nothing sampled yet, one sample, and a series that never moves are
+all divide-by-zero, and all three look like a bug on screen rather than throwing. Marks follow the
+usual rules — one series each, so no legend and no palette to validate; the heading names it.
+
 ## Command palette
 
 **Ctrl/⌘-K** from anywhere in the app: jump to a page, an agent or a host; connect and disconnect an
