@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { buildFigures } from '../lib/build'
+import { isOnline } from '../lib/agentState'
 import { useAgentStore } from './agents'
 
 /**
@@ -12,10 +14,17 @@ import { useAgentStore } from './agents'
  * interface says as much rather than implying the fleet was idle. A durable series would be a table,
  * an endpoint and a retention policy; this is the version that pays for itself immediately.
  */
+export interface Reading {
+  online: number
+  perMinute: number
+}
+
 export interface Sample {
   at: number
-  online: number
-  blocksPerMinute: number
+  /** The whole fleet. */
+  all: Reading
+  /** The same reading per server address, so the dashboard's picker has a series to switch to. */
+  byServer: Record<string, Reading>
 }
 
 /** Ten seconds for half an hour. Long enough to show a trend, short enough to stay honest. */
@@ -31,17 +40,42 @@ export const useHistoryStore = defineStore('history', () => {
     // flatline that never happened.
     if (!agents.loaded) return
 
+    const total = agents.schematic.totalBlocks
+    const byServer: Record<string, Reading> = {}
+
+    for (const address of agents.servers) {
+      const here = agents.agents.filter((agent) => agent.serverAddress === address)
+      byServer[address] = {
+        online: here.filter(isOnline).length,
+        perMinute: buildFigures(here, total).perMinute,
+      }
+    }
+
     samples.value = [
       ...samples.value,
-      { at: Date.now(), online: agents.online.length, blocksPerMinute: agents.blocksPerMinute },
+      {
+        at: Date.now(),
+        all: { online: agents.online.length, perMinute: agents.blocksPerMinute },
+        byServer,
+      },
     ].slice(-CAPACITY)
   }
 
   // Never cleared: the store lives as long as the app, and the series is the whole point of it.
   setInterval(record, SAMPLE_MS)
 
-  const online = computed(() => samples.value.map((sample) => sample.online))
-  const blocksPerMinute = computed(() => samples.value.map((sample) => sample.blocksPerMinute))
+  /**
+   * One reading's series, for the whole fleet or for one server.
+   *
+   * A server that did not exist when a sample was taken reads as zero rather than being skipped: the
+   * gap is real, and dropping the point would compress the timeline and draw a trend that never
+   * happened.
+   */
+  function seriesFor(server: string | null, reading: keyof Reading): number[] {
+    return samples.value.map((sample) =>
+      server === null ? sample.all[reading] : (sample.byServer[server]?.[reading] ?? 0),
+    )
+  }
 
   /** How much of a window the samples actually cover, for the caption under a chart. */
   const minutes = computed(() => {
@@ -51,5 +85,5 @@ export const useHistoryStore = defineStore('history', () => {
     return Math.round((last.at - first.at) / 60_000)
   })
 
-  return { samples, online, blocksPerMinute, minutes }
+  return { samples, seriesFor, minutes }
 })

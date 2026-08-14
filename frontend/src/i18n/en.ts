@@ -145,6 +145,8 @@ export const en = {
     reporting: '{reporting}/{online} reporting',
     noVitals: 'No agent is in game and reporting.',
     blocksApart: '{blocks} blocks',
+    serverScope: 'Which server this page is about',
+    allServers: 'All servers',
     vital: {
       health: 'Lowest health',
       food: 'Lowest food',

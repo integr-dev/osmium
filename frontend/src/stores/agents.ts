@@ -4,6 +4,8 @@ import { api, errorMessage, type AgentResponse, type HostResponse, type UserResp
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
 import { useAuthStore } from './auth'
 import { t } from '../i18n'
+import { buildFigures } from '../lib/build'
+import { isOnline } from '../lib/agentState'
 
 /**
  * Fleet state.
@@ -59,10 +61,8 @@ export interface ServerSummary {
   listener: FleetAgent | undefined
 }
 
-/** States in which an agent is genuinely in game. */
-export function isOnline(agent: AgentResponse): boolean {
-  return agent.state === 'ONLINE'
-}
+// Defined in `src/lib/agentState.ts` and re-exported here, where most callers already look for it.
+export { isOnline }
 
 export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
@@ -249,23 +249,20 @@ export const useAgentStore = defineStore('agents', () => {
 
   const online = computed(() => agents.value.filter(isOnline))
 
-  const blocksPlaced = computed(() =>
-    agents.value.reduce((sum, agent) => sum + agent.build.blocksPlaced, 0),
-  )
+  /**
+   * The fleet-wide build figures. The arithmetic lives in `src/lib/build.ts` so the dashboard can
+   * ask the same question of one server's agents — a schematic is built on a server, and summing
+   * two of them adds up two unrelated builds.
+   */
+  const fleetBuild = computed(() => buildFigures(agents.value, schematic.value.totalBlocks))
 
-  const progressPercent = computed(() =>
-    Math.min(100, (blocksPlaced.value / schematic.value.totalBlocks) * 100),
-  )
+  const blocksPlaced = computed(() => fleetBuild.value.placed)
 
-  const blocksPerMinute = computed(
-    () => online.value.filter((agent) => agent.build.blocksPlaced > 0).length * 38,
-  )
+  const progressPercent = computed(() => fleetBuild.value.percent)
 
-  const etaMinutes = computed(() => {
-    if (blocksPerMinute.value === 0) return null
-    const remaining = schematic.value.totalBlocks - blocksPlaced.value
-    return Math.max(0, Math.round(remaining / blocksPerMinute.value))
-  })
+  const blocksPerMinute = computed(() => fleetBuild.value.perMinute)
+
+  const etaMinutes = computed(() => fleetBuild.value.etaMinutes)
 
   /**
    * Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it.

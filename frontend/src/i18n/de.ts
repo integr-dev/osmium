@@ -133,6 +133,8 @@ export const de: Copy = {
     reporting: '{reporting}/{online} melden',
     noVitals: 'Kein Agent ist im Spiel und meldet.',
     blocksApart: '{blocks} Blöcke',
+    serverScope: 'Worauf sich diese Seite bezieht',
+    allServers: 'Alle Server',
     vital: {
       health: 'Niedrigste Gesundheit',
       food: 'Niedrigste Sättigung',

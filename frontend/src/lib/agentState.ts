@@ -27,6 +27,16 @@ export const STATE_BADGE: Record<AgentState, string> = {
   STALE: 'badge-warning badge-soft',
 }
 
+/**
+ * States in which an agent is genuinely in game.
+ *
+ * Here rather than in the fleet store because the pure helpers need it — and a store that imports
+ * them while they import the store is the import cycle this project has already been bitten by once.
+ */
+export function isOnline(agent: Pick<AgentResponse, 'state'>): boolean {
+  return agent.state === 'ONLINE'
+}
+
 /** The state as an operator reads it. Colours stay here; wording lives with the rest of the copy. */
 export function stateLabel(state: AgentState): string {
   return i18n.global.t('agentState.' + state)

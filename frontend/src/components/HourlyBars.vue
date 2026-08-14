@@ -52,7 +52,7 @@ const hasUnknown = computed(() => bars.value.some((bar) => bar.unknown))
 </script>
 
 <template>
-  <div v-if="bars.length" class="flex flex-col gap-1">
+  <div v-if="bars.length" class="flex flex-col gap-2">
     <div class="flex h-14 items-end gap-0.5" role="img" :aria-label="t('dashboard.activity')">
       <div
         v-for="bar in bars"

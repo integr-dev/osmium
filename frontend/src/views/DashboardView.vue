@@ -20,10 +20,11 @@ import RollingNumber from '../components/RollingNumber.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
+import { buildFigures } from '../lib/build'
 import { summariseVitals } from '../lib/vitals'
 import type { Sector } from '../stores/agents'
 import { bucketByHour } from '../lib/series'
-import { useAgentStore } from '../stores/agents'
+import { isOnline, useAgentStore } from '../stores/agents'
 import { useHistoryStore } from '../stores/history'
 
 const { t } = useI18n()
@@ -88,14 +89,14 @@ const SECTOR_PROGRESS: Record<Sector['status'], string> = {
 }
 
 const eta = computed(() => {
-  const minutes = agentStore.etaMinutes
+  const minutes = build.value.etaMinutes
   if (minutes === null) return 'stalled'
   const hours = Math.floor(minutes / 60)
   return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
 })
 
 /** Still mock — see the store. */
-const blocksRemaining = computed(() => agentStore.schematic.totalBlocks - agentStore.blocksPlaced)
+const blocksRemaining = computed(() => Math.max(0, build.value.target - build.value.placed))
 
 /**
  * Incidents per hour, from the page of activity already on screen.
@@ -117,7 +118,54 @@ const trendCaption = computed(() =>
     : t('dashboard.trendSession', { minutes: history.minutes }),
 )
 
-const incidentTimes = computed(() => activity.value.map((entry) => Date.parse(entry.at)))
+/**
+ * Which server the page is about, or null for the whole fleet.
+ *
+ * **Only the panels that are real are scoped.** Agents, their vitals, what needs attention and what
+ * happened are all per-agent facts, and an agent is on exactly one server. Build progress, sectors,
+ * throughput and the ETA are mock and fleet-wide, so they are left alone and labelled — scoping
+ * invented numbers would mean inventing a per-server shape for them ahead of the real pipeline.
+ */
+const server = ref<string | null>(null)
+
+const scoped = computed(() =>
+  server.value === null
+    ? agentStore.agents
+    : agentStore.agents.filter((agent) => agent.serverAddress === server.value),
+)
+
+const scopedOnline = computed(() => scoped.value.filter(isOnline).length)
+
+/**
+ * Build progress for whatever is selected. Still mock, but scoped like everything else now: a
+ * schematic is built on a server, so a fleet-wide total adds up unrelated builds.
+ */
+const build = computed(() => buildFigures(scoped.value, agentStore.schematic.totalBlocks))
+
+/** The sparklines follow the picker too, which is what the per-server sampling is for. */
+const onlineSeries = computed(() => history.seriesFor(server.value, 'online'))
+const throughputSeries = computed(() => history.seriesFor(server.value, 'perMinute'))
+
+const scopedAttention = computed(() =>
+  server.value === null
+    ? agentStore.attention
+    : agentStore.attention.filter((item) => item.agent.serverAddress === server.value),
+)
+
+/**
+ * Activity is filtered here rather than in the request: the endpoint takes an agent, not a server.
+ * The feed pages regardless, so scoping thins each page rather than truncating the history — the
+ * same way the hourly chart already reports only what it has actually loaded.
+ */
+const scopedActivity = computed(() =>
+  server.value === null
+    ? activity.value
+    : activity.value.filter(
+        (entry) => entry.agentId !== null && agentStore.byId(entry.agentId)?.serverAddress === server.value,
+      ),
+)
+
+const incidentTimes = computed(() => scopedActivity.value.map((entry) => Date.parse(entry.at)))
 
 const incidentHours = computed(() =>
   incidentTimes.value.length ? bucketByHour(incidentTimes.value, Date.now(), HOURS) : [],
@@ -131,7 +179,7 @@ const knownSince = computed(() =>
  * The worst reading of each kind and whose it is — an average would hide the one agent about to die
  * in a fleet that is otherwise fine. See `summariseVitals`.
  */
-const vitals = computed(() => summariseVitals(agentStore.agents))
+const vitals = computed(() => summariseVitals(scoped.value))
 
 /**
  * The three readings as rows, so the template loops once instead of repeating the same markup with
@@ -175,12 +223,30 @@ function percent(part: number, whole: number): number {
           </template>
         </i18n-t>
       </div>
-      <span
-        class="badge badge-sm gap-1"
-        :class="agentStore.blocksPerMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
-      >
-        {{ agentStore.blocksPerMinute > 0 ? t('dashboard.building') : t('dashboard.stalled') }}
-      </span>
+      <div class="flex items-center gap-3">
+        <!--
+          Only shown once there is a choice to make: a one-server fleet has nothing to switch
+          between, and a picker with a single option is a control that does nothing.
+        -->
+        <select
+          v-if="agentStore.serverSummaries.length > 1"
+          v-model="server"
+          class="select select-sm max-w-56 font-mono text-xs"
+          :aria-label="t('dashboard.serverScope')"
+        >
+          <option :value="null">{{ t('dashboard.allServers') }}</option>
+          <option v-for="entry in agentStore.serverSummaries" :key="entry.address" :value="entry.address">
+            {{ entry.address }}
+          </option>
+        </select>
+
+        <span
+          class="badge badge-sm gap-1"
+          :class="build.perMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
+        >
+          {{ build.perMinute > 0 ? t('dashboard.building') : t('dashboard.stalled') }}
+        </span>
+      </div>
     </header>
 
     <!--
@@ -188,13 +254,21 @@ function percent(part: number, whole: number): number {
       three that are counts travel to their new value rather than swapping it. The remaining figure
       is a formatted duration, and there is nothing to count through between "12m" and "2h 4m".
     -->
-    <div class="stats stats-vertical sm:stats-horizontal border-base-300 bg-base-200 w-full border">
+    <!--
+      `auto-cols-fr` is what stops the row re-flowing. daisyUI sizes stat columns to their content,
+      so a caption swapping between "building a trend…" and "last 12 min this session", or a count
+      crossing from 999 to 1000, resized that tile and pushed the other three sideways. Equal
+      fractions make every tile immune to what is inside it.
+    -->
+    <div
+      class="stats stats-vertical sm:stats-horizontal border-base-300 bg-base-200 w-full auto-cols-fr border"
+    >
       <div class="stat">
         <div class="stat-figure text-primary"><Agent class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.agentsOnline') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-20"></div>
         <div v-else class="stat-value text-3xl">
-          <RollingNumber :value="agentStore.online.length" /><span class="text-lg opacity-40">/{{ agentStore.agents.length }}</span>
+          <RollingNumber :value="scopedOnline" /><span class="text-lg opacity-40">/{{ scoped.length }}</span>
         </div>
         <!--
           The number is instantaneous; this is the only thing on the tile that says whether it has
@@ -202,24 +276,24 @@ function percent(part: number, whole: number): number {
           rather than letting an empty chart read as an idle fleet.
         -->
         <div class="stat-desc mt-1 flex flex-col gap-0.5">
-          <TrendLine :values="history.online" :label="t('dashboard.agentsOnline')" />
-          <span>{{ trendCaption }}</span>
+          <TrendLine :values="onlineSeries" :label="t('dashboard.agentsOnline')" />
+          <span class="truncate">{{ trendCaption }}</span>
         </div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.blocksPlaced') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-28"></div>
-        <div v-else class="stat-value text-3xl"><RollingNumber :value="agentStore.blocksPlaced" /></div>
-        <div class="stat-desc">of {{ agentStore.schematic.totalBlocks.toLocaleString() }}</div>
+        <div v-else class="stat-value text-3xl"><RollingNumber :value="build.placed" /></div>
+        <div class="stat-desc">of {{ build.target.toLocaleString() }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Gauge class="size-7" /></div>
         <div class="stat-title">{{ t('dashboard.throughput') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-16"></div>
-        <div v-else class="stat-value text-3xl"><RollingNumber :value="agentStore.blocksPerMinute" /></div>
+        <div v-else class="stat-value text-3xl"><RollingNumber :value="build.perMinute" /></div>
         <div class="stat-desc mt-1 flex flex-col gap-0.5">
-          <TrendLine :values="history.blocksPerMinute" :label="t('dashboard.throughput')" />
+          <TrendLine :values="throughputSeries" :label="t('dashboard.throughput')" />
           <span>{{ t('dashboard.perMinute') }}</span>
         </div>
       </div>
@@ -245,11 +319,11 @@ function percent(part: number, whole: number): number {
         </div>
         <progress
           class="progress progress-primary w-full"
-          :value="agentStore.progressPercent"
+          :value="build.percent"
           max="100"
         ></progress>
         <div class="flex justify-between text-xs opacity-60">
-          <span>{{ t('dashboard.percentComplete', { percent: agentStore.progressPercent.toFixed(1) }) }}</span>
+          <span>{{ t('dashboard.percentComplete', { percent: build.percent.toFixed(1) }) }}</span>
           <span class="tabular-nums">
             {{
               t(
@@ -263,19 +337,27 @@ function percent(part: number, whole: number): number {
       </div>
     </div>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <div class="flex h-full flex-col gap-6">
+    <div class="grid gap-6 lg:h-[30rem] lg:grid-cols-2">
+      <div class="flex min-h-0 flex-col gap-6">
         <div class="card border-base-300 bg-base-200 flex min-h-0 flex-1 flex-col border">
           <div class="card-body min-h-0 flex-1 gap-3">
             <h2 class="card-title flex items-center gap-2 text-base">
               <TriangleAlert class="text-warning size-4" />
               {{ t('dashboard.needsAttention') }}
-              <span class="badge badge-ghost badge-sm">{{ agentStore.attention.length }}</span>
+              <span class="badge badge-ghost badge-sm">{{ scopedAttention.length }}</span>
             </h2>
 
-            <ul v-if="agentStore.attention.length" class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+            <!--
+              `max-h` below lg only: there the column is a single grid track with no height to flex
+              against, so `flex-1` resolves to the content and the card grows instead of scrolling.
+              At lg the row sets the height and a cap would put back the gap it was sized to fill.
+            -->
+            <ul
+              v-if="scopedAttention.length"
+              class="flex max-h-64 min-h-0 flex-1 flex-col gap-1 overflow-y-auto lg:max-h-none"
+            >
               <RouterLink
-                v-for="(item, index) in agentStore.attention"
+                v-for="(item, index) in scopedAttention"
                 :key="`${item.agent.id}-${index}`"
                 :to="{ name: 'agent', params: { id: item.agent.id } }"
                 class="rounded-field hover:bg-base-300/50 flex items-center gap-3 px-3 py-2"
@@ -347,7 +429,7 @@ function percent(part: number, whole: number): number {
               <span
                 v-if="vitals.spread"
                 class="flex items-center gap-2 text-xs"
-                :title="vitals.spread.dimension"
+                :title="[vitals.spread.server, vitals.spread.dimension].filter(Boolean).join(' · ')"
               >
                 <span class="flex-1 truncate opacity-60">{{ t('dashboard.vital.spread') }}</span>
                 <span class="max-w-40 truncate font-medium">
@@ -362,32 +444,37 @@ function percent(part: number, whole: number): number {
         </div>
       </div>
 
-      <div class="card border-base-300 bg-base-200 border">
-        <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <Activity class="text-primary size-4" />
-            {{ t('dashboard.activity') }}
-          </h2>
-          <p class="text-xs opacity-50">{{ t('dashboard.activityHint') }}</p>
-
+      <div class="card border-base-300 bg-base-200 flex min-h-0 flex-col border">
+        <div class="card-body min-h-0 flex-1 justify-start gap-4">
           <!--
+            Heading, hint and chart are one block that never grows, so every spare pixel in the card
+            goes to the feed rather than opening a gap above the bars.
+
             Counts in discrete buckets, so bars: a line between them would suggest a value at 14:30
             that nothing measured. Above the feed rather than beside it, because it is the same data
             at a different resolution.
           -->
-          <HourlyBars
-            v-if="activity.length"
-            :buckets="incidentHours"
-            :known-since="knownSince"
-            :empty-label="t('dashboard.noActivity')"
-          />
+          <div class="flex shrink-0 flex-col gap-3">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <Activity class="text-primary size-4" />
+              {{ t('dashboard.activity') }}
+              <span class="text-xs font-normal opacity-50">{{ t('dashboard.activityHint') }}</span>
+            </h2>
+
+            <HourlyBars
+              v-if="scopedActivity.length"
+              :buckets="incidentHours"
+              :known-since="knownSince"
+              :empty-label="t('dashboard.noActivity')"
+            />
+          </div>
 
           <div v-if="activityError" role="alert" class="alert alert-error alert-soft">
             <TriangleAlert class="size-4" />
             <span>{{ activityError }}</span>
           </div>
 
-          <div ref="activityBox" class="flex max-h-96 flex-col gap-1 overflow-y-auto">
+          <div ref="activityBox" class="flex max-h-96 min-h-0 flex-1 flex-col gap-1 overflow-y-auto lg:max-h-none">
             <!--
               A TransitionGroup animates insertions but not the first render, which is exactly the
               distinction that matters: an incident arriving live slides in, and a page full of
@@ -397,7 +484,7 @@ function percent(part: number, whole: number): number {
             <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
               <component
                 :is="line.agentId ? RouterLink : 'div'"
-                v-for="line in activity"
+                v-for="line in scopedActivity"
                 :key="line.id"
                 :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
                 class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
@@ -412,7 +499,7 @@ function percent(part: number, whole: number): number {
             <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
               {{ t('common.loading') }}
             </p>
-            <p v-else-if="!activity.length" class="py-8 text-center text-sm opacity-50">
+            <p v-else-if="!scopedActivity.length" class="py-8 text-center text-sm opacity-50">
               {{ t('dashboard.noActivity') }}
             </p>
 
