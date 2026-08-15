@@ -194,6 +194,11 @@ export const useAgentStore = defineStore('agents', () => {
       case 'audit':
       case 'user':
       case 'user-removed':
+      // Schematics are a list too, and one that moves on its own: an upload and the pass that
+      // follows it run for minutes with nobody touching anything, so the view that shows them
+      // needs the stream rather than a poll.
+      case 'schematic':
+      case 'schematic-removed':
         // Paged lists, owned by whichever view is showing one, so these are handed on rather than
         // accumulated here: the store has no way to know which page a line belongs on.
         for (const listener of feedListeners) listener(name, data)

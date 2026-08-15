@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot as Agent } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
@@ -37,6 +37,28 @@ const allSelected = computed(
 function toggleAll() {
   selected.value = allSelected.value ? [] : props.agents.map((agent) => agent.id)
 }
+
+/**
+ * Nothing stays selected once it leaves the list.
+ *
+ * On screens where the choices *depend on the choice* — picking a builder locks the fleet to that
+ * agent's server — selecting all takes every agent shown, and the list then shrinks around the
+ * decision that made. Without this the ones that dropped out stay selected while invisible: the
+ * count says nine, the list shows four, and the action goes out to agents on a server the operator
+ * did not pick.
+ *
+ * It settles in one pass, because what is kept is exactly what the narrowed list contains. The
+ * guard is what stops it looping: assigning an unchanged array would retrigger the watch forever.
+ */
+watch(
+  () => props.agents,
+  (agents) => {
+    const available = new Set(agents.map((agent) => agent.id))
+    const kept = selected.value.filter((id) => available.has(id))
+
+    if (kept.length !== selected.value.length) selected.value = kept
+  },
+)
 </script>
 
 <template>
@@ -60,6 +82,16 @@ function toggleAll() {
         <span class="opacity-70">{{ t('configuration.selectAll') }}</span>
       </label>
 
+      <!--
+        The agents scroll, the heading and the select-all do not.
+
+        A fleet of forty makes this card taller than the panel it sits beside, and then the page
+        scrolls instead of the list: reaching the last agent pushes the thing being acted on off the
+        screen, and the select-all is somewhere above the top of the window by the time it is
+        wanted. Both lists are inside the same scroller, since the unavailable ones grow the card
+        just as well as the available ones.
+      -->
+      <div class="-mr-1 flex max-h-[26rem] flex-col gap-0.5 overflow-y-auto pr-1">
       <ul class="flex flex-col gap-0.5">
         <li v-for="agent in agents" :key="agent.id">
           <label
@@ -134,6 +166,7 @@ function toggleAll() {
           </li>
         </ul>
       </template>
+      </div>
 
       <p v-if="!agents.length && !unavailable.length" class="px-2 py-4 text-center text-sm opacity-50">
         {{ t('configuration.noAgents') }}

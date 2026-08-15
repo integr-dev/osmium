@@ -24,6 +24,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["upload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agents/{id}/server": {
         parameters: {
             query?: never;
@@ -82,6 +98,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_1"];
+        put?: never;
+        post: operations["create_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts": {
         parameters: {
             query?: never;
@@ -90,7 +122,7 @@ export interface paths {
             cookie?: never;
         };
         /** List hosts. */
-        get: operations["list_1"];
+        get: operations["list_2"];
         put?: never;
         /**
          * Enrol a host.
@@ -251,13 +283,13 @@ export interface paths {
             cookie?: never;
         };
         /** List every agent. */
-        get: operations["list_2"];
+        get: operations["list_3"];
         put?: never;
         /**
          * Create an agent slot.
          * @description Nothing has touched Minecraft at this point; the agent starts UNLINKED.
          */
-        post: operations["create_1"];
+        post: operations["create_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -382,6 +414,22 @@ export interface paths {
         patch: operations["updateSelf"];
         trace?: never;
     };
+    "/api/schematics/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["find"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_1"];
+        options?: never;
+        head?: never;
+        patch: operations["rename"];
+        trace?: never;
+    };
     "/api/hosts/{id}": {
         parameters: {
             query?: never;
@@ -396,14 +444,14 @@ export interface paths {
          * Remove a host.
          * @description Cascades to its agents, which cannot run without it. Invalidates the token.
          */
-        delete: operations["delete_1"];
+        delete: operations["delete_2"];
         options?: never;
         head?: never;
         /**
          * Rename a host.
          * @description Only the name is editable; address, version and reachability are observed from the connection rather than configured.
          */
-        patch: operations["rename"];
+        patch: operations["rename_1"];
         trace?: never;
     };
     "/api/agents/{id}": {
@@ -418,7 +466,7 @@ export interface paths {
         put?: never;
         post?: never;
         /** Delete an agent. */
-        delete: operations["delete_2"];
+        delete: operations["delete_3"];
         options?: never;
         head?: never;
         /**
@@ -470,6 +518,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics/{id}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["split"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schematics/{id}/materials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["materials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -478,7 +558,7 @@ export interface paths {
             cookie?: never;
         };
         /** List every role with its permission nodes. */
-        get: operations["list_3"];
+        get: operations["list_4"];
         put?: never;
         post?: never;
         delete?: never;
@@ -510,7 +590,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
          *                 from the previous response to continue. Kept for 3 days.
          */
-        get: operations["list_4"];
+        get: operations["list_5"];
         put?: never;
         post?: never;
         delete?: never;
@@ -591,7 +671,7 @@ export interface paths {
          *
          *                 Entries are kept for 30 days by default and purged daily.
          */
-        get: operations["list_5"];
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -645,7 +725,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: incidents arrive while the feed is being read. Send
          *                 `nextCursor` from the previous response to continue. Kept for 10 days.
          */
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -699,6 +779,54 @@ export interface components {
              * @description When a refresh token for this account was replayed, if the operator has not been shown it yet. Null the rest of the time, which is nearly always.
              */
             sessionAlertAt?: string | null;
+        };
+        SchematicContentResponse: {
+            format?: string | null;
+            /** Format: int32 */
+            dataVersion?: number | null;
+            /** Format: int64 */
+            volume?: number | null;
+            /** Format: int64 */
+            blockCount?: number | null;
+            /** Format: int32 */
+            regionCount?: number | null;
+            /** Format: int32 */
+            originX?: number | null;
+            /** Format: int32 */
+            originY?: number | null;
+            /** Format: int32 */
+            originZ?: number | null;
+            /** Format: int32 */
+            sizeX?: number | null;
+            /** Format: int32 */
+            sizeY?: number | null;
+            /** Format: int32 */
+            sizeZ?: number | null;
+            /** Format: int32 */
+            cellSize?: number | null;
+            outdated?: boolean;
+        };
+        SchematicResponse: {
+            /** Format: int64 */
+            id?: number;
+            name?: string;
+            originalFilename?: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+            /** Format: int64 */
+            receivedBytes?: number;
+            /** @enum {string} */
+            status?: "UPLOADING" | "PENDING" | "ANALYSING" | "READY" | "FAILED";
+            /** Format: int32 */
+            progressPercent?: number;
+            contentHash?: string | null;
+            content?: components["schemas"]["SchematicContentResponse"];
+            failure?: string | null;
+            uploadedBy?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
         };
         /** @description Points an agent at a Minecraft server, or at none. Separate from both setup and editing: the account is the same account wherever it joins, so where it plays is its own decision and changing it touches no credential. */
         AssignServerRequest: {
@@ -789,6 +917,12 @@ export interface components {
             /** @description Role name to assign. Must already exist. Omit for no permissions. */
             role?: string | null;
         };
+        CreateSchematicRequest: {
+            name: string;
+            filename: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+        };
         /** @description Enrols a host. No address: the host dials in, so its location is observed. */
         CreateHostRequest: {
             name: string;
@@ -861,6 +995,9 @@ export interface components {
         UpdateSelfRequest: {
             username: string;
         };
+        RenameSchematicRequest: {
+            name: string;
+        };
         /** @description Renames a host. Everything else about a host is observed, not configured. */
         UpdateHostRequest: {
             name: string;
@@ -872,6 +1009,41 @@ export interface components {
         SseEmitter: {
             /** Format: int64 */
             timeout?: number;
+        };
+        SegmentResponse: {
+            /** Format: int32 */
+            ordinal?: number;
+            /** Format: int32 */
+            minX?: number;
+            /** Format: int32 */
+            minY?: number;
+            /** Format: int32 */
+            minZ?: number;
+            /** Format: int32 */
+            maxX?: number;
+            /** Format: int32 */
+            maxY?: number;
+            /** Format: int32 */
+            maxZ?: number;
+            /** Format: int64 */
+            blocks?: number;
+            /** Format: int32 */
+            sharePercent?: number;
+        };
+        SplitResponse: {
+            mode?: string;
+            /** Format: int32 */
+            requested?: number;
+            /** Format: int32 */
+            parts?: number;
+            /** Format: int64 */
+            blocks?: number;
+            segments?: components["schemas"]["SegmentResponse"][];
+        };
+        MaterialResponse: {
+            name?: string;
+            /** Format: int64 */
+            blocks?: number;
         };
         /** @description A role and the permission nodes it grants. */
         RoleResponse: {
@@ -932,7 +1104,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -1028,6 +1200,30 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["UserResponse"];
+                };
+            };
+        };
+    };
+    upload: {
+        parameters: {
+            query: {
+                offset: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
                 };
             };
         };
@@ -1209,6 +1405,50 @@ export interface operations {
         };
     };
     list_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"][];
+                };
+            };
+        };
+    };
+    create_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSchematicRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    list_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -1484,7 +1724,7 @@ export interface operations {
             };
         };
     };
-    list_2: {
+    list_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -1513,7 +1753,7 @@ export interface operations {
             };
         };
     };
-    create_1: {
+    create_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -1976,7 +2216,75 @@ export interface operations {
             };
         };
     };
+    find: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
     delete_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rename: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSchematicRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    delete_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -2010,7 +2318,7 @@ export interface operations {
             };
         };
     };
-    rename: {
+    rename_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -2112,7 +2420,7 @@ export interface operations {
             };
         };
     };
-    delete_2: {
+    delete_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -2268,7 +2576,54 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    split: {
+        parameters: {
+            query: {
+                mode: "COLUMNS" | "LAYERS" | "GRID";
+                parts: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SplitResponse"];
+                };
+            };
+        };
+    };
+    materials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MaterialResponse"][];
+                };
+            };
+        };
+    };
+    list_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -2297,7 +2652,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: {
                 /** @description Conversation to or about this agent. Excludes the server's global chat. */
@@ -2456,7 +2811,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_6: {
         parameters: {
             query?: {
                 /** @description How many entries to return. Clamped to 1..500. */
@@ -2544,7 +2899,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_7: {
         parameters: {
             query?: {
                 /** @description Narrow to one agent. Omit for the whole fleet. */

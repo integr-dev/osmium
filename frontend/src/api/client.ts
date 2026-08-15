@@ -45,6 +45,29 @@ export type SessionResponse = Required<components['schemas']['SessionResponse']>
   userAgent: string | null
 }
 export type AuditEntryResponse = Required<components['schemas']['AuditEntryResponse']>
+
+/**
+ * `contentHash` and `failure` are genuinely nullable, and so is every field of `content`: nothing
+ * inside a schematic is known until the file has been read through, which is minutes after the row
+ * exists.
+ */
+export type SchematicResponse = Required<components['schemas']['SchematicResponse']> & {
+  contentHash: string | null
+  failure: string | null
+  content: components['schemas']['SchematicContentResponse']
+}
+export type MaterialResponse = Required<components['schemas']['MaterialResponse']>
+export type SegmentResponse = Required<components['schemas']['SegmentResponse']>
+
+/**
+ * `Omit` rather than an intersection, unlike the ones above. Intersecting an array does not replace
+ * its element type — `Segment[] & OptionalSegment[]` still indexes to something optional — so the
+ * assertion has to remove the property before adding it back.
+ */
+export type SplitResponse = Omit<
+  Required<components['schemas']['SplitResponse']>,
+  'segments'
+> & { segments: SegmentResponse[] }
 export type ChatMessageResponse = Required<components['schemas']['ChatMessageResponse']>
 export type ActivityEntryResponse = Required<components['schemas']['ActivityEntryResponse']>
 

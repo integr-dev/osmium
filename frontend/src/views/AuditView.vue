@@ -14,6 +14,7 @@ import {
   SquarePen,
   Trash2,
   TriangleAlert,
+  Upload,
   User,
   UserPlus,
   Users,
@@ -42,6 +43,9 @@ const agentStore = useAgentStore()
 type AuditAction = AuditEntryResponse['action']
 
 const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
+  SCHEMATIC_UPLOAD: Upload,
+  SCHEMATIC_RENAME: SquarePen,
+  SCHEMATIC_DELETE: Trash2,
   AGENT_CREATE: Agent,
   AGENT_UPDATE: SquarePen,
   AGENT_DELETE: Trash2,
@@ -69,6 +73,10 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
  * alike would defeat the point of scanning.
  */
 const ACTION_BADGE: Record<AuditAction, string> = {
+  SCHEMATIC_UPLOAD: 'badge-ghost',
+  SCHEMATIC_RENAME: 'badge-ghost',
+  // Takes the file, and with it every plan and every measure of progress computed from it.
+  SCHEMATIC_DELETE: 'badge-error badge-soft',
   AGENT_CREATE: 'badge-ghost',
   AGENT_UPDATE: 'badge-ghost',
   AGENT_DELETE: 'badge-error badge-soft',
