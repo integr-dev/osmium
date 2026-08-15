@@ -63,10 +63,12 @@ What is meant to survive that mock is the **shape**: fields are declared as a sc
 generically by type, so adding a setting later is an entry in that file plus a copy key, not another
 block of markup. The field list itself is a placeholder, not a specification.
 
-**Operations** holds the first real fleet-wide action: assigning a server to a group of agents. It
-lives there rather than on Configuration deliberately — Configuration is mock end to end, and one
-real field among invented ones is how a mock stops being obvious. Both screens share
-`AgentPicker.vue`, so the two lists cannot drift apart.
+**Schematics are real**: uploaded, read through, measured and divided. What no schematic has yet is
+an agent building it — carrying a segment to a host needs the host side, which does not exist. So
+the pipeline stops at a division nothing is sent, and the last step says so rather than offering a
+button that would do nothing.
+
+**Operations** holds everything done to the fleet as a group. See below.
 
 ### An agent may have no server
 
@@ -84,6 +86,61 @@ Telemetry is **absent rather than zeroed** when an agent has not reported: `agen
 null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes would render as an
 agent on no health standing at the world origin, which is a much more convincing lie than an empty
 panel.
+
+## Operations
+
+Three tabs, because they are the same act with a different verb — pick a group, then do one thing to
+all of it — and because an operator moves between them in one sitting: choose what to build, point
+the agents at the server, bring them in.
+
+| Tab | What it does |
+|---|---|
+| Schematics | upload, read, divide between agents |
+| Servers | point a group of agents at one Minecraft server |
+| Connections | bring a group in or out of game |
+
+Each tab is **node-gated**. A viewer reaches the page for the library and is not shown two tabs that
+would answer 403 — an interface offering what it will refuse reads as broken rather than as
+restricted.
+
+All three share `AgentPicker.vue` in the same column at the same width, so moving between them does
+not move the thing being reached for. Two of them **lock the selection**, which the picker has to
+know about: choosing a builder narrows the list to that agent's server, and selecting all would
+otherwise leave agents selected but invisible — the count saying nine while the list shows four.
+Nothing stays selected once it leaves the list.
+
+### The build is three steps
+
+```
+Schematic  ->  Agents  ->  Split
+```
+
+The order is strict rather than a preference: nothing can be divided before it has been read, and
+nothing can be divided at all until somebody is going to build it. All of it on one screen was a
+library, a viewer, a material list, a picker, a mode and a set of segments competing for the same
+attention, with that order invisible. Steps make it the shape of the screen.
+
+Forward is gated and **says what is missing** rather than only grimacing at a disabled button;
+backwards is always free.
+
+**One server per build.** Agents on two servers cannot share one — they would be placing blocks into
+different worlds that happen to have the same coordinates. The first pick decides which, and the
+rest of the fleet greys out with the reason attached. The server is then *stated*, not chosen: a
+second control for it would be a way to disagree with the agents.
+
+**The count is the selection.** Asking for a number of agents *and* which agents is asking the same
+question twice, and lets the two disagree.
+
+### The box viewer
+
+`BoxViewer.vue` draws the schematic as a box that can be turned, and the same component draws the
+segments a split produced — a split that looked unlike the thing it divided would be harder to read,
+not easier. Corner coordinates show for one box and drop for several, where eight labels per segment
+is a reading of nothing.
+
+SVG rather than a 3D renderer, and `src/lib/box3d.ts` is why: labels stay screen-aligned instead of
+rotating with the geometry, depth order is exact rather than approximate because the boxes are
+disjoint and axis-aligned, and the geometry stays testable, which nothing drawn to a canvas is.
 
 ## Charts
 
@@ -142,6 +199,11 @@ routine, not an expiry. A second 401, or a 403, is not fixed by reconnecting and
 
 `AppLayout` holds one stream open for the session. Events land in the store's `applyEvent`, which is
 the seam between transport and state — exported so the ingest is testable without a socket.
+
+Anything the store does not own state for is handed on to whichever view is showing it: chat, the
+activity feed, the audit trail, the account list, and **schematics**. That last one is why the
+library never polls — an upload and the pass that follows it run for minutes with nobody touching
+anything, and a screen that only moved when refreshed is a screen an operator sits and refreshes.
 
 **Silence is treated as failure.** A dead connection does not always announce itself: a proxy
 holding the client side open, a sleeping laptop or a NAT timeout all leave a socket that looks
@@ -424,7 +486,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-213 unit tests on Vitest with jsdom, in two groups.
+225 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
@@ -437,9 +499,11 @@ and they all look fine on screen: a sparkline with one sample or a flat series (
 distance measured across a dimension or a server (`vitals.ts`), a fleet reported finished because
 two servers' progress was added against one schematic (`build.ts`), which chat scope a live line
 belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), what the tab says
-(`browserStatus.ts`), and the isometric projection behind the sign-in screen (`schematic.ts`), which
-is chosen in projected space rather than on a grid that is projected afterwards — the obvious way
-round gives a 2:1 diamond, a perfectly good render of the wrong shape.
+(`browserStatus.ts`), the isometric projection behind the sign-in screen (`schematic.ts`), which is
+chosen in projected space rather than on a grid that is projected afterwards — the obvious way
+round gives a 2:1 diamond, a perfectly good render of the wrong shape — and the rotatable box in
+Operations (`box3d.ts`), where drawing the faces turned away renders a box that reads inside out and
+fitting each box to itself draws every segment of a split the same size.
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
@@ -567,15 +631,17 @@ suite runs once instead of twice.
 ## Layout
 
 ```
-src/api/         generated schema, typed client, token storage, live-update and feed clients
-src/components/  FormField, the add-host and add-agent modals, the chat rail and panel, the
-                 command palette, the sparkline and hourly bars, the language picker, the
-                 sign-in backdrop
+src/api/         generated schema, typed client, token storage, live-update and feed clients,
+                 resumable schematic upload
+src/components/  FormField and AgentPicker, the add-host, add-agent and upload modals, the chat
+                 rail and panel, the command palette, the sparkline and hourly bars, the language
+                 picker, the sign-in backdrop, the schematic library and the rotatable box viewer,
+                 the server-assignment and connection panels
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string, one file per locale
 src/lib/         everything computed away from a component: cursor-paged feeds, chat scopes,
-                 build and vitals arithmetic, chart geometry, shortcuts, panel resizing, and
-                 presentation maps for agent state, roles and permissions
+                 build and vitals arithmetic, chart and box geometry, shortcuts, panel resizing,
+                 and presentation maps for agent state, roles and permissions
 src/router/      routes and node-based guards
 src/stores/      auth, fleet, the chat rail, and the sampled history behind the sparklines (Pinia)
 src/test/        Vitest setup and the fetch stub

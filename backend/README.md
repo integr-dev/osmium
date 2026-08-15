@@ -54,6 +54,10 @@ set to `osmium`.
 | `osmium.chat.messages-per-minute` | `OSMIUM_CHAT_MESSAGES_PER_MINUTE` | `30` | outbound chat allowance, per agent |
 | `osmium.avatar.upstream` | `OSMIUM_AVATAR_UPSTREAM` | Minotar | skin service URL with `{id}`/`{size}`; **blank turns heads off** |
 | `osmium.avatar.size` | `OSMIUM_AVATAR_SIZE` | `64` | pixel size requested upstream |
+| `osmium.schematic.min-data-version` | `OSMIUM_SCHEMATIC_MIN_DATA_VERSION` | `1519` (1.13) | oldest Minecraft a schematic may come from — see below |
+| `osmium.schematic.max-data-version` | `OSMIUM_SCHEMATIC_MAX_DATA_VERSION` | `4903` (26.2) | newest, i.e. the version the fleet plays |
+| `osmium.schematic.directory` | `OSMIUM_SCHEMATIC_DIRECTORY` | `data/schematics` | where uploaded files live; **must be a volume in a container** |
+| `osmium.schematic.max-size` | `OSMIUM_SCHEMATIC_MAX_SIZE` | `8GB` | largest upload accepted, checked before any bytes are sent |
 | `osmium.avatar.ttl` | `OSMIUM_AVATAR_TTL` | `12h` | how long a fetched head is cached |
 
 CORS is **off** unless origins are listed, because both supported deployments proxy `/api` and are
@@ -100,6 +104,7 @@ model honest. A null role means no permissions at all.
 | `host.read` | see the hosts that run them |
 | `activity.read` | read the incident feed |
 | `chat.read` | read what was said in game |
+| `schematic.read` | see the schematic library, its materials and how it divides |
 | `chat.speak` | **speak in game as an agent** |
 | `agent.run` | connect and disconnect agents |
 | `agent.write` | create and rename agents, and place them on a server |
@@ -108,6 +113,8 @@ model honest. A null role means no permissions at all.
 | `host.write` | enrol and rename hosts |
 | `host.token` | rotate a host's enrolment token |
 | `host.delete` | remove a host, and every agent on it |
+| `schematic.write` | upload and rename schematics |
+| `schematic.delete` | delete a schematic and its file |
 
 **The split is by what an act costs, not by which resource it touches.** `run` is the all-day verb
 and undoes itself — an agent connected by mistake is disconnected again. `write` reshapes the fleet
@@ -128,17 +135,19 @@ single flat set lookup and the table is self-describing.
 
 | Role | Nodes |
 |---|---|
-| `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `agent.read`, `host.read`, `chat.read`, `activity.read` |
-| `orchestrator` | *viewer* + `agent.run`, `agent.write`, `agent.setup`, `chat.speak`, `host.write`, `host.token` |
-| `administrator` | *orchestrator* + `agent.delete`, `host.delete`, `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `user.sessions.revoke`, `audit.read`, `audit.export` |
+| `viewer` | `user.read.self`, `user.edit.self`, `role.read`, `agent.read`, `host.read`, `chat.read`, `activity.read`, `schematic.read` |
+| `orchestrator` | *viewer* + `agent.run`, `agent.write`, `agent.setup`, `chat.speak`, `host.write`, `host.token`, `schematic.write` |
+| `administrator` | *orchestrator* + `agent.delete`, `host.delete`, `schematic.delete`, `user.read`, `user.edit`, `user.create`, `user.delete`, `user.role.write`, `user.sessions.revoke`, `audit.read`, `audit.export` |
 
 A viewer is read-only throughout: the three read nodes gate listing hosts and agents, the feeds and
 the live streams, and nothing else, so it can watch the fleet without being able to touch it. Every
 way to change the fleet is a separate node, which is what makes that tier possible without a second
 set of routes.
 
-**An orchestrator holds neither deletion.** It runs the fleet all day and has no need to destroy part
-of it — an agent is gone with its history, and a host takes every agent on it — so both sit with the
+**An orchestrator holds none of the deletions.** It runs the fleet all day and has no need to
+destroy part of it — an agent is gone with its history, a host takes every agent on it, and a
+schematic takes a file that may have cost hours to transfer along with every plan computed from it —
+so all three sit with the
 tier that already carries the irreversible operations. That is the point of the split: the tier that
 does the work no longer has to be trusted with the things that cannot be undone.
 
@@ -193,6 +202,13 @@ changes automatically.
 | `POST` | `/api/agents/{id}/connect`, `/disconnect` | `agent.run` |
 | `POST` | `/api/agents/{id}/chat` | `chat.speak` (rate limited per agent; **429** when exceeded) |
 | `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
+| `GET` | `/api/schematics`, `/api/schematics/{id}` | `schematic.read` |
+| `GET` | `/api/schematics/{id}/materials` | `schematic.read` (by block, heaviest first) |
+| `GET` | `/api/schematics/{id}/split` | `schematic.read` (`mode` and `parts`; computed, never stored) |
+| `POST` | `/api/schematics` | `schematic.write` (declares name, filename and size; no bytes yet) |
+| `PUT` | `/api/schematics/{id}/content` | `schematic.write` (raw bytes at `offset`; **409** carries the real one) |
+| `PATCH` | `/api/schematics/{id}` | `schematic.write` (rename) |
+| `DELETE` | `/api/schematics/{id}` | `schematic.delete` (takes the file and the index with it) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -456,6 +472,13 @@ on REST, where they are node-gated and audited.
 | `user-removed` | `user.read` | `{ id }` | drops it |
 | `audit` | `audit.read` | one new entry | appends it to the trail |
 | `permissions` | `user.read.self` | the recipient's own account | replaces what it may do |
+| `schematic` | `schematic.read` | the resource, in the shape REST returns it | replaces it in place |
+| `schematic-removed` | `schematic.read` | `{ id }` | drops it |
+
+`schematic` is the only event here that fires while nothing has changed in the world: a large file
+takes minutes to arrive and minutes more to read, and without it the interface shows a row saying
+"analysing" with no way to tell a long job from a stuck one. Throttled where it is produced rather
+than at the broker, because the work underneath reports thousands of times a second.
 
 Resource events carry the same shapes the REST endpoints return, so a client replaces what it holds
 rather than refetching. That is why each feature's `toResponse` is shared between its controller and
@@ -797,6 +820,12 @@ src/main/resources/db/migration/
   V1__baseline.sql                 the schema as it stood when Flyway took over
   V2__drop_ddl_auto_leftovers.sql  the dead schema ddl-auto left behind
   V3__audit_export_action.sql      AUDIT_EXPORT added to the audit action constraint
+  V4__refresh_tokens.sql           the refresh-token family behind a session
+  V5__session_visibility.sql       what a session shows about itself, and the reuse alert
+  V6__session_alert.sql            the replayed-session notice an operator dismisses
+  V7__optional_agent_server.sql    an agent no longer has to be pointed at a server
+  V8__schematics.sql               the library: uploads, their progress and their failures
+  V9__schematic_index.sql          what a pass leaves behind: cells, materials, the origin
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -850,6 +879,222 @@ composite index in that order, so paging deep costs the same as the first page.
 
 `PageCursor` is the shared piece. A malformed cursor is a 400, not a silent restart from the top.
 
+## Reading a schematic
+
+Two formats are accepted, `.litematic` and `.schem`, and both are NBT underneath: a tree of named,
+length-prefixed, big-endian tags, usually gzipped. Osmium reads them itself. There is no NBT
+dependency because every NBT library builds the whole tag tree in memory, and the tree is precisely
+what cannot exist here — a schematic accepted at the top of the supported range has a block array
+measured in gigabytes.
+
+So `NbtInput` is a pull reader that offers two choices at every tag: read the value, or skip it.
+Skipping is what makes the size tractable, because a decoder wants four fields out of a file and has
+no use for the rest. Arrays are a length followed by elements pulled one at a time; there is
+deliberately no call that returns a whole array, since that call is where the design would fail.
+
+### Two passes, and why
+
+A file states its palette and its block data as separate tags of an **unordered** compound, so a
+writer is free to put the data first. When it does, one pass has no way to know which palette index
+means air until it has already streamed past the blocks — and buffering the blocks instead is the
+one thing that cannot be done at this size.
+
+The price is real: there is no seeking inside a gzip stream, so skipping a tag still costs
+decompressing it, and two passes cost two decompressions. Paid once per upload in a background job,
+in exchange for a reader that tag order cannot defeat.
+
+### The three things that decode into a different building
+
+None of these fail. They all produce a file that reads, and a build that is wrong.
+
+- **Litematica's block indices straddle long boundaries.** An entry may begin in one long and finish
+  in the next. The obvious implementation packs each long independently and is correct for every
+  width that divides 64 — and quietly wrong for every other one, most real palettes among them. See
+  `PackedEntries`, which also explains why sequential access is what makes streaming possible.
+- **A litematica region may have a negative extent**, meaning it runs backwards and its stated
+  position is the *maximum* corner. Read as a minimum, every block is present and the build is
+  mirrored. Normalised at the door, so nothing downstream carries the rule.
+- **Air has three names** — `air`, `cave_air`, `void_air`. Miss the second and a schematic captured
+  underground reads as a solid cube.
+
+Both decoders emit non-air blocks in the same order: y outermost, then z, then x. That is the
+format's own order, kept because a deterministic build order is what later lets a segment be
+described as a range rather than a set, and progress as a single integer rather than a set of
+placed positions.
+
+### Sizes, and what the formats can express
+
+An NBT array length is a signed 32-bit int. Sponge stores its block data as one array for the whole
+file, so a `.schem` tops out around two billion positions however it is written. Litematica stores
+data per region, so the ceiling is per region and a larger build is simply several of them —
+multi-region handling is the main path here, not an edge case.
+
+### The version gate
+
+Both formats record the Minecraft data version they were saved from, and it is the only thing in a
+file that says which game its block names belong to. A schematic from an older version names blocks
+that have since been renamed or removed, and building from it produces a plausible wrong building.
+
+It is a **range**, `min-data-version` to `max-data-version`, because most blocks do not change:
+stone from 1.16 is stone in 26.2, and refusing a build for being old would refuse most of the
+builds anyone has.
+
+**The range buys parseability, not compatibility, and that difference is the whole risk.** Some
+blocks *were* renamed — `grass` became `short_grass` in 1.20.3, `sign` became `oak_sign` in 1.14 — and
+nothing here can tell: block names are stored as strings and never resolved against a registry, so
+a name that no longer exists looks exactly like one that does. Widening the range does not remove
+that failure, it moves it to the host at build time. The material list is where an operator can see
+it coming, and a schematic older than `max-data-version` is flagged as such in the interface.
+
+What the two ends *can* check is real:
+
+- **1519, Java Edition 1.13 — the flattening.** Below it a file does not name its blocks at all; it
+  stores numeric ids. There is nothing to read, so this end is about the format.
+- **4903, Java Edition 26.2**, the version the fleet plays. The tighter end in practice: a schematic
+  from a *newer* Minecraft names blocks that do not exist yet, and the game being backwards
+  compatible does nothing about that.
+
+Setting both ends to the same number refuses anything but the fleet's own version.
+
+The upload accepts `.schematic` as well as `.litematic` and `.schem`, because the extension is not
+what decides. People rename these files and some tools write Sponge format under the older name, so
+a modern schematic called `.schematic` is read as what it is.
+
+A **genuine MCEdit `.schematic`** — pre-flattening, from 1.12 or earlier — is refused, and refused
+*by name*: it is the one unsupported format an operator is likely to have, and the only one they can
+do something about, since converting it is a menu item in the tools they already use. Told merely
+that the file was unrecognised, they would reasonably conclude it was broken.
+
+Supporting it properly is not a decoder. It stores blocks as **numeric ids with a data nibble** —
+`1` is stone, `5:2` is birch planks — so reading one means carrying the whole pre-flattening
+mapping to modern block names, some four thousand entries, which nothing else here would use.
+
+Format is otherwise decided from the file's contents, and settled as soon as the deciding tag's
+*name* has been read — the deciding tag in a litematic is `Regions`, which holds the
+entire build, so checking the name before the value is the difference between a cheap detection and
+decompressing the file to learn what was already known.
+
+## Uploading a schematic
+
+Three calls, not one multipart form:
+
+```
+POST  /api/schematics                       declare the name, filename and size
+PUT   /api/schematics/{id}/content?offset=  send bytes, at an explicit offset
+GET   /api/schematics/{id}                  read receivedBytes to resume
+```
+
+Declaring the size first means a file too large for this deployment is refused by one small request
+rather than after an hour of transfer. Sending at an explicit offset means a transfer that died at
+90% continues instead of starting again — a multipart upload of several gigabytes over a domestic
+connection has exactly one failure mode, and it is losing all of it. The body is raw bytes rather
+than multipart for the same reason: a multipart parser wants the part in memory or in a temporary
+file, which is a second copy of something already too big for one.
+
+An offset that does not continue where the file left off is a **409 carrying the real offset** in
+`X-Osmium-Expected-Offset`. That is what makes resuming one round trip rather than two — send, be
+told where you are, continue.
+
+### The file and the row cannot be written together
+
+The bytes go to a volume and the description goes to Postgres, and nothing makes those atomic. So
+the order is chosen for what a crash between them leaves: bytes are written **first**, leaving a
+file longer than the row admits. That is recoverable — the extra bytes were never acknowledged, and
+the client will send them again from the offset it is given. The other order loses bytes the row
+claims to have, which is not recoverable at all.
+
+`SchematicReconciler` squares the two on boot, because nothing else ever will: a half upload looks
+exactly like a paused one, and an interrupted analysis looks exactly like a running one.
+
+| Found | Done |
+|---|---|
+| more bytes on disk than acknowledged | trimmed back to the row |
+| fewer bytes on disk than acknowledged | row rewound — the write order rules this out, so something outside Osmium touched the file |
+| `ANALYSING` or `PENDING` | requeued; the work only reads a file and writes a row, so it is safe to repeat |
+| `READY` with no file | failed, with a message — better than being chosen for a build |
+| a file no row owns | deleted; it is the residue of an upload that died before its row committed |
+
+### Reading it happens on a queue
+
+A pass over a large file is minutes of streaming decompression, so it never runs inside a request.
+One at a time, deliberately: two on the same machine do not finish in half the time, they finish in
+rather more than the sum, having spent the difference contending for the same disk.
+
+The queue is in memory and the durable record is the row's status, which is what makes a restart
+survivable. It is fed **after the caller's transaction commits** — the worker is another thread
+reading the same database, and handed an id directly it wins the race often enough to matter: it
+looks the row up, does not find it, decides there is nothing to do, and drops it. Nothing else
+would have come back to it.
+
+Progress is published on the live channel as `schematic`, throttled at the source. A file of several
+gigabytes takes minutes to arrive and minutes more to read, and without it the interface has a row
+saying "analysing" and no way to tell a long job from a stuck one.
+
+## What a pass leaves behind
+
+The blocks are never stored — a billion rows is not a table — so one pass produces a small
+permanent summary, and everything after it reads that and never the file again.
+
+**A count per cell of a coarse grid.** This is what makes splitting possible. Dividing a build
+between agents has to divide the *blocks* evenly rather than the bounding box: a cathedral is mostly
+air and its spire is solid, so four equal boxes can hand one agent most of the work. Counting per
+cell turns that into arithmetic over a few hundred thousand numbers instead of a second pass over a
+billion.
+
+Only non-empty cells are kept. A sparse build — a rail line, a perimeter wall — has a bounding box
+orders of magnitude larger than the thing inside it, and its empty cells would be a table larger
+than the schematic.
+
+**The cell edge is derived from the volume, not fixed.** A fixed 16 is right for a dense build and
+ruinous for a sparse one: a rail network a hundred thousand blocks long has a bounding volume in the
+trillions, and one row per chunk section of that is hundreds of millions of rows. The edge doubles
+until the cell count is under `TARGET_CELLS`, so each step divides the count by eight and a handful
+of steps covers any size. It is **stored** on the row rather than recomputed, so changing the rule
+later cannot silently reinterpret rows written under the old one.
+
+**A count per block type**, by block rather than by block state — stairs facing east and stairs
+facing west are the same thing to gather, and a list split by state is a list nobody can shop from.
+
+Both tables are written through `JdbcTemplate` in batches rather than as entities. A quarter of a
+million cells is a batch insert, not a persistence context: mapped as entities they would be that
+many managed objects, flushed one statement at a time and held in memory until the transaction
+ended, for rows written once, read as a set and never updated.
+
+Both cascade from the schematic in the schema. Orphaned cells are invisible — they belong to no
+schematic, so nothing ever lists them — and they are the bulk of these tables.
+
+## Dividing a build between agents
+
+`GET /api/schematics/{id}/split?mode=&parts=` answers how a schematic divides. A **GET**, because it
+asks rather than acts: the answer is a pure function of the occupancy index and the two arguments,
+nothing is stored, and asking again gives the same segments. A plan saved today would be a copy of
+something already derivable, kept in step by hand, describing an assignment nothing can yet carry
+out — it becomes a row when there is a host that can be sent one.
+
+**Blocks are divided, not the box.** Four equal boxes over a cathedral hand one agent the spire and
+most of the work; the building is mostly air and the air is not evenly spread. So every cut is
+placed where it balances the counts either side, which the index makes a matter of summing a few
+hundred thousand numbers.
+
+Cuts land on cell boundaries, never inside a cell. A cell is the finest thing the index counts, so a
+cut through one would produce two segments of unknown size — and known sizes are the entire point of
+the segments.
+
+The three modes are **one algorithm with different axes allowed**, not three algorithms:
+
+| Mode | Cuts on | What it costs |
+|---|---|---|
+| `COLUMNS` | X and Z | Full-height pieces. Every agent has its own ground and builds bottom-up without waiting. The safe default. |
+| `LAYERS` | Y | Horizontal slabs, which **serialise** — the agent above has nothing to stand on. Only for something flat. |
+| `GRID` | any | Balances best, localises worst: an agent can be handed a piece with no floor under it. |
+
+It halves recursively rather than cutting one axis `parts` times, so each cut picks the axis that is
+currently longest and the pieces come out closer to compact than to long thin slices.
+
+**Fewer segments than asked for is a real answer.** A schematic three cells wide does not divide
+between eight agents however the cuts are placed, and padding the count with empty segments would
+send five agents to stand in the air. The response carries both `requested` and `parts`.
+
 ## The mock host
 
 Nothing reported by a host exists until one dials in — telemetry, nearby players, chat, activity and
@@ -896,7 +1141,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-289 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
+372 tests across 31 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
@@ -932,6 +1177,14 @@ The container cannot reach `localhost:5432`. Point it at the compose network:
 -e SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/osmium
 ```
 
+**Uploaded schematics need a volume.** They are files on disk rather than rows — one can run to
+gigabytes and a Postgres value stops at one — so a container without a mount loses every upload on
+the next deploy, and the rows describing them survive to point at nothing.
+
+```bash
+-v osmium-schematics:/var/lib/osmium/schematics -e OSMIUM_SCHEMATIC_DIRECTORY=/var/lib/osmium/schematics
+```
+
 A GraalVM native image was tried and dropped: it built and produced a working 311 MB image, but cost
 roughly 20 minutes per CI run, which is not worth it here.
 
@@ -965,6 +1218,7 @@ agent/        Minecraft sessions and the commands that drive them
 audit/        the operator trail and its retention purge
 activity/     what happened to agents: kicks, deaths, lifecycle changes
 chat/         what was said in game, per agent and per server, and listener election
+schematic/    the library, the readers for .litematic and .schem, the index and the split
 
 hostlink/     the backend<->host channel: envelope, handshake auth, connections, reports
 liveupdates/  the backend->browser channel: events, broker, subscriptions, SSE endpoint
@@ -972,9 +1226,13 @@ security/     node/role definitions, JWT issuing, Spring Security wiring
 web/          cross-cutting HTTP: exception handling, OpenAPI setup
 ```
 
-The six feature packages each contain `controller/`, `service/`, `repository/`, `model/` and
+The seven feature packages each contain `controller/`, `service/`, `repository/`, `model/` and
 `dto/`. The four below the gap are not features and stay flat: two are channels, one is framework
 wiring, one is cross-cutting HTTP.
+
+`schematic/` keeps the format readers at its top level rather than under `service/`. They are pure
+functions over a stream — no Spring, no database, nothing injected — and the split between them and
+the parts that touch a row is the most useful line in that package.
 
 All of that is `src/main`. `src/mockhost` sits beside it as a source set of its own — a development
 tool that speaks the host protocol, on neither the application classpath nor the test one. See

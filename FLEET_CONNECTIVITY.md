@@ -10,11 +10,15 @@
 | Chat listener election and outbound rate limiting | **Built** in `backend/`, covered by tests |
 | Telemetry: ingest, in-memory store, staleness, coalesced live event | **Built** in `backend/`, covered by tests |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
-| Live updates over SSE | **Built**, for hosts, agents, chat, activity and telemetry |
-| Work assignment and the schematic pipeline | **Not built** |
+| Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry and schematics |
+| Reading a schematic: upload, `.litematic` / `.schem`, the occupancy index, materials | **Built** in `backend/`, covered by tests |
+| Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
+| Assigning a segment to a host and building it | **Not built**: needs the host side |
 
 Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
-sectors, throughput and the schematic. Everything else is real but empty until a host connects.
+sectors and throughput. The schematics themselves are real: uploaded, read and divided. What no
+schematic has yet is an agent building it, because nothing can carry a segment to a host.
+Everything else is real but empty until a host connects.
 Sections not marked built are design, not description.
 
 **Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator
@@ -848,18 +852,28 @@ New nodes, following the existing convention of authorizing routes on nodes and 
 | `host.read` | View the hosts that run them | viewer |
 | `activity.read` | Read the incident feed | viewer |
 | `chat.read` | Read what was said in game | viewer |
+| `schematic.read` | View the schematic library, its materials and how it divides | viewer |
 | `agent.run` | Connect and disconnect agents | orchestrator |
 | `agent.write` | Create and rename agents, place them on a server | orchestrator |
 | `agent.setup` | Trigger `setup_agent` on a host | orchestrator |
 | `chat.speak` | **Speak in-game as an agent** | orchestrator |
 | `host.write` | Enrol and rename hosts | orchestrator |
 | `host.token` | Rotate a host enrolment token | orchestrator |
+| `schematic.write` | Upload and rename schematics | orchestrator |
 | `agent.delete` | Delete an agent, and its history | administrator |
 | `host.delete` | Remove a host, and every agent on it | administrator |
+| `schematic.delete` | Delete a schematic and its file | administrator |
 
-**`orchestrator` runs the fleet; it does not get to destroy part of it.** The two deletions sit with
-`administrator`, which already carries the irreversible operations, so the tiers divide along "runs
-the agents" versus "runs the people and the things that cannot be undone".
+**`orchestrator` runs the fleet; it does not get to destroy part of it.** All three deletions sit
+with `administrator`, which already carries the irreversible operations, so the tiers divide along
+"runs the agents" versus "runs the people and the things that cannot be undone". A schematic is the
+same shape of decision as an agent: uploading one is additive and renaming it undoes itself, while
+deleting one takes a file that may have cost hours to transfer, and with it every plan and every
+measure of progress computed from it.
+
+Reading schematics is its own node rather than part of `agent.read`, because a schematic is a design
+rather than fleet state — it is what somebody means to build, and it exists before any agent has
+been pointed at it.
 
 The nodes are split by **what an act costs**, not by which resource it touches: `run` undoes itself,
 `write` is recoverable, `delete` is not. Two are separated for what they *are* rather than what they

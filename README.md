@@ -7,17 +7,19 @@ hands each agent its own slice. The dashboard shows what the fleet is doing: pro
 what needs attention, and what is being said in game.
 
 > **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
-> telemetry, live updates and the host transport are built and tested. The host program itself lives
-> outside this repository — Rust on azalea, see [`host/`](host/). Those feeds stay empty until a host
-> connects and starts reporting. Build progress and remote configuration are the two parts of the
-> UI still running on mock data.
+> telemetry, live updates and the host transport are built and tested. So is the front half of the
+> schematic pipeline: uploading a file, reading it, and dividing it between agents. What is missing
+> is the back half — sending a segment to a host and building it — which waits on the host program.
+> That lives outside this repository, Rust on azalea, see [`host/`](host/); the feeds stay empty until
+> one connects and starts reporting. Build progress and remote configuration are the two parts of
+> the UI still running on mock data.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, and the WebSocket hosts dial into. | Built, 285 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard. | Built, 138 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, and the WebSocket hosts dial into. | Built, 372 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 225 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
@@ -61,9 +63,9 @@ nodes, arranged as nested tiers:
 
 | Role | Adds |
 |---|---|
-| `viewer` | watch the fleet, and see your own account |
-| `orchestrator` | *viewer* + acting on hosts and agents |
-| `administrator` | *orchestrator* + user management |
+| `viewer` | watch the fleet and the schematics, and see your own account |
+| `orchestrator` | *viewer* + acting on hosts and agents, and uploading schematics |
+| `administrator` | *orchestrator* + user management, the audit trail, and everything irreversible |
 
 So the split is "runs the agents" versus "runs the people". Details in
 [`backend/README.md`](backend/README.md).
@@ -71,14 +73,15 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 285 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 138 tests
+cd backend && ./gradlew test     # 372 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 225 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
 clients over real host sockets, and unit tests on an injected clock for anything about the passage of
 time. The frontend covers the route guard, the auth store, the API client middleware, the fleet
-store's derived state, cursor paging, and that the English and German copy stay in step.
+store's derived state, cursor paging, the geometry behind the charts and the box viewer, and that
+the English and German copy stay in step.
 
 ## CI
 
