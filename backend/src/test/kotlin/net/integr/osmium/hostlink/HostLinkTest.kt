@@ -14,6 +14,7 @@ import net.integr.osmium.security.encodeRequired
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -181,6 +182,90 @@ class HostLinkTest {
         val linked = agentRepository.findById(agent.id!!).orElseThrow()
         assertEquals("Probe_01", linked.mcUsername)
         assertEquals("069a79f4-44e9-4726-a5be-fca90e38aaf5", linked.mcUuid)
+
+        socket.close()
+    }
+
+    /**
+     * State is stored, so it outlives the connection that reported it. A host that restarts leaves
+     * the backend asserting sessions nobody is running, and `agent_status` never contradicts it —
+     * it says what changed, never what exists. The arrival announcement is what closes that.
+     */
+    @Test
+    fun `an agent the host does not announce is taken off online`() {
+        agent.state = AgentState.ONLINE
+        agent.onlineSince = Instant.now()
+        agent.chatListener = true
+        agentRepository.saveAndFlush(agent)
+
+        val second = agentRepository.saveAndFlush(
+            Agent(label = "Probe_02", host = host, serverAddress = "mc.example.com:25565", state = AgentState.ONLINE),
+        )
+
+        val socket = connect(token())
+        // Only the second agent is still running; the first went with the process that restarted.
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.AGENTS,
+                payload = objectMapper.valueToTree(
+                    mapOf("agents" to listOf(mapOf("agentId" to second.id, "state" to "ONLINE"))),
+                ),
+            ),
+        )
+
+        awaitUntil { agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.LINKED }
+
+        val dropped = agentRepository.findById(agent.id!!).orElseThrow()
+        // Not UNLINKED: the credentials are on the host's disk and outlived the restart.
+        assertEquals(AgentState.LINKED, dropped.state)
+        assertNull(dropped.onlineSince)
+        // A listener that is not in game must leave a vacancy the next election can fill.
+        assertFalse(dropped.chatListener)
+
+        // Announced, so untouched.
+        assertEquals(AgentState.ONLINE, agentRepository.findById(second.id!!).orElseThrow().state)
+
+        socket.close()
+    }
+
+    /** The command went with the process that was going to answer it, so nothing is coming. */
+    @Test
+    fun `an unannounced agent mid-setup goes back to where setup started`() {
+        agent.state = AgentState.SETUP_PENDING
+        agentRepository.saveAndFlush(agent)
+
+        val socket = connect(token())
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.AGENTS,
+                payload = objectMapper.valueToTree(mapOf("agents" to emptyList<Map<String, Any>>())),
+            ),
+        )
+
+        awaitUntil { agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.UNLINKED }
+
+        socket.close()
+    }
+
+    /** Omitting the announcement has to change nothing, or an older host breaks on upgrade. */
+    @Test
+    fun `a host that never announces leaves state alone`() {
+        agent.state = AgentState.ONLINE
+        agentRepository.saveAndFlush(agent)
+
+        val socket = connect(token())
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.HEARTBEAT,
+                payload = objectMapper.valueToTree(mapOf("hostVersion" to "0.9.9-probe")),
+            ),
+        )
+        awaitUntil { hostRepository.findById(host.id!!).orElseThrow().isReachable() }
+
+        assertEquals(AgentState.ONLINE, agentRepository.findById(agent.id!!).orElseThrow().state)
 
         socket.close()
     }

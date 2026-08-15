@@ -132,10 +132,7 @@ class MockHost(private val url: String, private val token: String) {
             .get(10, TimeUnit.SECONDS)
 
         println("connected to $url")
-        // The agents are the host's own memory of what it was told to run, and the backend does not
-        // re-issue commands on reconnect. Anything already online says so again, or it would sit in
-        // the interface as ONLINE with vitals that stopped arriving.
-        for ((agentId, agent) in agents) if (agent.online) state(agentId, "ONLINE")
+        announce()
         true
     }.getOrElse {
         println("connect failed (${it.message}), retrying in ${backoff / 1000}s")
@@ -225,6 +222,27 @@ class MockHost(private val url: String, private val token: String) {
             ),
         )
     }
+
+    /**
+     * What this process is actually running, said on arrival.
+     *
+     * The map is memory, so a restarted mock runs nothing and announces nothing — which is the
+     * honest answer, and the backend takes the agents it owns off ONLINE accordingly. Within one
+     * process a reconnect announces what it kept, so a dropped socket changes nothing.
+     */
+    private fun announce() = send(
+        HostEnvelope(
+            kind = MessageKind.EVENT,
+            type = EventType.AGENTS,
+            payload = mapper.valueToTree(
+                mapOf(
+                    "agents" to agents
+                        .filterValues { it.online }
+                        .map { (agentId, _) -> mapOf("agentId" to agentId, "state" to "ONLINE") },
+                ),
+            ),
+        ),
+    )
 
     private fun heartbeat() = send(
         HostEnvelope(

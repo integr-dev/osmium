@@ -346,7 +346,40 @@ across the top level**.
 
 // host-scoped, so no agentId
 { "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
+
+// host-scoped, sent once on connect: what this host is actually running
+{ "kind": "event", "type": "agents",
+  "payload": { "agents": [ { "agentId": 42, "state": "ONLINE" } ] } }
 ```
+
+### Announcing agents on connect
+
+**Send this as soon as the socket is up.** It is the only message that says what *exists* rather
+than what *changed*, and without it a restarted host leaves the backend asserting sessions nobody is
+running.
+
+Agent state is stored, so it outlives the connection that reported it. `agent_status` reports
+transitions; it never re-establishes the whole picture, and nothing else does either. The gap that
+leaves is not hypothetical: a host that reported four agents `ONLINE` and then restarted has an
+Osmium showing four agents in game, indefinitely, with no telemetry behind them.
+
+So on arrival the host lists the agents it is running, and the backend reconciles the rest:
+
+| Believed state | Announced | Not announced |
+|---|---|---|
+| `ONLINE` | left alone | → `LINKED` — the credentials survived the restart, the session did not |
+| `SETUP_PENDING` | left alone | → `UNLINKED` — the command went with the process that was going to answer it |
+| anything else | applied as reported | left alone — none of them claim a live session |
+
+An agent that goes unmentioned also loses `chatListener`, so the next election sees a vacancy rather
+than a listener that is gone.
+
+**Announcing nothing is a valid announcement** — an empty `agents` array means "I am running none of
+them", which is exactly what a freshly restarted host should say. **Omitting the event entirely
+changes nothing**, so a host that predates this keeps working; it simply keeps the old failure mode.
+
+A host that kept its sessions across a dropped socket announces them and nothing changes, which is
+what makes this safe to send on every connect rather than only after a restart.
 
 ### Chat and activity events
 

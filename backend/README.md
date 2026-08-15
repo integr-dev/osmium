@@ -412,6 +412,31 @@ Reachability is **derived** from the heartbeat rather than stored, so a backend 
 a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
 the state is genuinely unknown at that point.
 
+### What a host announces on connect
+
+Agent state is **stored**, so it outlives the connection that reported it, and `agent_status` only
+ever says what *changed*. Between them that leaves one hole: a host that restarts has an Osmium
+still asserting the sessions it reported before, with nothing in the protocol to contradict them.
+Reachability does not help — the host is back, so `STALE` stops applying and the stale `ONLINE`
+resurfaces intact.
+
+So a host sends an `agents` event on connect listing what it is actually running, and
+`HostReportService.reconcile` squares it against what the backend owns for that host:
+
+- **Announced** agents are applied exactly as `agent_status` would apply them, so a host that kept
+  its sessions across a dropped socket changes nothing by saying so.
+- **Unannounced** `ONLINE` becomes `LINKED` — credentials live on the host's disk and survive a
+  restart; the session does not. `SETUP_PENDING` becomes `UNLINKED`, where a failed setup lands,
+  because the command went with the process that was going to answer it.
+- **Every other state is left alone.** None of them claim a live session, so silence says nothing
+  about them.
+
+Each correction writes an activity entry, because it is a state change the operator did not cause
+and would otherwise see unexplained.
+
+**Omitting the event changes nothing**, which is what keeps an older host working — it simply keeps
+the old failure mode. An empty list is a real announcement and means "none of them".
+
 ## Live updates
 
 `GET /api/stream` is a server-sent event stream of everything that changes;
@@ -871,7 +896,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-285 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
+289 tests across 22 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
