@@ -4,6 +4,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Bot as Agent,
+  ChevronDown,
   LayoutDashboard,
   LogOut,
   // Aliased: `Map` is a JavaScript built-in, and shadowing it in a template is a trap for the next
@@ -50,6 +51,9 @@ useHistoryStore()
 const router = useRouter()
 
 const addAgentOpen = ref(false)
+
+/** The fleet section, open by default: it is the reason most operators open the sidebar. */
+const agentsOpen = ref(true)
 const retrying = ref(false)
 
 const palette = ref<InstanceType<typeof CommandPalette> | null>(null)
@@ -238,9 +242,16 @@ async function logout() {
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
 
-      <!-- Wider than the default drawer: agent rows now carry an account name and a server address. -->
+      <!--
+        Wider than the default drawer: agent rows now carry an account name and a server address.
+
+        `h-full`, not `min-h-full`. daisyUI gives `.drawer-side` a height of 100dvh and its own
+        `overflow-y: auto`, so an aside that is merely *at least* full height grows past the
+        viewport with the fleet and the drawer scrolls the whole sidebar — links included. Fixing
+        it to the viewport is what gives the list below something to be bounded by.
+      -->
       <aside
-        class="border-base-300 bg-base-200 relative flex min-h-full max-w-[85vw] flex-col border-r lg:max-w-none"
+        class="border-base-300 bg-base-200 relative flex h-full max-w-[85vw] flex-col overflow-hidden border-r lg:max-w-none"
         :style="{ width: `${sidebarWidth}px` }"
       >
         <!--
@@ -319,8 +330,23 @@ async function logout() {
           </button>
         </div>
 
-        <div class="flex-1 overflow-y-auto px-3">
-          <ul class="menu w-full gap-0.5 p-0">
+        <!--
+          The pages stay put and the fleet scrolls under them.
+
+          The scroll used to sit here, on everything: a fleet of forty pushed Dashboard, Map and
+          Hosts off the top of the sidebar, so reaching a page meant scrolling back up a list of
+          agents to find the links. Only the agents grow without bound, so only the agents scroll.
+
+          Two menus rather than one, with the scroll on a plain div between them. Bounding the
+          agents *inside* the menu does not work: daisyUI sets `flex-shrink: 0` on every `.menu li`
+          and `flex-flow: column wrap` on both the menu and its items, so a bounded list refuses to
+          shrink and wraps into a second column beside the pages instead of scrolling. Keeping the
+          scroller out of the menu's way avoids arguing with all of that.
+        -->
+        <!-- Natural height. Given `flex-1` it splits the spare space with the scroller below and
+             the fleet starts halfway down the sidebar with a gap above it. -->
+        <div class="px-3">
+          <ul class="menu w-full flex-nowrap gap-0.5 p-0">
             <li>
               <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
                 <LayoutDashboard class="size-4 shrink-0" />
@@ -354,14 +380,45 @@ async function logout() {
                 </span>
               </RouterLink>
             </li>
+          </ul>
+        </div>
+
+        <!--
+          A button rather than a `<summary>`, and the reason is the scrolling.
+
+          A summary has to be a child of its `<details>`, which means it scrolls with the list it
+          opens — so the heading and the online count leave the screen as soon as the fleet is long
+          enough to need scrolling, which is exactly when they are worth reading. Splitting the two
+          costs the native disclosure and buys a header that stays.
+        -->
+        <div class="px-3">
+          <ul class="menu w-full flex-nowrap gap-0.5 p-0">
             <li>
-              <details open>
-                <summary class="gap-3">
-                  <Agent class="size-4 shrink-0" />
-                  {{ t('nav.agents') }}
-                  <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
-                </summary>
-                <ul class="gap-0.5">
+              <button
+                type="button"
+                class="gap-3"
+                :aria-expanded="agentsOpen"
+                aria-controls="sidebar-agents"
+                @click="agentsOpen = !agentsOpen"
+              >
+                <Agent class="size-4 shrink-0" />
+                {{ t('nav.agents') }}
+                <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
+                <ChevronDown
+                  class="size-4 shrink-0 opacity-60 transition-transform"
+                  :class="agentsOpen ? '' : '-rotate-90'"
+                />
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <!-- The fleet, and only the fleet. Everything above stays where it was put. -->
+        <div v-show="agentsOpen" id="sidebar-agents" class="min-h-0 flex-1 overflow-y-auto px-3">
+          <!-- The indent and hairline daisyUI would have drawn for a nested menu, kept by hand now
+               that the list is no longer nested inside one. -->
+          <div class="border-base-content/10 ms-4 border-s ps-2">
+            <ul class="menu w-full flex-nowrap gap-0.5 p-0">
                   <!--
                     The fleet is a list of people as much as a list of rows, and this is the one
                     place every one of them is on screen at once. `v-flash` is on the state rather
@@ -406,10 +463,8 @@ async function logout() {
                       {{ t('nav.addAgent') }}
                     </button>
                   </li>
-                </ul>
-              </details>
-            </li>
-          </ul>
+            </ul>
+          </div>
         </div>
 
         <!--
