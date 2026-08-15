@@ -127,6 +127,12 @@ export const en = {
     password: 'Password',
     signIn: 'Sign in',
     signingIn: 'Signing in…',
+    capsLock: 'Caps Lock is on',
+    /** Said before a password is spent on a backend that was never going to answer. */
+    reachable: 'Osmium is responding',
+    unreachable: 'Osmium is not responding',
+    /** Its own key rather than the Accounts page's: rewording that one must not reword this. */
+    noSignUp: 'Only administrators can create accounts.',
   },
 
   dashboard: {

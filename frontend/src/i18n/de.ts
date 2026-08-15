@@ -115,6 +115,10 @@ export const de: Copy = {
     password: 'Passwort',
     signIn: 'Anmelden',
     signingIn: 'Anmeldung läuft…',
+    capsLock: 'Feststelltaste ist aktiv',
+    reachable: 'Osmium antwortet',
+    unreachable: 'Osmium antwortet nicht',
+    noSignUp: 'Nur die Administration kann Konten anlegen.',
   },
 
   dashboard: {

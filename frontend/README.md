@@ -343,8 +343,16 @@ Two icons, never both. `ServerOff` means the backend is unreachable and nothing 
 first being fine, because a dead backend takes the stream with it — and when both fired they said
 the same thing twice, with the stream noticing up to 45s later than the first failed request.
 
-`backendReachable` and `backendEverReached` live in `src/api/client.ts` rather than a store, so every
-call updates them — including the account lookup a viewer makes without ever touching the fleet.
+`backendReachable` and `backendEverReached` live in `src/api/reachability.ts` rather than a store, so
+every call updates them — including the account lookup a viewer makes without ever touching the
+fleet. `src/api/client.ts` re-exports them and stays the module everything imports from; they sit in
+their own file only because `session.ts` writes them too, and `client.ts` already imports
+`session.ts`.
+
+That second writer is what the **sign-in screen** reads. Refreshing the session is the only request
+a signed-out tab makes, and the route guard has already awaited it by the time the screen renders,
+so the screen can say whether Osmium is answering **before** a password is spent finding out. Any
+response counts, including the 401 that means there is simply no session to resume.
 
 Two things make this work that are easy to get wrong:
 
@@ -416,7 +424,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-202 unit tests on Vitest with jsdom, in two groups.
+213 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
@@ -428,8 +436,10 @@ that computes something is a plain function with its own spec, because the failu
 and they all look fine on screen: a sparkline with one sample or a flat series (`series.ts`),
 distance measured across a dimension or a server (`vitals.ts`), a fleet reported finished because
 two servers' progress was added against one schematic (`build.ts`), which chat scope a live line
-belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), and what the tab says
-(`browserStatus.ts`).
+belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), what the tab says
+(`browserStatus.ts`), and the isometric projection behind the sign-in screen (`schematic.ts`), which
+is chosen in projected space rather than on a grid that is projected afterwards — the obvious way
+round gives a 2:1 diamond, a perfectly good render of the wrong shape.
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
@@ -559,7 +569,8 @@ suite runs once instead of twice.
 ```
 src/api/         generated schema, typed client, token storage, live-update and feed clients
 src/components/  FormField, the add-host and add-agent modals, the chat rail and panel, the
-                 command palette, the sparkline and hourly bars, the language picker
+                 command palette, the sparkline and hourly bars, the language picker, the
+                 sign-in backdrop
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string, one file per locale
 src/lib/         everything computed away from a component: cursor-paged feeds, chat scopes,
