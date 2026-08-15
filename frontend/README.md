@@ -416,11 +416,20 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-138 unit tests on Vitest with jsdom. They cover the parts where a bug is invisible until someone is
-locked out or over-privileged: the route guard, the auth store, the API client's middleware, the
-fleet store's derived state, the cursor paging in `useFeed` — where a cursor that is not carried
-forward silently re-reads page one — and translation parity, where a missing placeholder swallows a
-value without erroring.
+202 unit tests on Vitest with jsdom, in two groups.
+
+**Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
+auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
+`useFeed` — where a cursor that is not carried forward silently re-reads page one — and
+translation parity, where a missing placeholder swallows a value without erroring.
+
+**Where a bug renders as a plausible wrong answer** rather than an error. Everything in `src/lib`
+that computes something is a plain function with its own spec, because the failures are arithmetic
+and they all look fine on screen: a sparkline with one sample or a flat series (`series.ts`),
+distance measured across a dimension or a server (`vitals.ts`), a fleet reported finished because
+two servers' progress was added against one schematic (`build.ts`), which chat scope a live line
+belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), and what the tab says
+(`browserStatus.ts`).
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a
@@ -549,14 +558,20 @@ suite runs once instead of twice.
 
 ```
 src/api/         generated schema, typed client, token storage, live-update and feed clients
-src/components/  FormField, the add-host and add-agent modals, the chat rail and panel, the language picker
+src/components/  FormField, the add-host and add-agent modals, the chat rail and panel, the
+                 command palette, the sparkline and hourly bars, the language picker
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string, one file per locale
-src/lib/         cursor-paged feeds, presentation maps for agent state, roles and permissions
+src/lib/         everything computed away from a component: cursor-paged feeds, chat scopes,
+                 build and vitals arithmetic, chart geometry, shortcuts, panel resizing, and
+                 presentation maps for agent state, roles and permissions
 src/router/      routes and node-based guards
-src/stores/      auth and fleet state (Pinia)
+src/stores/      auth, fleet, the chat rail, and the sampled history behind the sparklines (Pinia)
 src/test/        Vitest setup and the fetch stub
 src/views/       dashboard, map, operations, configuration, hosts, agent detail, accounts, audit, login
 ```
 
-Specs sit next to what they test as `*.spec.ts`, so `vue-tsc` type-checks them with everything else.
+Specs sit next to what they test as `*.spec.ts`, so they are type-checked with everything else — but
+only by `npm run build`, which runs `vue-tsc -b`. `vue-tsc --noEmit` is **not** the same check: it
+passed a component missing a required prop and a spec using a field that no longer existed. The
+build is the one to trust.
