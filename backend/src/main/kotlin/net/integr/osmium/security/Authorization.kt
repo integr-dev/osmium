@@ -98,6 +98,22 @@ object Nodes {
     const val HOST_TOKEN = "host.token"
     const val HOST_DELETE = "host.delete"
 
+    /**
+     * The schematics the fleet builds from.
+     *
+     * Read is its own node rather than part of `agent.read` because a schematic is a design rather
+     * than fleet state: it is what somebody means to build, and it exists before any agent has been
+     * pointed at it.
+     *
+     * `write` covers uploading one and renaming it. Deliberately not deleting - an upload is
+     * additive and a rename undoes itself, while a delete takes a file that may have cost hours to
+     * transfer, and with it every plan and every measure of progress computed from it. It sits with
+     * the tier that already holds the fleet's other irreversible operations.
+     */
+    const val SCHEMATIC_READ = "schematic.read"
+    const val SCHEMATIC_WRITE = "schematic.write"
+    const val SCHEMATIC_DELETE = "schematic.delete"
+
     val ALL: Set<String> = setOf(
         USER_READ_SELF,
         USER_EDIT_SELF,
@@ -122,6 +138,9 @@ object Nodes {
         HOST_WRITE,
         HOST_TOKEN,
         HOST_DELETE,
+        SCHEMATIC_READ,
+        SCHEMATIC_WRITE,
+        SCHEMATIC_DELETE,
     )
 }
 
@@ -157,6 +176,7 @@ object RoleDefinitions {
         Nodes.HOST_READ,
         Nodes.CHAT_READ,
         Nodes.ACTIVITY_READ,
+        Nodes.SCHEMATIC_READ,
     )
 
     /**
@@ -175,12 +195,14 @@ object RoleDefinitions {
         Nodes.CHAT_SPEAK,
         Nodes.HOST_WRITE,
         Nodes.HOST_TOKEN,
+        Nodes.SCHEMATIC_WRITE,
     )
 
     /** Adds user management, the audit trail and everything irreversible. */
     private val ADMINISTRATOR_NODES: Set<String> = ORCHESTRATOR_NODES + setOf(
         Nodes.AGENT_DELETE,
         Nodes.HOST_DELETE,
+        Nodes.SCHEMATIC_DELETE,
         Nodes.USER_READ,
         Nodes.USER_EDIT,
         Nodes.USER_CREATE,

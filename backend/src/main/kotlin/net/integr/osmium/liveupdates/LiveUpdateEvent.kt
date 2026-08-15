@@ -67,6 +67,18 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      * fleet does not entitle you to read what other operators did.
      */
     AUDIT_ENTRY("audit", Nodes.AUDIT_READ),
+
+    /**
+     * A schematic, as it arrives and then as it is read.
+     *
+     * The only event here that fires while nothing has changed in the world. A file of several
+     * gigabytes takes minutes to upload and minutes more to read, and without this the interface
+     * shows a row saying "analysing" with no way to tell a long job from a stuck one. Throttled
+     * where it is produced rather than here, because the work underneath reports thousands of times
+     * a second.
+     */
+    SCHEMATIC_CHANGED("schematic", Nodes.SCHEMATIC_READ),
+    SCHEMATIC_REMOVED("schematic-removed", Nodes.SCHEMATIC_READ),
 }
 
 /**

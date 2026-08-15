@@ -398,6 +398,8 @@ class UserControllerTest : AbstractRestTest() {
                     "host.token",
                     "host.write",
                     "role.read",
+                    "schematic.read",
+                    "schematic.write",
                     "user.edit.self",
                     "user.read.self",
                 ),

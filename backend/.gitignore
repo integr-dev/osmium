@@ -38,3 +38,8 @@ out/
 
 ### Kotlin ###
 .kotlin
+
+### Osmium ###
+# Uploaded schematics, which default to a directory beside the working one. Multi-gigabyte files
+# that belong to a deployment, not to the source. See osmium.schematic.directory.
+data/
