@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { api } from './client'
+import { api, backendEverReached, backendReachable } from './client'
 import { refreshSession } from './session'
 import { token } from './token'
 import { calls, respondWith } from '../test/http'
@@ -65,6 +65,35 @@ describe('refreshSession', () => {
     // Unreachable is not signed out. Dropping the session over a sleeping laptop would cost the
     // operator their work for no reason.
     expect(token.value).toBe('first-token')
+  })
+
+  /**
+   * This is the only request a signed-out tab makes, so it is the only thing that can tell the
+   * login screen whether there is a backend behind it. Without this the screen has no way to
+   * separate a wrong password from a backend that is not running, and finds out by spending one.
+   */
+  it('reports that the backend answered, even when it says no', async () => {
+    respondWith(() => ({ status: 401 }))
+
+    await refreshSession()
+
+    // A 401 is the backend working: it means there is no session to resume, which is the ordinary
+    // state of a first visit.
+    expect(backendReachable.value).toBe(true)
+    expect(backendEverReached.value).toBe(true)
+  })
+
+  it('reports that the backend did not answer', async () => {
+    respondWith(() => {
+      throw new Error('offline')
+    })
+
+    await refreshSession()
+
+    expect(backendReachable.value).toBe(false)
+    // Never reached, so there is nothing on screen that was ever true — the distinction the login
+    // screen and the app shell both branch on.
+    expect(backendEverReached.value).toBe(false)
   })
 })
 

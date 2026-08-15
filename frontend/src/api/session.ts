@@ -1,4 +1,5 @@
 import { apiBaseUrl } from './base'
+import { backendEverReached, backendReachable } from './reachability'
 import { token } from './token'
 
 /**
@@ -57,6 +58,14 @@ async function exchange(): Promise<boolean> {
       method: 'POST',
       credentials: 'same-origin',
     })
+    // Any answer proves the backend is up, including the 401 that means there is no session to
+    // resume. Recorded here and not only in the API client's middleware because this call runs
+    // before every other one — the route guard awaits it during the app's first navigation — and it
+    // is the *only* request a signed-out tab makes. Without this the login screen has no way to
+    // tell a wrong password from a backend that is not running.
+    backendReachable.value = true
+    backendEverReached.value = true
+
     if (!response.ok) {
       token.value = null
       return false
@@ -68,6 +77,7 @@ async function exchange(): Promise<boolean> {
   } catch {
     // Transport failure. The session may well be fine, so the token is left alone rather than
     // logging the operator out because their laptop slept.
+    backendReachable.value = false
     return false
   }
 }

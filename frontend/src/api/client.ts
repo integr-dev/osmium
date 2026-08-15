@@ -1,8 +1,8 @@
 import createClient, { type Middleware } from 'openapi-fetch'
-import { ref } from 'vue'
 import type { paths, components } from './schema'
 import { t } from '../i18n'
 import { apiBaseUrl } from './base'
+import { backendEverReached, backendReachable } from './reachability'
 import { refreshSession } from './session'
 import { token } from './token'
 
@@ -77,18 +77,8 @@ export function isUnreachable(error: unknown): boolean {
   return errorMessage(error, '') === UNREACHABLE_MESSAGE
 }
 
-/**
- * Whether the last request reached the backend at all. Lives here rather than in a store so every
- * call updates it, including the account lookup a viewer makes without ever touching the fleet.
- */
-export const backendReachable = ref(true)
-
-/**
- * Whether the backend has *ever* answered this session. It separates the two failures that look
- * identical otherwise: never got started, versus was working and went away. The first has nothing
- * worth showing, the second has data on screen that is merely stale.
- */
-export const backendEverReached = ref(false)
+/** Written here and in `session.ts`; re-exported so this stays the one module callers import. */
+export { backendReachable, backendEverReached } from './reachability'
 
 let onUnauthorized: (() => void) | null = null
 
