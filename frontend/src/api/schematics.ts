@@ -1,9 +1,15 @@
-import { api, errorMessage, type SchematicResponse, type SplitResponse } from './client'
+import {
+  api,
+  errorMessage,
+  type SchematicResponse,
+  type ShapeResponse,
+  type SplitResponse,
+} from './client'
 import { apiBaseUrl } from './base'
 import { token } from './token'
 import { t } from '../i18n'
 
-export type { SchematicResponse, SplitResponse }
+export type { SchematicResponse, ShapeResponse, SplitResponse }
 
 /**
  * Sending a schematic, which is the one request in Osmium that can run for an hour.
@@ -155,4 +161,33 @@ export async function splitSchematic(
   })
   if (error) throw new Error(errorMessage(error))
   return data as SplitResponse
+}
+
+/**
+ * The schematic as a voxel model.
+ *
+ * `detail` is voxels along the longest axis, which bounds what comes back rather than describing
+ * what is in the file — the same schematic at 32 and at 96 is one building at two resolutions.
+ */
+export async function schematicShape(id: number, detail = 64): Promise<ShapeResponse> {
+  const { data, error } = await api.GET('/api/schematics/{id}/shape', {
+    params: { path: { id }, query: { detail } },
+  })
+  if (error) throw new Error(errorMessage(error))
+  return data as ShapeResponse
+}
+
+/**
+ * Reads an already-uploaded file again.
+ *
+ * The file is the durable thing and everything else is derived from it, so a schematic read before
+ * the index learned to record something describes less than it could. This is the alternative to
+ * sending gigabytes again to recompute what is already on disk.
+ */
+export async function reanalyseSchematic(id: number): Promise<SchematicResponse> {
+  const { data, error } = await api.POST('/api/schematics/{id}/reanalyse', {
+    params: { path: { id } },
+  })
+  if (error) throw new Error(errorMessage(error))
+  return data as SchematicResponse
 }

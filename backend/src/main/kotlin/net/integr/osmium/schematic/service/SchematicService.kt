@@ -7,12 +7,14 @@ import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.schematic.SplitMode
 import net.integr.osmium.schematic.Vec3i
+import net.integr.osmium.schematic.schematicShape
 import net.integr.osmium.schematic.splitSchematic
 import net.integr.osmium.schematic.config.SchematicProperties
 import net.integr.osmium.schematic.dto.CreateSchematicRequest
 import net.integr.osmium.schematic.dto.MaterialResponse
 import net.integr.osmium.schematic.dto.SchematicResponse
 import net.integr.osmium.schematic.dto.SegmentResponse
+import net.integr.osmium.schematic.dto.ShapeResponse
 import net.integr.osmium.schematic.dto.SplitResponse
 import net.integr.osmium.schematic.dto.toResponse
 import net.integr.osmium.schematic.model.Schematic
@@ -51,10 +53,16 @@ class SchematicService(
      */
     private val locks = ConcurrentHashMap<Long, Any>()
 
-    fun findAll(): List<SchematicResponse> =
-        repository.findAllByOrderByCreatedAtDesc().map { it.toResponse(properties.maxDataVersion) }
+    fun findAll(): List<SchematicResponse> {
+        // One snapshot for the whole list. Asked per schematic, the queue could be taken from
+        // between two of them and the same place would be reported twice.
+        val positions = queue.positions()
+        return repository.findAllByOrderByCreatedAtDesc()
+            .map { it.toResponse(properties.maxDataVersion, positions[it.id]) }
+    }
 
-    fun find(id: Long): SchematicResponse = load(id).toResponse(properties.maxDataVersion)
+    fun find(id: Long): SchematicResponse =
+        load(id).toResponse(properties.maxDataVersion, queue.positionOf(id))
 
     /**
      * What has to be gathered before the build starts.
@@ -66,6 +74,41 @@ class SchematicService(
     fun materials(id: Long): List<MaterialResponse> {
         load(id)
         return index.materialsOf(id).map { MaterialResponse(it.name, it.blocks) }
+    }
+
+    /**
+     * The schematic as a voxel model, coarse enough to draw.
+     *
+     * Read from the occupancy index rather than the file, so it costs a query rather than a pass —
+     * and inherits the index's limit: it knows how many blocks are in a cell, never where inside
+     * it, so past a certain size this is a massing model and not a picture.
+     */
+    fun shape(id: Long, detail: Int): ShapeResponse {
+        require(detail in 8..MAX_DETAIL) { "A shape cannot be $detail voxels across" }
+
+        val schematic = load(id)
+        check(schematic.status == SchematicStatus.READY) {
+            "'${schematic.name}' has not been read yet, so there is nothing to draw"
+        }
+
+        val origin = Vec3i(schematic.originX ?: 0, schematic.originY ?: 0, schematic.originZ ?: 0)
+        val shape = schematicShape(index.cellsOf(id), schematic.cellSize ?: 1, origin, detail)
+
+        return ShapeResponse(
+            voxelSize = shape.voxelSize,
+            originX = shape.origin.x,
+            originY = shape.origin.y,
+            originZ = shape.origin.z,
+            sizeX = shape.size.x,
+            sizeY = shape.size.y,
+            sizeZ = shape.size.z,
+            count = shape.voxels.size,
+            hidden = shape.hidden,
+            palette = shape.palette,
+            // Flattened rather than a list of objects: at tens of thousands of cubes the field
+            // names would be most of the response.
+            voxels = shape.voxels.flatMap { listOf(it.x, it.y, it.z, it.faces, it.material) },
+        )
     }
 
     /**
@@ -143,7 +186,7 @@ class SchematicService(
             detail = "Upload of ${request.filename} started, ${request.sizeBytes} bytes",
         )
         publish(schematic)
-        return schematic.toResponse(properties.maxDataVersion)
+        return schematic.response()
     }
 
     /**
@@ -195,8 +238,37 @@ class SchematicService(
             }
 
             publish(schematic)
-            return schematic.toResponse(properties.maxDataVersion)
+            return schematic.response()
         }
+    }
+
+    /**
+     * Reads an already-uploaded file again.
+     *
+     * The file is the durable thing and the index is derived from it, so anything the index learns
+     * to record — a dominant block per cell, whatever comes next — leaves every schematic analysed
+     * before it describing less than it could. The alternative to this is re-uploading gigabytes to
+     * recompute something already sitting on disk.
+     *
+     * Not a migration. Backfilling on deploy would read every file on the box at once, on the boot
+     * path, for schematics nobody may look at again.
+     */
+    @Transactional
+    fun reanalyse(id: Long): SchematicResponse {
+        val schematic = load(id)
+        check(schematic.status == SchematicStatus.READY || schematic.status == SchematicStatus.FAILED) {
+            "'${schematic.name}' is ${schematic.status.name.lowercase()}, so it is already being read"
+        }
+        check(storage.exists(id)) { "The file for '${schematic.name}' is missing from storage" }
+
+        schematic.status = SchematicStatus.PENDING
+        schematic.analysedBytes = 0
+        schematic.failure = null
+        schematic.updatedAt = Instant.now()
+
+        queue.enqueue(id)
+        publish(schematic)
+        return schematic.response()
     }
 
     @Transactional
@@ -216,7 +288,7 @@ class SchematicService(
             detail = "Renamed from '$previous'",
         )
         publish(schematic)
-        return schematic.toResponse(properties.maxDataVersion)
+        return schematic.response()
     }
 
     @Transactional
@@ -241,8 +313,17 @@ class SchematicService(
     private fun load(id: Long): Schematic =
         repository.findById(id).orElseThrow { NoSuchElementException("No schematic $id") }
 
+    /**
+     * The schematic as it goes out, place in the queue included.
+     *
+     * Null right after the last chunk lands: joining the queue waits for this transaction to commit,
+     * so nothing here can see it yet. The queue announces the real place a moment later.
+     */
+    private fun Schematic.response(): SchematicResponse =
+        toResponse(properties.maxDataVersion, id?.let { queue.positionOf(it) })
+
     private fun publish(schematic: Schematic) {
-        broker.publish(LiveUpdateEvent(type = LiveUpdateType.SCHEMATIC_CHANGED, data = schematic.toResponse(properties.maxDataVersion)))
+        broker.publish(LiveUpdateEvent(type = LiveUpdateType.SCHEMATIC_CHANGED, data = schematic.response()))
     }
 
     private fun currentUsername(): String =
@@ -253,5 +334,15 @@ class SchematicService(
 
         /** More agents than any fleet has. A guard on the argument, not a considered limit. */
         const val MAX_PARTS = 64
+
+        /**
+         * Voxels along the longest axis.
+         *
+         * High enough to reach one voxel per index cell on any build the index holds, which is as
+         * fine as this can ever be: the cells are what it counts, so a voxel cannot be smaller than
+         * one. Enclosure is what makes asking for it affordable — the inside of a solid is dropped,
+         * so the cost grows with the surface rather than the volume.
+         */
+        const val MAX_DETAIL = 1024
     }
 }

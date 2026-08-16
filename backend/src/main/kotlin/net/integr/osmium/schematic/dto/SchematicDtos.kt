@@ -70,6 +70,15 @@ data class SchematicResponse(
     val receivedBytes: Long,
     val status: SchematicStatus,
     val progressPercent: Int,
+    /**
+     * Where it sits in the reading queue, 1 meaning next. Null unless it is waiting — a schematic
+     * being read, or already read, is not in a line — and null for a moment after the last chunk
+     * lands, because the queue is only joined once that transaction commits.
+     *
+     * Not on the row. It is a fact about the other schematics rather than about this one, and
+     * storing it would mean rewriting every waiting row each time one is taken.
+     */
+    val queuePosition: Int?,
     val contentHash: String?,
     val content: SchematicContentResponse,
     val failure: String?,
@@ -82,8 +91,10 @@ data class SchematicResponse(
  * @param buildsFor the newest Minecraft this fleet builds, so a file older than it can be marked.
  *   Passed in rather than read from config here: a DTO mapper that reaches for a bean is a DTO
  *   mapper that cannot be called from a test without one.
+ * @param queuePosition where it is waiting, from the analysis queue. Same reasoning — the queue is
+ *   in memory and not something a mapper should be reaching into.
  */
-fun Schematic.toResponse(buildsFor: Int? = null) = SchematicResponse(
+fun Schematic.toResponse(buildsFor: Int? = null, queuePosition: Int? = null) = SchematicResponse(
     id = id ?: 0,
     name = name,
     originalFilename = originalFilename,
@@ -91,6 +102,7 @@ fun Schematic.toResponse(buildsFor: Int? = null) = SchematicResponse(
     receivedBytes = receivedBytes,
     status = status,
     progressPercent = progressPercent,
+    queuePosition = queuePosition,
     contentHash = contentHash,
     content = SchematicContentResponse(
         format = format?.name,
@@ -140,4 +152,35 @@ data class SplitResponse(
     val parts: Int,
     val blocks: Long,
     val segments: List<SegmentResponse>,
+)
+
+/**
+ * The schematic as something drawable: a coarse voxel model of where its blocks are.
+ *
+ * [voxels] is flat — `x, y, z, faces, material` repeated — rather than a list of objects. At tens of thousands
+ * of cubes the field names are most of the payload, and this is a wire format the browser reads once
+ * into an array rather than a shape anyone works with.
+ *
+ * `faces` is a bitmask of the sides with nothing against them, in the order `-X +X -Y +Y -Z +Z`.
+ * Decided here rather than in the browser, which would otherwise recompute it on every frame.
+ *
+ * `material` indexes [palette]. A palette rather than a name per voxel: a build uses tens of
+ * materials and has tens of thousands of voxels, so naming each one would be most of the response.
+ */
+data class ShapeResponse(
+    /** Blocks along one edge of a voxel. Larger for a larger build — see the detail budget. */
+    val voxelSize: Int,
+    val originX: Int,
+    val originY: Int,
+    val originZ: Int,
+    val sizeX: Int,
+    val sizeY: Int,
+    val sizeZ: Int,
+    /** How many cubes are in [voxels], which holds five numbers for each. */
+    val count: Int,
+    /** Voxels dropped for being enclosed on all six sides. Usually most of them. */
+    val hidden: Int,
+    /** Block names, most of the model first. Entry 0 is the unknown material. */
+    val palette: List<String>,
+    val voxels: List<Int>,
 )

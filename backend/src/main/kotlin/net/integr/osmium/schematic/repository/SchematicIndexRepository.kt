@@ -23,8 +23,9 @@ class SchematicIndexRepository(private val jdbc: JdbcTemplate) {
 
         cells.chunked(BATCH).forEach { batch ->
             jdbc.batchUpdate(
-                "INSERT INTO schematic_cells (schematic_id, cx, cy, cz, blocks) VALUES (?, ?, ?, ?, ?)",
-                batch.map { arrayOf<Any>(schematicId, it.x, it.y, it.z, it.blocks) },
+                "INSERT INTO schematic_cells (schematic_id, cx, cy, cz, blocks, block_name) " +
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                batch.map { arrayOf<Any>(schematicId, it.x, it.y, it.z, it.blocks, it.block) },
             )
         }
     }
@@ -47,9 +48,17 @@ class SchematicIndexRepository(private val jdbc: JdbcTemplate) {
     )
 
     fun cellsOf(schematicId: Long): List<Cell> = jdbc.query(
-        "SELECT cx, cy, cz, blocks FROM schematic_cells WHERE schematic_id = ?",
+        "SELECT cx, cy, cz, blocks, block_name FROM schematic_cells WHERE schematic_id = ?",
         { rs, _ ->
-            Cell(rs.getInt("cx"), rs.getInt("cy"), rs.getInt("cz"), rs.getInt("blocks"))
+            Cell(
+                rs.getInt("cx"),
+                rs.getInt("cy"),
+                rs.getInt("cz"),
+                rs.getInt("blocks"),
+                // Null for anything analysed before the column existed. Empty rather than a
+                // guessed name: the preview falls back to a default colour and says nothing false.
+                rs.getString("block_name") ?: "",
+            )
         },
         schematicId,
     )

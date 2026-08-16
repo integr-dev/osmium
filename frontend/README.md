@@ -131,6 +131,40 @@ second control for it would be a way to disagree with the agents.
 **The count is the selection.** Asking for a number of agents *and* which agents is asking the same
 question twice, and lets the two disagree.
 
+### Getting there takes a while, so say where it got to
+
+A schematic passes through three states before it can be looked at, and on a large file each is
+minutes long: bytes arriving, then waiting for the reader, then being read. One bar covers all three
+— an operator does not care where sending ends and reading begins, they care that it is still
+moving — with a line under it saying how far in.
+
+| State | Under the bar |
+|---|---|
+| Uploading | `24.0 MB of 180 MB · 13%`, a chunk at a time |
+| Queued | how many are ahead of it, from the backend's `queuePosition` |
+| Reading | the percentage, and which of the two passes it is on |
+
+**Queued was the one state that said nothing.** Just the word, and a bar that was not there — for
+what is usually several minutes of a *different* schematic being read, with nothing on screen to say
+that is what it was waiting for. It now gets an indeterminate bar rather than one sitting at zero,
+because there is no percentage of waiting and a still bar reads as stuck.
+
+**Reading says which pass** because the file is read twice — once for what it is, once for where its
+blocks are. Without that, a bar that goes past halfway and keeps climbing looks like it restarted.
+
+The upload bar moves a chunk at a time and is not smoothed. `fetch` reports nothing about a request
+body in flight, so the alternative is a bar that is guessing, and a guess is exactly what makes a
+stalled transfer look like a working one.
+
+**Finishing an upload is not news about the schematic.** What the last chunk answers with is a
+snapshot from inside its own transaction, so it always says `PENDING` and never carries a place in
+the queue — and the reading that follows can be over before that promise resolves, which on a small
+file takes tens of milliseconds. Applied over what the stream has already delivered it put the row
+back to waiting: Vue renders once, so the reading was erased before it was ever painted, and when
+`READY` arrived first the row stayed at waiting for good, because nothing publishes that schematic
+again. The stream owns the row; the upload's own answer is a fallback for the one case it cannot
+cover, an upload that outlived a reconnect which dropped the schematic's arrival.
+
 ### The box viewer
 
 `BoxViewer.vue` draws the schematic as a box that can be turned, and the same component draws the
@@ -141,6 +175,80 @@ is a reading of nothing.
 SVG rather than a 3D renderer, and `src/lib/box3d.ts` is why: labels stay screen-aligned instead of
 rotating with the geometry, depth order is exact rather than approximate because the boxes are
 disjoint and axis-aligned, and the geometry stays testable, which nothing drawn to a canvas is.
+
+### Shape, and bounds
+
+Two views of one schematic, and the switch between them is not a preference. **Shape** is the
+building itself as voxels, which is what answers "is this the right one". **Bounds** is the box, and
+a split is expressed in coordinates — drawing the division over a voxel model would hide the
+division behind the thing being divided. So the default follows the step: shape while choosing,
+bounds while dividing, either one click from the other.
+
+`VoxelViewer.vue` is **canvas**, unlike everything else here. Tens of thousands of cubes is hundreds
+of thousands of polygons and the DOM will not hold that many nodes, let alone re-lay them out during
+a drag. What that costs is the geometry being testable — so the geometry is not in the component:
+the rotation stays in `box3d.ts` and the draw order and face selection in `voxels.ts`, both specced.
+The component is the paint call.
+
+The ordering is worth knowing about. Axis-aligned cubes on a grid have an **exact** painter's order
+that depends only on which octant the camera is in — walk each axis away from the viewer and a cube
+is always drawn after anything it could be behind. Eight cases, and since there are only eight the
+sorted order is cached per octant: a drag that stays on one side of the model reuses it for every
+frame, and crossing to another side costs one sort.
+
+Four more things keep a frame cheap, and they are all the same idea — do it once instead of per
+face:
+
+- **Face visibility is decided once per frame**, not per voxel. Which of the six directions can face
+  a camera depends only on the rotation, so it is one calculation and then a bitwise `and` per cube.
+- **Shade is baked into the colour** rather than set as `globalAlpha`. Transparency was the expensive
+  part: an alpha change is a canvas state change *and* it forces the compositor to blend rather than
+  overwrite.
+- **Faces are batched by colour.** Two faces of one material and one direction now share a fill, so
+  they share a path — and the run is flushed the moment the colour changes, which is what keeps the
+  order between different colours exact. Safe under the nonzero fill rule because every face drawn
+  is turned towards the camera, and consistently wound faces seen from the front project with
+  consistent winding.
+- **The voxels are an `Int32Array`**, converted once per model rather than read as boxed numbers out
+  of parsed JSON on every frame.
+
+The resolution is the operator's to choose, as voxels along the longest axis — the honest control,
+since it is what bounds the work, where asking for blocks-per-voxel directly would let a large
+schematic ask for millions of cubes. What the slider reads back is the blocks-per-voxel it worked
+out to, which is the number anybody actually cares about.
+
+### Knowing which way is up
+
+Both viewers share the rotation, and they now share three decisions about orientation, because
+without them a schematic is a shape you cannot place yourself in.
+
+**The light is fixed to the world, not to the camera.** View-space lighting was the first attempt,
+on the reasoning that a face holding one brightness through a drag looks calmer. It does, and it
+costs the only thing shading is for: the top of the model was bright from one angle and dark from
+another, so nothing in the picture said which end was the roof. Fixed to the world, the top is
+always the brightest face and the underside always the darkest.
+
+The brightness *wraps* rather than clamping at zero. Clamping puts every face turned away from the
+light on the same ambient floor, and three sides at one grey read as a single surface — the model
+loses its corners exactly where it most needs them.
+
+**Negative pitch looks down.** Nothing in the arithmetic says so and the sign is easy to get
+backwards, which is how the viewer used to open underneath the building looking up at its floor. The
+default is stated once in `box3d.ts` and both viewers take it from there.
+
+**The range is lopsided on purpose.** Looking down stops short of vertical, where the model
+collapses to a plan. Looking *up* stops just past the horizon, and that one is about feel rather
+than the picture: from underneath, dragging left turns the model the way dragging right does from
+above. The arithmetic is correct and it reads as the control inverting itself, so the view does not
+go there. A shallow angle still shows an overhang or the underside of a floor.
+
+Related, and the other half of the same complaint: the drag and the arrow keys disagreed about which
+way was up — the pointer lowered the camera where `ArrowUp` raised it. Both now raise it, so
+dragging down rolls the top of the model towards you, the way taking hold of it would.
+
+The voxel viewer also strokes a **ground grid** on the `y = 0` plane before the model, extending a
+little past its footprint. Shading says which face is the top; a floor says where the bottom is,
+which shading alone cannot when the underside is not in view.
 
 ## Charts
 
@@ -486,7 +594,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-225 unit tests on Vitest with jsdom, in two groups.
+233 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
@@ -635,13 +743,13 @@ src/api/         generated schema, typed client, token storage, live-update and 
                  resumable schematic upload
 src/components/  FormField and AgentPicker, the add-host, add-agent and upload modals, the chat
                  rail and panel, the command palette, the sparkline and hourly bars, the language
-                 picker, the sign-in backdrop, the schematic library and the rotatable box viewer,
+                 picker, the sign-in backdrop, the schematic library, the box and voxel viewers,
                  the server-assignment and connection panels
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string, one file per locale
 src/lib/         everything computed away from a component: cursor-paged feeds, chat scopes,
-                 build and vitals arithmetic, chart and box geometry, shortcuts, panel resizing,
-                 and presentation maps for agent state, roles and permissions
+                 build and vitals arithmetic, chart, box and voxel geometry, shortcuts, panel
+                 resizing, and presentation maps for agent state, roles and permissions
 src/router/      routes and node-based guards
 src/stores/      auth, fleet, the chat rail, and the sampled history behind the sparklines (Pinia)
 src/test/        Vitest setup and the fetch stub

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Box, TriangleAlert, Upload } from 'lucide-vue-next'
 import FormField from './FormField.vue'
 import { uploadSchematic, type SchematicResponse } from '../api/schematics'
+import { bytes } from '../lib/bytes'
 
 /**
  * Sending a schematic, out of the way until it is wanted.
@@ -27,6 +28,15 @@ const file = ref<File | null>(null)
 const error = ref<string | null>(null)
 const sending = ref(false)
 const percent = ref(0)
+/**
+ * Bytes acknowledged, not bytes handed to `fetch`.
+ *
+ * It moves a chunk at a time, which on a slow connection is a bar that stands still for a while and
+ * then jumps. That is the honest picture: `fetch` reports nothing about an upload in flight, so the
+ * alternative is a smooth bar that is guessing, and a guess is what makes a stalled transfer look
+ * like a working one.
+ */
+const sent = ref(0)
 const upload = ref<AbortController | null>(null)
 
 watch(open, (isOpen) => {
@@ -36,6 +46,7 @@ watch(open, (isOpen) => {
       name.value = ''
       file.value = null
       percent.value = 0
+      sent.value = 0
     }
     error.value = null
     dialogEl.value?.showModal()
@@ -56,6 +67,7 @@ async function send() {
 
   sending.value = true
   percent.value = 0
+  sent.value = 0
   error.value = null
   upload.value = new AbortController()
 
@@ -64,8 +76,9 @@ async function send() {
       name: name.value.trim(),
       file: file.value,
       signal: upload.value.signal,
-      onProgress: ({ sent, total }) => {
-        percent.value = Math.round((sent / total) * 100)
+      onProgress: (progress) => {
+        sent.value = progress.sent
+        percent.value = Math.round((progress.sent / progress.total) * 100)
       },
     })
     emit('created', created)
@@ -117,7 +130,15 @@ async function send() {
 
         <div v-if="sending" class="flex flex-col gap-1">
           <progress class="progress progress-primary w-full" :value="percent" max="100"></progress>
-          <p class="text-xs opacity-60">{{ t('schematics.uploading', { percent }) }}</p>
+          <p class="text-xs tabular-nums opacity-60">
+            {{
+              t('schematics.uploading', {
+                sent: bytes(sent),
+                total: bytes(file?.size ?? 0),
+                percent,
+              })
+            }}
+          </p>
         </div>
 
         <div v-if="error" role="alert" class="alert alert-error alert-soft">

@@ -1,7 +1,13 @@
 package net.integr.osmium.schematic
 
-/** How many blocks sit in one cell of the grid, and where that cell is. */
-data class Cell(val x: Int, val y: Int, val z: Int, val blocks: Int)
+/**
+ * How many blocks sit in one cell of the grid, where that cell is, and what it is mostly made of.
+ *
+ * [block] is one name rather than a breakdown: the preview colours a cell, and a cell wide enough
+ * to hold two materials is a cell wider than either is worth distinguishing. Empty for rows written
+ * before the column existed, which is the one case a reader has to expect.
+ */
+data class Cell(val x: Int, val y: Int, val z: Int, val blocks: Int, val block: String = "")
 
 /** How much of one block type the whole schematic needs. */
 data class Material(val name: String, val blocks: Long)
@@ -23,6 +29,22 @@ class SchematicIndex(val cellEdge: Int, private val origin: Vec3i) {
     private val cells = HashMap<Long, Int>()
     private val materials = HashMap<String, Long>()
 
+    /**
+     * What each cell is mostly made of, as a running majority vote.
+     *
+     * Packed into one long — the leading block's id above, how far ahead it is below — so a cell
+     * costs sixteen bytes rather than a map of its own. A tally per cell would be exact and would
+     * also be a hash map allocated a quarter of a million times and written to once per block, on
+     * the one path that runs a billion times.
+     *
+     * The vote is Boyer–Moore: it returns the true majority whenever one exists, and something
+     * frequent when none does. For choosing a colour that distinction does not arise — a cell
+     * evenly split between two materials has no honest single colour anyway.
+     */
+    private val leading = HashMap<Long, Long>()
+    private val names = HashMap<String, Int>()
+    private val byId = ArrayList<String>()
+
     var blocks = 0L
         private set
 
@@ -36,7 +58,34 @@ class SchematicIndex(val cellEdge: Int, private val origin: Vec3i) {
             (z - origin.z) / cellEdge,
         )
         cells.merge(key, 1, Int::plus)
+        vote(key, idOf(name))
     }
+
+    private fun idOf(name: String): Int = names.getOrPut(name) {
+        byId += name
+        byId.size - 1
+    }
+
+    private fun vote(key: Long, id: Int) {
+        val current = leading[key]
+        if (current == null) {
+            leading[key] = pack(id, 1)
+            return
+        }
+
+        val leader = (current ushr 32).toInt()
+        val margin = current.toInt()
+
+        leading[key] = when {
+            leader == id -> pack(leader, margin + 1)
+            // Behind by one more. At zero the next block of any kind takes the lead, which is what
+            // makes this a majority vote rather than a first-past-the-post one.
+            margin > 1 -> pack(leader, margin - 1)
+            else -> pack(id, 1)
+        }
+    }
+
+    private fun pack(id: Int, margin: Int): Long = (id.toLong() shl 32) or margin.toLong()
 
     /**
      * Only the cells that hold something.
@@ -45,7 +94,13 @@ class SchematicIndex(val cellEdge: Int, private val origin: Vec3i) {
      * larger than the thing inside it, and storing its empty cells would be storing the box.
      */
     fun cells(): List<Cell> = cells.map { (key, blocks) ->
-        Cell(x = unpack(key, 42), y = unpack(key, 21), z = unpack(key, 0), blocks = blocks)
+        Cell(
+            x = unpack(key, 42),
+            y = unpack(key, 21),
+            z = unpack(key, 0),
+            blocks = blocks,
+            block = leading[key]?.let { byId[(it ushr 32).toInt()] } ?: "",
+        )
     }
 
     /** Heaviest first, which is the order a material list is read in. */

@@ -7,6 +7,7 @@ import net.integr.osmium.schematic.dto.MaterialResponse
 import net.integr.osmium.schematic.dto.RenameSchematicRequest
 import net.integr.osmium.schematic.SplitMode
 import net.integr.osmium.schematic.dto.SchematicResponse
+import net.integr.osmium.schematic.dto.ShapeResponse
 import net.integr.osmium.schematic.dto.SplitResponse
 import net.integr.osmium.schematic.service.SchematicService
 import org.springframework.http.HttpStatus
@@ -50,6 +51,18 @@ class SchematicController(private val service: SchematicService) {
     fun materials(@PathVariable id: Long): List<MaterialResponse> = service.materials(id)
 
     /**
+     * The schematic as a voxel model, for the preview.
+     *
+     * `detail` is voxels along the longest axis, which is the honest unit: it bounds what comes
+     * back rather than describing what is in the file, and the same schematic at 32 and at 96 is
+     * the same building at two resolutions.
+     */
+    @GetMapping("/{id}/shape")
+    @PreAuthorize("hasAuthority('schematic.read')")
+    fun shape(@PathVariable id: Long, @RequestParam(defaultValue = "64") detail: Int): ShapeResponse =
+        service.shape(id, detail)
+
+    /**
      * How the build divides between a number of agents.
      *
      * A GET because it is a question rather than an act: the answer is a pure function of the
@@ -87,6 +100,16 @@ class SchematicController(private val service: SchematicService) {
         @RequestParam offset: Long,
         request: HttpServletRequest,
     ): SchematicResponse = service.append(id, offset, request.inputStream)
+
+    /**
+     * Reads an already-uploaded file again, in place.
+     *
+     * `schematic.write` rather than `read`: it costs minutes of a worker and rewrites the index,
+     * which is a change to the schematic even though the file is untouched.
+     */
+    @PostMapping("/{id}/reanalyse")
+    @PreAuthorize("hasAuthority('schematic.write')")
+    fun reanalyse(@PathVariable id: Long): SchematicResponse = service.reanalyse(id)
 
     @PatchMapping("/{id}")
     @PreAuthorize("hasAuthority('schematic.write')")

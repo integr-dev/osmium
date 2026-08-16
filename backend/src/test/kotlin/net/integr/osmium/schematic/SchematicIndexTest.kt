@@ -23,8 +23,8 @@ class SchematicIndexTest {
         val cells = index.cells().sortedBy { it.x }
 
         assertEquals(2, cells.size)
-        assertEquals(Cell(0, 0, 0, 2), cells[0])
-        assertEquals(Cell(1, 0, 0, 1), cells[1])
+        assertEquals(Cell(0, 0, 0, 2, "minecraft:stone"), cells[0])
+        assertEquals(Cell(1, 0, 0, 1, "minecraft:stone"), cells[1])
         assertEquals(3L, index.blocks)
     }
 
@@ -47,7 +47,32 @@ class SchematicIndexTest {
         index.add(-4000, -64, -4000, "minecraft:stone")
         index.add(-3985, -49, -3985, "minecraft:stone")
 
-        assertEquals(listOf(Cell(0, 0, 0, 2)), index.cells())
+        assertEquals(listOf(Cell(0, 0, 0, 2, "minecraft:stone")), index.cells())
+    }
+
+    @Test
+    fun `records what each cell is mostly made of`() {
+        // The colour of a voxel. A cell of nine stone and one glass is a stone cell, whatever order
+        // the two arrived in — "whichever was last" would make the picture depend on the read order.
+        val index = index()
+        repeat(9) { index.add(it, 0, 0, "minecraft:stone") }
+        index.add(9, 0, 0, "minecraft:glass")
+
+        assertEquals("minecraft:stone", index.cells().single().block)
+    }
+
+    @Test
+    fun `holds the majority whatever order it arrives in`() {
+        // The vote is a running one — two numbers per cell rather than a tally — so a material that
+        // leads early and is overtaken must still lose. Interleaved is the case that catches it.
+        val index = index()
+        repeat(4) {
+            index.add(0, 0, 0, "minecraft:glass")
+            index.add(1, 0, 0, "minecraft:stone")
+            index.add(2, 0, 0, "minecraft:stone")
+        }
+
+        assertEquals("minecraft:stone", index.cells().single().block)
     }
 
     @Test

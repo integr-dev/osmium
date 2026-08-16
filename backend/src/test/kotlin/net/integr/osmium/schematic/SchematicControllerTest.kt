@@ -5,8 +5,12 @@ import net.integr.osmium.TestcontainersConfiguration
 import net.integr.osmium.account.model.User
 import net.integr.osmium.account.repository.RoleRepository
 import net.integr.osmium.account.repository.UserRepository
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.schematic.config.SchematicProperties
 import net.integr.osmium.schematic.repository.SchematicIndexRepository
 import net.integr.osmium.schematic.repository.SchematicRepository
+import net.integr.osmium.schematic.service.SchematicAnalyser
+import net.integr.osmium.schematic.service.SchematicAnalysisQueue
 import net.integr.osmium.schematic.service.SchematicStorage
 import net.integr.osmium.security.RoleNames
 import net.integr.osmium.security.encodeRequired
@@ -14,9 +18,11 @@ import net.integr.osmium.web.ApiExceptionHandler
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -30,6 +36,8 @@ import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.put
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The upload path end to end, against a real database and a real directory.
@@ -59,6 +67,9 @@ class SchematicControllerTest {
     @Autowired private lateinit var userRepository: UserRepository
     @Autowired private lateinit var roleRepository: RoleRepository
     @Autowired private lateinit var passwordEncoder: PasswordEncoder
+    @Autowired private lateinit var properties: SchematicProperties
+    @Autowired private lateinit var broker: LiveUpdateBroker
+    @Autowired private lateinit var analyser: SchematicAnalyser
 
     private val file: ByteArray = SchematicFixtures.litematic(
         listOf(
@@ -203,6 +214,72 @@ class SchematicControllerTest {
     }
 
     @Test
+    fun `hands back a voxel model of the build`() {
+        val id: Int = JsonPath.read(create().andReturn().response.contentAsString, "$.id")
+        send(id.toLong(), 0, file)
+        assertEquals("READY", settled(id.toLong()))
+
+        mockMvc.get("/api/schematics/$id/shape?detail=64") {
+            header(HttpHeaders.AUTHORIZATION, "Bearer ${token("sch-viewer")}")
+        }.andExpect {
+            status { isOk() }
+            // Small enough to draw a voxel per block, so nothing is approximated.
+            jsonPath("$.voxelSize") { value(1) }
+            // Three, not the region's four: the model is fitted to where the blocks are rather than
+            // to the extent that was declared, and this fixture only fills even columns.
+            jsonPath("$.sizeX") { value(3) }
+            // Every other position is stone, so no voxel has a neighbour and none is enclosed.
+            jsonPath("$.count") { value(8) }
+            jsonPath("$.hidden") { value(0) }
+            // Flat: five numbers per cube, not five fields. At tens of thousands of them the field
+            // names would be most of the response.
+            jsonPath("$.voxels.length()") { value(40) }
+            // Every block in the fixture is stone, so the palette is the unknown entry plus it.
+            jsonPath("$.palette[1]") { value("minecraft:stone") }
+        }
+    }
+
+    @Test
+    fun `reads an already-uploaded file again`() {
+        val id: Int = JsonPath.read(create().andReturn().response.contentAsString, "$.id")
+        send(id.toLong(), 0, file)
+        assertEquals("READY", settled(id.toLong()))
+
+        // The file is the durable thing and the index is derived from it, so anything the index
+        // learns to record leaves earlier schematics describing less than they could. Re-reading is
+        // the alternative to sending gigabytes again to recompute what is already on disk.
+        mockMvc.post("/api/schematics/$id/reanalyse") {
+            header(HttpHeaders.AUTHORIZATION, "Bearer ${token("sch-orchestrator")}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.status") { value("PENDING") }
+        }
+
+        assertEquals("READY", settled(id.toLong()))
+        assertEquals(8L, repository.findById(id.toLong()).get().blockCount)
+    }
+
+    @Test
+    fun `a viewer may not ask for a re-read`() {
+        val id: Int = JsonPath.read(create().andReturn().response.contentAsString, "$.id")
+
+        // It costs minutes of a worker and rewrites the index, which is a change to the schematic
+        // even though the file is untouched.
+        mockMvc.post("/api/schematics/$id/reanalyse") {
+            header(HttpHeaders.AUTHORIZATION, "Bearer ${token("sch-viewer")}")
+        }.andExpect { status { isForbidden() } }
+    }
+
+    @Test
+    fun `refuses to draw a schematic that has not been read`() {
+        val id: Int = JsonPath.read(create().andReturn().response.contentAsString, "$.id")
+
+        mockMvc.get("/api/schematics/$id/shape") {
+            header(HttpHeaders.AUTHORIZATION, "Bearer ${token("sch-viewer")}")
+        }.andExpect { status { isConflict() } }
+    }
+
+    @Test
     fun `divides a schematic between agents`() {
         val id: Int = JsonPath.read(create().andReturn().response.contentAsString, "$.id")
         send(id.toLong(), 0, file)
@@ -340,5 +417,49 @@ class SchematicControllerTest {
     fun `refuses a second schematic with the same name`() {
         create().andExpect { status { isCreated() } }
         create().andExpect { status { isConflict() } }
+    }
+
+    /**
+     * Where each waiting schematic is in the line.
+     *
+     * Against a queue of its own, with a worker held on its first schematic. The application's queue
+     * drains as fast as ids reach it, so a line long enough to have positions in it never exists for
+     * long enough to be looked at — and a test that waited for one to appear would be a test that
+     * passes only when the machine is busy.
+     */
+    @Test
+    fun `tells each waiting schematic how many are ahead of it`() {
+        val taken = CountDownLatch(1)
+        val release = CountDownLatch(1)
+
+        val queue = SchematicAnalysisQueue(
+            analyser = object : ObjectProvider<SchematicAnalyser> {
+                override fun getObject(): SchematicAnalyser {
+                    taken.countDown()
+                    release.await()
+                    // The real one, which finds no such row and returns. Anything thrown here would
+                    // be caught by the worker and logged as the machinery having failed.
+                    return analyser
+                }
+            },
+            repository = repository,
+            properties = properties,
+            broker = broker,
+        )
+
+        try {
+            queue.enqueue(1)
+            assertTrue(taken.await(5, TimeUnit.SECONDS), "The worker never took the first schematic")
+
+            listOf(2L, 3L, 4L).forEach(queue::enqueue)
+
+            // The one being read is in no line at all; the rest are numbered from the front.
+            assertNull(queue.positionOf(1))
+            assertEquals(mapOf(2L to 1, 3L to 2, 4L to 3), queue.positions())
+            assertEquals(3, queue.depth())
+        } finally {
+            release.countDown()
+            queue.stop()
+        }
     }
 }

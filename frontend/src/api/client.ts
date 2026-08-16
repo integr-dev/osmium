@@ -59,6 +59,11 @@ export type SchematicResponse = Required<components['schemas']['SchematicRespons
 export type MaterialResponse = Required<components['schemas']['MaterialResponse']>
 export type SegmentResponse = Required<components['schemas']['SegmentResponse']>
 
+/** Flat: x, y, z, faces repeated. See the shape endpoint for why it is not a list of objects. */
+export type ShapeResponse = Omit<Required<components['schemas']['ShapeResponse']>, 'voxels'> & {
+  voxels: number[]
+}
+
 /**
  * `Omit` rather than an intersection, unlike the ones above. Intersecting an array does not replace
  * its element type — `Segment[] & OptionalSegment[]` still indexes to something optional — so the

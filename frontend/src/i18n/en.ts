@@ -344,7 +344,7 @@ export const en = {
     filterPlaceholder: 'Search schematics',
     noMatches: 'Nothing matches that.',
     upload: 'Upload',
-    uploading: 'Sending… {percent}%',
+    uploading: 'Sending… {sent} of {total} · {percent}%',
     cancel: 'Cancel',
     namePlaceholder: 'Name this schematic',
     name: 'Name',
@@ -362,6 +362,16 @@ export const en = {
     statusREADY: 'Ready',
     statusFAILED: 'Failed',
 
+    /**
+     * How far into that state, under the bar. The badge says which stage; these say how much of it
+     * is left, which for a queued schematic is the only thing that was ever missing.
+     */
+    progressUploading: '{sent} of {total} · {percent}%',
+    progressWaiting: 'Waiting to be read',
+    progressNext: 'Next to be read',
+    progressQueued: 'Waiting · {ahead} ahead of it',
+    progressReading: '{percent}% · pass {pass} of 2',
+
     blocks: 'Blocks',
     volume: 'Volume',
     regions: 'Regions',
@@ -370,6 +380,15 @@ export const en = {
     materials: 'Materials',
     noMaterials: 'Nothing to gather.',
     dragHint: 'Drag to turn. Arrow keys work too.',
+    reread: 'Re-read',
+    rereadHint: 'Reads the uploaded file again, without sending it again.',
+    viewShape: 'Shape',
+    detail: 'Detail',
+    viewBounds: 'Bounds',
+    shapeExact: 'One voxel per block.',
+    shapeCoarse: 'One voxel per {size} blocks — a massing model, not a picture.',
+    shapeOf: 'A model of a build {x} by {y} by {z} blocks',
+    splitOnBounds: 'The division is drawn on Bounds.',
     uploadedBy: 'Uploaded by {name}',
     builders: 'Agents',
     buildingOn: 'Building on',

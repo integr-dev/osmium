@@ -1,0 +1,12 @@
+-- What each cell of the occupancy index is mostly made of.
+--
+-- The index was built to answer "how many blocks are here", which is all a split needs. Drawing the
+-- schematic needs one more thing: something to colour a voxel with. One name rather than a
+-- breakdown, because a cell wide enough to hold two materials is a cell wider than either is worth
+-- distinguishing — and because a tally per cell would be a hash map allocated a quarter of a
+-- million times and written to once per block, on the path that runs a billion times.
+--
+-- Nullable, and left null on existing rows. Backfilling would mean re-reading every uploaded file,
+-- which is minutes each; a schematic analysed before this renders in the default colour until it is
+-- read again, and says nothing false in the meantime.
+ALTER TABLE schematic_cells ADD COLUMN block_name VARCHAR(128);

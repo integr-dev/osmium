@@ -204,6 +204,7 @@ changes automatically.
 | `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
 | `GET` | `/api/schematics`, `/api/schematics/{id}` | `schematic.read` |
 | `GET` | `/api/schematics/{id}/materials` | `schematic.read` (by block, heaviest first) |
+| `GET` | `/api/schematics/{id}/shape` | `schematic.read` (a voxel model; `detail` bounds what comes back) |
 | `GET` | `/api/schematics/{id}/split` | `schematic.read` (`mode` and `parts`; computed, never stored) |
 | `POST` | `/api/schematics` | `schematic.write` (declares name, filename and size; no bytes yet) |
 | `PUT` | `/api/schematics/{id}/content` | `schematic.write` (raw bytes at `offset`; **409** carries the real one) |
@@ -495,6 +496,14 @@ Three properties are load-bearing:
   it would announce changes a rollback then discards, and a client applying them in place has no way
   to learn it was told a lie. This is the mirror image of the audit log, which writes *inside* the
   transaction so an entry exists only if the command committed.
+- **Progress does not**, and `publishNow` is the exception that says so. A unit of work that runs for
+  minutes inside one transaction and reports how far it has got has nothing left to say by the time
+  that transaction commits: deferred, every report arrives in one burst at the end, and the pass
+  reads as silence followed by a finished job. That is precisely what the schematic reader did — it
+  held browsers on "queued" for the whole length of a read. Progress is not a state anything can roll
+  back to a wrong value, so it goes out immediately; the settled result at the end still waits.
+  `publishNow` is also the only thing that works from inside an `afterCommit` callback, where the
+  synchronization list has already been walked and an ordinary publish is dropped in silence.
 - **Streams re-read authority every 30s**, and a demotion *narrows* one rather than only being able
   to end it. Authorities resolve per request for REST, so a demotion bites immediately there; a
   stream authorises once and would otherwise run for hours. Only losing `user.read.self` — the node
@@ -1026,9 +1035,28 @@ reading the same database, and handed an id directly it wins the race often enou
 looks the row up, does not find it, decides there is nothing to do, and drops it. Nothing else
 would have come back to it.
 
-Progress is published on the live channel as `schematic`, throttled at the source. A file of several
-gigabytes takes minutes to arrive and minutes more to read, and without it the interface has a row
-saying "analysing" and no way to tell a long job from a stuck one.
+Progress is published on the live channel as `schematic`, throttled at the source and sent with
+`publishNow`. A file of several gigabytes takes minutes to arrive and minutes more to read, and
+without it the interface has a row saying "analysing" and no way to tell a long job from a stuck one.
+
+**The reading is one transaction, so its reports cannot wait for it.** The whole pass runs inside
+`analyse`, and the ordinary publish holds events until commit — which for a schematic is the moment
+the read finishes. Every report then arrived at once, after `READY`, and the row appeared to sit at
+"queued" for the entire pass and then jump straight to ready. The flip to `ANALYSING` and each report
+are delivered immediately; only the settled result at the end is allowed to wait for the commit that
+makes it true.
+
+**The queue announces its own line.** `queuePosition` on the schematic says where a waiting file
+sits, 1 meaning next. It is not on the row and could not be: it is a fact about the *other*
+schematics, so it would have to be rewritten on every one of them each time one is taken. Nor can it
+be worked out from the row being sent — the only moment it changes for a waiting schematic is when a
+different schematic is taken, and nothing touches the waiting one then. So the queue publishes the
+whole line whenever it moves, on `enqueue` and again the instant the worker takes the head. The line
+is a handful of entries at worst; a queue long enough for that to cost anything is a queue nobody
+reaches the end of today.
+
+It is null for the moment between the last chunk landing and the queue being joined, because joining
+waits for that transaction to commit. The announcement that follows carries the real place.
 
 ## What a pass leaves behind
 
@@ -1062,6 +1090,35 @@ ended, for rows written once, read as a set and never updated.
 
 Both cascade from the schematic in the schema. Orphaned cells are invisible — they belong to no
 schematic, so nothing ever lists them — and they are the bulk of these tables.
+
+## Drawing one
+
+`GET /api/schematics/{id}/shape?detail=` answers with the build as voxels, read from the occupancy
+index rather than the file — so it costs a query rather than a pass, and inherits the index's limit:
+it knows how many blocks are in a cell, never where inside it. Past a certain size this is a massing
+model and not a picture, and the interface says which it is looking at.
+
+A quarter of a million cubes is more than a browser will draw at a frame rate anybody can drag
+against, so three things reduce it and only the last is the browser's:
+
+**Coarsening.** Cells are merged until the longest axis fits inside `detail`, which bounds the grid to
+`detail³` before anything else happens. By halving rather than by an arbitrary divisor, so a voxel is
+exactly the union of the cells under it and a block cannot land in two.
+
+**Enclosure.** Every voxel with all six neighbours present is dropped. Those are interior — not
+hidden from *this* angle but from every angle — so it is exact rather than an approximation, and it
+is where the saving is: coarsening turns a building into something closer to solid, and a solid's
+inside grows as the cube of its size while its surface grows as the square. A ten-cube of a thousand
+voxels has 488 worth drawing.
+
+**Exposure.** Each voxel carries a bitmask of the sides with nothing against them, decided here once
+instead of in the browser sixty times a second. Of those the browser draws only the three that can
+face a camera, in an order that needs no sorting at all: axis-aligned cubes on a grid have an exact
+painter's order that depends only on which octant the camera is in.
+
+The response is **flat** — `x, y, z, faces` repeated — rather than a list of objects. At tens of
+thousands of cubes the field names would be most of the payload, and it is read once into an array
+rather than being a shape anything works with.
 
 ## Dividing a build between agents
 
@@ -1141,7 +1198,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-372 tests across 31 classes. Most run against a real Postgres 18 through Testcontainers with
+384 tests across 32 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

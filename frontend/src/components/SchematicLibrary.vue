@@ -5,6 +5,7 @@ import {
   Box,
   Hammer,
   Scissors,
+  RotateCw,
   Search,
   Server,
   TriangleAlert,
@@ -13,19 +14,24 @@ import {
 } from 'lucide-vue-next'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
+import VoxelViewer from './VoxelViewer.vue'
 import SchematicUploadModal from './SchematicUploadModal.vue'
 import {
   deleteSchematic,
   listSchematics,
   schematicMaterials,
+  reanalyseSchematic,
+  schematicShape,
   splitSchematic,
   type SchematicResponse,
+  type ShapeResponse,
   type SplitMode,
   type SplitResponse,
 } from '../api/schematics'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import type { Box as Box3d } from '../lib/box3d'
+import { bytes } from '../lib/bytes'
 
 /**
  * Starting a build: choose what, choose who, divide it up.
@@ -81,6 +87,96 @@ const selected = computed(() => schematics.value.find((item) => item.id === sele
 
 /** A schematic that has not been read has no shape, no materials and nothing to divide. */
 const ready = computed(() => selected.value?.status === 'READY')
+
+/**
+ * Two ways of looking at the same schematic.
+ *
+ * **Shape** is the building itself, as voxels: what an operator wants when the question is "is this
+ * the right one". **Bounds** is the box, which is what a split is expressed in — a segment is a
+ * range of coordinates, and drawing the division over a voxel model would hide the division behind
+ * the thing being divided.
+ *
+ * So the default follows the step rather than being a preference: shape while choosing, bounds
+ * while dividing. Either is one click from the other.
+ */
+const view = ref<'shape' | 'bounds'>('shape')
+
+/**
+ * How fine the preview is, as voxels along the longest axis.
+ *
+ * The honest control: it bounds what the backend hands back, where asking for blocks-per-voxel
+ * directly would let a large schematic ask for millions of cubes. What the operator reads is the
+ * blocks-per-voxel it worked out to, which is the number they actually care about.
+ *
+ * The finest this schematic can be drawn: one voxel per index cell.
+ *
+ * Not always one voxel per *block*. The index counts cells and coarsens its own grid for a large
+ * build, so its cell size is the floor here — asking for more would be asking for detail that was
+ * never recorded. A house indexes at one block per cell and reaches 1:1; a cathedral indexes at
+ * four and reaches four.
+ */
+const finest = computed(() => {
+  const content = selected.value?.content
+  if (!content?.sizeX || !content.sizeY || !content.sizeZ) return 128
+
+  const span = Math.max(content.sizeX, content.sizeY, content.sizeZ)
+  return Math.min(1024, Math.max(8, Math.ceil(span / (content.cellSize ?? 1))))
+})
+
+/**
+ * The steps the slider offers, ending at whatever this schematic's finest is.
+ *
+ * Coarse steps are the ones worth having for a large build — the difference between 16 and 24
+ * voxels across is visible, the difference between 500 and 508 is not — so they widen as they go
+ * and the last one is the floor rather than a round number.
+ */
+const DETAILS = computed(() => {
+  const steps = [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512].filter(
+    (step) => step < finest.value,
+  )
+  return [...steps, finest.value]
+})
+
+const detailStep = ref(0)
+
+const detail = computed(() => DETAILS.value[detailStep.value] ?? 64)
+
+// Back to the default whenever the schematic changes: the step that was right for the last one is
+// an index into a different list, and 64 is where this started.
+watch(
+  () => [selectedId.value, DETAILS.value] as const,
+  ([, steps]) => {
+    const near = steps.findIndex((step) => step >= 64)
+    detailStep.value = near === -1 ? steps.length - 1 : near
+  },
+  { immediate: true },
+)
+
+/** Keyed by schematic *and* detail: the same build at two resolutions is two models. */
+const shapes = new Map<string, ShapeResponse>()
+const shape = ref<ShapeResponse | null>(null)
+const loadingShape = ref(false)
+
+watch(
+  () => [selectedId.value, ready.value, view.value, detail.value] as const,
+  async ([id, isReady, mode, fineness]) => {
+    const key = `${id}@${fineness}`
+    shape.value = id === null ? null : (shapes.get(key) ?? null)
+    if (id === null || !isReady || mode !== 'shape' || shape.value) return
+
+    loadingShape.value = true
+    try {
+      const model = await schematicShape(id, fineness)
+      shapes.set(key, model)
+      if (selectedId.value === id) shape.value = model
+    } catch (failure) {
+      emit('failed', failure instanceof Error ? failure.message : t('errors.generic'))
+    } finally {
+      loadingShape.value = false
+    }
+  },
+  { immediate: true },
+)
 
 /**
  * The box as the operator will place it. Its own coordinates, not a normalised one: the corner
@@ -169,6 +265,12 @@ function go(to: Step) {
   step.value = to
 }
 
+// Shape while choosing, bounds while dividing — the split is drawn in coordinates, and a division
+// over a voxel model hides the very thing being divided.
+watch(step, (to) => {
+  view.value = to === 'split' ? 'bounds' : 'shape'
+})
+
 function next() {
   const at = STEPS.indexOf(step.value)
   if (at < STEPS.length - 1 && canAdvance.value) step.value = STEPS[at + 1]!
@@ -211,9 +313,36 @@ function apply(incoming: SchematicResponse) {
   else schematics.value[index] = incoming
 }
 
+/**
+ * The upload finished. Which is **not** news about the schematic's state.
+ *
+ * What comes back is the last chunk's answer, written inside that request's transaction, so it
+ * always says PENDING and never carries a place in the queue. The reading that follows can be over
+ * before this promise resolves — on a small file it takes tens of milliseconds — and applied over
+ * what the stream has already delivered it puts the row back to waiting. Vue renders once, so the
+ * reading is erased before it is ever painted, and if READY arrived first the row stays at waiting
+ * for good, because nothing will publish that schematic again.
+ *
+ * So the stream owns the row from here, and this is only a fallback for the one case it cannot
+ * cover: the upload having outlived a reconnect that dropped the event announcing the schematic.
+ */
 function uploaded(schematic: SchematicResponse) {
-  apply(schematic)
+  if (!schematics.value.some((item) => item.id === schematic.id)) apply(schematic)
   selectedId.value = schematic.id
+}
+
+/**
+ * Reads the file again. Wanted whenever the index has learned to record something a schematic was
+ * analysed before — its cached shape goes with it, or the old one would be redrawn over the new.
+ */
+async function reread(schematic: SchematicResponse) {
+  try {
+    apply(await reanalyseSchematic(schematic.id))
+    DETAILS.value.forEach((fineness) => shapes.delete(`${schematic.id}@${fineness}`))
+    shape.value = null
+  } catch (failure) {
+    emit('failed', failure instanceof Error ? failure.message : t('errors.generic'))
+  }
 }
 
 async function runSplit() {
@@ -288,15 +417,52 @@ const statusTone: Record<string, string> = {
   FAILED: 'badge-error',
 }
 
-function bytes(count: number): string {
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = count
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
+/** Still moving, and therefore worth a bar. */
+function inFlight(schematic: SchematicResponse): boolean {
+  return (
+    schematic.status === 'UPLOADING' ||
+    schematic.status === 'PENDING' ||
+    schematic.status === 'ANALYSING'
+  )
+}
+
+/**
+ * What is happening to a schematic, in words, under its bar.
+ *
+ * The badge already names the state; this says how far into it. Queued was the one state with
+ * neither — a word and a still bar, for what on a large build is several minutes of a *different*
+ * schematic being read, with nothing on screen to say that is what it is waiting for.
+ *
+ * Null once it has settled, and the row goes back to showing its size.
+ */
+function progressOf(schematic: SchematicResponse): string | null {
+  switch (schematic.status) {
+    case 'UPLOADING':
+      return t('schematics.progressUploading', {
+        sent: bytes(schematic.receivedBytes),
+        total: bytes(schematic.sizeBytes),
+        percent: schematic.progressPercent,
+      })
+
+    case 'PENDING':
+      // Null rather than 1 for the moment between the last chunk landing and the queue being
+      // joined — the backend cannot know the place yet, and guessing at it would be a number that
+      // changes for no reason a second later.
+      if (schematic.queuePosition == null) return t('schematics.progressWaiting')
+      if (schematic.queuePosition <= 1) return t('schematics.progressNext')
+      return t('schematics.progressQueued', { ahead: schematic.queuePosition - 1 })
+
+    case 'ANALYSING':
+      // The file is read twice — once for what it is, once for where its blocks are — so a bar
+      // that reached halfway and kept going is not a stall. Said, rather than left to look like one.
+      return t('schematics.progressReading', {
+        percent: schematic.progressPercent,
+        pass: schematic.progressPercent < 50 ? 1 : 2,
+      })
+
+    default:
+      return null
   }
-  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 </script>
 
@@ -372,17 +538,27 @@ function bytes(count: number): string {
             </span>
 
             <!--
-              One bar for two stages. An operator watching an upload does not care where sending
-              ends and reading begins; they care that it is still moving.
+              One bar for three stages. An operator watching an upload does not care where sending
+              ends, waiting begins and reading takes over; they care that it is still moving.
+
+              Queued gets an indeterminate bar rather than an empty one: there is no percentage of
+              waiting, and a bar sitting at zero says stuck where a moving one says pending.
             -->
             <progress
-              v-if="schematic.status === 'UPLOADING' || schematic.status === 'ANALYSING'"
+              v-if="schematic.status === 'PENDING'"
+              class="progress progress-primary h-1 w-full"
+            ></progress>
+            <progress
+              v-else-if="schematic.status === 'UPLOADING' || schematic.status === 'ANALYSING'"
               class="progress progress-primary h-1 w-full"
               :value="schematic.progressPercent"
               max="100"
             ></progress>
 
-            <span class="text-xs opacity-50">
+            <span v-if="inFlight(schematic)" class="text-xs tabular-nums opacity-50">
+              {{ progressOf(schematic) }}
+            </span>
+            <span v-else class="text-xs opacity-50">
               {{ bytes(schematic.sizeBytes) }}
               <template v-if="schematic.content.blockCount">
                 · {{ n(schematic.content.blockCount) }} {{ t('schematics.blocks').toLowerCase() }}
@@ -404,9 +580,20 @@ function bytes(count: number): string {
                 {{ t(`schematics.status${selected.status}`) }}
               </span>
               <button
-                v-if="auth.can('schematic.delete')"
+                v-if="auth.can('schematic.write') && (ready || selected.status === 'FAILED')"
                 type="button"
                 class="btn btn-ghost btn-xs ml-auto gap-1"
+                :title="t('schematics.rereadHint')"
+                @click="reread(selected)"
+              >
+                <RotateCw class="size-3.5" />
+                {{ t('schematics.reread') }}
+              </button>
+              <button
+                v-if="auth.can('schematic.delete')"
+                type="button"
+                class="btn btn-ghost btn-xs gap-1"
+                :class="auth.can('schematic.write') ? '' : 'ml-auto'"
                 @click="askToRemove(selected)"
               >
                 <Trash2 class="size-3.5" />
@@ -444,8 +631,65 @@ function bytes(count: number): string {
             -->
             <div v-if="ready" class="grid gap-4 xl:grid-cols-[1fr_15rem]">
               <div class="flex min-w-0 flex-col gap-2">
-                <BoxViewer :boxes="boxes" corners />
-                <p class="text-xs opacity-50">{{ t('schematics.dragHint') }}</p>
+                <VoxelViewer v-if="view === 'shape'" :shape="shape" />
+                <BoxViewer v-else :boxes="boxes" corners />
+
+                <div class="flex flex-wrap items-center gap-3">
+                  <div role="tablist" class="tabs tabs-box tabs-xs">
+                    <button
+                      type="button"
+                      role="tab"
+                      class="tab"
+                      :class="view === 'shape' ? 'tab-active' : ''"
+                      @click="view = 'shape'"
+                    >
+                      {{ t('schematics.viewShape') }}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      class="tab"
+                      :class="view === 'bounds' ? 'tab-active' : ''"
+                      @click="view = 'bounds'"
+                    >
+                      {{ t('schematics.viewBounds') }}
+                    </button>
+                  </div>
+
+                  <p v-if="view !== 'shape'" class="text-xs opacity-50">
+                    {{ t('schematics.dragHint') }}
+                  </p>
+
+                  <!--
+                    Resolution, in voxels along the longest axis, because that is what bounds the
+                    work. What is read back is blocks per voxel, which is what an operator is
+                    actually choosing between.
+                  -->
+                  <label v-else class="ml-auto flex items-center gap-2">
+                    <span class="text-xs opacity-50">{{ t('schematics.detail') }}</span>
+                    <input
+                      v-model.number="detailStep"
+                      type="range"
+                      min="0"
+                      :max="DETAILS.length - 1"
+                      step="1"
+                      class="range range-xs w-28"
+                    />
+                    <span class="text-xs tabular-nums opacity-40">
+                      <template v-if="loadingShape">
+                        <span class="loading loading-spinner loading-xs"></span>
+                      </template>
+                      <template v-else-if="shape">
+                        {{
+                          shape.voxelSize > 1
+                            ? t('schematics.shapeCoarse', { size: shape.voxelSize })
+                            : t('schematics.shapeExact')
+                        }}
+                        · {{ n(shape.count) }}
+                      </template>
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <div class="flex min-w-0 flex-col gap-3">
@@ -613,8 +857,38 @@ function bytes(count: number): string {
           change and nothing else does. Corner coordinates are dropped once there are several:
           eight labels per segment is not a reading of anything.
         -->
-        <BoxViewer :boxes="splitBoxes ?? boxes" :corners="!splitBoxes" />
-        <p class="text-xs opacity-50">{{ t('schematics.dragHint') }}</p>
+        <VoxelViewer v-if="view === 'shape'" :shape="shape" />
+        <BoxViewer v-else :boxes="splitBoxes ?? boxes" :corners="!splitBoxes" />
+
+        <div class="flex flex-wrap items-center gap-3">
+          <div role="tablist" class="tabs tabs-box tabs-xs">
+            <button
+              type="button"
+              role="tab"
+              class="tab"
+              :class="view === 'shape' ? 'tab-active' : ''"
+              @click="view = 'shape'"
+            >
+              {{ t('schematics.viewShape') }}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="tab"
+              :class="view === 'bounds' ? 'tab-active' : ''"
+              @click="view = 'bounds'"
+            >
+              {{ t('schematics.viewBounds') }}
+            </button>
+          </div>
+
+          <!-- The division is drawn in coordinates, so it only exists on the box view. Said here
+               rather than left as a picture that silently stops showing what was just computed. -->
+          <p v-if="view === 'shape' && split" class="text-xs opacity-50">
+            {{ t('schematics.splitOnBounds') }}
+          </p>
+          <p v-else class="text-xs opacity-50">{{ t('schematics.dragHint') }}</p>
+        </div>
       </div>
     </div>
 

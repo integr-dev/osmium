@@ -114,6 +114,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics/{id}/reanalyse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reanalyse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts": {
         parameters: {
             query?: never;
@@ -534,6 +550,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics/{id}/shape": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["shape"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schematics/{id}/materials": {
         parameters: {
             query?: never;
@@ -819,6 +851,8 @@ export interface components {
             status?: "UPLOADING" | "PENDING" | "ANALYSING" | "READY" | "FAILED";
             /** Format: int32 */
             progressPercent?: number;
+            /** Format: int32 */
+            queuePosition?: number | null;
             contentHash?: string | null;
             content?: components["schemas"]["SchematicContentResponse"];
             failure?: string | null;
@@ -1039,6 +1073,28 @@ export interface components {
             /** Format: int64 */
             blocks?: number;
             segments?: components["schemas"]["SegmentResponse"][];
+        };
+        ShapeResponse: {
+            /** Format: int32 */
+            voxelSize?: number;
+            /** Format: int32 */
+            originX?: number;
+            /** Format: int32 */
+            originY?: number;
+            /** Format: int32 */
+            originZ?: number;
+            /** Format: int32 */
+            sizeX?: number;
+            /** Format: int32 */
+            sizeY?: number;
+            /** Format: int32 */
+            sizeZ?: number;
+            /** Format: int32 */
+            count?: number;
+            /** Format: int32 */
+            hidden?: number;
+            palette?: string[];
+            voxels?: number[];
         };
         MaterialResponse: {
             name?: string;
@@ -1439,6 +1495,28 @@ export interface operations {
         responses: {
             /** @description Created */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    reanalyse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2597,6 +2675,30 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["SplitResponse"];
+                };
+            };
+        };
+    };
+    shape: {
+        parameters: {
+            query?: {
+                detail?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ShapeResponse"];
                 };
             };
         };
