@@ -29,7 +29,6 @@ import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_BADGE, stateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
-import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
@@ -49,7 +48,7 @@ const removeDialog = ref<HTMLDialogElement | null>(null)
 const setupDialog = ref<HTMLDialogElement | null>(null)
 const draft = ref({ label: '' })
 const editError = ref<string | null>(null)
-const setupMethod = ref(LOGIN_METHOD_IDS[0])
+const setupMethod = ref('')
 
 const agent = computed(() => agentStore.byId(Number(route.params.id)))
 
@@ -147,16 +146,23 @@ async function run(action: () => Promise<void>) {
 }
 
 /**
- * The method is chosen per setup rather than remembered: nothing on the host advertises what it can
- * perform, so the operator is the only one who knows which mechanism will work there.
+ * What this agent's host says it can log in with, from its handshake.
+ *
+ * The host is the only party that knows: the mechanisms are implemented there, and a fixed list in
+ * the frontend offered every host the same four whether or not any of them would work. Empty while
+ * the host is disconnected, and empty for one that advertises nothing — which can then set nothing
+ * up, and says so rather than failing on the way back from the attempt.
  */
+const loginMethods = computed(() => host.value?.loginMethods ?? [])
+
+/** Chosen per setup rather than remembered: the list belongs to the host and can change under it. */
 function openSetup() {
-  setupMethod.value = LOGIN_METHOD_IDS[0]
+  setupMethod.value = loginMethods.value[0]?.id ?? ''
   setupDialog.value?.showModal()
 }
 
 async function confirmSetup() {
-  if (!agent.value) return
+  if (!agent.value || !setupMethod.value) return
   setupDialog.value?.close()
   await run(() => agentStore.setupAgent(agent.value!.id, setupMethod.value))
 }
@@ -593,21 +599,43 @@ async function confirmRemove() {
         </h3>
         <p class="mt-3 text-sm opacity-70">{{ t('agents.setUpBody', { host: agent.hostName }) }}</p>
 
-        <ul class="list bg-base-100 border-base-300 mt-4 rounded-box border">
-          <li v-for="id in LOGIN_METHOD_IDS" :key="id" class="list-row items-center">
+        <!--
+          The host's list, not ours. Its copy comes from the host too: it is the only party that
+          knows what its mechanisms are, so it is the only one that can describe them. The id is
+          shown when it sends none, which is at least the string it will be asked to act on.
+        -->
+        <ul v-if="loginMethods.length" class="list bg-base-100 border-base-300 mt-4 rounded-box border">
+          <li v-for="method in loginMethods" :key="method.id" class="list-row items-center">
             <label class="flex w-full cursor-pointer items-center gap-3">
-              <input v-model="setupMethod" type="radio" :value="id" class="radio radio-sm radio-primary" />
+              <input
+                v-model="setupMethod"
+                type="radio"
+                :value="method.id"
+                class="radio radio-sm radio-primary"
+              />
               <span class="min-w-0 flex-1">
-                <span class="block text-sm font-medium">{{ t(`loginMethod.${id}.label`) }}</span>
-                <span class="block text-xs opacity-60">{{ t(`loginMethod.${id}.description`) }}</span>
+                <span class="block text-sm font-medium">{{ method.label || method.id }}</span>
+                <span v-if="method.description" class="block text-xs opacity-60">
+                  {{ method.description }}
+                </span>
               </span>
             </label>
           </li>
         </ul>
 
+        <div v-else role="alert" class="alert alert-warning alert-soft mt-4 text-sm">
+          <TriangleAlert class="size-4 shrink-0" />
+          <span>{{ t('agents.noLoginMethods', { host: agent.hostName }) }}</span>
+        </div>
+
         <div class="modal-action">
           <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">{{ t('common.cancel') }}</button>
-          <button class="btn btn-primary btn-sm gap-2" type="button" @click="confirmSetup">
+          <button
+            class="btn btn-primary btn-sm gap-2"
+            type="button"
+            :disabled="!setupMethod"
+            @click="confirmSetup"
+          >
             <KeyRound class="size-4" />
             {{ t('agents.setUpStart') }}
           </button>

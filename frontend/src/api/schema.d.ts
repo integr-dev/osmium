@@ -979,6 +979,8 @@ export interface components {
             reachable?: boolean;
             /** Format: int64 */
             agentCount?: number;
+            /** @description What this host can log in with, from its handshake. Empty while it is disconnected, and empty for a host that advertises nothing - which can then set nothing up. */
+            loginMethods?: components["schemas"]["LoginMethodResponse"][];
         };
         /** @description A freshly issued access token. */
         LoginResponse: {
@@ -1188,6 +1190,13 @@ export interface components {
         ActivityPageResponse: {
             items?: components["schemas"]["ActivityEntryResponse"][];
             nextCursor?: string | null;
+        };
+        /** @description A login mechanism the host advertised in its handshake. The id is opaque to the backend and is relayed to the host verbatim; the copy describes a mechanism, never an account. */
+        LoginMethodResponse: {
+            /** @example device_code */
+            id?: string;
+            label?: string | null;
+            description?: string | null;
         };
     };
     responses: never;

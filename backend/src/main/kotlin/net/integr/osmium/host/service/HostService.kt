@@ -3,6 +3,7 @@ package net.integr.osmium.host.service
 import net.integr.osmium.host.dto.CreateHostRequest
 import net.integr.osmium.host.dto.HostEnrolledResponse
 import net.integr.osmium.host.dto.HostResponse
+import net.integr.osmium.host.dto.LoginMethodResponse
 import net.integr.osmium.host.dto.UpdateHostRequest
 import net.integr.osmium.host.dto.toResponse
 import net.integr.osmium.audit.model.AuditAction
@@ -14,6 +15,7 @@ import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostConnections
+import net.integr.osmium.hostlink.LoginMethod
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -164,13 +166,32 @@ class HostService(
         broker.publish(LiveUpdateEvent(type = LiveUpdateType.HOST_REMOVED, data = mapOf("id" to id)))
     }
 
+    /**
+     * Records what a host says it can log in with, from its handshake.
+     *
+     * The list goes to the connection registry rather than to the row - see [LoginMethod]. The
+     * announcement is what makes it usable: an operator with the setup dialog already open would
+     * otherwise be looking at an empty chooser for a host that has just said what it offers.
+     */
+    fun recordLoginMethods(hostId: Long, methods: List<LoginMethod>) {
+        registry.advertise(hostId, methods)
+        hostRepository.findById(hostId).ifPresent(::publish)
+    }
+
     private fun publish(host: Host) = broker.publish(
         LiveUpdateEvent(type = LiveUpdateType.HOST_CHANGED, data = host.toResponse()),
     )
 
-    /** Delegates to the shared mapper, supplying the count it deliberately does not query itself. */
-    private fun Host.toResponse(): HostResponse =
-        toResponse(agentCount = id?.let { agentRepository.countByHostId(it) } ?: 0)
+    /**
+     * Delegates to the shared mapper, supplying the two things it deliberately does not fetch: the
+     * agent count, which needs a query, and the login methods, which are not on the row at all.
+     */
+    private fun Host.toResponse(): HostResponse = toResponse(
+        agentCount = id?.let { agentRepository.countByHostId(it) } ?: 0,
+        loginMethods = id?.let { hostId ->
+            registry.loginMethodsOf(hostId).map { LoginMethodResponse(it.id, it.label, it.description) }
+        } ?: emptyList(),
+    )
 
     private fun generateSecret(): String {
         val bytes = ByteArray(TOKEN_BYTES).also { SecureRandom().nextBytes(it) }

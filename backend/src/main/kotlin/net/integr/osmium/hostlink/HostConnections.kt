@@ -21,7 +21,20 @@ class HostConnections(private val objectMapper: ObjectMapper) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val sessions = ConcurrentHashMap<Long, WebSocketSession>()
 
+    /**
+     * What each connected host says it can log in with, from its handshake.
+     *
+     * Here rather than on the host row for the same reason reachability is derived: it is a claim
+     * about a process that is running now. A stored list would outlive the build that made it and
+     * have the backend offering an operator mechanisms the host has since dropped.
+     */
+    private val advertised = ConcurrentHashMap<Long, List<LoginMethod>>()
+
     fun register(hostId: Long, session: WebSocketSession) {
+        // A fresh socket has not said anything yet, and what the last one advertised was a claim
+        // about a process that may since have been replaced by a different build.
+        advertised.remove(hostId)
+
         // A reconnect before the old socket was reaped would otherwise leave two live sessions.
         sessions.put(hostId, session)?.let { previous ->
             log.info("Host {} reconnected; closing the superseded session", hostId)
@@ -31,17 +44,29 @@ class HostConnections(private val objectMapper: ObjectMapper) {
 
     fun unregister(hostId: Long, session: WebSocketSession) {
         // Only drop it if it is still the session we know about, so a late close from a superseded
-        // socket cannot evict the live one.
-        sessions.remove(hostId, session)
+        // socket cannot evict the live one - nor take the new one's advertisement with it.
+        if (sessions.remove(hostId, session)) advertised.remove(hostId)
     }
 
     fun isConnected(hostId: Long): Boolean = sessions[hostId]?.isOpen == true
+
+    fun advertise(hostId: Long, methods: List<LoginMethod>) {
+        advertised[hostId] = methods
+    }
+
+    /**
+     * What this host can log in with. Empty when it is not connected, which is the truthful answer:
+     * nothing has told us, and a command could not reach it to try anyway.
+     */
+    fun loginMethodsOf(hostId: Long): List<LoginMethod> =
+        if (isConnected(hostId)) advertised[hostId].orEmpty() else emptyList()
 
     /**
      * Drops a host's connection. Used when its token is rotated: an already-authenticated session
      * would otherwise survive the rotation, which defeats the point if the old token leaked.
      */
     fun disconnect(hostId: Long) {
+        advertised.remove(hostId)
         sessions.remove(hostId)?.let { session ->
             log.info("Closing session for host {} after token rotation", hostId)
             runCatching { session.close() }

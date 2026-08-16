@@ -239,6 +239,8 @@ export const en = {
     moveOffline: 'Disconnect the agent before moving it to another server.',
     setUpTitle: 'Set up {name}',
     setUpBody: 'Sign-in happens on {host}. Osmium relays your choice and never sees the credentials — finish the sign-in there, and the agent reports back when it is ready.',
+    /** The list comes from the host, so an empty one is a fact about it and not about Osmium. */
+    noLoginMethods: '{host} has not said what it can log in with. It reports that when it connects, so check that it is running and up to date.',
     setUpStart: 'Start setup',
     connect: 'Connect',
     disconnect: 'Disconnect',
@@ -385,6 +387,8 @@ export const en = {
     viewShape: 'Shape',
     detail: 'Detail',
     viewBounds: 'Bounds',
+    /** Beside the slider, where the width has to be the same at every position. */
+    detailAcross: '{count} across',
     shapeExact: 'One voxel per block.',
     shapeCoarse: 'One voxel per {size} blocks — a massing model, not a picture.',
     shapeOf: 'A model of a build {x} by {y} by {z} blocks',
@@ -660,13 +664,6 @@ export const en = {
     'host.write': 'Enrol and rename hosts',
     'host.token': 'Rotate a host enrolment token',
     'host.delete': 'Remove hosts',
-  },
-
-  loginMethod: {
-    method_a: { label: 'Method A', description: 'Placeholder. Performed on the host.' },
-    method_b: { label: 'Method B', description: 'Placeholder. Performed on the host.' },
-    method_c: { label: 'Method C', description: 'Placeholder. Performed on the host.' },
-    method_d: { label: 'Method D', description: 'Placeholder. Performed on the host.' },
   },
 
   errors: {

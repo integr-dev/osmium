@@ -134,7 +134,11 @@ data class UpdateAgentRequest(
 data class SetupAgentRequest(
     @field:NotBlank
     @field:Size(max = SETUP_METHOD_MAX_LENGTH)
-    @field:Schema(example = "method_a")
+    @field:Schema(
+        description = "One of the ids the owning host advertised in its handshake. Anything else " +
+            "is refused, and a host that advertised nothing can set nothing up.",
+        example = "device_code",
+    )
     val method: String,
 )
 

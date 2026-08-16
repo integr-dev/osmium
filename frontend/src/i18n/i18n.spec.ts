@@ -24,13 +24,6 @@ describe('copy lookups', () => {
     }
   })
 
-  it('resolves every login method', () => {
-    for (const id of Object.keys(en.loginMethod)) {
-      expect(resolves(`loginMethod.${id}.label`), id).toBe(true)
-      expect(resolves(`loginMethod.${id}.description`), id).toBe(true)
-    }
-  })
-
   /**
    * Node ids contain dots, which vue-i18n reads as a path separator — `permission.chat.read` looks
    * for `permission → fleet → chat` and falls back silently. That is why `nodeLabel` indexes the

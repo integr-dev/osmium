@@ -55,18 +55,26 @@ object EventType {
     const val SETUP_RESULT = "setup_result"
 
     /**
-     * What this host is actually running, sent when it connects:
-     * `{ "agents": [ { "agentId": 12, "state": "ONLINE" } ] }`.
+     * What this host is, sent once when it connects:
      *
-     * State is **stored**, so it outlives the connection that reported it. A host that restarts
-     * therefore leaves the backend asserting sessions nobody is running any more, and nothing else
-     * in the protocol ever contradicts it - `agent_status` says what changed, never what exists.
+     * ```jsonc
+     * { "agents": [ { "agentId": 12, "state": "ONLINE" } ],
+     *   "loginMethods": [ { "id": "device_code", "label": "…", "description": "…" } ] }
+     * ```
      *
-     * So the host says so on arrival, and the backend reconciles: an agent it owns that goes
-     * unmentioned is not in game, whatever it was believed to be doing. Omitting this event changes
-     * nothing, which is what keeps an older host working.
+     * **The agents.** State is *stored*, so it outlives the connection that reported it. A host
+     * that restarts therefore leaves the backend asserting sessions nobody is running any more, and
+     * nothing else in the protocol ever contradicts it - `agent_status` says what changed, never
+     * what exists. So the host says what it has on arrival and the backend reconciles: an agent it
+     * owns that goes unmentioned is not in game, whatever it was believed to be doing.
+     *
+     * **The login methods.** Which mechanisms this machine can actually perform, which only it
+     * knows - see [LoginMethod]. Not stored, and a host that advertises none can set nothing up.
+     *
+     * Both are omissible and an absent key changes nothing, which is what lets the two halves of
+     * this event arrive in different host versions.
      */
-    const val AGENTS = "agents"
+    const val HANDSHAKE = "handshake"
 
     /**
      * A line of Minecraft chat: `{ "scope": "global", "from": "Notch", "text": "…" }`.

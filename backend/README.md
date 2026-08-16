@@ -429,7 +429,13 @@ Reachability is **derived** from the heartbeat rather than stored, so a backend 
 a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
 the state is genuinely unknown at that point.
 
-### What a host announces on connect
+### What a host says on connect
+
+One `handshake` event carries the two things only the host can state: what it is running, and what
+it can log in with. The keys are independent and both optional. It was called `agents` while the
+agent list was all it held; the rename is a clean break with no alias.
+
+#### What it is running
 
 Agent state is **stored**, so it outlives the connection that reported it, and `agent_status` only
 ever says what *changed*. Between them that leaves one hole: a host that restarts has an Osmium
@@ -437,8 +443,8 @@ still asserting the sessions it reported before, with nothing in the protocol to
 Reachability does not help — the host is back, so `STALE` stops applying and the stale `ONLINE`
 resurfaces intact.
 
-So a host sends an `agents` event on connect listing what it is actually running, and
-`HostReportService.reconcile` squares it against what the backend owns for that host:
+So the handshake lists what the host is actually running, and `HostReportService.reconcile` squares
+it against what the backend owns for that host:
 
 - **Announced** agents are applied exactly as `agent_status` would apply them, so a host that kept
   its sessions across a dropped socket changes nothing by saying so.
@@ -451,8 +457,29 @@ So a host sends an `agents` event on connect listing what it is actually running
 Each correction writes an activity entry, because it is a state change the operator did not cause
 and would otherwise see unexplained.
 
-**Omitting the event changes nothing**, which is what keeps an older host working — it simply keeps
-the old failure mode. An empty list is a real announcement and means "none of them".
+**Omitting the key changes nothing** — a host that has not implemented this half simply keeps the
+old failure mode. An empty list is a real announcement and means "none of them".
+
+#### What it can log in with
+
+`loginMethods` is the mechanisms that host can actually perform: an opaque `id` plus optional copy
+for the operator choosing between them. The frontend offers exactly this list, and `setup` refuses
+anything outside it with a **400** before dispatching — membership in a list the host itself
+supplied, never the backend learning what a method *means*.
+
+The check applies only while the host is connected. Disconnected, an empty list means nobody has
+said rather than that the method is wrong, so the request falls through to the ordinary
+undeliverable path and answers **503**, which is the true reason.
+
+**Not stored.** It lives in `HostConnections` beside the socket and goes when the socket does, for
+the same reason reachability is derived: it is a claim about a process that is running now, and a
+row asserting mechanisms a restarted host has dropped would offer the operator a choice that no
+longer exists. A host that advertises nothing can set nothing up, and the frontend says so.
+
+The backend held four placeholders before this, `method_a`–`method_d`, offered to every host
+regardless of what it could do — a chooser where three of four selections were wrong and nothing on
+screen said which. See *`method` is a mechanism, never an account* in FLEET_CONNECTIVITY.md, whose
+earlier rejection of advertisement this reverses.
 
 ## Live updates
 
@@ -1183,9 +1210,14 @@ Two details are load-bearing rather than tidy:
   devtools tears down a running `bootRun` the moment they do. Starting the mock host killed the
   backend it had just connected to.
 
-It reconnects with backoff, because the backend it talks to restarts on every save, and re-announces
-any agent it had online — the backend does not reissue commands on reconnect, so an agent would
-otherwise sit in the interface as `ONLINE` with vitals that had stopped arriving.
+It reconnects with backoff, because the backend it talks to restarts on every save, and re-sends its
+handshake — the backend does not reissue commands on reconnect, so an agent would otherwise sit in
+the interface as `ONLINE` with vitals that had stopped arriving.
+
+That handshake also advertises two login methods, `device_code` and `token_paste`. Since the backend
+offers only what a host advertises, a mock that said nothing here could not set an agent up at all —
+which would take the whole setup path out of local development. They are fictional mechanisms with
+real shapes, and like a real host’s they name a mechanism and never an account.
 
 What it does **not** do: log in to anything, hold a credential, or model Minecraft. Setup succeeds
 because it was asked to, and reports an invented identity. It cannot tell you whether a real login

@@ -87,6 +87,22 @@ null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes w
 agent on no health standing at the world origin, which is a much more convincing lie than an empty
 panel.
 
+### The login methods are the host's, not ours
+
+The setup dialog offers exactly what the agent's host advertised in its handshake, read off
+`host.loginMethods`. There is no list in the frontend: it held four placeholders before this and
+offered all four to every host, which is a chooser where most selections are wrong and nothing on
+screen says which.
+
+Their copy comes from the host too, and is therefore **not translated** — the host is the only party
+that knows what its own mechanisms are, so it is the only one that can describe them. The id is
+shown when a host sends no label, which is at least the string it will be asked to act on.
+
+**An empty list is a real state and says so.** A host that is disconnected, or connected and
+advertising nothing, gets a warning naming the host rather than an empty radio list, and the start
+button stays disabled. The backend refuses an unadvertised method with a 400 regardless, so this is
+the interface agreeing with the API rather than guarding it.
+
 ## Operations
 
 Three tabs, because they are the same act with a different verb — pick a group, then do one thing to
@@ -216,6 +232,21 @@ The resolution is the operator's to choose, as voxels along the longest axis —
 since it is what bounds the work, where asking for blocks-per-voxel directly would let a large
 schematic ask for millions of cubes. What the slider reads back is the blocks-per-voxel it worked
 out to, which is the number anybody actually cares about.
+
+**The slider asks on release, not on the way.** A range input's `input` fires for every position the
+thumb passes over and its `change` fires once, when the drag ends; bound to the first, a single drag
+across the track read the occupancy index a dozen times to arrive at the one resolution that was
+wanted, each answer redrawing the viewer under a hand that had already moved on. The control follows
+the thumb, and only what has been *committed* is fetched. Several neighbouring positions request the
+same model anyway — a voxel is a power-of-two multiple of an index cell — so most of those reads
+were returning a picture that was already on screen.
+
+**Nothing in that row changes width.** The readout beside the slider used to hold whatever had come
+back, so it grew and shrank between a spinner, `One voxel per block.` and a full sentence about
+massing models — which moved the slider out from under the thumb mid-drag and, at the wrong window
+width, wrapped the row. The slider's own position now sits in a fixed box beside it, and the
+sentence about what came back is a line of its own, truncated to one line with its height reserved,
+so it cannot push anything whatever it says.
 
 ### Knowing which way is up
 

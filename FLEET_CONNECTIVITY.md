@@ -351,16 +351,27 @@ across the top level**.
 // host-scoped, so no agentId
 { "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
 
-// host-scoped, sent once on connect: what this host is actually running
-{ "kind": "event", "type": "agents",
-  "payload": { "agents": [ { "agentId": 42, "state": "ONLINE" } ] } }
+// host-scoped, sent once on connect: what this host is, both keys optional
+{ "kind": "event", "type": "handshake",
+  "payload": {
+    "agents": [ { "agentId": 42, "state": "ONLINE" } ],
+    "loginMethods": [ { "id": "device_code", "label": "Device code",
+                        "description": "Approve a code on the host machine." } ] } }
 ```
 
-### Announcing agents on connect
+### The handshake
 
-**Send this as soon as the socket is up.** It is the only message that says what *exists* rather
-than what *changed*, and without it a restarted host leaves the backend asserting sessions nobody is
-running.
+One message, sent as soon as the socket is up, carrying the two things only the host can state:
+**what it is running** and **what it can log in with**. The keys are independent and both optional,
+so a host implementing one half is handled rather than rejected.
+
+It was called `agents` while the agent list was all it carried. That name no longer describes the
+contents, and the rename is a clean break with no alias — nothing had shipped sending the old one.
+
+#### What it is running
+
+It is the only message that says what *exists* rather than what *changed*, and without it a
+restarted host leaves the backend asserting sessions nobody is running.
 
 Agent state is stored, so it outlives the connection that reported it. `agent_status` reports
 transitions; it never re-establishes the whole picture, and nothing else does either. The gap that
@@ -384,6 +395,26 @@ changes nothing**, so a host that predates this keeps working; it simply keeps t
 
 A host that kept its sessions across a dropped socket announces them and nothing changes, which is
 what makes this safe to send on every connect rather than only after a restart.
+
+#### What it can log in with
+
+`loginMethods` is the list of mechanisms this machine can actually perform. Each entry is an `id`
+plus optional `label` and `description`; only the `id` is required, because it is the part that
+comes back in `setup_agent`.
+
+**The list is not stored.** It is a claim about a process that is running now, held with the
+connection exactly as reachability is, and it goes when the socket does. A row asserting mechanisms
+a restarted host has since dropped would be worse than no row: the operator would be offered a
+choice that no longer exists, and told so only after trying it.
+
+**A host that advertises nothing can set nothing up**, and the frontend says so rather than offering
+a chooser that cannot work. That is the deliberate consequence of the backend no longer inventing a
+list of its own.
+
+The copy is the host's because the mechanism is the host's — it is the only party that knows what
+its own methods are, so it is the only one that can describe them. Which puts the same obligation on
+`label` and `description` as on `method` itself: they name a **mechanism** and never an account. See
+below.
 
 ### Chat and activity events
 
@@ -475,24 +506,34 @@ each message self-describing.
 `setup_agent` carries the login method the operator chose in the frontend, which the backend relays
 without interpreting.
 
-The real mechanisms are not decided yet, so the chooser currently offers four **placeholders** —
-`method_a` through `method_d`. They exist to prove the path end to end: the frontend picks one, the
-backend stores nothing about what it means, and the host receives the string verbatim. Replacing
-them is a frontend list change and a host implementation, not a protocol change.
+**The host decides what the methods are.** They come from its `handshake`, and the chooser offers
+exactly those. The backend held four placeholders before this — `method_a` through `method_d`,
+offered to every host whether or not any of them would work there — which is a chooser where three
+of four selections are wrong and nothing on screen says which.
 
 The line this must not cross: **a mechanism selector is fine, an account hint is not.** Relaying
 "use the device code flow" says nothing about which credential results. Relaying an email address, a
 profile name or a preferred account would make the backend an authority on *which* identity to
 acquire, which is precisely the role this design removes from it. The same field could hold either,
-so the rule has to be written down rather than inferred.
+so the rule has to be written down rather than inferred. It binds the advertisement too: a host
+offering "Sign in as build-bot-4@example.com" would be handing the backend the identity the whole
+arrangement exists to keep out of it.
 
 The frontend presents the choice; the backend is a courier.
 
-**Hosts do not advertise which methods they support.** The chooser offers every method and an
-unsupported one fails in `setup_result`. Advertisement was considered and rejected: it would put the
-backend in the business of knowing what a method *is* in order to store and filter it, which is the
-exact coupling `method` is written to avoid, and it buys only an earlier error message for a
-selection an operator makes once per agent. A late, clear rejection is the accepted cost.
+**A method not in the host's list is refused with 400 before anything is dispatched.** This is not
+the backend knowing what a method means — it is membership in a list the same host supplied, which
+it could equally have checked by string comparison in the dark. What it buys is that the agent never
+passes through `SETUP_PENDING` for an attempt that was never going to work.
+
+The check applies **only while the host is connected**. Disconnected, the empty list means nobody
+has said, not that the method is wrong, so the request falls through to the ordinary undeliverable
+path and answers **503** — which is the true reason it cannot proceed.
+
+> Reversed from an earlier decision. Advertisement was rejected on the grounds that it would couple
+> the backend to what a method *is*; that turned out to be a mischaracterisation of what storing an
+> opaque list requires, and it was paying for that supposed purity with a chooser that mostly
+> offered mechanisms the host could not perform.
 
 ### Version handshake
 
@@ -992,16 +1033,15 @@ real accounts we can provision and afford to lose), not a token-format one.
 
 Answered elsewhere in this document, kept here as a pointer: the process model, sector assignment,
 schematic formats, chat scoping and listener election, chat persistence and retention, rate limits,
-the `setup_agent` method field and why hosts do not advertise their methods, and the version
-handshake.
+the `setup_agent` method field and how hosts advertise their methods, and the version handshake.
 
 ### Recently closed
 
 | Question | Answer |
 |---|---|
 | Which schematic formats? | Both `.schem` and `.litematic`, behind one parser interface |
-| Which login methods? | Four placeholders, `method_a`–`method_d`, until real mechanisms are chosen |
-| Per-host method advertisement? | **Rejected.** The backend stays uninterested in what a method means; an unsupported one fails in `setup_result` |
+| Which login methods? | Whichever the host advertises in its `handshake`. The backend holds no list of its own |
+| Per-host method advertisement? | **Adopted**, reversing an earlier rejection. Not stored — it lives with the connection, like reachability — and a method outside the list is refused with 400 before dispatch |
 | Audit retention? | Operator audit 30 days, activity 10 days, chat 3 days |
 | Where is the audit log read? | An administrator-only page in the frontend, gated on a new `audit.read` node |
 | How are chat and activity carried? | Two host event types, `chat` and `activity`, scoped by the host — see *Wire protocol → Chat and activity events* |

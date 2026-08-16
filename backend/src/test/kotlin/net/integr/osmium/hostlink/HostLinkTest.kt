@@ -154,6 +154,8 @@ class HostLinkTest {
         assertEquals(503, setup().statusCode.value())
 
         val socket = connect(token())
+        // Nothing can be set up until the host has said what it can log in with.
+        socket.send(announce(loginMethods = listOf("device_code")))
         // Registration happens in the server's connect callback, so retry until it is deliverable.
         awaitUntil { setup().statusCode.value() == 200 }
         awaitUntil { socket.received.any { it.type == CommandType.SETUP_AGENT } }
@@ -207,7 +209,7 @@ class HostLinkTest {
         socket.send(
             HostEnvelope(
                 kind = MessageKind.EVENT,
-                type = EventType.AGENTS,
+                type = EventType.HANDSHAKE,
                 payload = objectMapper.valueToTree(
                     mapOf("agents" to listOf(mapOf("agentId" to second.id, "state" to "ONLINE"))),
                 ),
@@ -239,7 +241,7 @@ class HostLinkTest {
         socket.send(
             HostEnvelope(
                 kind = MessageKind.EVENT,
-                type = EventType.AGENTS,
+                type = EventType.HANDSHAKE,
                 payload = objectMapper.valueToTree(mapOf("agents" to emptyList<Map<String, Any>>())),
             ),
         )
@@ -266,6 +268,55 @@ class HostLinkTest {
         awaitUntil { hostRepository.findById(host.id!!).orElseThrow().isReachable() }
 
         assertEquals(AgentState.ONLINE, agentRepository.findById(agent.id!!).orElseThrow().state)
+
+        socket.close()
+    }
+
+    // ---- what a host can log in with -------------------------------------------------------
+
+    /**
+     * The host is the authority on which mechanisms exist. The backend held four placeholders
+     * before this and offered them to every host, which meant offering three that would fail.
+     */
+    @Test
+    fun `a host's advertised login methods reach the frontend and leave with it`() {
+        val socket = connect(token())
+        socket.send(announce(loginMethods = listOf("device_code", "token_paste")))
+
+        awaitUntil { hosts().contains("device_code") }
+        assertTrue(hosts().contains("token_paste"))
+
+        socket.close()
+
+        // Not stored, so it goes with the connection that claimed it: the list is a statement
+        // about a running process, and a machine that is gone offers nothing.
+        awaitUntil { !hosts().contains("device_code") }
+    }
+
+    @Test
+    fun `a method the host never advertised is refused before anything is dispatched`() {
+        val socket = connect(token())
+        socket.send(announce(loginMethods = listOf("device_code")))
+
+        // 503 until the socket registers, then 400 for a method this host did not offer.
+        awaitUntil { setup("token_paste").statusCode.value() == 400 }
+
+        // Refused at the API, so the host was never asked and the agent never left UNLINKED —
+        // which is the whole point of checking here rather than waiting for a setup_result.
+        assertEquals(AgentState.UNLINKED, agentRepository.findById(agent.id!!).orElseThrow().state)
+        assertTrue(socket.received.none { it.type == CommandType.SETUP_AGENT })
+
+        socket.close()
+    }
+
+    /** A host that says nothing can set nothing up, rather than everything failing later. */
+    @Test
+    fun `a connected host that advertises nothing refuses every method`() {
+        val socket = connect(token())
+        socket.send(announce(agents = emptyList()))
+
+        // 503 until the socket registers, then 400 rather than 200: connected is not enough.
+        awaitUntil { setup().statusCode.value() == 400 }
 
         socket.close()
     }
@@ -300,13 +351,36 @@ class HostLinkTest {
 
     private fun token() = "osm_host_${host.id}_$secret"
 
-    private fun setup() = RestClient.create()
+    private fun setup(method: String = "device_code") = RestClient.create()
         .post()
         .uri("http://localhost:$port/api/agents/${agent.id}/setup")
         .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
         .contentType(MediaType.APPLICATION_JSON)
-        .body("""{"method":"device_code"}""")
+        .body("""{"method":"$method"}""")
         .exchange { _, response -> response }
+
+    private fun hosts() = RestClient.create()
+        .get()
+        .uri("http://localhost:$port/api/hosts")
+        .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
+        .retrieve()
+        .body(String::class.java)
+        .orEmpty()
+
+    /** What a host says on arrival. Both halves are optional, so each is omitted when not given. */
+    private fun announce(
+        agents: List<Map<String, Any?>>? = null,
+        loginMethods: List<String>? = null,
+    ) = HostEnvelope(
+        kind = MessageKind.EVENT,
+        type = EventType.HANDSHAKE,
+        payload = objectMapper.valueToTree(
+            buildMap {
+                agents?.let { put("agents", it) }
+                loginMethods?.let { ids -> put("loginMethods", ids.map { mapOf("id" to it) }) }
+            },
+        ),
+    )
 
     /**
      * The handshake driven over plain HTTP, so the status is readable — a WebSocket client only

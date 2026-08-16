@@ -521,7 +521,7 @@ class AgentControllerTest : AbstractRestTest() {
         mockMvc.post("/api/agents/${agent.id}/setup") {
             header(HttpHeaders.AUTHORIZATION, authAs("ada4", RoleNames.VIEWER))
             contentType = MediaType.APPLICATION_JSON
-            content = """{"method":"method_a"}"""
+            content = """{"method":"device_code"}"""
         }.andExpect { status { isForbidden() } }
     }
 

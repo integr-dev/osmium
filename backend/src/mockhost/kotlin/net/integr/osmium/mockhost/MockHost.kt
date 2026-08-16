@@ -64,6 +64,25 @@ private const val MAX_RETRY_MILLIS = 30_000L
 /** Below this, a connection did not really work and must not reset the backoff. */
 private const val HEALTHY_MILLIS = 5_000L
 
+/**
+ * What this mock claims it can log in with, advertised in its handshake.
+ *
+ * Two, deliberately, because one would not exercise a chooser. Both name a *mechanism*: neither
+ * says which account results, which is the line a real host must not cross either.
+ */
+private val LOGIN_METHODS = listOf(
+    mapOf(
+        "id" to "device_code",
+        "label" to "Device code",
+        "description" to "The host opens a code on this machine and waits for it to be approved.",
+    ),
+    mapOf(
+        "id" to "token_paste",
+        "label" to "Paste a token",
+        "description" to "An existing session token is handed to the host directly.",
+    ),
+)
+
 class MockHost(private val url: String, private val token: String) {
 
     private val mapper: ObjectMapper = jacksonObjectMapper()
@@ -224,21 +243,28 @@ class MockHost(private val url: String, private val token: String) {
     }
 
     /**
-     * What this process is actually running, said on arrival.
+     * What this process is, said on arrival: what it is running, and what it can log in with.
      *
-     * The map is memory, so a restarted mock runs nothing and announces nothing — which is the
-     * honest answer, and the backend takes the agents it owns off ONLINE accordingly. Within one
-     * process a reconnect announces what it kept, so a dropped socket changes nothing.
+     * The agent map is memory, so a restarted mock runs nothing and announces nothing — which is
+     * the honest answer, and the backend takes the agents it owns off ONLINE accordingly. Within
+     * one process a reconnect announces what it kept, so a dropped socket changes nothing.
+     *
+     * The login methods are the mock's whole contribution to the setup path: the backend offers
+     * exactly what a host advertises and nothing else, so a mock that said nothing here could not
+     * set up an agent at all. They are fictional mechanisms with real shapes — a device code flow
+     * and a token paste are the two ways this actually gets done — and, like a real host's, they
+     * name a mechanism and never an account.
      */
     private fun announce() = send(
         HostEnvelope(
             kind = MessageKind.EVENT,
-            type = EventType.AGENTS,
+            type = EventType.HANDSHAKE,
             payload = mapper.valueToTree(
                 mapOf(
                     "agents" to agents
                         .filterValues { it.online }
                         .map { (agentId, _) -> mapOf("agentId" to agentId, "state" to "ONLINE") },
+                    "loginMethods" to LOGIN_METHODS,
                 ),
             ),
         ),

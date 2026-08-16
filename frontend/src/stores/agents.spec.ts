@@ -6,8 +6,17 @@ import type { AgentResponse, AgentTelemetryResponse, HostResponse } from '../api
 import { respondWith } from '../test/http'
 
 const HOSTS: HostResponse[] = [
-  { id: 1, name: 'eu-1', hostVersion: '0.1.0', lastSeenAt: null, reachable: true, agentCount: 4 },
-  { id: 2, name: 'eu-2', hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1 },
+  {
+    id: 1,
+    name: 'eu-1',
+    hostVersion: '0.1.0',
+    lastSeenAt: null,
+    reachable: true,
+    agentCount: 4,
+    loginMethods: [{ id: 'device_code', label: 'Device code', description: null }],
+  },
+  // Unreachable, so it advertises nothing: the list goes with the connection that claimed it.
+  { id: 2, name: 'eu-2', hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1, loginMethods: [] },
 ]
 
 /**

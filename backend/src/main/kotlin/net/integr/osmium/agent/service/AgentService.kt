@@ -174,6 +174,26 @@ class AgentService(
 
         // The method is a mechanism selector the operator chose, relayed uninterpreted. It must
         // never carry an account hint - see the wire protocol section of FLEET_CONNECTIVITY.md.
+        //
+        // Checked against what this host advertised on connect: membership in a list the host
+        // itself supplied, rather than the backend knowing what a method means. Otherwise the
+        // mistake costs a round trip and comes back as a setup_result refusal, having moved the
+        // agent through SETUP_PENDING on the way.
+        //
+        // Only while it is connected. Disconnected, the empty list means nobody has said, not that
+        // the method is wrong, and `dispatch` has the truthful answer for that: undeliverable.
+        val hostId = agent.host.id!!
+        if (registry.isConnected(hostId)) {
+            val offered = registry.loginMethodsOf(hostId)
+            require(offered.any { it.id == request.method }) {
+                if (offered.isEmpty()) {
+                    "'${agent.host.name}' has not said what it can log in with"
+                } else {
+                    "'${agent.host.name}' cannot log in with '${request.method}'"
+                }
+            }
+        }
+
         dispatch(
             agent = agent,
             type = CommandType.SETUP_AGENT,

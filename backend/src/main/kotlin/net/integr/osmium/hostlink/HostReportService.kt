@@ -67,7 +67,7 @@ class HostReportService(
                 address = null,
             )
 
-            EventType.AGENTS -> reconcile(hostId, envelope)
+            EventType.HANDSHAKE -> handshake(hostId, envelope)
 
             EventType.AGENT_STATUS -> applyStatus(hostId, envelope)
 
@@ -111,6 +111,31 @@ class HostReportService(
     }
 
     /**
+     * What a host says it is, on arrival: what it is running, and what it can log in with.
+     *
+     * Two independent halves of one message, and each key is optional, so a host that only
+     * implements one of them is handled rather than rejected.
+     */
+    private fun handshake(hostId: Long, envelope: HostEnvelope) {
+        envelope.payload?.get("loginMethods")?.takeIf { it.isArray }?.let { advertised ->
+            // Copy is optional and only ever shown; the id is the part that has to be there,
+            // because it is what comes back in setup_agent.
+            val methods = advertised.mapNotNull { node ->
+                node.get("id")?.asString()?.takeIf { it.isNotBlank() }?.let { id ->
+                    LoginMethod(
+                        id = id,
+                        label = node.get("label")?.asString(),
+                        description = node.get("description")?.asString(),
+                    )
+                }
+            }
+            hostService.recordLoginMethods(hostId, methods)
+        }
+
+        envelope.payload?.get("agents")?.takeIf { it.isArray }?.let { reconcile(hostId, it) }
+    }
+
+    /**
      * Squares what a host says it is running against what the backend believed.
      *
      * Announced agents are applied exactly as `agent_status` would apply them, so a host that kept
@@ -127,12 +152,7 @@ class HostReportService(
      * Every other state is left alone: none of them assert a session, so the host's silence says
      * nothing about them.
      */
-    private fun reconcile(hostId: Long, envelope: HostEnvelope) {
-        val reported = envelope.payload?.get("agents")?.takeIf { it.isArray } ?: run {
-            log.debug("Ignoring malformed agent announcement from host {}", hostId)
-            return
-        }
-
+    private fun reconcile(hostId: Long, reported: JsonNode) {
         val announced = reported.mapNotNull { node -> node.get("agentId")?.asLong() }.toSet()
 
         for (node in reported) {

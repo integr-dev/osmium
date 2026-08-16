@@ -224,6 +224,7 @@ export const de: Copy = {
     moveOffline: 'Trennen Sie den Agenten, bevor Sie ihn auf einen anderen Server verschieben.',
     setUpTitle: '{name} einrichten',
     setUpBody: 'Die Anmeldung läuft auf {host}. Osmium leitet nur Ihre Auswahl weiter und bekommt die Zugangsdaten nie zu sehen — schließen Sie die Anmeldung dort ab, und der Agent meldet sich zurück, sobald er bereit ist.',
+    noLoginMethods: '{host} hat nicht mitgeteilt, womit er sich anmelden kann. Das meldet er beim Verbinden — prüfen Sie, ob er läuft und aktuell ist.',
     setUpStart: 'Einrichtung starten',
     connect: 'Verbinden',
     disconnect: 'Trennen',
@@ -356,6 +357,7 @@ export const de: Copy = {
     viewShape: 'Form',
     detail: 'Auflösung',
     viewBounds: 'Maße',
+    detailAcross: '{count} breit',
     shapeExact: 'Ein Voxel je Block.',
     shapeCoarse: 'Ein Voxel je {size} Blöcke — ein Massenmodell, kein Abbild.',
     shapeOf: 'Modell eines Baus von {x} mal {y} mal {z} Blöcken',
@@ -609,13 +611,6 @@ export const de: Copy = {
     'host.write': 'Hosts registrieren und umbenennen',
     'host.token': 'Host-Token neu ausstellen',
     'host.delete': 'Hosts entfernen',
-  },
-
-  loginMethod: {
-    method_a: { label: 'Methode A', description: 'Platzhalter. Läuft auf dem Host.' },
-    method_b: { label: 'Methode B', description: 'Platzhalter. Läuft auf dem Host.' },
-    method_c: { label: 'Methode C', description: 'Platzhalter. Läuft auf dem Host.' },
-    method_d: { label: 'Methode D', description: 'Platzhalter. Läuft auf dem Host.' },
   },
 
   errors: {

@@ -39,9 +39,10 @@ rotation evicts a session.
 The backend records the remote address it observed on connect, which is why enrolment never asks
 for one.
 
-**The first frame you send is [`agents`](#45-agents--once-immediately-after-connecting)**, listing what
-this host is actually running. Without it a host that has restarted leaves Osmium asserting sessions
-that no longer exist.
+**The first frame you send is [`handshake`](#45-handshake--once-immediately-after-connecting)**,
+stating what this host is running and what it can log in with. Without the first, a host that has
+restarted leaves Osmium asserting sessions that no longer exist. Without the second, none of its
+agents can be set up.
 
 ---
 
@@ -98,7 +99,7 @@ answer with a `result`.
 ```jsonc
 // backend → host
 { "id": "cmd-7f3a", "kind": "command", "type": "setup_agent", "agentId": 42,
-  "payload": { "label": "Mason_04", "method": "method_a" } }
+  "payload": { "label": "Mason_04", "method": "device_code" } }
 ```
 
 | Field | Meaning |
@@ -117,8 +118,10 @@ answer with a `result`.
 > An agent may now also be assigned to **no server at all**. It can still be set up from there;
 > it simply cannot be told to connect until one is chosen.
 
-`method` is currently one of four placeholders, `method_a`–`method_d`, until real mechanisms are
-chosen. The backend has no idea what any of them mean and stores nothing about them.
+`method` is always one of the ids **this host advertised** in its
+[`handshake`](#45-handshake--once-immediately-after-connecting). The backend has no idea what any of
+them mean and stores nothing about them; it checks the string against your own list and relays it
+verbatim.
 
 **`method` is a mechanism, never an account.** It says "use this flow", not "use this identity".
 Nothing in this protocol ever tells the host *which* account to acquire — that is the whole point of
@@ -139,8 +142,15 @@ Answer with the identity only:
 `type` may be either `setup_agent` or `setup_result`; both are accepted. `reason` is logged, not
 shown to the operator, so write it for whoever reads host logs.
 
-An unsupported `method` is a normal `ok: false` — hosts do **not** advertise which methods they
-support, deliberately.
+> ⚠️ **Changed — the backend no longer invents the list.** It used to offer four placeholders,
+> `method_a`–`method_d`, to every host regardless of what that host could do. Now it offers exactly
+> what you advertise, and refuses anything else with a **400** before the command is ever sent.
+>
+> A host that advertises nothing can set nothing up. This is not a failure mode to work around: it
+> is the backend declining to guess on your behalf.
+
+An unsupported `method` should still be a normal `ok: false`. The check above closes the common
+case, not the race where your list changes between the handshake and the command.
 
 ### `connect`
 
@@ -315,14 +325,24 @@ not stale.
 
 ---
 
-### 4.5 `agents` — once, immediately after connecting
+### 4.5 `handshake` — once, immediately after connecting
 
 ```jsonc
-{ "kind": "event", "type": "agents",
-  "payload": { "agents": [ { "agentId": 42, "state": "ONLINE" } ] } }
+{ "kind": "event", "type": "handshake",
+  "payload": {
+    "agents": [ { "agentId": 42, "state": "ONLINE" } ],
+    "loginMethods": [ { "id": "device_code", "label": "Device code",
+                        "description": "Approve a code on this machine." } ] } }
 ```
 
-Host-scoped, so **no `agentId`** on the envelope; the ids are inside the payload.
+Host-scoped, so **no `agentId`** on the envelope; everything is inside the payload.
+
+> ⚠️ **Renamed from `agents`.** There is no alias — the old name is not handled. It was accurate
+> while the agent list was all this carried, and is not now.
+
+Both keys are **optional and independent**, so you can implement one half first.
+
+#### `agents` — what you are running
 
 This is the only message that says what *exists*. `agent_status` reports transitions, and agent
 state is **stored** on the backend, so it outlives the connection that reported it. A host that
@@ -346,8 +366,34 @@ dropped socket announces them and nothing changes, which is what makes it safe t
 and a host cannot reliably tell the two cases apart anyway.
 
 **An empty list is a real announcement**: `"agents": []` means "I am running none of them", which is
-exactly what a freshly started host should say. Omitting the event entirely is treated as saying
-nothing at all, so an older host keeps working unchanged — it simply keeps the old failure mode.
+exactly what a freshly started host should say. Omitting the key is treated as saying nothing at all,
+so a host that has not implemented this half keeps working — it simply keeps the old failure mode.
+
+#### `loginMethods` — what you can log in with
+
+The mechanisms **this machine can actually perform**. The operator picks one and it comes back to you
+as `setup_agent`s `method`.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Opaque to the backend, relayed verbatim. This is what you get back. |
+| `label` | no | Short name for the chooser. The `id` is shown when this is absent. |
+| `description` | no | One line on what the operator is about to be asked to do. |
+
+The copy is yours because the mechanism is yours: you are the only party that knows what your methods
+are, so you are the only one that can describe them. The backend does not translate it and has no
+list of its own to fall back on.
+
+**The same rule as `method` binds this: a mechanism, never an account.** `"Device code"` is a
+mechanism. `"Sign in as build-bot-4@example.com"` is an identity, and putting one here hands the
+backend the very thing this design keeps out of it.
+
+**Not stored.** The backend holds the list with your connection and drops it when the socket closes,
+the same way it treats reachability. Re-send it on every connect; there is nothing to update or
+revoke.
+
+**Advertise nothing and you can set nothing up.** The operator is told that this host has not said
+what it can log in with, rather than being offered a chooser that cannot work.
 
 ---
 
@@ -408,7 +454,7 @@ into an image.
 **The backend is the source of truth for work; the host is the source of truth for agent state.**
 The host receives a segment and builds it, it does not schedule. Conversely the backend never
 asserts an agent's state back onto the host — on reconnect the host re-enumerates what is actually
-live and reports it, as [`agents`](#45-agents--once-immediately-after-connecting). That
+live and reports it, in the [`handshake`](#45-handshake--once-immediately-after-connecting). That
 re-enumeration is not optional: it is the only thing that clears state the backend is still
 asserting from a previous process.
 
@@ -430,7 +476,13 @@ failure.
 7. Handle `set_chat_listener` → toggle `global` forwarding for that agent; default off.
 8. Classify inbound chat into the six scopes and emit `chat` / `activity`.
 9. Reply `ok: false` to any command you do not recognise.
-10. On reconnect, re-enumerate live sessions and report each one's `agent_status`.
+10. Send `handshake` immediately on **every** connect, both halves:
+    - `agents` — re-enumerate what is actually live. Not optional: it is the only thing that clears
+      sessions the backend is still asserting from a previous process. An empty array is a real
+      answer.
+    - `loginMethods` — what this machine can log in with. **Advertise nothing and no agent on this
+      host can be set up at all**, because the backend offers exactly this list and holds none of
+      its own.
 
 ## Before writing any of it
 
