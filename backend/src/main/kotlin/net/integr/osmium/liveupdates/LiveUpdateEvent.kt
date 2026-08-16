@@ -17,7 +17,7 @@ import net.integr.osmium.security.Nodes
  *   renaming one of these is not.
  * @param node the permission a subscriber must hold to receive this kind of event. Declared on the
  *   type rather than passed at publish time because it belongs to the kind, not the occurrence —
- *   every `agent` event needs `fleet.read`, always — so a publisher cannot forget it or set it
+ *   every `agent` event needs `agent.read`, always — so a publisher cannot forget it or set it
  *   wrong.
  *
  *   `LiveUpdateSubscriptions` checks it against the subscriber's own nodes on every dispatch, which
@@ -25,18 +25,18 @@ import net.integr.osmium.security.Nodes
  *   everyone entitled to the second.
  */
 enum class LiveUpdateType(val eventName: String, val node: String) {
-    AGENT_CHANGED("agent", Nodes.FLEET_READ),
-    AGENT_REMOVED("agent-removed", Nodes.FLEET_READ),
-    HOST_CHANGED("host", Nodes.FLEET_READ),
-    HOST_REMOVED("host-removed", Nodes.FLEET_READ),
+    AGENT_CHANGED("agent", Nodes.AGENT_READ),
+    AGENT_REMOVED("agent-removed", Nodes.AGENT_READ),
+    HOST_CHANGED("host", Nodes.HOST_READ),
+    HOST_REMOVED("host-removed", Nodes.HOST_READ),
 
     /**
      * Appended to a feed rather than replacing a resource. Both carry `agentId`, so the per-agent
      * stream gets them too - including the server's global chat, which arrives under whichever
      * agent currently forwards it. A client showing one agent's conversation filters on `scope`.
      */
-    CHAT_MESSAGE("chat", Nodes.FLEET_READ),
-    ACTIVITY_ENTRY("activity", Nodes.FLEET_READ),
+    CHAT_MESSAGE("chat", Nodes.CHAT_READ),
+    ACTIVITY_ENTRY("activity", Nodes.ACTIVITY_READ),
 
     /**
      * An agent's vitals, on its own event rather than inside `agent`.
@@ -45,7 +45,7 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      * actually changes. Folding it in would turn a rare, meaningful event into a firehose, and send
      * the whole agent each time to carry a few numbers that moved.
      */
-    AGENT_TELEMETRY("telemetry", Nodes.FLEET_READ),
+    AGENT_TELEMETRY("telemetry", Nodes.AGENT_READ),
 
     USER_CHANGED("user", Nodes.USER_READ),
     USER_REMOVED("user-removed", Nodes.USER_READ),
@@ -67,6 +67,18 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      * fleet does not entitle you to read what other operators did.
      */
     AUDIT_ENTRY("audit", Nodes.AUDIT_READ),
+
+    /**
+     * A schematic, as it arrives and then as it is read.
+     *
+     * The only event here that fires while nothing has changed in the world. A file of several
+     * gigabytes takes minutes to upload and minutes more to read, and without this the interface
+     * shows a row saying "analysing" with no way to tell a long job from a stuck one. Throttled
+     * where it is produced rather than here, because the work underneath reports thousands of times
+     * a second.
+     */
+    SCHEMATIC_CHANGED("schematic", Nodes.SCHEMATIC_READ),
+    SCHEMATIC_REMOVED("schematic-removed", Nodes.SCHEMATIC_READ),
 }
 
 /**

@@ -55,7 +55,11 @@ class ChatListenerService(
     @Transactional
     fun reconcileAll() {
         agentRepository.findAll()
-            .groupBy { it.serverAddress }
+            // An agent assigned nowhere is a candidate for nothing. Without this they would group
+            // together under null and the sweep would try to elect a listener for "no server",
+            // which is not a server and has no chat to forward.
+            .mapNotNull { agent -> agent.serverAddress?.let { it to agent } }
+            .groupBy({ it.first }, { it.second })
             .forEach { (server, agents) -> reconcile(server, agents) }
     }
 

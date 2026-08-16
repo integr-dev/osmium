@@ -18,10 +18,29 @@ data class CreateAgentRequest(
 
     val hostId: Long,
 
-    @field:NotBlank
+    /**
+     * **Optional.** Requiring one here forced an operator to decide where an agent would play before
+     * it had been set up, and therefore before they knew the credential worked. Assigning it later
+     * through `PUT /api/agents/{id}/server` is the ordinary path; this exists so the common case
+     * still takes one call.
+     */
     @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
-    @field:Schema(example = "mc.example.com:25565")
-    val serverAddress: String,
+    @field:Schema(description = "Where it should play, if that is already known.", example = "mc.example.com:25565")
+    val serverAddress: String? = null,
+)
+
+@Schema(
+    description = "Points an agent at a Minecraft server, or at none. Separate from both setup and " +
+        "editing: the account is the same account wherever it joins, so where it plays is its own " +
+        "decision and changing it touches no credential.",
+)
+data class AssignServerRequest(
+    @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
+    @field:Schema(
+        description = "Null unassigns it, leaving the agent set up and idle.",
+        example = "mc.example.com:25565",
+    )
+    val serverAddress: String?,
 )
 
 @Schema(description = "A player standing near an agent in game.")
@@ -79,7 +98,8 @@ data class AgentResponse(
     val label: String,
     val hostId: Long,
     val hostName: String,
-    val serverAddress: String,
+    @field:Schema(description = "Where it plays, or null when it is assigned nowhere and cannot connect.")
+    val serverAddress: String?,
     @field:Schema(description = "Stored state, adjusted to STALE when the owning host is unreachable.")
     val state: AgentState,
     val mcUsername: String?,
@@ -99,17 +119,12 @@ data class AgentResponse(
 )
 
 @Schema(
-    description = "Edits an agent. Omitted fields are left alone. Moving an agent to another Minecraft " +
-        "server does not affect its credentials - the account is the account, whichever server it " +
-        "joins - but it must not be connected at the time.",
+    description = "Renames an agent. Where it plays is set through `PUT /api/agents/{id}/server`, " +
+        "which is a different kind of change and has its own preconditions.",
 )
 data class UpdateAgentRequest(
     @field:Size(max = AGENT_LABEL_MAX_LENGTH)
     val label: String? = null,
-
-    @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
-    @field:Schema(description = "Move the agent to this server. Only while it is not online.")
-    val serverAddress: String? = null,
 )
 
 @Schema(
@@ -123,7 +138,7 @@ data class SetupAgentRequest(
     val method: String,
 )
 
-@Schema(description = "Sends a chat message as an agent. This is impersonation - gated on fleet.chat.")
+@Schema(description = "Sends a chat message as an agent. This is impersonation - gated on chat.")
 data class ChatRequest(
     @field:NotBlank
     @field:Size(max = CHAT_MAX_LENGTH)

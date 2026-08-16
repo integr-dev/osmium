@@ -44,7 +44,9 @@ async function submit() {
   try {
     const agent = await agentStore.addAgent({
       label: draft.value.label,
-      serverAddress: draft.value.serverAddress,
+      // Optional now. Left blank the agent is created assigned nowhere, which is a real state and
+      // often the right one: where it plays can be decided once its credential is known to work.
+      serverAddress: draft.value.serverAddress.trim() || null,
       hostId: draft.value.hostId,
     })
     open.value = false
@@ -83,14 +85,18 @@ async function submit() {
             maxlength="64"
             required
           />
+          <!--
+            No longer required. Deciding where an agent plays before it has been set up means
+            deciding before anyone knows the credential works, so it can be left for later.
+          -->
           <FormField
             v-model="draft.serverAddress"
-            :label="t('agents.server')"
+            :label="t('agents.serverOptional')"
             :placeholder="t('agents.serverPlaceholder')"
             :icon="Server"
             type="text"
-            required
           />
+          <p class="text-xs opacity-60">{{ t('agents.serverLaterHint') }}</p>
         </template>
 
         <template v-else>
@@ -109,12 +115,7 @@ async function submit() {
                   class="size-2 shrink-0 rounded-full"
                   :class="host.reachable ? 'bg-success' : 'bg-error'"
                 ></span>
-                <span class="min-w-0 flex-1">
-                  <span class="block font-medium">{{ host.name }}</span>
-                  <span class="block font-mono text-xs opacity-50">
-                    {{ host.address ?? t('hosts.notConnected') }}
-                  </span>
-                </span>
+                <span class="min-w-0 flex-1 font-medium">{{ host.name }}</span>
                 <span class="text-xs opacity-50">
                   {{ t('hosts.agentCount', { count: host.agentCount }, host.agentCount) }}
                 </span>

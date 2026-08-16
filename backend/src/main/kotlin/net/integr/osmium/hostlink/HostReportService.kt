@@ -67,6 +67,8 @@ class HostReportService(
                 address = null,
             )
 
+            EventType.AGENTS -> reconcile(hostId, envelope)
+
             EventType.AGENT_STATUS -> applyStatus(hostId, envelope)
 
             EventType.CHAT -> recordChat(hostId, envelope)
@@ -109,6 +111,62 @@ class HostReportService(
     }
 
     /**
+     * Squares what a host says it is running against what the backend believed.
+     *
+     * Announced agents are applied exactly as `agent_status` would apply them, so a host that kept
+     * its sessions across a socket blip changes nothing by saying so.
+     *
+     * An agent this host owns and did **not** mention is not in game. Its stored state is a claim
+     * about a live session, and the only party that can see one has just declined to mention it:
+     *
+     * - `ONLINE` becomes `LINKED`. The credentials are on the host's disk and outlive a restart;
+     *   the session does not.
+     * - `SETUP_PENDING` becomes `UNLINKED`, the same place a failed setup lands. The command went
+     *   with the process that was going to answer it, so nothing is coming.
+     *
+     * Every other state is left alone: none of them assert a session, so the host's silence says
+     * nothing about them.
+     */
+    private fun reconcile(hostId: Long, envelope: HostEnvelope) {
+        val reported = envelope.payload?.get("agents")?.takeIf { it.isArray } ?: run {
+            log.debug("Ignoring malformed agent announcement from host {}", hostId)
+            return
+        }
+
+        val announced = reported.mapNotNull { node -> node.get("agentId")?.asLong() }.toSet()
+
+        for (node in reported) {
+            val agentId = node.get("agentId")?.asLong() ?: continue
+            val agent = ownedAgent(hostId, agentId) ?: continue
+            applyReportedState(hostId, agent, node.get("state")?.asString())
+        }
+
+        for (agent in agentRepository.findAllByHostId(hostId)) {
+            if (agent.id in announced) continue
+
+            val corrected = when (agent.state) {
+                AgentState.ONLINE -> AgentState.LINKED
+                AgentState.SETUP_PENDING -> AgentState.UNLINKED
+                else -> continue
+            }
+
+            log.info("Host {} did not announce agent {}; {} -> {}", hostId, agent.label, agent.state, corrected)
+            agent.state = corrected
+            agent.onlineSince = null
+            agent.chatListener = false
+            // The operator did not cause this and would otherwise see a state change with no
+            // explanation, which is exactly what the activity feed is for.
+            activityService.record(
+                agent = agent,
+                scope = ActivityScope.LIFECYCLE,
+                severity = ActivitySeverity.WARNING,
+                text = "Host reconnected without this agent, so it is no longer in game",
+            )
+            publish(agent)
+        }
+    }
+
+    /**
      * `agent_status` carries two things with very different lifetimes, and they are handled apart.
      *
      * The **state** is a rare, durable fact: it is written and published only when it actually
@@ -127,7 +185,12 @@ class HostReportService(
     }
 
     private fun applyState(hostId: Long, agent: Agent, envelope: HostEnvelope) {
-        val reported = envelope.payload?.get("state")?.asString() ?: return
+        applyReportedState(hostId, agent, envelope.payload?.get("state")?.asString())
+    }
+
+    /** Shared with the arrival announcement, which reports the same states in a different shape. */
+    private fun applyReportedState(hostId: Long, agent: Agent, reported: String?) {
+        if (reported == null) return
 
         val state = runCatching { AgentState.valueOf(reported) }.getOrNull()
         if (state == null) {
@@ -302,11 +365,13 @@ class HostReportService(
 
     /** Rejects a host reporting on an agent it does not own, rather than trusting the agentId. */
     private fun resolve(hostId: Long, envelope: HostEnvelope) =
-        envelope.agentId
-            ?.let { agentRepository.findById(it).orElse(null) }
-            ?.takeIf { it.host.id == hostId }
+        envelope.agentId?.let { ownedAgent(hostId, it) }
             ?: run {
                 log.warn("Host {} reported on agent {} it does not own", hostId, envelope.agentId)
                 null
             }
+
+    /** A host may only speak about the agents it owns, however the id reached us. */
+    private fun ownedAgent(hostId: Long, agentId: Long): Agent? =
+        agentRepository.findById(agentId).orElse(null)?.takeIf { it.host.id == hostId }
 }

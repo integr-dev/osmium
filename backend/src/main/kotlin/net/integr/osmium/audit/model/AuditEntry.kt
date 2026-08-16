@@ -49,6 +49,37 @@ enum class AuditAction {
      * nothing here sees it again. The detail carries the range asked for and the row count.
      */
     AUDIT_EXPORT,
+
+    /**
+     * A refresh token was presented twice, and every session descended from that login was revoked.
+     *
+     * Not an operator action at all, unlike everything above it — but it is the strongest signal
+     * this system produces that a credential has been copied, and the trail is where somebody looks
+     * afterwards. The account it names is the victim; which of the two callers was the thief is
+     * precisely what is not knowable, which is why the whole family goes.
+     */
+    SESSION_REUSE_DETECTED,
+
+    /**
+     * An operator ended every session on their own account, access tokens included.
+     *
+     * Recorded because it is what someone does when they think they have been compromised, and the
+     * moment they realised is exactly the timestamp an investigation is looking for afterwards.
+     */
+    SESSION_REVOKED_ALL,
+
+    /**
+     * Recorded when the upload *starts*, not when it finishes.
+     *
+     * A schematic is what the fleet will spend days building, so the trail should say who chose it
+     * — and an upload that never completes is often the more interesting entry, because it is what
+     * an operator sees just before wondering where their file went.
+     */
+    SCHEMATIC_UPLOAD,
+    SCHEMATIC_RENAME,
+
+    /** Takes the file with it, and with the file every plan and every measure of progress on it. */
+    SCHEMATIC_DELETE,
 }
 
 

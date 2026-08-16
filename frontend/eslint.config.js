@@ -2,10 +2,11 @@ import pluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 import tseslint from 'typescript-eslint'
 
-// Deliberately minimal. This config exists to enforce the security rules from BOT_CONNECTIVITY.md,
+// Deliberately minimal. This config exists to enforce the security rules from FLEET_CONNECTIVITY.md,
 // not to impose a full style guide - formatting stays out of scope. The key rule is `vue/no-v-html`:
-// v-html is the main XSS vector in a Vue app, and it matters more here because the access token
-// lives in localStorage (see src/api/token.ts).
+// v-html is the main XSS vector in a Vue app. No credential is readable by script any more - the
+// access token is in memory and the refresh token is an HttpOnly cookie - but script on the page can
+// still act as the operator for as long as the tab is open, so keeping it out remains the point.
 export default tseslint.config(
   { ignores: ['dist', 'src/api/schema.d.ts'] },
   ...pluginVue.configs['flat/recommended'],

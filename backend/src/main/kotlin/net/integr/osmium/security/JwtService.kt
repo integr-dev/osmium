@@ -31,6 +31,10 @@ class JwtService(
             .issuedAt(issuedAt)
             .expiresAt(expiresAt)
             .subject(user.username)
+            // The account's token version at the moment of issue, compared on every request. It is
+            // the only way to revoke one of these: incrementing it refuses every token minted so
+            // far. See DatabaseJwtAuthenticationConverter.
+            .claim(VERSION_CLAIM, user.tokenVersion)
             .build()
 
         val token = encoder
@@ -40,7 +44,10 @@ class JwtService(
         return IssuedToken(value = token, expiresAt = expiresAt)
     }
 
-    private companion object {
-        const val ISSUER = "osmium"
+    companion object {
+        private const val ISSUER = "osmium"
+
+        /** Claim carrying [net.integr.osmium.account.model.User.tokenVersion]. */
+        const val VERSION_CLAIM = "ver"
     }
 }

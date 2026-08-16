@@ -1,7 +1,9 @@
 import createClient, { type Middleware } from 'openapi-fetch'
-import { ref } from 'vue'
 import type { paths, components } from './schema'
 import { t } from '../i18n'
+import { apiBaseUrl } from './base'
+import { backendEverReached, backendReachable } from './reachability'
+import { refreshSession } from './session'
 import { token } from './token'
 
 /**
@@ -34,7 +36,43 @@ export type AgentTelemetryResponse = Required<components['schemas']['AgentTeleme
 export type AgentResponse = Required<components['schemas']['AgentResponse']> & {
   telemetry: AgentTelemetryResponse | null
 }
+/**
+ * `clientIp` and `userAgent` are genuinely nullable: they are whatever the request happened to
+ * carry, and a deployment that does not pass proxy headers through records neither.
+ */
+export type SessionResponse = Required<components['schemas']['SessionResponse']> & {
+  clientIp: string | null
+  userAgent: string | null
+}
 export type AuditEntryResponse = Required<components['schemas']['AuditEntryResponse']>
+
+/**
+ * `contentHash` and `failure` are genuinely nullable, and so is every field of `content`: nothing
+ * inside a schematic is known until the file has been read through, which is minutes after the row
+ * exists.
+ */
+export type SchematicResponse = Required<components['schemas']['SchematicResponse']> & {
+  contentHash: string | null
+  failure: string | null
+  content: components['schemas']['SchematicContentResponse']
+}
+export type MaterialResponse = Required<components['schemas']['MaterialResponse']>
+export type SegmentResponse = Required<components['schemas']['SegmentResponse']>
+
+/** Flat: x, y, z, faces repeated. See the shape endpoint for why it is not a list of objects. */
+export type ShapeResponse = Omit<Required<components['schemas']['ShapeResponse']>, 'voxels'> & {
+  voxels: number[]
+}
+
+/**
+ * `Omit` rather than an intersection, unlike the ones above. Intersecting an array does not replace
+ * its element type — `Segment[] & OptionalSegment[]` still indexes to something optional — so the
+ * assertion has to remove the property before adding it back.
+ */
+export type SplitResponse = Omit<
+  Required<components['schemas']['SplitResponse']>,
+  'segments'
+> & { segments: SegmentResponse[] }
 export type ChatMessageResponse = Required<components['schemas']['ChatMessageResponse']>
 export type ActivityEntryResponse = Required<components['schemas']['ActivityEntryResponse']>
 
@@ -67,18 +105,8 @@ export function isUnreachable(error: unknown): boolean {
   return errorMessage(error, '') === UNREACHABLE_MESSAGE
 }
 
-/**
- * Whether the last request reached the backend at all. Lives here rather than in a store so every
- * call updates it, including the account lookup a viewer makes without ever touching the fleet.
- */
-export const backendReachable = ref(true)
-
-/**
- * Whether the backend has *ever* answered this session. It separates the two failures that look
- * identical otherwise: never got started, versus was working and went away. The first has nothing
- * worth showing, the second has data on screen that is merely stale.
- */
-export const backendEverReached = ref(false)
+/** Written here and in `session.ts`; re-exported so this stays the one module callers import. */
+export { backendReachable, backendEverReached } from './reachability'
 
 let onUnauthorized: (() => void) | null = null
 
@@ -92,7 +120,7 @@ const auth: Middleware = {
     if (token.value) request.headers.set('Authorization', `Bearer ${token.value}`)
     return request
   },
-  onResponse({ request, response }) {
+  async onResponse({ request, response }) {
     // A gateway error is the proxy saying it could not reach the backend, so it is reshaped into
     // the same result a transport failure produces. Its body is the proxy's HTML, which would
     // otherwise surface to the operator as an unhelpful fallback message.
@@ -110,12 +138,25 @@ const auth: Middleware = {
       backendEverReached.value = true
     }
 
-    // The token expired or the account was removed/renamed. There is no refresh flow by design,
-    // so drop the session and let the user log in again. Login itself must not trigger this.
-    if (response.status === 401 && !request.url.endsWith('/api/auth/login')) {
-      token.value = null
-      onUnauthorized?.()
+    // The access token has expired, or the account was removed or renamed. The first is routine —
+    // access tokens are minted for half an hour and refreshed silently — so a 401 asks for a new
+    // one and replays the request rather than ending the session.
+    //
+    // Retried exactly once. If the replay 401s too the session is genuinely over, and a loop here
+    // would be a request storm against a backend that has already said no.
+    if (response.status === 401 && !isSessionCall(request.url)) {
+      const resumed = await refreshSession()
+      if (!resumed) {
+        onUnauthorized?.()
+        return response
+      }
+      // A fresh Request: the original is consumed, and its Authorization header holds the token
+      // that just failed.
+      const retry = new Request(request.url, request)
+      retry.headers.set('Authorization', `Bearer ${token.value}`)
+      return fetch(retry)
     }
+
     return response
   },
   /**
@@ -134,19 +175,22 @@ const auth: Middleware = {
   },
 }
 
+/**
+ * The three endpoints that manage the session itself. A 401 from one of them is the answer, not a
+ * prompt to go and get a new token — refreshing in response to a failed refresh is a loop.
+ */
+function isSessionCall(url: string): boolean {
+  return SESSION_PATHS.some((path) => url.includes(path))
+}
+
+const SESSION_PATHS = ['/api/auth/login', '/api/auth/refresh', '/api/auth/logout']
+
 function unreachableResponse(): Response {
   return new Response(JSON.stringify({ message: UNREACHABLE_MESSAGE }), {
     status: UNREACHABLE_STATUS,
     headers: { 'Content-Type': 'application/json' },
   })
 }
-
-/**
- * Empty in both supported deployments, which proxy `/api` and are therefore same-origin. Exported
- * because the generated client is not the only thing that calls the API: player heads are fetched
- * by hand, and a split-origin deployment has to send them to the same place as everything else.
- */
-export const apiBaseUrl: string = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const api = createClient<paths>({ baseUrl: apiBaseUrl })
 

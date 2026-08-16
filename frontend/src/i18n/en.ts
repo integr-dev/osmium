@@ -39,6 +39,7 @@ export const en = {
   nav: {
     openNavigation: 'Open navigation',
     closeNavigation: 'Close navigation',
+    resizeSidebar: 'Resize the sidebar',
     dashboard: 'Dashboard',
     map: 'Map',
     hosts: 'Hosts',
@@ -50,6 +51,63 @@ export const en = {
     configuration: 'Configuration',
     auditLog: 'Audit log',
     logOut: 'Log out',
+  },
+
+  /**
+   * Ctrl/⌘-K. The section names are nouns rather than verbs — the list is what you can reach, not
+   * what you are being told to do.
+   */
+  palette: {
+    hint: '{keys} to search',
+    placeholder: 'Search agents, hosts and pages…',
+    noMatches: 'Nothing matches that.',
+    connectAgent: 'Connect {name}',
+    disconnectAgent: 'Disconnect {name}',
+    toggleChat: 'Toggle chat',
+    chatServer: 'Chat: {server}',
+    refresh: 'Refresh the fleet',
+    language: 'Language: {name}',
+    section: {
+      navigate: 'Pages',
+      agents: 'Agents',
+      hosts: 'Hosts',
+      actions: 'Actions',
+    },
+  },
+
+  /**
+   * The rail beside the page. "Speak as" rather than "send as": the message goes out under a
+   * Minecraft account, and everyone in game reads it as that player talking.
+   */
+  chat: {
+    title: 'Chat',
+    toggle: 'Toggle chat ({keys})',
+    resize: 'Resize the chat rail',
+    scope: 'What to show',
+    servers: 'Servers',
+    agents: 'Agents',
+    speakAs: 'Speak as',
+    listening: 'listening',
+    notListening: 'no listener',
+    noListener: 'No agent is online here, so nothing is forwarding this server’s chat.',
+    noServers: 'No servers yet. Assign an agent to one to read its chat.',
+    noSpeaker: 'Nobody is in game here to speak through.',
+    speakerOffline: '{name} is not in game.',
+    hostOffline: 'Host {host} is unreachable.',
+  },
+
+  /**
+   * The browser tab, rotated through every few seconds. Short: a tab shows about twenty characters
+   * before the browser truncates it, and a truncated fact is worse than a shorter one.
+   */
+  title: {
+    plain: 'Osmium',
+    /** The name stays in front, so the tab is identifiable whichever fact is showing. */
+    prefixed: 'Osmium · {text}',
+    offline: 'offline',
+    online: '{online}/{total} in game',
+    built: '{percent}% built',
+    eta: 'ETA {minutes}m',
   },
 
   connection: {
@@ -69,6 +127,12 @@ export const en = {
     password: 'Password',
     signIn: 'Sign in',
     signingIn: 'Signing in…',
+    capsLock: 'Caps Lock is on',
+    /** Said before a password is spent on a backend that was never going to answer. */
+    reachable: 'Osmium is responding',
+    unreachable: 'Osmium is not responding',
+    /** Its own key rather than the Accounts page's: rewording that one must not reword this. */
+    noSignUp: 'Only administrators can create accounts.',
   },
 
   dashboard: {
@@ -83,14 +147,30 @@ export const en = {
     remaining: 'Est. remaining',
     atCurrentRate: 'at the current rate',
     needsAttention: 'Needs attention',
+    vitals: 'Vitals',
+    reporting: '{reporting}/{online} reporting',
+    noVitals: 'No agent is in game and reporting.',
+    blocksApart: '{blocks} blocks',
+    serverScope: 'Which server this page is about',
+    allServers: 'All servers',
+    vital: {
+      health: 'Lowest health',
+      food: 'Lowest food',
+      ping: 'Worst ping',
+      spread: 'Furthest apart',
+    },
     allHealthy: 'All agents are healthy.',
     activity: 'Agent activity',
     progress: 'Schematic progress',
     percentComplete: '{percent}% complete',
     blocksRemaining: '{count} block remaining | {count} blocks remaining',
     sectors: 'Sectors',
-    contribution: 'Contribution',
     activityHint: 'Alerts and status changes.',
+    incidentsPerHour: 'Per hour, over the last {hours} hours.',
+    incidentsPartial: 'Per hour. Faint hours are older than anything loaded, not quiet.',
+    incidentsUnloaded: 'not loaded',
+    trendSession: 'last {minutes} min this session',
+    trendStarting: 'building a trend…',
     noActivity: 'Nothing to report.',
     noChat: 'No messages yet.',
   },
@@ -99,18 +179,6 @@ export const en = {
   attention: {
     hostUnreachable: 'Host unreachable',
     needsRelink: 'Needs relink',
-  },
-
-  servers: {
-    title: 'Active servers',
-    hint: 'Select a server to read its chat.',
-    online: '{online} of {total} online',
-    listening: 'Chat on',
-    noListenerShort: 'No chat',
-    noListener: 'No agent is online here, so nothing is forwarding this server’s chat.',
-    via: 'Forwarded by {name}.',
-    chatTitle: 'Server chat',
-    none: 'No servers yet. Add an agent to get started.',
   },
 
   hosts: {
@@ -176,6 +244,20 @@ export const en = {
     disconnect: 'Disconnect',
     edit: 'Edit agent',
     move: 'Move to another Minecraft server',
+
+    /**
+     * Where an agent plays is its own action, not a field on the edit: a rename is cosmetic and
+     * always allowed, while this decides what the next connection targets and is offline-only.
+     */
+    serverOptional: 'Minecraft server (optional)',
+    serverLaterHint: 'Leave blank to decide later. An agent can be set up before it has anywhere to play.',
+    noServer: 'No server',
+    notLinked: 'Not set up',
+    setServer: 'Server',
+    setServerTitle: 'Where should {name} play?',
+    setServerHint: 'The account is the same account wherever it joins, so this changes nothing about its credentials.',
+    unassignHint: 'Leave blank to take it off its server. It stays set up and can be assigned again later.',
+    needsServer: 'Assign a server before connecting.',
     removeWarning: 'The agent is removed from Osmium. Credentials stored on {host} are not affected — revoke the account there if it should stop working.',
 
     uptime: 'Uptime',
@@ -191,7 +273,6 @@ export const en = {
     activity: 'Activity',
     noActivity: 'Nothing to report.',
     chat: 'Chat',
-    chatHint: '— to and from this agent. Server chat is on the dashboard.',
     chatPlaceholder: 'Send a message as this agent',
     send: 'Send',
     agentTag: 'agent',
@@ -209,6 +290,126 @@ export const en = {
     title: 'Operations',
     subtitle: 'Run work across the fleet.',
     empty: 'Nothing here yet.',
+    agents: 'Agents',
+
+    /** The three things this screen does, as tabs. Nouns: they are places, not commands. */
+    tabSchematics: 'Schematics',
+    tabServers: 'Servers',
+    tabPower: 'Connections',
+
+    assignTitle: 'Assign a server',
+    assignHint: 'Points every selected agent at one Minecraft server. Credentials are untouched — an account is the same account wherever it joins.',
+    pickAgents: 'Select the agents to change.',
+    assign: 'Assign',
+    applying: 'Applying…',
+    clearServer: 'Take off server',
+    assigned: 'Assigned {count} agents to {server}.',
+    cleared: 'Took {count} agents off their server.',
+    onlineExcluded: 'Online agents cannot be moved. Disconnect them first.',
+
+    powerTitle: 'Connect and disconnect',
+    powerHint: 'Brings a group in or out of game at once. Each agent is asked in turn, so a failure stops rather than leaving an unpredictable half done.',
+    connect: 'Connect',
+    disconnect: 'Disconnect',
+    connected: 'Connected {count} agents.',
+    disconnected: 'Disconnected {count} agents.',
+    offlineOnly: 'Already online.',
+    onlineOnly: 'Not in game.',
+
+    /** Read aloud in place of the box picture, so it says the size rather than the angle. */
+    boxSize: '{name} {x} by {y} by {z} blocks',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    resetView: 'Reset the view',
+  },
+
+  schematics: {
+    title: 'Schematics',
+    step_schematic: 'Schematic',
+    step_agents: 'Agents',
+    step_split: 'Split',
+    back: 'Back',
+    next: 'Next',
+    needSchematic: 'Choose a schematic that has been read.',
+    needBuilders: 'Choose the agents that will build it.',
+    uploadTitle: 'Upload a schematic',
+    uploadIntro: 'A .litematic or .schem. It is read once it arrives, which takes a while on a large one — the list shows how far along it is. The format is taken from the file, not its name.',
+    buildTitle: 'What is being built',
+    buildingWhat: 'Building',
+    blocksEach: 'each',
+    startBuilding: 'Start building',
+    awaitingHost: 'Waiting on the host to support building.',
+    subtitle: 'What the fleet builds from.',
+    empty: 'No schematics yet. Upload a .litematic or .schem to start.',
+    filterPlaceholder: 'Search schematics',
+    noMatches: 'Nothing matches that.',
+    upload: 'Upload',
+    uploading: 'Sending… {sent} of {total} · {percent}%',
+    cancel: 'Cancel',
+    namePlaceholder: 'Name this schematic',
+    name: 'Name',
+    deleteTitle: 'Delete {name}?',
+    deleteWarning: 'The file goes with it, and so does everything measured from it — the material list, the shape, any division worked out from it. Anything already being built carries on.',
+    pickFile: 'Choose a file',
+    rename: 'Rename',
+    delete: 'Delete',
+    selectHint: 'Select a schematic to see its shape.',
+
+    /** The row's own state, which is a two-stage bar: bytes arriving, then bytes being read. */
+    statusUPLOADING: 'Uploading',
+    statusPENDING: 'Queued',
+    statusANALYSING: 'Reading',
+    statusREADY: 'Ready',
+    statusFAILED: 'Failed',
+
+    /**
+     * How far into that state, under the bar. The badge says which stage; these say how much of it
+     * is left, which for a queued schematic is the only thing that was ever missing.
+     */
+    progressUploading: '{sent} of {total} · {percent}%',
+    progressWaiting: 'Waiting to be read',
+    progressNext: 'Next to be read',
+    progressQueued: 'Waiting · {ahead} ahead of it',
+    progressReading: '{percent}% · pass {pass} of 2',
+
+    blocks: 'Blocks',
+    volume: 'Volume',
+    regions: 'Regions',
+    size: 'Size',
+    format: 'Format',
+    materials: 'Materials',
+    noMaterials: 'Nothing to gather.',
+    dragHint: 'Drag to turn. Arrow keys work too.',
+    reread: 'Re-read',
+    rereadHint: 'Reads the uploaded file again, without sending it again.',
+    viewShape: 'Shape',
+    detail: 'Detail',
+    viewBounds: 'Bounds',
+    shapeExact: 'One voxel per block.',
+    shapeCoarse: 'One voxel per {size} blocks — a massing model, not a picture.',
+    shapeOf: 'A model of a build {x} by {y} by {z} blocks',
+    splitOnBounds: 'The division is drawn on Bounds.',
+    uploadedBy: 'Uploaded by {name}',
+    builders: 'Agents',
+    buildingOn: 'Building on',
+    pickBuilders: 'Select the agents that will build it.',
+    oneServerOnly: 'A build happens on one server. These are somewhere else, or nowhere.',
+    splitBetween: 'Split between {count}',
+    splitTitle: 'Divide between agents',
+    splitting: 'Dividing…',
+    mode: 'How to cut it',
+    modeCOLUMNS: 'Columns',
+    modeLAYERS: 'Layers',
+    modeGRID: 'Grid',
+    modeHintCOLUMNS: 'Full-height pieces of the footprint. Every agent has its own ground and builds bottom-up without waiting for anyone.',
+    modeHintLAYERS: 'Horizontal slabs. The agent above has nothing to stand on until the one below is finished, so this only suits something flat.',
+    modeHintGRID: 'Cut on whichever axis is longest. Balances best, and can hand an agent a piece with no floor under it.',
+    segment: 'Segment {ordinal}',
+    segmentShare: '{blocks} blocks · {percent}%',
+    splitShort: 'This divides into {parts} of the {requested} asked for. There is not enough of it to go further.',
+    splitNotReady: 'Wait for the schematic to be read.',
+    outdated: 'Older Minecraft',
+    outdatedHint: 'Saved from Minecraft data version {version}, which is older than the one this fleet builds. Most blocks are unchanged between versions, but any that were renamed will fail when an agent tries to place one — check the material list below.',
   },
 
   /** MOCK, pending the backend. The field list here is a placeholder, not a specification. */
@@ -269,7 +470,6 @@ export const en = {
     role: 'Role',
     noRole: 'No role',
     permissions: 'Permissions',
-    permissionsHidden: 'You do not have permission to view this.',
     noPermissions: 'This account has no permissions.',
     current: 'current',
     included: 'included',
@@ -285,7 +485,40 @@ export const en = {
     confirmPassword: 'Confirm new password',
     confirmPlaceholder: 'Repeat the new password',
     passwordHint: 'Requires your current password. 4–72 characters.',
-    passwordChanged: 'Password changed.',
+    passwordChanged: 'Password changed. Every other session has been signed out.',
+  },
+
+  /**
+   * Deliberately plain about what these values are worth. An address is only the operator's if the
+   * deployment is set up to pass it through, and a browser names itself — neither is evidence, and
+   * copy that implied otherwise would invite someone to conclude too much from a row.
+   */
+  sessions: {
+    title: 'Signed in on',
+    hint: 'Where this account is signed in. A session ends 12 hours after it began, however much it is used.',
+    none: 'No other sessions.',
+    thisDevice: 'This device',
+    startedAt: 'Signed in {when}',
+    endsAt: 'Ends {when}',
+    unknownDevice: 'Unknown browser',
+    unknownAddress: 'Address not recorded',
+    end: 'Sign out',
+    ending: 'Signing out…',
+    endAll: 'Sign out everywhere',
+    endAllHint: 'Ends every session including this one, and immediately invalidates access already granted. Use this if you think someone else has your session.',
+    endAllConfirm: 'Sign out of every session?',
+    endAllWarning: 'Every browser signed in as you is signed out, this one included. You will need to sign in again.',
+    failed: 'Could not end that session.',
+
+    /**
+     * Says what happened and what to do, and stops there. The signal is "a token was presented
+     * twice", which is usually theft and is not proof of it — copy that asserted an attack would be
+     * claiming more than the system knows, and would read as crying wolf the first time it was
+     * something duller.
+     */
+    alertTitle: 'A sign-in token for your account was used twice',
+    alertBody: 'That normally means a copy of it exists somewhere it should not, so every session was signed out on {when}. If this was not you, change your password.',
+    alertDismiss: 'Dismiss',
   },
 
   accounts: {
@@ -317,6 +550,11 @@ export const en = {
     passwordOptional: 'Leave blank to keep the current password',
     changeRole: 'Change role',
     removeRoleHint: 'Removes all permissions.',
+    passwordResetWarning: 'Setting a password also ends every session that account has.',
+    signOut: 'Sign out everywhere',
+    signOutTitle: 'Sign {name} out of every session?',
+    signOutWarning: 'Every browser signed in as {name} is signed out, and access already granted stops working immediately. The account itself is untouched and they can sign in again.',
+    signedOut: '{name} has been signed out everywhere.',
   },
 
   audit: {
@@ -387,6 +625,11 @@ export const en = {
     USER_ROLE_CHANGE: 'Role changed',
     USER_PASSWORD_CHANGE: 'Password changed',
     AUDIT_EXPORT: 'Log exported',
+    SESSION_REUSE_DETECTED: 'Session token replayed',
+    SESSION_REVOKED_ALL: 'Signed out everywhere',
+    SCHEMATIC_UPLOAD: 'Schematic uploaded',
+    SCHEMATIC_RENAME: 'Schematic renamed',
+    SCHEMATIC_DELETE: 'Schematic deleted',
   },
 
   /**
@@ -401,13 +644,22 @@ export const en = {
     'user.create': 'Create accounts',
     'user.delete': 'Delete accounts',
     'user.role.write': 'Assign roles',
+    'user.sessions.revoke': 'Sign an account out everywhere',
     'role.read': 'View roles',
     'audit.read': 'View the audit log',
     'audit.export': 'Export the audit log',
-    'fleet.read': 'View hosts and agents',
-    'fleet.control': 'Manage and control agents',
-    'fleet.chat': 'Speak in game as an agent',
-    'fleet.login': 'Enrol hosts and set up agents',
+    'agent.read': 'View agents and telemetry',
+    'host.read': 'View hosts',
+    'activity.read': 'View agent activity',
+    'chat.read': 'Read in-game chat',
+    'chat.speak': 'Speak in game as an agent',
+    'agent.run': 'Connect and disconnect agents',
+    'agent.write': 'Create, rename and place agents',
+    'agent.delete': 'Delete agents',
+    'agent.setup': 'Set an agent up to log in',
+    'host.write': 'Enrol and rename hosts',
+    'host.token': 'Rotate a host enrolment token',
+    'host.delete': 'Remove hosts',
   },
 
   loginMethod: {
@@ -418,6 +670,8 @@ export const en = {
   },
 
   errors: {
+    loadSessions: 'Could not load your sessions.',
+    assignServer: 'Could not change the server.',
     generic: 'Something went wrong.',
     unreachable: 'Cannot reach Osmium',
     invalidCredentials: 'Incorrect username or password.',

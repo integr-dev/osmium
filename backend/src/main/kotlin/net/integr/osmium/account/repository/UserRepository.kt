@@ -13,6 +13,13 @@ import org.springframework.data.repository.query.Param
 interface AuthorizationRow {
     val username: String
     val nodeId: String?
+
+    /**
+     * The account's current token version. An access token carrying any other value has been
+     * revoked. Carried on this projection rather than fetched separately, so revocation costs no
+     * request the application was not already making.
+     */
+    val tokenVersion: Int
 }
 
 interface UserRepository : JpaRepository<User, Long> {
@@ -26,7 +33,7 @@ interface UserRepository : JpaRepository<User, Long> {
      */
     @Query(
         """
-        select u.username as username, n.id as nodeId
+        select u.username as username, n.id as nodeId, u.tokenVersion as tokenVersion
         from User u
         left join u.role r
         left join r.nodes n

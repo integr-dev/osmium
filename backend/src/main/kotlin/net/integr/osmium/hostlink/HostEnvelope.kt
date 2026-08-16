@@ -55,6 +55,20 @@ object EventType {
     const val SETUP_RESULT = "setup_result"
 
     /**
+     * What this host is actually running, sent when it connects:
+     * `{ "agents": [ { "agentId": 12, "state": "ONLINE" } ] }`.
+     *
+     * State is **stored**, so it outlives the connection that reported it. A host that restarts
+     * therefore leaves the backend asserting sessions nobody is running any more, and nothing else
+     * in the protocol ever contradicts it - `agent_status` says what changed, never what exists.
+     *
+     * So the host says so on arrival, and the backend reconciles: an agent it owns that goes
+     * unmentioned is not in game, whatever it was believed to be doing. Omitting this event changes
+     * nothing, which is what keeps an older host working.
+     */
+    const val AGENTS = "agents"
+
+    /**
      * A line of Minecraft chat: `{ "scope": "global", "from": "Notch", "text": "…" }`.
      *
      * `scope` is one of `outbound`, `direct`, `local`, `global` and is **classified by the host** -

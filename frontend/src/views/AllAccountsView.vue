@@ -10,6 +10,7 @@ import {
   KeyRound,
   Plus,
   Search,
+  ShieldAlert,
   SquarePen,
   Trash2,
   UserPlus,
@@ -164,6 +165,36 @@ async function createUser() {
   await loadUsers()
 }
 
+/**
+ * Ending somebody else's sessions. Confirmed rather than immediate: it is not destructive — the
+ * account survives and can sign straight back in — but it does throw an operator out of whatever
+ * they were doing, so it should not happen on a stray click next to Edit.
+ */
+const signingOut = ref<UserResponse | null>(null)
+const signedOut = ref<string | null>(null)
+
+function askSignOut(user: UserResponse) {
+  signingOut.value = user
+  signedOut.value = null
+  dialog('sign-out-user')?.showModal()
+}
+
+async function confirmSignOut() {
+  const user = signingOut.value
+  if (!user) return
+  error.value = null
+
+  const { error: failure } = await api.POST('/api/users/{id}/sessions/revoke-all', {
+    params: { path: { id: user.id } },
+  })
+  dialog('sign-out-user')?.close()
+  if (failure) {
+    error.value = errorMessage(failure, t('errors.generic'))
+    return
+  }
+  signedOut.value = t('accounts.signedOut', { name: user.username })
+}
+
 async function saveRole() {
   if (!editing.value) return
   error.value = null
@@ -272,6 +303,12 @@ function openEdit(user: UserResponse) {
       <span>{{ error }}</span>
     </div>
 
+    <!-- Nothing on the row changes when sessions end, so the confirmation has to be said out loud. -->
+    <div v-if="signedOut" role="alert" class="alert alert-success alert-soft">
+      <CheckCheck class="size-4" />
+      <span>{{ signedOut }}</span>
+    </div>
+
     <div class="card border-base-300 bg-base-200 border">
       <div class="overflow-x-auto">
         <table class="table">
@@ -336,6 +373,19 @@ function openEdit(user: UserResponse) {
                   >
                     <UserRoundCog class="size-3.5" />
                     {{ t('accounts.changeRole') }}
+                  </button>
+                  <!--
+                    Offered on the same node as editing, because it grants nothing extra: anyone who
+                    can reset a password or delete the account can already lock this operator out.
+                    This is the narrow version, for a laptop that has gone missing.
+                  -->
+                  <button
+                    v-if="auth.can('user.edit') && user.username !== auth.user?.username"
+                    class="btn btn-ghost btn-xs gap-1"
+                    @click="askSignOut(user)"
+                  >
+                    <ShieldAlert class="size-3.5" />
+                    {{ t('accounts.signOut') }}
                   </button>
                   <button
                     v-if="auth.can('user.delete') && user.username !== auth.user?.username"
@@ -512,6 +562,14 @@ function openEdit(user: UserResponse) {
             minlength="4"
             maxlength="72"
           />
+          <!--
+            Said before the fact, not after. Setting a password here ends every session that account
+            has, which is right — it is the response to a compromise — but an administrator who did
+            not expect it would read the operator being thrown out as a fault.
+          -->
+          <p v-if="editingUser.password" class="text-xs opacity-60">
+            {{ t('accounts.passwordResetWarning') }}
+          </p>
           <FormField
             v-model="editingUser.confirmPassword"
             :label="t('accounts.confirmNewPassword')"
@@ -593,6 +651,28 @@ function openEdit(user: UserResponse) {
             <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
           </div>
         </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+    </dialog>
+
+    <dialog :id="'sign-out-user'" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <ShieldAlert class="text-warning size-5" />
+          {{ t('accounts.signOutTitle', { name: signingOut?.username }) }}
+        </h3>
+        <p class="mt-3 text-sm opacity-70">
+          {{ t('accounts.signOutWarning', { name: signingOut?.username }) }}
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" type="button" @click="dialog('sign-out-user')?.close()">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-warning btn-sm gap-2" type="button" @click="confirmSignOut">
+            <ShieldAlert class="size-4" />
+            {{ t('accounts.signOut') }}
+          </button>
+        </div>
       </div>
       <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>

@@ -1,4 +1,5 @@
 package net.integr.osmium.agent.controller
+import com.jayway.jsonpath.JsonPath
 
 import net.integr.osmium.AbstractRestTest
 import net.integr.osmium.agent.model.AgentState
@@ -13,6 +14,7 @@ import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
+import org.springframework.test.web.servlet.put
 import kotlin.test.assertEquals
 
 class AgentControllerTest : AbstractRestTest() {
@@ -299,20 +301,88 @@ class AgentControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `an agent can be renamed and moved to another server`() {
+    fun `an agent can be renamed`() {
         val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
 
         mockMvc.patch("/api/agents/${target.id}") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"label":"Mason_09","serverAddress":"Other.Example.com"}"""
+            content = """{"label":"Mason_09"}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.label") { value("Mason_09") }
+            jsonPath("$.state") { value(AgentState.LINKED.name) }
+        }
+    }
+
+    /** Where an agent plays is its own operation now, not a field on the edit. */
+    @Test
+    fun `an agent is pointed at a server through its own endpoint`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.put("/api/agents/${target.id}/server") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":"Other.Example.com"}"""
+        }.andExpect {
+            status { isOk() }
             jsonPath("$.serverAddress") { value("other.example.com:25565") }
             // The account is the same account wherever it joins, so credentials are untouched.
             jsonPath("$.state") { value(AgentState.LINKED.name) }
+        }
+    }
+
+    /**
+     * The state the old shape could not express: set up, and deliberately playing nowhere. It used
+     * to be faked by pointing an agent at a server it was not connected to, which then showed up
+     * under Active servers with nobody on it.
+     */
+    @Test
+    fun `an agent can be assigned to no server at all`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.put("/api/agents/${target.id}/server") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":null}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.serverAddress") { doesNotExist() }
+        }
+
+        // And it cannot connect from there, because there is nowhere to connect to.
+        mockMvc.post("/api/agents/${target.id}/connect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect { status { isConflict() } }
+    }
+
+    @Test
+    fun `an agent may be created without a server and given one later`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val host = reachableHost()
+
+        // Requiring one at creation made the operator decide where an agent would play before
+        // knowing whether its credential even worked.
+        val created = mockMvc.post("/api/agents") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"Mason_10","hostId":${host.id}}"""
+        }.andExpect {
+            status { isCreated() }
+            jsonPath("$.serverAddress") { doesNotExist() }
+        }.andReturn().response.contentAsString
+
+        val id = JsonPath.read<Int>(created, "$.id")
+        mockMvc.put("/api/agents/$id/server") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":"mc.example.com"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
         }
     }
 
@@ -321,7 +391,7 @@ class AgentControllerTest : AbstractRestTest() {
         val auth = authAs("agent", RoleNames.ORCHESTRATOR)
         val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.ONLINE)
 
-        mockMvc.patch("/api/agents/${target.id}") {
+        mockMvc.put("/api/agents/${target.id}/server") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
             content = """{"serverAddress":"other.example.com:25565"}"""
@@ -370,8 +440,8 @@ class AgentControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `orchestrator deletes an agent`() {
-        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+    fun `administrator deletes an agent`() {
+        val auth = authAs("agent", RoleNames.ADMINISTRATOR)
         val agent = createAgent(label = "Mason_01", host = reachableHost())
 
         mockMvc.delete("/api/agents/${agent.id}") {
@@ -384,7 +454,25 @@ class AgentControllerTest : AbstractRestTest() {
     }
 
     /**
-     * A viewer watches the fleet but cannot touch it. `fleet.read` gates listing and the live
+     * The point of splitting the old single control node: the tier that runs the fleet all day is
+     * not the tier trusted to destroy part of it. An orchestrator connects, renames and sets up
+     * agents, and is refused the one action that takes an agent and its history with it.
+     */
+    @Test
+    fun `an orchestrator cannot delete an agent`() {
+        val agent = createAgent(label = "Mason_88", host = reachableHost())
+
+        mockMvc.delete("/api/agents/${agent.id}") {
+            header(HttpHeaders.AUTHORIZATION, authAs("runner", RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isForbidden() }
+        }
+
+        assert(agentRepository.findAll().isNotEmpty())
+    }
+
+    /**
+     * A viewer watches the fleet but cannot touch it. `agent.read` gates listing and the live
      * streams only; every way to change an agent is a separate node, which is what makes a
      * read-only tier possible without a second set of routes.
      */

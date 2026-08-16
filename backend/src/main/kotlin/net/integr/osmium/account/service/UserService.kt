@@ -25,6 +25,7 @@ import net.integr.osmium.audit.service.AuditService
 class UserService(
     private val userRepository: UserRepository,
     private val roleRepository: RoleRepository,
+    private val refreshTokenService: RefreshTokenService,
     private val passwordEncoder: PasswordEncoder,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
@@ -93,7 +94,14 @@ class UserService(
         }
         val previous = user.username
         rename(user = user, username = request.username)
-        request.password?.let { user.passwordHash = passwordEncoder.encodeRequired(it) }
+        request.password?.let {
+            user.passwordHash = passwordEncoder.encodeRequired(it)
+            // And every session opened with the old one. An administrator resetting somebody's
+            // password is responding to a scare, and leaving the sessions running would mean the
+            // one thing they were trying to stop carries on for another twelve hours - while they
+            // believe they have dealt with it. Changing your own password already did this.
+            refreshTokenService.revokeAllFor(user)
+        }
 
         val changes = buildList {
             if (user.username != previous) add("renamed from $previous")
@@ -111,6 +119,29 @@ class UserService(
         return user.toResponse()
     }
 
+    /**
+     * Ends every session an account has, without touching the account itself.
+     *
+     * On `user.edit` rather than a node of its own, because it grants nothing new: an administrator
+     * holding it can already reset the password or delete the account, either of which locks the
+     * operator out harder than this does. It exists because those are both blunt — this is the
+     * narrow version, for "their laptop was stolen and they are asleep".
+     *
+     * Reading somebody else's sessions is deliberately **not** here. Only the person holding them
+     * can tell which one is theirs, so a list would hand an administrator another operator's
+     * addresses and devices in exchange for data they are in no position to interpret.
+     */
+    @Transactional
+    fun revokeSessions(id: Long, actorUsername: String) {
+        val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
+        refreshTokenService.revokeAllFor(user)
+        auditService.record(
+            action = AuditAction.SESSION_REVOKED_ALL,
+            target = user.username,
+            detail = "Signed out of every session by $actorUsername",
+        )
+    }
+
     @Transactional
     fun delete(id: Long, actorUsername: String) {
         val user = userRepository.findById(id).orElseThrow { NoSuchElementException("No user with id $id") }
@@ -118,6 +149,7 @@ class UserService(
 
         val username = user.username
         val role = user.role?.name ?: "none"
+        // Sessions go with the account, by the cascade mapped on User.refreshTokens.
         userRepository.delete(user)
         auditService.record(
             action = AuditAction.USER_DELETE,

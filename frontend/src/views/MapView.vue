@@ -8,7 +8,7 @@ import { Map as MapIcon } from 'lucide-vue-next'
  * navigation is settled before the work that fills it starts.
  *
  * The data for a real one is already arriving: `agent.telemetry.position`, and a position on each
- * nearby player. Read-only, so it sits with the fleet screens rather than behind `fleet.control`.
+ * nearby player. Read-only, so it sits with the fleet screens rather than behind a write node.
  */
 const { t } = useI18n()
 </script>

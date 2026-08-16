@@ -4,17 +4,21 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Bot as Agent,
+  ChevronDown,
   LayoutDashboard,
   LogOut,
   // Aliased: `Map` is a JavaScript built-in, and shadowing it in a template is a trap for the next
   // person who reaches for one.
   Map as MapIcon,
   Menu,
+  MessagesSquare,
   Plus,
   RotateCw,
   ScrollText,
+  Search,
   Server,
   ServerOff,
+  ShieldAlert,
   SlidersHorizontal,
   TriangleAlert,
   User,
@@ -23,21 +27,67 @@ import {
   Workflow,
 } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import ChatRail from '../components/ChatRail.vue'
+import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
 import PlayerHead from '../components/PlayerHead.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { STATE_DOT, stateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
+import { useResizable } from '../lib/resizable'
+import { isShortcut, shortcutLabel } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
+import { useChatStore } from '../stores/chat'
+import { useHistoryStore } from '../stores/history'
 
 const { t } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
+const chat = useChatStore()
+// Started here rather than on the dashboard, so the series covers the session instead of only the
+// stretches somebody happened to be looking at it.
+useHistoryStore()
 const router = useRouter()
 
 const addAgentOpen = ref(false)
+
+/** The fleet section, open by default: it is the reason most operators open the sidebar. */
+const agentsOpen = ref(true)
 const retrying = ref(false)
+
+const palette = ref<InstanceType<typeof CommandPalette> | null>(null)
+
+function openPalette() {
+  palette.value?.open()
+}
+
+const paletteKeys = shortcutLabel('K')
+const chatKeys = shortcutLabel('J')
+
+/**
+ * Agent rows carry a label, an account name and a server address, and how much of that fits is a
+ * judgement only the person reading it can make. The floor keeps the nav legible; the ceiling stops
+ * the sidebar from eating the page it is navigating.
+ */
+const {
+  width: sidebarWidth,
+  start: startSidebarResize,
+  nudge: nudgeSidebar,
+} = useResizable({ key: 'osmium.layout.sidebar', initial: 288, min: 224, max: 440, edge: 'right' })
+
+/**
+ * Ctrl/⌘-J opens the rail. Prevented because Chrome binds it to its own downloads panel, and this is
+ * the more specific claim while the app has focus. Ctrl/⌘-K is the palette's own, in that component.
+ */
+function onKeydown(event: KeyboardEvent) {
+  if (!isShortcut(event, 'J') || !auth.can('chat.read')) return
+  event.preventDefault()
+  chat.toggle()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 /**
  * Two different failures, two different treatments.
@@ -51,6 +101,15 @@ const retrying = ref(false)
 const blocked = computed(() => !backendEverReached.value && !backendReachable.value)
 const degraded = computed(() => backendEverReached.value && !backendReachable.value)
 
+/**
+ * Whether either status icon is showing. They share the right edge with the palette hint, and the
+ * hint gives it up: something is wrong is worth more of the operator's attention than a shortcut
+ * they will learn on any other day.
+ */
+const statusShown = computed(
+  () => degraded.value || (auth.can('agent.read') && !agentStore.liveUpdatesConnected),
+)
+
 const backendTip = computed(() =>
   retrying.value
     ? t('connection.retrying')
@@ -61,7 +120,7 @@ async function retry() {
   retrying.value = true
   try {
     await auth.loadUser()
-    if (auth.can('fleet.read')) await agentStore.refresh()
+    if (auth.can('agent.read')) await agentStore.refresh()
     if (backendReachable.value) agentStore.connectLiveUpdates()
   } finally {
     retrying.value = false
@@ -71,17 +130,29 @@ async function retry() {
 // The sidebar is present on every authenticated page, so it is the natural place to load the fleet
 // and to hold the live stream open: one connection for the whole session rather than one per view.
 onMounted(() => {
-  if (!auth.can('fleet.read')) return
+  if (!auth.can('agent.read')) return
   void agentStore.refresh()
   agentStore.connectLiveUpdates()
 })
 
 onUnmounted(() => agentStore.disconnectLiveUpdates())
 
-function logout() {
+/** Date and time both: this is a security notice, and "which day" is the first thing asked of it. */
+function formatAlert(at: string): string {
+  return new Date(at).toLocaleString(undefined, {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+async function logout() {
   // Closed before the token is dropped, so the stream does not reconnect with a dead credential.
   agentStore.disconnectLiveUpdates()
-  auth.logout()
+  // Awaited: this revokes the refresh token at the backend, and leaving before it lands would let
+  // the cookie outlive the logout.
+  await auth.logout()
   void router.push({ name: 'login' })
 }
 </script>
@@ -113,7 +184,7 @@ function logout() {
   <div v-else class="drawer lg:drawer-open">
     <input id="app-drawer" type="checkbox" class="drawer-toggle" />
 
-    <div class="drawer-content flex min-h-screen flex-col">
+    <div class="drawer-content flex h-screen flex-col overflow-hidden">
       <!-- Only reachable below lg, where the sidebar is collapsed. -->
       <div class="navbar border-base-300 bg-base-200 border-b lg:hidden">
         <label for="app-drawer" class="btn btn-square btn-ghost btn-sm" :aria-label="t('nav.openNavigation')">
@@ -123,17 +194,82 @@ function logout() {
         <span class="ml-2 font-semibold">Osmium</span>
       </div>
 
-      <main class="flex-1 px-6 py-8">
-        <RouterView />
-      </main>
+      <!--
+        The page and the chat rail share the width, and **each scrolls itself**. The document used to
+        scroll instead, which put the scrollbar on the viewport edge — to the right of the rail,
+        past the content it was actually scrolling.
+
+        `min-w-0` on the page, or a wide table inside it pushes the rail off the screen rather than
+        scrolling itself. `min-h-0` on the row, or neither pane may shrink below its content and both
+        overflow the frame instead of scrolling inside it.
+      -->
+      <div class="flex min-h-0 flex-1">
+        <main class="min-w-0 flex-1 overflow-y-auto px-6 py-8">
+          <!--
+            On every page rather than tucked into My account. It is the only way the person it
+            happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
+            administrator and not them — and somebody who has just been signed out with no
+            explanation should not have to go looking.
+          -->
+          <div
+            v-if="auth.sessionAlertAt"
+            role="alert"
+            class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+          >
+            <ShieldAlert class="mt-0.5 size-5 shrink-0" />
+            <span class="min-w-0 flex-1">
+              <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
+              <span class="block text-sm opacity-80">
+                {{ t('sessions.alertBody', { when: formatAlert(auth.sessionAlertAt) }) }}
+              </span>
+            </span>
+            <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
+              {{ t('sessions.alertDismiss') }}
+            </button>
+          </div>
+
+          <RouterView />
+        </main>
+
+        <ChatRail v-if="chat.open" />
+      </div>
     </div>
 
     <AddAgentModal v-model:open="addAgentOpen" />
+    <!-- Listens on the window, so it opens from anywhere inside the app. -->
+    <CommandPalette ref="palette" @add-agent="addAgentOpen = true" />
 
     <div class="drawer-side">
       <label for="app-drawer" class="drawer-overlay" :aria-label="t('nav.closeNavigation')"></label>
 
-      <aside class="border-base-300 bg-base-200 flex min-h-full w-64 flex-col border-r">
+      <!--
+        Wider than the default drawer: agent rows now carry an account name and a server address.
+
+        `h-full`, not `min-h-full`. daisyUI gives `.drawer-side` a height of 100dvh and its own
+        `overflow-y: auto`, so an aside that is merely *at least* full height grows past the
+        viewport with the fleet and the drawer scrolls the whole sidebar — links included. Fixing
+        it to the viewport is what gives the list below something to be bounded by.
+      -->
+      <aside
+        class="border-base-300 bg-base-200 relative flex h-full max-w-[85vw] flex-col overflow-hidden border-r lg:max-w-none"
+        :style="{ width: `${sidebarWidth}px` }"
+      >
+        <!--
+          Pointer only, and hidden where the sidebar is a drawer: a 4px target is not something to
+          hand somebody on a touchscreen, and a panel that slides over the page has no edge to drag.
+          Focusable with arrow keys anyway, so the width is not a mouse-only setting.
+        -->
+        <div
+          class="hover:bg-primary/40 focus-visible:bg-primary/40 absolute inset-y-0 right-0 z-10 hidden w-1 cursor-col-resize outline-none lg:block"
+          role="separator"
+          aria-orientation="vertical"
+          :aria-label="t('nav.resizeSidebar')"
+          tabindex="0"
+          @pointerdown="startSidebarResize"
+          @keydown.left.prevent="nudgeSidebar(-16)"
+          @keydown.right.prevent="nudgeSidebar(16)"
+        ></div>
+
         <div class="flex items-center gap-3 px-5 py-6">
           <img src="/logo.svg" alt="" class="size-8" />
           <span class="text-lg font-semibold tracking-tight">Osmium</span>
@@ -163,17 +299,54 @@ function logout() {
 
             <!-- The narrow case: the backend answers, but events are not arriving. -->
             <span
-              v-else-if="auth.can('fleet.read') && !agentStore.liveUpdatesConnected"
+              v-else-if="auth.can('agent.read') && !agentStore.liveUpdatesConnected"
               class="tooltip tooltip-left before:w-44 before:whitespace-normal"
               :data-tip="t('connection.streamLost')"
             >
               <WifiOff class="text-warning size-4" />
             </span>
           </div>
+
+          <!--
+            Says the palette exists and opens it, so the shortcut is discoverable without being the
+            only way in. Gives up the right edge the moment a status icon needs it, so the two never
+            compete for the same corner.
+
+            `-mr-2` cancels the button's own padding: without it the label sits inset from the edge
+            everything else in the sidebar lines up against.
+
+            The icon carries the meaning and the keys carry the instruction, so the sentence lives
+            in the title: an icon on its own says nothing to a screen reader.
+          -->
+          <button
+            v-if="!statusShown"
+            type="button"
+            class="btn btn-ghost btn-xs -mr-2 gap-1.5 px-2 font-normal opacity-50 hover:opacity-100"
+            :title="t('palette.hint', { keys: paletteKeys })"
+            @click="openPalette"
+          >
+            <Search class="size-3.5 shrink-0" />
+            {{ paletteKeys }}
+          </button>
         </div>
 
-        <div class="flex-1 overflow-y-auto px-3">
-          <ul class="menu w-full gap-0.5 p-0">
+        <!--
+          The pages stay put and the fleet scrolls under them.
+
+          The scroll used to sit here, on everything: a fleet of forty pushed Dashboard, Map and
+          Hosts off the top of the sidebar, so reaching a page meant scrolling back up a list of
+          agents to find the links. Only the agents grow without bound, so only the agents scroll.
+
+          Two menus rather than one, with the scroll on a plain div between them. Bounding the
+          agents *inside* the menu does not work: daisyUI sets `flex-shrink: 0` on every `.menu li`
+          and `flex-flow: column wrap` on both the menu and its items, so a bounded list refuses to
+          shrink and wraps into a second column beside the pages instead of scrolling. Keeping the
+          scroller out of the menu's way avoids arguing with all of that.
+        -->
+        <!-- Natural height. Given `flex-1` it splits the spare space with the scroller below and
+             the fleet starts halfway down the sidebar with a gap above it. -->
+        <div class="px-3">
+          <ul class="menu w-full flex-nowrap gap-0.5 p-0">
             <li>
               <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
                 <LayoutDashboard class="size-4 shrink-0" />
@@ -186,13 +359,13 @@ function logout() {
                 {{ t('nav.map') }}
               </RouterLink>
             </li>
-            <li v-if="auth.can('fleet.control')">
+            <li v-if="auth.can('agent.run')">
               <RouterLink :to="{ name: 'operations' }" class="gap-3">
                 <Workflow class="size-4 shrink-0" />
                 {{ t('nav.operations') }}
               </RouterLink>
             </li>
-            <li v-if="auth.can('fleet.control')">
+            <li v-if="auth.can('agent.write')">
               <RouterLink :to="{ name: 'configuration' }" class="gap-3">
                 <SlidersHorizontal class="size-4 shrink-0" />
                 {{ t('nav.configuration') }}
@@ -207,14 +380,45 @@ function logout() {
                 </span>
               </RouterLink>
             </li>
+          </ul>
+        </div>
+
+        <!--
+          A button rather than a `<summary>`, and the reason is the scrolling.
+
+          A summary has to be a child of its `<details>`, which means it scrolls with the list it
+          opens — so the heading and the online count leave the screen as soon as the fleet is long
+          enough to need scrolling, which is exactly when they are worth reading. Splitting the two
+          costs the native disclosure and buys a header that stays.
+        -->
+        <div class="px-3">
+          <ul class="menu w-full flex-nowrap gap-0.5 p-0">
             <li>
-              <details open>
-                <summary class="gap-3">
-                  <Agent class="size-4 shrink-0" />
-                  {{ t('nav.agents') }}
-                  <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
-                </summary>
-                <ul class="gap-0.5">
+              <button
+                type="button"
+                class="gap-3"
+                :aria-expanded="agentsOpen"
+                aria-controls="sidebar-agents"
+                @click="agentsOpen = !agentsOpen"
+              >
+                <Agent class="size-4 shrink-0" />
+                {{ t('nav.agents') }}
+                <span class="badge badge-xs ml-auto">{{ agentStore.online.length }}/{{ agentStore.agents.length }}</span>
+                <ChevronDown
+                  class="size-4 shrink-0 opacity-60 transition-transform"
+                  :class="agentsOpen ? '' : '-rotate-90'"
+                />
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <!-- The fleet, and only the fleet. Everything above stays where it was put. -->
+        <div v-show="agentsOpen" id="sidebar-agents" class="min-h-0 flex-1 overflow-y-auto px-3">
+          <!-- The indent and hairline daisyUI would have drawn for a nested menu, kept by hand now
+               that the list is no longer nested inside one. -->
+          <div class="border-base-content/10 ms-4 border-s ps-2">
+            <ul class="menu w-full flex-nowrap gap-0.5 p-0">
                   <!--
                     The fleet is a list of people as much as a list of rows, and this is the one
                     place every one of them is on screen at once. `v-flash` is on the state rather
@@ -234,20 +438,53 @@ function logout() {
                           :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
                         ></span>
                       </span>
-                      <span class="truncate">{{ agent.label }}</span>
+                      <!--
+                        The same second line the agent picker carries: the Minecraft account, then
+                        where it plays. Each is named when absent rather than left blank — before
+                        setup there is no account, and an agent assigned nowhere has no server, and
+                        both are things an operator is looking for when they scan this list.
+                      -->
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate">{{ agent.label }}</span>
+                        <span class="block truncate text-xs opacity-50">
+                          <span v-if="agent.mcUsername" class="font-mono">{{ agent.mcUsername }}</span>
+                          <span v-else class="italic">{{ t('agents.notLinked') }}</span>
+                          <span class="opacity-60"> · </span>
+                          <span :class="agent.serverAddress ? 'font-mono' : 'italic'">
+                            {{ agent.serverAddress ?? t('agents.noServer') }}
+                          </span>
+                        </span>
+                      </span>
                     </RouterLink>
                   </li>
-                  <li v-if="auth.can('fleet.control')">
+                  <li v-if="auth.can('agent.write')">
                     <button type="button" class="gap-2.5 opacity-70" @click="addAgentOpen = true">
                       <Plus class="size-4 shrink-0" />
                       {{ t('nav.addAgent') }}
                     </button>
                   </li>
-                </ul>
-              </details>
-            </li>
-          </ul>
+            </ul>
+          </div>
         </div>
+
+        <!--
+          Not a nav item — it opens a panel beside the page rather than going anywhere — so it sits
+          on the separator between the pages and the account menu instead of among the links. The
+          badge is the only place the fleet's chatter is visible while the rail is shut, which is
+          also why it takes the corner the keys otherwise occupy.
+        -->
+        <ul v-if="auth.can('chat.read')" class="menu w-full gap-0.5 px-3 pb-3">
+          <li>
+            <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
+              <MessagesSquare class="size-4 shrink-0" />
+              {{ t('chat.title') }}
+              <span v-if="chat.unread" class="badge badge-primary badge-xs ml-auto">
+                {{ chat.unread > 99 ? '99+' : chat.unread }}
+              </span>
+              <kbd v-else class="kbd kbd-xs ml-auto">{{ chatKeys }}</kbd>
+            </button>
+          </li>
+        </ul>
 
         <div class="border-base-300 border-t p-3">
           <ul class="menu w-full gap-0.5 p-0">

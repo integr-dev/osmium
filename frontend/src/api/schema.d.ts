@@ -24,6 +24,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["upload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{id}/server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Point the agent at a Minecraft server, or at none.
+         * @description Null unassigns it, leaving it set up and idle. Offline only: this decides what the next connection targets, and changing it under a live session would describe a session that is not happening. Credentials are untouched either way.
+         */
+        put: operations["assignServer"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users": {
         parameters: {
             query?: never;
@@ -42,6 +78,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{id}/sessions/revoke-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign an account out of every session.
+         * @description Revokes every refresh token and every access token already issued to it, leaving the account itself alone. For when somebody's laptop is gone and they are not around to do it themselves.
+         */
+        post: operations["revokeSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schematics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_1"];
+        put?: never;
+        post: operations["create_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schematics/{id}/reanalyse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reanalyse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts": {
         parameters: {
             query?: never;
@@ -50,7 +138,7 @@ export interface paths {
             cookie?: never;
         };
         /** List hosts. */
-        get: operations["list_1"];
+        get: operations["list_2"];
         put?: never;
         /**
          * Enrol a host.
@@ -83,6 +171,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sessions/revoke-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign out of every session, everywhere.
+         * @description Revokes every refresh token **and** every access token already issued — the latter is what a password change alone did not do.
+         */
+        post: operations["revokeAllSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/session-alert/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the replayed-session notice.
+         * @description Marks it read. A later replay raises it again.
+         */
+        post: operations["acknowledgeSessionAlert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a new access token from the refresh cookie.
+         * @description Rotates: the presented token is spent and a successor replaces the cookie. The session expiry does not move, so refreshing cannot extend a session past its login.
+         */
+        post: operations["refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/password": {
         parameters: {
             query?: never;
@@ -103,6 +251,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End the current session.
+         * @description Revokes the refresh token and every successor of it, then clears the cookie.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/login": {
         parameters: {
             query?: never;
@@ -112,7 +280,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exchange credentials for an access token. */
+        /**
+         * Exchange credentials for a session.
+         * @description The access token comes back in the body, for the caller to hold in memory. The refresh token is set as an HttpOnly cookie and never reaches JavaScript.
+         */
         post: operations["login"];
         delete?: never;
         options?: never;
@@ -128,13 +299,13 @@ export interface paths {
             cookie?: never;
         };
         /** List every agent. */
-        get: operations["list_2"];
+        get: operations["list_3"];
         put?: never;
         /**
          * Create an agent slot.
          * @description Nothing has touched Minecraft at this point; the agent starts UNLINKED.
          */
-        post: operations["create_1"];
+        post: operations["create_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -206,7 +377,7 @@ export interface paths {
         put?: never;
         /**
          * Speak in game as this agent.
-         * @description Impersonation: this says something under an account you own, so it is gated separately from fleet.control. Rate limited per agent, because chat spam is the fastest route to a Minecraft ban and the ban lands on the account, not the operator.
+         * @description Impersonation: this says something under an account you own, so it is gated separately from every other verb. Rate limited per agent, because chat spam is the fastest route to a Minecraft ban and the ban lands on the account, not the operator.
          */
         post: operations["chat"];
         delete?: never;
@@ -259,6 +430,22 @@ export interface paths {
         patch: operations["updateSelf"];
         trace?: never;
     };
+    "/api/schematics/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["find"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_1"];
+        options?: never;
+        head?: never;
+        patch: operations["rename"];
+        trace?: never;
+    };
     "/api/hosts/{id}": {
         parameters: {
             query?: never;
@@ -273,14 +460,14 @@ export interface paths {
          * Remove a host.
          * @description Cascades to its agents, which cannot run without it. Invalidates the token.
          */
-        delete: operations["delete_1"];
+        delete: operations["delete_2"];
         options?: never;
         head?: never;
         /**
          * Rename a host.
          * @description Only the name is editable; address, version and reachability are observed from the connection rather than configured.
          */
-        patch: operations["rename"];
+        patch: operations["rename_1"];
         trace?: never;
     };
     "/api/agents/{id}": {
@@ -295,12 +482,12 @@ export interface paths {
         put?: never;
         post?: never;
         /** Delete an agent. */
-        delete: operations["delete_2"];
+        delete: operations["delete_3"];
         options?: never;
         head?: never;
         /**
-         * Rename an agent or move it to another server.
-         * @description Omitted fields are left alone. Moving does not affect credentials - the account is the same wherever it joins - but the agent must be offline first.
+         * Rename an agent.
+         * @description Omitted fields are left alone. Where an agent plays is set through `PUT /api/agents/{id}/server`, which has its own preconditions.
          */
         patch: operations["update_1"];
         trace?: never;
@@ -316,7 +503,7 @@ export interface paths {
          * Stream everything this account is entitled to see change.
          * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`, `user`, `user-removed`, `audit`, `permissions`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat`, `activity` and `audit` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
          *
-         *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `fleet.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
+         *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `agent.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
          */
         get: operations["stream"];
         put?: never;
@@ -347,6 +534,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schematics/{id}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["split"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schematics/{id}/shape": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["shape"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schematics/{id}/materials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["materials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -355,7 +590,7 @@ export interface paths {
             cookie?: never;
         };
         /** List every role with its permission nodes. */
-        get: operations["list_3"];
+        get: operations["list_4"];
         put?: never;
         post?: never;
         delete?: never;
@@ -375,15 +610,19 @@ export interface paths {
          * One page of chat, newest first.
          * @description Pass exactly one of `agentId` or `server`.
          *
-         *                 `agentId` gives the conversation to or about that agent. `server` gives what everyone on
-         *                 that server saw, forwarded once by the elected listener - deliberately separate, because
-         *                 the server's chat is identical for every agent on it and would otherwise bury the lines
-         *                 that are actually about the agent you are looking at.
+         *                 `agentId` gives the conversation to or about that agent, and excludes the global
+         *                 channel: that is identical for every agent on the server and would bury the lines that
+         *                 are actually about the one you are looking at.
+         *
+         *                 `server` gives everything that happened there - the global channel forwarded once by the
+         *                 elected listener, plus whispers, proximity chat and the agents' own outbound lines. Not
+         *                 the mirror of the above: a whisper to one agent is still something that happened on that
+         *                 server.
          *
          *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
          *                 from the previous response to continue. Kept for 3 days.
          */
-        get: operations["list_4"];
+        get: operations["list_5"];
         put?: never;
         post?: never;
         delete?: never;
@@ -404,6 +643,26 @@ export interface paths {
          * @description Accepts a Minecraft username or UUID. Fetched from a skin service and cached, so no operator's browser talks to it directly.
          */
         get: operations["head"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The account's own live sessions.
+         * @description Only the tip of each rotation chain, with the caller's own marked. The address is only meaningful where the deployment's proxy headers are trusted, and the user agent is self-declared by the browser.
+         */
+        get: operations["sessions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -444,7 +703,7 @@ export interface paths {
          *
          *                 Entries are kept for 30 days by default and purged daily.
          */
-        get: operations["list_5"];
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -498,10 +757,30 @@ export interface paths {
          *                 Pages by cursor, not by offset: incidents arrive while the feed is being read. Send
          *                 `nextCursor` from the previous response to continue. Kept for 10 days.
          */
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * End one of your own sessions.
+         * @description Ending the current one leaves this browser signed out at the next refresh.
+         */
+        delete: operations["endSession"];
         options?: never;
         head?: never;
         patch?: never;
@@ -527,64 +806,69 @@ export interface components {
             role?: string | null;
             /** @description Permission nodes granted by the assigned role. */
             nodes?: string[];
+            /**
+             * Format: date-time
+             * @description When a refresh token for this account was replayed, if the operator has not been shown it yet. Null the rest of the time, which is nearly always.
+             */
+            sessionAlertAt?: string | null;
         };
-        /** @description Creates an account with an administrator-chosen username and password. */
-        CreateUserRequest: {
-            username: string;
-            password?: string;
-            /** @description Role name to assign. Must already exist. Omit for no permissions. */
-            role?: string | null;
+        SchematicContentResponse: {
+            format?: string | null;
+            /** Format: int32 */
+            dataVersion?: number | null;
+            /** Format: int64 */
+            volume?: number | null;
+            /** Format: int64 */
+            blockCount?: number | null;
+            /** Format: int32 */
+            regionCount?: number | null;
+            /** Format: int32 */
+            originX?: number | null;
+            /** Format: int32 */
+            originY?: number | null;
+            /** Format: int32 */
+            originZ?: number | null;
+            /** Format: int32 */
+            sizeX?: number | null;
+            /** Format: int32 */
+            sizeY?: number | null;
+            /** Format: int32 */
+            sizeZ?: number | null;
+            /** Format: int32 */
+            cellSize?: number | null;
+            outdated?: boolean;
         };
-        /** @description Enrols a host. No address: the host dials in, so its location is observed. */
-        CreateHostRequest: {
-            name: string;
-        };
-        /** @description A freshly enrolled host, with its enrolment token shown exactly once. */
-        HostEnrolledResponse: {
-            host?: components["schemas"]["HostResponse"];
-            /** @description Give this to the host. It is hashed on the server and never shown again. */
-            token?: string;
-        };
-        /** @description A host. Reachability is derived from the heartbeat, not stored. */
-        HostResponse: {
+        SchematicResponse: {
             /** Format: int64 */
             id?: number;
             name?: string;
-            /** @description Observed when the host connects. Null until it first dials in. */
-            address?: string | null;
-            hostVersion?: string | null;
-            /** Format: date-time */
-            lastSeenAt?: string | null;
-            reachable?: boolean;
+            originalFilename?: string;
             /** Format: int64 */
-            agentCount?: number;
-        };
-        /** @description Rotates the password of the authenticated account. */
-        PasswordChangeRequest: {
-            currentPassword: string;
-            newPassword?: string;
-        };
-        /** @description Credentials for a login attempt. */
-        LoginRequest: {
-            /** @example admin */
-            username: string;
-            /** @example admin */
-            password: string;
-        };
-        /** @description A freshly issued access token. */
-        LoginResponse: {
-            /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
-            token?: string;
-            /** Format: date-time */
-            expiresAt?: string;
-        };
-        /** @description Creates an agent slot. Nothing has touched Minecraft at this point. */
-        CreateAgentRequest: {
-            label: string;
+            sizeBytes?: number;
             /** Format: int64 */
-            hostId?: number;
-            /** @example mc.example.com:25565 */
-            serverAddress: string;
+            receivedBytes?: number;
+            /** @enum {string} */
+            status?: "UPLOADING" | "PENDING" | "ANALYSING" | "READY" | "FAILED";
+            /** Format: int32 */
+            progressPercent?: number;
+            /** Format: int32 */
+            queuePosition?: number | null;
+            contentHash?: string | null;
+            content?: components["schemas"]["SchematicContentResponse"];
+            failure?: string | null;
+            uploadedBy?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        /** @description Points an agent at a Minecraft server, or at none. Separate from both setup and editing: the account is the same account wherever it joins, so where it plays is its own decision and changing it touches no credential. */
+        AssignServerRequest: {
+            /**
+             * @description Null unassigns it, leaving the agent set up and idle.
+             * @example mc.example.com:25565
+             */
+            serverAddress?: string | null;
         };
         /** @description An agent. Only its Minecraft identity is stored, never a credential. */
         AgentResponse: {
@@ -594,7 +878,8 @@ export interface components {
             /** Format: int64 */
             hostId?: number;
             hostName?: string;
-            serverAddress?: string;
+            /** @description Where it plays, or null when it is assigned nowhere and cannot connect. */
+            serverAddress?: string | null;
             /**
              * @description Stored state, adjusted to STALE when the owning host is unreachable.
              * @enum {string}
@@ -659,12 +944,78 @@ export interface components {
             /** Format: double */
             z?: number;
         };
+        /** @description Creates an account with an administrator-chosen username and password. */
+        CreateUserRequest: {
+            username: string;
+            password?: string;
+            /** @description Role name to assign. Must already exist. Omit for no permissions. */
+            role?: string | null;
+        };
+        CreateSchematicRequest: {
+            name: string;
+            filename: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+        };
+        /** @description Enrols a host. No address: the host dials in, so its location is observed. */
+        CreateHostRequest: {
+            name: string;
+        };
+        /** @description A freshly enrolled host, with its enrolment token shown exactly once. */
+        HostEnrolledResponse: {
+            host?: components["schemas"]["HostResponse"];
+            /** @description Give this to the host. It is hashed on the server and never shown again. */
+            token?: string;
+        };
+        /** @description A host. Reachability is derived from the heartbeat, not stored. */
+        HostResponse: {
+            /** Format: int64 */
+            id?: number;
+            name?: string;
+            /** @description Observed when the host connects. Null until it first dials in. */
+            hostVersion?: string | null;
+            /** Format: date-time */
+            lastSeenAt?: string | null;
+            reachable?: boolean;
+            /** Format: int64 */
+            agentCount?: number;
+        };
+        /** @description A freshly issued access token. */
+        LoginResponse: {
+            /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
+            token?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        /** @description Rotates the password of the authenticated account. */
+        PasswordChangeRequest: {
+            currentPassword: string;
+            newPassword?: string;
+        };
+        /** @description Credentials for a login attempt. */
+        LoginRequest: {
+            /** @example admin */
+            username: string;
+            /** @example admin */
+            password: string;
+        };
+        /** @description Creates an agent slot. Nothing has touched Minecraft at this point. */
+        CreateAgentRequest: {
+            label: string;
+            /** Format: int64 */
+            hostId?: number;
+            /**
+             * @description Where it should play, if that is already known.
+             * @example mc.example.com:25565
+             */
+            serverAddress?: string | null;
+        };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
             /** @example method_a */
             method: string;
         };
-        /** @description Sends a chat message as an agent. This is impersonation - gated on fleet.chat. */
+        /** @description Sends a chat message as an agent. This is impersonation - gated on chat. */
         ChatRequest: {
             message: string;
         };
@@ -678,19 +1029,77 @@ export interface components {
         UpdateSelfRequest: {
             username: string;
         };
+        RenameSchematicRequest: {
+            name: string;
+        };
         /** @description Renames a host. Everything else about a host is observed, not configured. */
         UpdateHostRequest: {
             name: string;
         };
-        /** @description Edits an agent. Omitted fields are left alone. Moving an agent to another Minecraft server does not affect its credentials - the account is the account, whichever server it joins - but it must not be connected at the time. */
+        /** @description Renames an agent. Where it plays is set through `PUT /api/agents/{id}/server`, which is a different kind of change and has its own preconditions. */
         UpdateAgentRequest: {
             label?: string | null;
-            /** @description Move the agent to this server. Only while it is not online. */
-            serverAddress?: string | null;
         };
         SseEmitter: {
             /** Format: int64 */
             timeout?: number;
+        };
+        SegmentResponse: {
+            /** Format: int32 */
+            ordinal?: number;
+            /** Format: int32 */
+            minX?: number;
+            /** Format: int32 */
+            minY?: number;
+            /** Format: int32 */
+            minZ?: number;
+            /** Format: int32 */
+            maxX?: number;
+            /** Format: int32 */
+            maxY?: number;
+            /** Format: int32 */
+            maxZ?: number;
+            /** Format: int64 */
+            blocks?: number;
+            /** Format: int32 */
+            sharePercent?: number;
+        };
+        SplitResponse: {
+            mode?: string;
+            /** Format: int32 */
+            requested?: number;
+            /** Format: int32 */
+            parts?: number;
+            /** Format: int64 */
+            blocks?: number;
+            segments?: components["schemas"]["SegmentResponse"][];
+        };
+        ShapeResponse: {
+            /** Format: int32 */
+            voxelSize?: number;
+            /** Format: int32 */
+            originX?: number;
+            /** Format: int32 */
+            originY?: number;
+            /** Format: int32 */
+            originZ?: number;
+            /** Format: int32 */
+            sizeX?: number;
+            /** Format: int32 */
+            sizeY?: number;
+            /** Format: int32 */
+            sizeZ?: number;
+            /** Format: int32 */
+            count?: number;
+            /** Format: int32 */
+            hidden?: number;
+            palette?: string[];
+            voxels?: number[];
+        };
+        MaterialResponse: {
+            name?: string;
+            /** Format: int64 */
+            blocks?: number;
         };
         /** @description A role and the permission nodes it grants. */
         RoleResponse: {
@@ -719,6 +1128,30 @@ export interface components {
             items?: components["schemas"]["ChatMessageResponse"][];
             nextCursor?: string | null;
         };
+        /** @description One live session. Only the tip of each rotation chain is listed — a spent token is a step in a chain, not something an operator would recognise. */
+        SessionResponse: {
+            /** Format: int64 */
+            id?: number;
+            /**
+             * Format: date-time
+             * @description When this link in the chain was issued.
+             */
+            startedAt?: string;
+            /**
+             * Format: date-time
+             * @description When the session ends regardless of use. Refreshing does not move it.
+             */
+            expiresAt?: string;
+            /**
+             * @description Where it was last seen from, or null when the request carried nothing usable. Only meaningful where the deployment's proxy headers are trusted.
+             * @example 203.0.113.7
+             */
+            clientIp?: string | null;
+            /** @description Self-declared by the browser, and not evidence of anything. */
+            userAgent?: string | null;
+            /** @description True for the session making this request - the one not to end by accident. */
+            current?: boolean;
+        };
         /** @description One operator action: who did what, to which agent or host. */
         AuditEntryResponse: {
             /** Format: int64 */
@@ -727,7 +1160,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -827,6 +1260,92 @@ export interface operations {
             };
         };
     };
+    upload: {
+        parameters: {
+            query: {
+                offset: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    assignServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignServerRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated agent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Over-long address. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.write`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
     list: {
         parameters: {
             query?: never;
@@ -907,7 +1426,107 @@ export interface operations {
             };
         };
     };
+    revokeSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `user.edit`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such account. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"][];
+                };
+            };
+        };
+    };
+    create_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSchematicRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    reanalyse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    list_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -925,7 +1544,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostResponse"][];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `host.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -967,7 +1586,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostEnrolledResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1007,7 +1626,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostEnrolledResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.token`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1023,6 +1642,73 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["HostEnrolledResponse"];
+                };
+            };
+        };
+    };
+    revokeAllSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    acknowledgeSessionAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notice dismissed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                osmium_refresh?: string;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A new access token, and a rotated cookie. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description No cookie, or a token that is unknown, expired, revoked or replayed. A replay revokes every session descended from that login. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LoginResponse"];
                 };
             };
         };
@@ -1063,6 +1749,26 @@ export interface operations {
             };
         };
     };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                osmium_refresh?: string;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session ended, cookie cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -1076,7 +1782,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Token issued. */
+            /** @description Session started. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1096,7 +1802,7 @@ export interface operations {
             };
         };
     };
-    list_2: {
+    list_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -1114,7 +1820,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"][];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `agent.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1125,7 +1831,7 @@ export interface operations {
             };
         };
     };
-    create_1: {
+    create_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -1156,7 +1862,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1200,7 +1906,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `agent.setup`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1258,7 +1964,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.run`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1316,7 +2022,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.run`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1334,7 +2040,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description The agent has not been set up. */
+            /** @description The agent has not been set up, or is assigned to no server. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1387,7 +2093,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.chat`. */
+            /** @description Missing node `chat.speak`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1588,7 +2294,75 @@ export interface operations {
             };
         };
     };
+    find: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
     delete_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rename: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSchematicRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    delete_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -1606,7 +2380,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.delete`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1622,7 +2396,7 @@ export interface operations {
             };
         };
     };
-    rename: {
+    rename_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -1655,7 +2429,7 @@ export interface operations {
                     "*/*": components["schemas"]["HostResponse"];
                 };
             };
-            /** @description Missing node `fleet.login`. */
+            /** @description Missing node `host.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1704,7 +2478,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `agent.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1724,7 +2498,7 @@ export interface operations {
             };
         };
     };
-    delete_2: {
+    delete_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -1742,7 +2516,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.delete`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1791,7 +2565,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Missing node `fleet.control`. */
+            /** @description Missing node `agent.write`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1809,7 +2583,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description Label taken, or the agent is online. */
+            /** @description Label already taken. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1880,7 +2654,78 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    split: {
+        parameters: {
+            query: {
+                mode: "COLUMNS" | "LAYERS" | "GRID";
+                parts: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SplitResponse"];
+                };
+            };
+        };
+    };
+    shape: {
+        parameters: {
+            query?: {
+                detail?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ShapeResponse"];
+                };
+            };
+        };
+    };
+    materials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MaterialResponse"][];
+                };
+            };
+        };
+    };
+    list_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -1909,7 +2754,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: {
                 /** @description Conversation to or about this agent. Excludes the server's global chat. */
@@ -1948,7 +2793,7 @@ export interface operations {
                     "*/*": components["schemas"]["ChatPageResponse"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `chat.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1979,7 +2824,7 @@ export interface operations {
                     "*/*": string;
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `agent.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1995,6 +2840,37 @@ export interface operations {
                 };
                 content: {
                     "*/*": string;
+                };
+            };
+        };
+    };
+    sessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                osmium_refresh?: string;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live sessions, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SessionResponse"][];
+                };
+            };
+            /** @description Missing or invalid token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SessionResponse"][];
                 };
             };
         };
@@ -2037,7 +2913,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_6: {
         parameters: {
             query?: {
                 /** @description How many entries to return. Clamped to 1..500. */
@@ -2125,7 +3001,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_7: {
         parameters: {
             query?: {
                 /** @description Narrow to one agent. Omit for the whole fleet. */
@@ -2159,7 +3035,7 @@ export interface operations {
                     "*/*": components["schemas"]["ActivityPageResponse"];
                 };
             };
-            /** @description Missing node `fleet.read`. */
+            /** @description Missing node `activity.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2167,6 +3043,33 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["ActivityPageResponse"];
                 };
+            };
+        };
+    };
+    endSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such session **for this account**. Another operator's session is reported the same way as one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

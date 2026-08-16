@@ -160,7 +160,7 @@ class LiveUpdateSubscriptionsTest : AbstractRestTest() {
     }
 
     /**
-     * The reason the endpoint asks for `user.read.self` rather than `fleet.read`: an account has to
+     * The reason the endpoint asks for `user.read.self` rather than `agent.read`: an account has to
      * be able to hear that its own role moved, whether or not it may watch the fleet. No seeded role
      * is this narrow, so the test builds one — the point is the shape of the check, not the tiers
      * that happen to exist today.

@@ -35,7 +35,10 @@ interface ChatMessageRepository : JpaRepository<ChatMessage, Long> {
         limit: Limit,
     ): List<ChatMessage>
 
-    /** A server's feed, which is where global chat lives: one per server, not one per agent. */
+    /**
+     * A server's feed: everything the fleet heard or said there, global chat included. Scoped by
+     * address rather than by agent, so it survives the agent that forwarded a line.
+     */
     @Query(
         """
         select m from ChatMessage m

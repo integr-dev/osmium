@@ -10,11 +10,15 @@
 | Chat listener election and outbound rate limiting | **Built** in `backend/`, covered by tests |
 | Telemetry: ingest, in-memory store, staleness, coalesced live event | **Built** in `backend/`, covered by tests |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
-| Live updates over SSE | **Built**, for hosts, agents, chat, activity and telemetry |
-| Work assignment and the schematic pipeline | **Not built** |
+| Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry and schematics |
+| Reading a schematic: upload, `.litematic` / `.schem`, the occupancy index, materials | **Built** in `backend/`, covered by tests |
+| Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
+| Assigning a segment to a host and building it | **Not built**: needs the host side |
 
 Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
-sectors, throughput and the schematic. Everything else is real but empty until a host connects.
+sectors and throughput. The schematics themselves are real: uploaded, read and divided. What no
+schematic has yet is an agent building it, because nothing can carry a segment to a host.
+Everything else is real but empty until a host connects.
 Sections not marked built are design, not description.
 
 **Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator
@@ -62,7 +66,7 @@ artefact, so there is nothing to audit, leak, or get subtly wrong.
 | Backend or database compromised | No credentials stored there, and no code path that handles one | Attacker learns *which* accounts exist, and can trigger `setup_agent` |
 | Osmium used to phish an operator | The backend never displays an auth prompt or code, so there is nothing to imitate | — |
 | Host host compromised | Token cache encrypted at rest; revocation path documented | Root on that host gets the tokens |
-| Malicious authenticated operator | Node gating + audit trail | An operator with `fleet.chat` can still act in-game |
+| Malicious authenticated operator | Node gating + audit trail | An operator with `chat.speak` can still act in-game |
 | Stolen frontend session (XSS) | Node gating limits which accounts can act | Session can drive agents until the token expires |
 | Host token leaked | Stored hashed, rotatable, revocable | Valid until revoked |
 
@@ -312,7 +316,7 @@ and disconnect an agent that is deliberately running.
 ### Authorization is backend-side only
 
 The host authenticated once with its enrolment token and trusts what the backend sends; it performs
-no permission checks of its own. `fleet.control`, `fleet.chat` and the rest are therefore enforced
+no permission checks of its own. `agent.run`, `chat.speak` and the rest are therefore enforced
 **before dispatch**. The consequence is that a compromised backend can drive every agent — accepted
 in exchange for the backend never holding credentials, which keeps the accounts themselves out of
 reach.
@@ -331,9 +335,10 @@ across the top level**.
 
 ```jsonc
 // backend → host
+// No server address: setting an agent up is acquiring a credential, and a Minecraft account can
+// join any server. `connect` carries the address, which is where it is needed. See host/README.md.
 { "id": "cmd-7f3a", "kind": "command", "type": "setup_agent", "agentId": 42,
-  "payload": { "label": "Mason_04", "serverAddress": "mc.example.com:25565",
-               "method": "device_code" } }
+  "payload": { "label": "Mason_04", "method": "device_code" } }
 
 // host → backend, answering it
 { "id": "cmd-7f3a", "kind": "result", "type": "setup_agent", "agentId": 42,
@@ -345,7 +350,40 @@ across the top level**.
 
 // host-scoped, so no agentId
 { "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
+
+// host-scoped, sent once on connect: what this host is actually running
+{ "kind": "event", "type": "agents",
+  "payload": { "agents": [ { "agentId": 42, "state": "ONLINE" } ] } }
 ```
+
+### Announcing agents on connect
+
+**Send this as soon as the socket is up.** It is the only message that says what *exists* rather
+than what *changed*, and without it a restarted host leaves the backend asserting sessions nobody is
+running.
+
+Agent state is stored, so it outlives the connection that reported it. `agent_status` reports
+transitions; it never re-establishes the whole picture, and nothing else does either. The gap that
+leaves is not hypothetical: a host that reported four agents `ONLINE` and then restarted has an
+Osmium showing four agents in game, indefinitely, with no telemetry behind them.
+
+So on arrival the host lists the agents it is running, and the backend reconciles the rest:
+
+| Believed state | Announced | Not announced |
+|---|---|---|
+| `ONLINE` | left alone | → `LINKED` — the credentials survived the restart, the session did not |
+| `SETUP_PENDING` | left alone | → `UNLINKED` — the command went with the process that was going to answer it |
+| anything else | applied as reported | left alone — none of them claim a live session |
+
+An agent that goes unmentioned also loses `chatListener`, so the next election sees a vacancy rather
+than a listener that is gone.
+
+**Announcing nothing is a valid announcement** — an empty `agents` array means "I am running none of
+them", which is exactly what a freshly restarted host should say. **Omitting the event entirely
+changes nothing**, so a host that predates this keeps working; it simply keeps the old failure mode.
+
+A host that kept its sessions across a dropped socket announces them and nothing changes, which is
+what makes this safe to send on every connect rather than only after a restart.
 
 ### Chat and activity events
 
@@ -497,20 +535,25 @@ ping/pong or close-code handling to maintain.
 
 | Endpoint | Sends | Node |
 |---|---|---|
-| `GET /api/stream` | state changes, heartbeats, aggregate counters | `fleet.read` |
-| `GET /api/stream/agents/{id}` | that agent's chat, telemetry and state | `fleet.read` |
+| `GET /api/stream` | state changes, heartbeats, aggregate counters | a session; per event type |
+| `GET /api/stream/agents/{id}` | that agent's chat, telemetry and state | a session; per event type |
 
 Fanning everything to everyone wastes the wire and leaks activity across views that an operator is
 not looking at.
 
 ### Four things that will bite
 
-**`EventSource` cannot set an `Authorization` header.** The access token is held in `localStorage`
-and sent as a Bearer header, which the browser's native SSE API has no way to do. Putting the token
-in the query string lands it in access logs and referrers; switching to cookies reintroduces CSRF.
-The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer pattern
-unchanged. A browser WebSocket has the same limitation and solves it differently, by authenticating
-in the first frame.
+**`EventSource` cannot set an `Authorization` header.** The access token is held in memory and sent
+as a Bearer header, which the browser's native SSE API has no way to do. Putting the token in the
+query string lands it in access logs and referrers; moving it to a cookie would reintroduce CSRF on
+every route, which is why the refresh cookie is scoped to `/api/auth` and the access token is not a
+cookie at all. The fix is a **fetch-based SSE client**, which can set headers, keeping the Bearer
+pattern unchanged. A browser WebSocket has the same limitation and solves it differently, by
+authenticating in the first frame.
+
+Two further reasons it stays hand-rolled now that a cookie does exist: `EventSource` never surfaces
+keep-alive comments to JavaScript, and the idle watchdog re-arms on them; and it retries forever,
+where this client gives up on a 403 that reconnecting cannot fix.
 
 **A long-lived stream breaks instant revocation.** Authorities resolve from the database on every
 REST request, so a demotion takes effect immediately — but a stream authorises once at subscribe and
@@ -677,7 +720,7 @@ third-party conversation rather than no store at all.
 Outbound chat is limited **per agent** — 30 messages a minute — enforced backend-side before
 dispatch, and refused with a 429.
 
-Two concrete reasons: a stolen operator session holding `fleet.chat` can otherwise spam under
+Two concrete reasons: a stolen operator session holding `chat.speak` can otherwise spam under
 accounts you own, and chat spam is the fastest route to a Minecraft ban. It is the one control here
 whose in-game consequence is permanent and unrecoverable.
 
@@ -805,25 +848,46 @@ New nodes, following the existing convention of authorizing routes on nodes and 
 
 | Node | Grants | Tier |
 |---|---|---|
-| `fleet.read` | View agents, telemetry, nearby players | orchestrator |
-| `fleet.control` | Create agents, connect, disconnect, assign work | orchestrator |
-| `fleet.chat` | **Speak in-game as an agent** | orchestrator |
-| `fleet.login` | Enrol hosts, trigger `setup_agent` on a host | orchestrator |
+| `agent.read` | View agents, telemetry, nearby players | viewer |
+| `host.read` | View the hosts that run them | viewer |
+| `activity.read` | Read the incident feed | viewer |
+| `chat.read` | Read what was said in game | viewer |
+| `schematic.read` | View the schematic library, its materials and how it divides | viewer |
+| `agent.run` | Connect and disconnect agents | orchestrator |
+| `agent.write` | Create and rename agents, place them on a server | orchestrator |
+| `agent.setup` | Trigger `setup_agent` on a host | orchestrator |
+| `chat.speak` | **Speak in-game as an agent** | orchestrator |
+| `host.write` | Enrol and rename hosts | orchestrator |
+| `host.token` | Rotate a host enrolment token | orchestrator |
+| `schematic.write` | Upload and rename schematics | orchestrator |
+| `agent.delete` | Delete an agent, and its history | administrator |
+| `host.delete` | Remove a host, and every agent on it | administrator |
+| `schematic.delete` | Delete a schematic and its file | administrator |
 
-**`orchestrator` holds full authority over the fleet.** The only thing `administrator` adds is user
-management, so the tiers divide along "runs the agents" versus "runs the people".
+**`orchestrator` runs the fleet; it does not get to destroy part of it.** All three deletions sit
+with `administrator`, which already carries the irreversible operations, so the tiers divide along
+"runs the agents" versus "runs the people and the things that cannot be undone". A schematic is the
+same shape of decision as an agent: uploading one is additive and renaming it undoes itself, while
+deleting one takes a file that may have cost hours to transfer, and with it every plan and every
+measure of progress computed from it.
 
-The four nodes stay **separate anyway**, even though one tier currently holds them all, because two
-of them are meaningfully more dangerous than the others and a future tier may need less:
+Reading schematics is its own node rather than part of `agent.read`, because a schematic is a design
+rather than fleet state — it is what somebody means to build, and it exists before any agent has
+been pointed at it.
 
-- **`fleet.chat` is impersonation.** It permits saying anything in-game under an account you own — a
-  griefing and social-engineering vector, and the action most likely to get an account banned.
-- **`fleet.login` is credential acquisition.** It decides which Microsoft account becomes linked to
-  your infrastructure.
+The nodes are split by **what an act costs**, not by which resource it touches: `run` undoes itself,
+`write` is recoverable, `delete` is not. Two are separated for what they *are* rather than what they
+cost:
 
-Collapsing them into `fleet.control` would make that distinction unrecoverable; keeping them apart
-costs nothing today and leaves room for, say, a build-only tier that can connect agents but not
-speak as them.
+- **`chat.speak` is impersonation.** It permits saying anything in-game under an account you
+  own — a griefing and social-engineering vector, and the action most likely to get an account
+  banned. Reading chat is a different node again: content, not state.
+- **`agent.setup` is credential acquisition.** It decides which Microsoft account becomes
+  linked to your infrastructure.
+
+Collapsing either into a general write node would make that distinction unrecoverable, and keeping
+them apart is what makes a build-only tier possible — one that can connect agents but not speak as
+them.
 
 ## Audit
 
@@ -869,10 +933,13 @@ standing right to read every other operator's actions, or the text they had an a
 
 - **Host host compromise means account compromise.** Encryption at rest does not help if the key
   is reachable from the same box. Contained, not eliminated.
-- **The frontend stores its access token in `localStorage`** (see `frontend/src/api/token.ts`).
-  Before this design ships, that raises the stakes of an XSS from "attacker reads the user table"
-  to "attacker drives Minecraft accounts and speaks as them". The CSP and the `v-html` lint ban move
-  from advisable to required.
+- **An XSS can still act as the operator.** No credential is readable by script any more — the
+  access token is in memory, the refresh token is an `HttpOnly` cookie (see
+  `frontend/src/api/token.ts` and `session.ts`) — so a session can no longer be carried off the
+  machine and used later. But a script on the page can call the API, and call refresh, for as long
+  as the tab is open. Once this design ships that is the difference between "attacker reads the user
+  table" and "attacker drives Minecraft accounts and speaks as them", so the CSP and the `v-html`
+  lint ban are required rather than advisable: they are what stops a script running at all.
 - **Automation is against the spirit of Microsoft's terms.** Use alternate accounts that can be
   lost, not anyone's main.
 - **Break-glass revocation** is the account owner's Microsoft security page, which kills all

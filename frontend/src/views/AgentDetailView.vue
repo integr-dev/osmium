@@ -15,7 +15,6 @@ import {
   MessageSquare,
   Power,
   RotateCw,
-  Send,
   Server,
   Signal,
   SquarePen,
@@ -25,29 +24,30 @@ import {
 } from 'lucide-vue-next'
 import FormField from '../components/FormField.vue'
 import PlayerHead from '../components/PlayerHead.vue'
-import type { ActivityEntryResponse, ChatMessageResponse } from '../api/client'
-import { fetchActivityPage, fetchChatPage } from '../api/feeds'
+import type { ActivityEntryResponse } from '../api/client'
+import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { STATE_BADGE, stateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { LOGIN_METHOD_IDS } from '../lib/loginMethods'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
+const chat = useChatStore()
 
-const message = ref('')
 const error = ref<string | null>(null)
 const busy = ref(false)
 
 const editDialog = ref<HTMLDialogElement | null>(null)
 const removeDialog = ref<HTMLDialogElement | null>(null)
 const setupDialog = ref<HTMLDialogElement | null>(null)
-const draft = ref({ label: '', serverAddress: '' })
+const draft = ref({ label: '' })
 const editError = ref<string | null>(null)
 const setupMethod = ref(LOGIN_METHOD_IDS[0])
 
@@ -76,33 +76,25 @@ const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
 }
 
 /**
- * This agent's own feeds. Chat here is what was said **to or about this agent**; the server's global
- * chat is on the dashboard, since it is identical for every agent on the server and would bury the
- * lines that are actually about this one.
+ * This agent's incidents. Its chat is a scope of the rail rather than a panel here — one
+ * conversation shown in one place, pointed at whatever is being looked at.
  *
- * Both are fixed-height panels rather than the whole page, so each scrolls its own older pages in.
+ * A fixed-height panel rather than the whole page, so it scrolls its own older pages in.
  */
 const agentId = computed(() => Number(route.params.id))
 
-const chatBox = ref<HTMLElement | null>(null)
-const chatSentinel = ref<HTMLElement | null>(null)
 const activityBox = ref<HTMLElement | null>(null)
 const activitySentinel = ref<HTMLElement | null>(null)
 
-const chatFeed = useFeed<ChatMessageResponse>((cursor) =>
-  fetchChatPage(cursor, { agentId: agentId.value }),
-)
 const activityFeed = useFeed<ActivityEntryResponse>((cursor) =>
   fetchActivityPage(cursor, agentId.value),
 )
-const { items: chat, loading: chatLoading, exhausted: chatExhausted } = chatFeed
 const {
   items: activity,
   loading: activityLoading,
   exhausted: activityExhausted,
 } = activityFeed
 
-const chatScroll = useInfiniteScroll(chatSentinel, () => void moreChat(), chatBox)
 const activityScroll = useInfiniteScroll(activitySentinel, () => void moreActivity(), activityBox)
 
 let stopListening: (() => void) | null = null
@@ -110,28 +102,18 @@ let stopListening: (() => void) | null = null
 onMounted(async () => {
   if (!agent.value) void agentStore.refresh()
 
-  await Promise.all([chatFeed.reset(), activityFeed.reset()])
-  chatScroll.start()
+  await activityFeed.reset()
   activityScroll.start()
 
+  // Chat is the panel's own business; this is only activity. See ChatPanel.
   stopListening = agentStore.onFeedEvent((name, data) => {
-    if (name === 'chat') {
-      const line = data as ChatMessageResponse
-      // Global arrives under whichever agent forwards it, and belongs to the server, not here.
-      if (line.agentId === agentId.value && line.scope !== 'GLOBAL') chatFeed.prepend(line)
-      return
-    }
+    if (name !== 'activity') return
     const entry = data as ActivityEntryResponse
     if (entry.agentId === agentId.value) activityFeed.prepend(entry)
   })
 })
 
 onBeforeUnmount(() => stopListening?.())
-
-async function moreChat(): Promise<void> {
-  await chatFeed.more()
-  if (!chatExhausted.value) await chatScroll.rearm()
-}
 
 async function moreActivity(): Promise<void> {
   await activityFeed.more()
@@ -164,13 +146,6 @@ async function run(action: () => Promise<void>) {
   }
 }
 
-async function send() {
-  if (!agent.value) return
-  const text = message.value
-  await run(() => agentStore.say(agent.value!.id, text))
-  if (!error.value) message.value = ''
-}
-
 /**
  * The method is chosen per setup rather than remembered: nothing on the host advertises what it can
  * perform, so the operator is the only one who knows which mechanism will work there.
@@ -188,9 +163,38 @@ async function confirmSetup() {
 
 function openEdit() {
   if (!agent.value) return
-  draft.value = { label: agent.value.label, serverAddress: agent.value.serverAddress }
+  draft.value = { label: agent.value.label }
   editError.value = null
   editDialog.value?.showModal()
+}
+
+/**
+ * Where the agent plays, as its own dialog.
+ *
+ * Separate from the rename because it is a different kind of change: it decides what the next
+ * connection targets, so the backend refuses it while the agent is online, where a rename is always
+ * allowed. Clearing the field unassigns, which leaves the agent set up and idle.
+ */
+const serverDialog = ref<HTMLDialogElement | null>(null)
+const serverDraft = ref('')
+const serverError = ref<string | null>(null)
+
+function openServer() {
+  if (!agent.value) return
+  serverDraft.value = agent.value.serverAddress ?? ''
+  serverError.value = null
+  serverDialog.value?.showModal()
+}
+
+async function saveServer() {
+  if (!agent.value) return
+  serverError.value = null
+  try {
+    await agentStore.assignServer(agent.value.id, serverDraft.value.trim() || null)
+    serverDialog.value?.close()
+  } catch (failure) {
+    serverError.value = failure instanceof Error ? failure.message : t('errors.assignServer')
+  }
 }
 
 async function saveEdit() {
@@ -199,7 +203,6 @@ async function saveEdit() {
   try {
     await agentStore.updateAgent(agent.value.id, {
       label: draft.value.label,
-      serverAddress: draft.value.serverAddress,
     })
     editDialog.value?.close()
   } catch (failure) {
@@ -227,17 +230,20 @@ async function confirmRemove() {
         <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="lg" />
         <div>
         <h1 class="text-2xl leading-tight font-semibold tracking-tight">{{ agent.label }}</h1>
+        <!--
+          One line: the Minecraft account, where it plays, and the host running it. Each is named
+          when absent rather than dropped — before setup there is no account and an agent assigned
+          nowhere has no server, and both are answers somebody is looking for rather than gaps.
+        -->
         <p class="flex flex-wrap items-center gap-2 text-sm opacity-60">
-          <span class="flex items-center gap-1">
-            <Server class="size-3.5" />
-            {{ agent.serverAddress }}
+          <span v-if="agent.mcUsername" class="font-mono">{{ agent.mcUsername }}</span>
+          <span v-else class="italic">{{ t('agents.notLinked') }}</span>
+          <span>·</span>
+          <span :class="agent.serverAddress ? '' : 'italic'">
+            {{ agent.serverAddress ?? t('agents.noServer') }}
           </span>
           <span>·</span>
           <span>{{ agent.hostName }}</span>
-          <template v-if="agent.mcUsername">
-            <span>·</span>
-            <span class="font-mono">{{ agent.mcUsername }}</span>
-          </template>
         </p>
         </div>
       </div>
@@ -261,12 +267,26 @@ async function confirmRemove() {
             {{ uptimeOf(agent) }}
           </div>
         </div>
-        <div v-if="auth.can('fleet.control')" class="flex gap-1">
-          <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
-            <SquarePen class="size-4" />
-            {{ t('common.edit') }}
-          </button>
-          <button class="btn btn-ghost btn-sm text-error gap-1" @click="removeDialog?.showModal()">
+        <!-- Reshaping and destroying are separate authorities, so they are separate checks. -->
+        <div
+          v-if="auth.can('agent.write') || auth.can('agent.delete')"
+          class="flex gap-1"
+        >
+          <template v-if="auth.can('agent.write')">
+            <button class="btn btn-ghost btn-sm gap-1" @click="openServer">
+              <Server class="size-4" />
+              {{ t('agents.setServer') }}
+            </button>
+            <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
+              <SquarePen class="size-4" />
+              {{ t('common.edit') }}
+            </button>
+          </template>
+          <button
+            v-if="auth.can('agent.delete')"
+            class="btn btn-ghost btn-sm text-error gap-1"
+            @click="removeDialog?.showModal()"
+          >
             <Trash2 class="size-4" />
             {{ t('common.delete') }}
           </button>
@@ -453,7 +473,7 @@ async function confirmRemove() {
 
         <div class="flex flex-wrap gap-2">
           <button
-            v-if="auth.can('fleet.login')"
+            v-if="auth.can('agent.setup')"
             class="btn btn-soft btn-sm gap-2"
             :disabled="busy || !hostReachable || agent.state === 'SETUP_PENDING' || isOnline(agent)"
             @click="openSetup"
@@ -461,17 +481,18 @@ async function confirmRemove() {
             <KeyRound class="size-4" />
             {{ t('agents.setUp') }}
           </button>
+          <!-- No server is nowhere to connect to, and the backend refuses it with a 409. -->
           <button
-            v-if="auth.can('fleet.control')"
+            v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || !hostReachable || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING'"
+            :disabled="busy || !hostReachable || !agent.serverAddress || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING'"
             @click="run(() => agentStore.connect(agent!.id))"
           >
             <RotateCw class="size-4" />
             {{ t('agents.connect') }}
           </button>
           <button
-            v-if="auth.can('fleet.control')"
+            v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
             :disabled="busy || !hostReachable || !isOnline(agent)"
             @click="run(() => agentStore.disconnect(agent!.id))"
@@ -479,57 +500,21 @@ async function confirmRemove() {
             <Power class="size-4" />
             {{ t('agents.disconnect') }}
           </button>
-        </div>
 
-        <div class="divider my-0"></div>
-
-        <div class="flex items-center gap-2 text-sm font-medium opacity-70">
-          <MessageSquare class="size-4" />
-          {{ t('agents.chat') }}
-          <span class="text-xs font-normal opacity-60">{{ t('agents.chatHint') }}</span>
-        </div>
-
-        <div
-          ref="chatBox"
-          class="rounded-box bg-base-300/25 flex max-h-64 flex-col gap-1 overflow-y-auto p-3"
-        >
-          <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
-            <p v-for="line in chat" :key="line.id" class="flex items-center gap-1.5 text-sm">
-              <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
-              <PlayerHead :id="line.from" :name="line.from" size="xs" />
-              <span class="shrink-0 font-medium">{{ line.from }}:</span>
-              <span class="min-w-0 opacity-80">{{ line.text }}</span>
-            </p>
-          </TransitionGroup>
-
-          <p v-if="chatLoading" class="py-4 text-center text-sm opacity-50">
-            {{ t('common.loading') }}
-          </p>
-          <p v-else-if="!chat.length" class="py-4 text-center text-sm opacity-50">
-            {{ t('dashboard.noChat') }}
-          </p>
-
-          <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
-          <div ref="chatSentinel" aria-hidden="true" class="h-px shrink-0"></div>
-        </div>
-
-        <form v-if="auth.can('fleet.chat')" class="flex gap-2" @submit.prevent="send">
-          <input
-            v-model="message"
-            class="input w-full"
-            type="text"
-            :placeholder="t('agents.chatPlaceholder')"
-            :disabled="busy || !hostReachable || !isOnline(agent)"
-          />
+          <!--
+            The conversation itself is the rail's, not this page's — one panel, wherever it is
+            pointed. This aims it here, so the page still leads to the chat without carrying a
+            second copy of it.
+          -->
           <button
-            class="btn btn-primary gap-2"
-            type="submit"
-            :disabled="busy || !hostReachable || !isOnline(agent) || !message.trim()"
+            v-if="auth.can('chat.read')"
+            class="btn btn-soft btn-sm gap-2"
+            @click="chat.show({ kind: 'agent', id: agent.id })"
           >
-            <Send class="size-4" />
-            {{ t('agents.send') }}
+            <MessageSquare class="size-4" />
+            {{ t('agents.chat') }}
           </button>
-        </form>
+        </div>
       </div>
     </div>
 
@@ -549,19 +534,6 @@ async function confirmRemove() {
             maxlength="64"
             required
           />
-          <FormField
-            v-model="draft.serverAddress"
-            :label="t('agents.server')"
-            :placeholder="t('agents.serverPlaceholder')"
-            :icon="Server"
-            type="text"
-            required
-            :disabled="isOnline(agent)"
-          />
-          <p v-if="isOnline(agent)" class="text-xs opacity-60">
-            {{ t('agents.moveOffline') }}
-          </p>
-
           <div v-if="editError" role="alert" class="alert alert-error alert-soft">
             <TriangleAlert class="size-4" />
             <span>{{ editError }}</span>
@@ -570,6 +542,43 @@ async function confirmRemove() {
           <div class="modal-action">
             <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
             <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+          </div>
+        </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+    </dialog>
+
+    <dialog ref="serverDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <Server class="text-primary size-5" />
+          {{ t('agents.setServerTitle', { name: agent.label }) }}
+        </h3>
+        <p class="mt-1 text-sm opacity-60">{{ t('agents.setServerHint') }}</p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveServer">
+          <FormField
+            v-model="serverDraft"
+            :label="t('agents.server')"
+            :placeholder="t('agents.serverPlaceholder')"
+            :icon="Server"
+            type="text"
+            :disabled="isOnline(agent)"
+          />
+          <!-- Emptying the field is how an agent is taken off a server, so it is said out loud. -->
+          <p class="text-xs opacity-60">
+            {{ isOnline(agent) ? t('agents.moveOffline') : t('agents.unassignHint') }}
+          </p>
+
+          <div v-if="serverError" role="alert" class="alert alert-error alert-soft">
+            <TriangleAlert class="size-4" />
+            <span>{{ serverError }}</span>
+          </div>
+
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent)">
+              {{ t('common.save') }}
+            </button>
           </div>
         </form>
       </div>

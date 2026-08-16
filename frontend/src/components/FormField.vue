@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
+import { ref, type Component } from 'vue'
 
 /**
  * A daisyUI text field with a leading icon *and* floating-label behaviour.
@@ -27,6 +27,16 @@ withDefaults(
 )
 
 const model = defineModel<string>({ required: true })
+
+/**
+ * Exposed rather than left to the `autofocus` attribute, which the caller could pass through
+ * `$attrs` anyway. The browser only honours `autofocus` on an inserted element while focus is still
+ * on the document itself, so it works on a fresh page load and silently does nothing on the
+ * navigation that most wants it — signing out, where focus is left on the button that did it.
+ */
+const input = ref<HTMLInputElement>()
+
+defineExpose({ focus: () => input.value?.focus() })
 </script>
 
 <template>
@@ -39,7 +49,7 @@ const model = defineModel<string>({ required: true })
     <span>{{ label }}</span>
     <label class="input w-full" :class="invalid ? 'input-error' : ''">
       <component :is="icon" v-if="icon" class="size-4 shrink-0 opacity-60" />
-      <input v-model="model" :placeholder="placeholder ?? label" v-bind="$attrs" />
+      <input ref="input" v-model="model" :placeholder="placeholder ?? label" v-bind="$attrs" />
     </label>
   </div>
 </template>

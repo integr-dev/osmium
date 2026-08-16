@@ -11,6 +11,8 @@ import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.get
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
@@ -122,4 +124,60 @@ class LiveUpdateControllerTest : AbstractRestTest() {
 
         assertEquals(1, delivered.size)
     }
+
+    // ---- progress, which cannot wait for a commit -----------------------------------------------
+
+    /**
+     * The distinction the schematic reader needs. Its pass runs for minutes inside a single
+     * transaction, so an event held until that transaction commits describes work that has already
+     * finished — every report lands in one burst at the end and the whole read reads as silence.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `progress goes out during the transaction that reports it, and state waits`() {
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
+        broker.subscribe { delivered += it }
+
+        transactionTemplate.executeWithoutResult {
+            broker.publish(stage("held"))
+            broker.publishNow(stage("now"))
+
+            assertEquals(listOf("now"), stages(delivered), "the held event escaped its transaction")
+        }
+
+        assertEquals(listOf("now", "held"), stages(delivered))
+    }
+
+    /**
+     * Publishing from an `afterCommit` callback, which is where the analysis queue announces its
+     * line. Synchronizations are still *active* there, but the list has already been walked — so
+     * the ordinary publish hands the event to a callback that is never invoked and drops it without
+     * a word. Immediate delivery is the only thing that works from inside one.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `an event published from an afterCommit callback arrives only if it is immediate`() {
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
+        broker.subscribe { delivered += it }
+
+        transactionTemplate.executeWithoutResult {
+            TransactionSynchronizationManager.registerSynchronization(
+                object : TransactionSynchronization {
+                    override fun afterCommit() {
+                        broker.publish(stage("held"))
+                        broker.publishNow(stage("now"))
+                    }
+                }
+            )
+        }
+
+        assertEquals(listOf("now"), stages(delivered))
+    }
+
+    private fun stage(name: String) =
+        LiveUpdateEvent(LiveUpdateType.SCHEMATIC_CHANGED, mapOf("stage" to name))
+
+    /** Only this test's own events: subscribers outlive the test that added them. */
+    private fun stages(delivered: List<LiveUpdateEvent>) =
+        delivered.mapNotNull { (it.data as? Map<*, *>)?.get("stage") as? String }
 }

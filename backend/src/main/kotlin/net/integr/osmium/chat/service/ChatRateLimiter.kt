@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
  * **Per agent, not per operator.** The consequence being avoided is a Minecraft ban, which lands on
  * the account rather than on whoever triggered it — so two operators sharing one agent share its
  * budget, and an operator driving ten agents is not throttled across all of them. It is also the
- * check that contains a stolen session holding `fleet.chat`: it can still speak, but not spam.
+ * check that contains a stolen session holding `chat.speak`: it can still speak, but not spam.
  *
  * A token bucket rather than a count per calendar minute. A fixed window lets an operator send the
  * whole allowance at 11:59:59 and the whole allowance again a second later, which is exactly the

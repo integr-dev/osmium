@@ -6,8 +6,8 @@ import type { AgentResponse, AgentTelemetryResponse, HostResponse } from '../api
 import { respondWith } from '../test/http'
 
 const HOSTS: HostResponse[] = [
-  { id: 1, name: 'eu-1', address: '10.0.0.4', hostVersion: '0.1.0', lastSeenAt: null, reachable: true, agentCount: 4 },
-  { id: 2, name: 'eu-2', address: null, hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1 },
+  { id: 1, name: 'eu-1', hostVersion: '0.1.0', lastSeenAt: null, reachable: true, agentCount: 4 },
+  { id: 2, name: 'eu-2', hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1 },
 ]
 
 /**
@@ -332,12 +332,18 @@ describe('live updates', () => {
     const store = useAgentStore()
     const auth = useAuthStore()
     await store.refresh()
-    auth.user = { id: 1, username: 'demoted', role: 'administrator', nodes: ['fleet.read', 'audit.read'] }
+    auth.user = {
+      id: 1,
+      username: 'demoted',
+      role: 'administrator',
+      nodes: ['agent.read', 'audit.read'],
+      sessionAlertAt: null,
+    }
 
-    store.applyEvent('permissions', { id: 1, username: 'demoted', role: 'viewer', nodes: ['fleet.read'] })
+    store.applyEvent('permissions', { id: 1, username: 'demoted', role: 'viewer', nodes: ['agent.read'] })
 
     expect(auth.can('audit.read')).toBe(false)
-    expect(auth.can('fleet.read')).toBe(true)
+    expect(auth.can('agent.read')).toBe(true)
   })
 
   it('stops delivering once a listener unsubscribes', async () => {

@@ -33,7 +33,6 @@ class HostControllerTest : AbstractRestTest() {
             status { isCreated() }
             jsonPath("$.host.name") { value("host-eu-1") }
             jsonPath("$.host.reachable") { value(false) }
-            jsonPath("$.host.address") { value(null) }
             jsonPath("$.host.agentCount") { value(0) }
             jsonPath("$.token") { value(startsWith("osm_host_")) }
         }
@@ -70,7 +69,10 @@ class HostControllerTest : AbstractRestTest() {
         assertNull(hostService.authenticate("osm_host_notanumber_secret"))
     }
 
-    /** A viewer sees the fleet. Enrolling, renaming, rotating and removing stay behind fleet.login. */
+    /**
+     * A viewer sees the fleet. Enrolling and renaming need `host.write`, rotating the
+     * enrolment token `host.token`, and removal `host.delete`.
+     */
     @Test
     fun `a viewer can list hosts`() {
         reachableHost("host-eu-1")

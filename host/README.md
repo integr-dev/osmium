@@ -39,6 +39,10 @@ rotation evicts a session.
 The backend records the remote address it observed on connect, which is why enrolment never asks
 for one.
 
+**The first frame you send is [`agents`](#45-agents--once-immediately-after-connecting)**, listing what
+this host is actually running. Without it a host that has restarted leaves Osmium asserting sessions
+that no longer exist.
+
 ---
 
 ## 2. The envelope
@@ -94,14 +98,24 @@ answer with a `result`.
 ```jsonc
 // backend → host
 { "id": "cmd-7f3a", "kind": "command", "type": "setup_agent", "agentId": 42,
-  "payload": { "label": "Mason_04", "serverAddress": "mc.example.com:25565", "method": "method_a" } }
+  "payload": { "label": "Mason_04", "method": "method_a" } }
 ```
 
 | Field | Meaning |
 |---|---|
 | `label` | The operator's name for this agent. Not a Minecraft account name. |
-| `serverAddress` | Where it will play. Already normalised, lowercase, usually with a port. |
 | `method` | The login **mechanism** the operator chose, relayed uninterpreted. |
+
+> ⚠️ **Changed — this payload no longer carries `serverAddress`.** A host must not expect it.
+>
+> Setting an agent up is acquiring a credential, and a Minecraft account can join any server, so
+> where an agent plays is a separate decision that can change afterwards without touching the
+> account. Sending it here handed the host a value that went stale the moment the agent was
+> reassigned — and it was never needed, because `connect` carries the address, which is the point at
+> which it matters.
+>
+> An agent may now also be assigned to **no server at all**. It can still be set up from there;
+> it simply cannot be told to connect until one is chosen.
 
 `method` is currently one of four placeholders, `method_a`–`method_d`, until real mechanisms are
 chosen. The backend has no idea what any of them mean and stores nothing about them.
@@ -134,6 +148,11 @@ support, deliberately.
 { "id": "cmd-…", "kind": "command", "type": "connect", "agentId": 42,
   "payload": { "serverAddress": "mc.example.com:25565" } }
 ```
+
+`serverAddress` is **always present and never empty**. It is the authority on where this agent plays:
+it is not sent at setup, it can change between one connect and the next, and an agent assigned to no
+server is refused by the backend before any command is dispatched. A host should use the address in
+this payload rather than anything it remembers.
 
 Fire and forget: **do not send a result.** Report the outcome as an `agent_status` event instead —
 `ONLINE` on success, `CONNECT_FAILED` if the server refused, `NEEDS_RELINK` if the stored credential
@@ -296,6 +315,42 @@ not stale.
 
 ---
 
+### 4.5 `agents` — once, immediately after connecting
+
+```jsonc
+{ "kind": "event", "type": "agents",
+  "payload": { "agents": [ { "agentId": 42, "state": "ONLINE" } ] } }
+```
+
+Host-scoped, so **no `agentId`** on the envelope; the ids are inside the payload.
+
+This is the only message that says what *exists*. `agent_status` reports transitions, and agent
+state is **stored** on the backend, so it outlives the connection that reported it. A host that
+reported four agents `ONLINE` and then restarted leaves an Osmium showing four agents in game,
+indefinitely, with no telemetry behind them — reachability does not save it, because the host is
+back, so `STALE` stops applying and the stale `ONLINE` resurfaces intact.
+
+What the backend does with it, for every agent it owns on this host:
+
+| Believed state | Announced | Not announced |
+|---|---|---|
+| `ONLINE` | applied as reported | → `LINKED` — credentials survived the restart, the session did not |
+| `SETUP_PENDING` | applied as reported | → `UNLINKED` — the command went with the process that was going to answer it |
+| anything else | applied as reported | left alone — none of them claim a live session |
+
+An unannounced agent also loses the listener role, so the next election sees a vacancy rather than a
+listener that is gone.
+
+**Send it on every connect, not only after a restart.** A host that kept its sessions across a
+dropped socket announces them and nothing changes, which is what makes it safe to send always —
+and a host cannot reliably tell the two cases apart anyway.
+
+**An empty list is a real announcement**: `"agents": []` means "I am running none of them", which is
+exactly what a freshly started host should say. Omitting the event entirely is treated as saying
+nothing at all, so an older host keeps working unchanged — it simply keeps the old failure mode.
+
+---
+
 ## 5. Chat scoping and the listener role
 
 The host is the only side that can classify chat — it sees the raw packet types, and the backend
@@ -353,7 +408,9 @@ into an image.
 **The backend is the source of truth for work; the host is the source of truth for agent state.**
 The host receives a segment and builds it, it does not schedule. Conversely the backend never
 asserts an agent's state back onto the host — on reconnect the host re-enumerates what is actually
-live and reports it.
+live and reports it, as [`agents`](#45-agents--once-immediately-after-connecting). That
+re-enumeration is not optional: it is the only thing that clears state the backend is still
+asserting from a previous process.
 
 **Commands are never queued.** If the host is not connected, the operator's request fails with a 503
 immediately. One firing long after they have resolved things by hand is worse than an outright

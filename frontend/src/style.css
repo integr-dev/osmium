@@ -37,6 +37,28 @@
 }
 
 /*
+ * daisyUI animates the drawer panel with `transition: translate .3s ease-out, width .2s ease-out`.
+ * The translate is the slide-in on a narrow screen and is worth keeping; the width is not, because
+ * the sidebar's edge is draggable and a 200ms ease means it arrives a fifth of a second after the
+ * pointer, every frame of the drag. Only the property that actually slides is animated.
+ *
+ * Unlayered, so it beats daisyUI's layered rule without having to out-specify it.
+ */
+.drawer-side > :not(.drawer-overlay) {
+  transition: translate 0.3s ease-out;
+}
+
+/*
+ * daisyUI builds a modal's click-outside from a real `<button>` filling the backdrop, which Tailwind
+ * then gives a pointer cursor. Nothing there is clickable in the sense a hand means — the whole area
+ * is one dismiss target — and the cursor changing on the way past the dialog reads as if the page
+ * behind it were interactive. Unlayered, so it wins without out-specifying the utility.
+ */
+.modal-backdrop button {
+  cursor: default;
+}
+
+/*
  * Motion.
  *
  * Two effects, one rule: movement marks the instant something changed, and nothing else. Osmium is
@@ -75,12 +97,45 @@
 }
 
 /*
+ * A block in the sign-in backdrop. The exception to the rule above: this one is not marking a
+ * change, it is the one ornament in the interface, on the one page with nothing to report.
+ *
+ * Every block shares a duration and differs only in delay, so the stagger holds for every loop
+ * rather than drifting apart after the first. `both` is what makes a block invisible before its
+ * turn — without it each one is drawn immediately and the field arrives all at once, already
+ * built. See `src/lib/schematic.ts`.
+ */
+.osmium-place {
+  animation: osmium-place var(--osmium-place-loop) ease-out var(--osmium-place-delay) infinite both;
+}
+
+@keyframes osmium-place {
+  0% {
+    opacity: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/*
  * Honoured rather than softened. Someone who has asked their system for less motion has asked for
  * none of this, and every effect above is decorative by construction — removing it loses nothing
  * that is not also written down somewhere on the page.
  */
 @media (prefers-reduced-motion: reduce) {
   .osmium-flash {
+    animation: none;
+  }
+
+  /* The finished field, held still. There is nothing to convey, so there is nothing to restore. */
+  .osmium-place {
     animation: none;
   }
 

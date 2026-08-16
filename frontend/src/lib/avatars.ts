@@ -1,15 +1,15 @@
 import { watch } from 'vue'
-import { apiBaseUrl } from '../api/client'
+import { apiBaseUrl } from '../api/base'
 import { token } from '../api/token'
 
 /**
  * Player heads, fetched with the access token and handed to an `<img>` as a blob URL.
  *
- * `/api/avatars` is gated on `fleet.read` like everything else, and an `<img src>` cannot send an
- * `Authorization` header — the token is in `localStorage`, not a cookie. So the head is fetched
- * here and the element is given an object URL instead. That is the cost of not leaving the endpoint
- * open, and it is worth paying: the alternative was an unauthenticated route whose outbound
- * requests to a third party answered to nobody.
+ * `/api/avatars` is gated on `agent.read` like everything else, and an `<img src>` cannot send an
+ * `Authorization` header. The access token is not a cookie — the only cookie in this app is the
+ * refresh token, scoped to `/api/auth` — so the head is fetched here and the element is given an
+ * object URL instead. That is the cost of not leaving the endpoint open, and it is worth paying:
+ * the alternative was an unauthenticated route whose outbound requests answered to nobody.
  *
  * Two things this has to get right, because a fleet page renders the same head many times over:
  *

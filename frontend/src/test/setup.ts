@@ -15,7 +15,7 @@ beforeEach(async () => {
   backendReachable.value = true
   backendEverReached.value = false
 
-  // The token ref is module state read from localStorage once at import; clearing storage alone
-  // would not reset it, so reset the ref and let its watcher clear storage.
+  // Module state, and nothing else clears it: the access token lives in memory only, so it would
+  // otherwise leak from one test into the next.
   token.value = null
 })

@@ -24,16 +24,20 @@ import org.springframework.web.bind.annotation.RestController
 class ChatController(private val chatService: ChatService) {
 
     @GetMapping
-    @PreAuthorize("hasAuthority('fleet.read')")
+    @PreAuthorize("hasAuthority('chat.read')")
     @Operation(
         summary = "One page of chat, newest first.",
         description = """
             Pass exactly one of `agentId` or `server`.
 
-            `agentId` gives the conversation to or about that agent. `server` gives what everyone on
-            that server saw, forwarded once by the elected listener - deliberately separate, because
-            the server's chat is identical for every agent on it and would otherwise bury the lines
-            that are actually about the agent you are looking at.
+            `agentId` gives the conversation to or about that agent, and excludes the global
+            channel: that is identical for every agent on the server and would bury the lines that
+            are actually about the one you are looking at.
+
+            `server` gives everything that happened there - the global channel forwarded once by the
+            elected listener, plus whispers, proximity chat and the agents' own outbound lines. Not
+            the mirror of the above: a whisper to one agent is still something that happened on that
+            server.
 
             Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
             from the previous response to continue. Kept for 3 days.
@@ -42,7 +46,7 @@ class ChatController(private val chatService: ChatService) {
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "A page of chat."),
         ApiResponse(responseCode = "400", description = "Neither or both filters given, or a malformed `cursor`."),
-        ApiResponse(responseCode = "403", description = "Missing node `fleet.read`."),
+        ApiResponse(responseCode = "403", description = "Missing node `chat.read`."),
     )
     fun list(
         @Parameter(description = "Conversation to or about this agent. Excludes the server's global chat.")

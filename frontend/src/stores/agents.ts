@@ -4,6 +4,8 @@ import { api, errorMessage, type AgentResponse, type HostResponse, type UserResp
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
 import { useAuthStore } from './auth'
 import { t } from '../i18n'
+import { buildFigures } from '../lib/build'
+import { isOnline } from '../lib/agentState'
 
 /**
  * Fleet state.
@@ -59,10 +61,8 @@ export interface ServerSummary {
   listener: FleetAgent | undefined
 }
 
-/** States in which an agent is genuinely in game. */
-export function isOnline(agent: AgentResponse): boolean {
-  return agent.state === 'ONLINE'
-}
+// Defined in `src/lib/agentState.ts` and re-exported here, where most callers already look for it.
+export { isOnline }
 
 export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
@@ -194,6 +194,11 @@ export const useAgentStore = defineStore('agents', () => {
       case 'audit':
       case 'user':
       case 'user-removed':
+      // Schematics are a list too, and one that moves on its own: an upload and the pass that
+      // follows it run for minutes with nobody touching anything, so the view that shows them
+      // needs the stream rather than a poll.
+      case 'schematic':
+      case 'schematic-removed':
         // Paged lists, owned by whichever view is showing one, so these are handed on rather than
         // accumulated here: the store has no way to know which page a line belongs on.
         for (const listener of feedListeners) listener(name, data)
@@ -249,26 +254,31 @@ export const useAgentStore = defineStore('agents', () => {
 
   const online = computed(() => agents.value.filter(isOnline))
 
-  const blocksPlaced = computed(() =>
-    agents.value.reduce((sum, agent) => sum + agent.build.blocksPlaced, 0),
+  /**
+   * The fleet-wide build figures. The arithmetic lives in `src/lib/build.ts` so the dashboard can
+   * ask the same question of one server's agents — a schematic is built on a server, and summing
+   * two of them adds up two unrelated builds.
+   */
+  const fleetBuild = computed(() => buildFigures(agents.value, schematic.value.totalBlocks))
+
+  const blocksPlaced = computed(() => fleetBuild.value.placed)
+
+  const progressPercent = computed(() => fleetBuild.value.percent)
+
+  const blocksPerMinute = computed(() => fleetBuild.value.perMinute)
+
+  const etaMinutes = computed(() => fleetBuild.value.etaMinutes)
+
+  /**
+   * Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it.
+   *
+   * Agents assigned nowhere contribute none. That is the point of allowing it — an agent that is set
+   * up and waiting for work used to be parked on a server it was not connected to, which then
+   * appeared here with nobody on it.
+   */
+  const servers = computed(() =>
+    [...new Set(agents.value.map((agent) => agent.serverAddress).filter((it) => it !== null))].sort(),
   )
-
-  const progressPercent = computed(() =>
-    Math.min(100, (blocksPlaced.value / schematic.value.totalBlocks) * 100),
-  )
-
-  const blocksPerMinute = computed(
-    () => online.value.filter((agent) => agent.build.blocksPlaced > 0).length * 38,
-  )
-
-  const etaMinutes = computed(() => {
-    if (blocksPerMinute.value === 0) return null
-    const remaining = schematic.value.totalBlocks - blocksPlaced.value
-    return Math.max(0, Math.round(remaining / blocksPerMinute.value))
-  })
-
-  /** Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it. */
-  const servers = computed(() => [...new Set(agents.value.map((agent) => agent.serverAddress))].sort())
 
   /**
    * Each server with its share of the fleet, and the agent forwarding its global chat.
@@ -375,23 +385,34 @@ export const useAgentStore = defineStore('agents', () => {
   async function addAgent(input: {
     label: string
     hostId: number
-    serverAddress: string
+    serverAddress: string | null
   }): Promise<AgentResponse> {
     const { data, error: failure } = await api.POST('/api/agents', { body: input })
     if (failure || !data) throw new Error(errorMessage(failure, t('errors.createAgent')))
     return data as AgentResponse
   }
 
-  /** Rename and/or move to another server. Omitted fields are left alone by the backend. */
-  async function updateAgent(
-    id: number,
-    changes: { label?: string; serverAddress?: string },
-  ): Promise<void> {
+  /** Rename. Where an agent plays is [assignServer], which has its own preconditions. */
+  async function updateAgent(id: number, changes: { label?: string }): Promise<void> {
     const { error: failure } = await api.PATCH('/api/agents/{id}', {
       params: { path: { id } },
       body: changes,
     })
     if (failure) throw new Error(errorMessage(failure, t('errors.updateAgent')))
+  }
+
+  /**
+   * Points an agent at a Minecraft server, or at none — pass null to unassign.
+   *
+   * Separate from the rename because it is a different kind of change: it decides what the next
+   * connection targets, so the backend refuses it while the agent is online.
+   */
+  async function assignServer(id: number, serverAddress: string | null): Promise<void> {
+    const { error: failure } = await api.PUT('/api/agents/{id}/server', {
+      params: { path: { id } },
+      body: { serverAddress },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.assignServer')))
   }
 
   async function removeAgent(id: number): Promise<void> {
@@ -459,6 +480,7 @@ export const useAgentStore = defineStore('agents', () => {
     removeHost,
     addAgent,
     updateAgent,
+    assignServer,
     removeAgent,
     setupAgent,
     connect,

@@ -25,7 +25,6 @@ data class HostResponse(
     val id: Long,
     val name: String,
     @field:Schema(description = "Observed when the host connects. Null until it first dials in.")
-    val address: String?,
     val hostVersion: String?,
     val lastSeenAt: Instant?,
     val reachable: Boolean,
@@ -43,7 +42,6 @@ data class HostEnrolledResponse(
 fun Host.toResponse(agentCount: Long): HostResponse = HostResponse(
     id = checkNotNull(id) { "Host has not been persisted yet" },
     name = name,
-    address = address,
     hostVersion = hostVersion,
     lastSeenAt = lastSeenAt,
     reachable = isReachable(),
