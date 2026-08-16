@@ -137,8 +137,22 @@ const DETAILS = computed(() => {
   return [...steps, finest.value]
 })
 
+/**
+ * Where the control is, and what has actually been asked for.
+ *
+ * Two values because a drag must not be a stream of requests. Bound straight to the fetch, every
+ * position the thumb passed over asked the backend for a model of its own — a dozen reads of the
+ * occupancy index to arrive at the one resolution that was wanted, each arriving late enough to
+ * redraw the viewer under a hand that had already moved on.
+ *
+ * `sliderStep` follows the thumb; `detailStep` catches up when the drag ends, which is what the
+ * range input's `change` means as distinct from its `input`.
+ */
+const sliderStep = ref(0)
 const detailStep = ref(0)
 
+/** Voxels along the longest axis: at the slider's position, and at the one being drawn. */
+const pendingDetail = computed(() => DETAILS.value[sliderStep.value] ?? 64)
 const detail = computed(() => DETAILS.value[detailStep.value] ?? 64)
 
 // Back to the default whenever the schematic changes: the step that was right for the last one is
@@ -148,6 +162,7 @@ watch(
   ([, steps]) => {
     const near = steps.findIndex((step) => step >= 64)
     detailStep.value = near === -1 ? steps.length - 1 : near
+    sliderStep.value = detailStep.value
   },
   { immediate: true },
 )
@@ -177,6 +192,23 @@ watch(
   },
   { immediate: true },
 )
+
+/**
+ * What the drawn model turned out to be: how coarse it is, and how many cubes that came to.
+ *
+ * The grain is the honest answer to what the slider was set to, and not the same number — a voxel
+ * is a power-of-two multiple of an index cell, so several neighbouring positions on the slider
+ * produce the very same model.
+ */
+const shapeNote = computed(() => {
+  if (!shape.value) return null
+
+  const size = shape.value.voxelSize
+  const grain =
+    size > 1 ? t('schematics.shapeCoarse', { size }) : t('schematics.shapeExact')
+
+  return `${grain} · ${n(shape.value.count)}`
+})
 
 /**
  * The box as the operator will place it. Its own coordinates, not a normalised one: the corner
@@ -662,34 +694,43 @@ function progressOf(schematic: SchematicResponse): string | null {
 
                   <!--
                     Resolution, in voxels along the longest axis, because that is what bounds the
-                    work. What is read back is blocks per voxel, which is what an operator is
-                    actually choosing between.
+                    work. Every part of this row has a fixed width: the readout used to grow and
+                    shrink with its own contents, which moved the slider out from under the thumb
+                    mid-drag and, at the wrong window width, wrapped the whole row.
                   -->
                   <label v-else class="ml-auto flex items-center gap-2">
                     <span class="text-xs opacity-50">{{ t('schematics.detail') }}</span>
                     <input
-                      v-model.number="detailStep"
+                      :value="sliderStep"
                       type="range"
                       min="0"
                       :max="DETAILS.length - 1"
                       step="1"
                       class="range range-xs w-28"
+                      @input="sliderStep = Number(($event.target as HTMLInputElement).value)"
+                      @change="detailStep = sliderStep"
                     />
-                    <span class="text-xs tabular-nums opacity-40">
-                      <template v-if="loadingShape">
-                        <span class="loading loading-spinner loading-xs"></span>
-                      </template>
-                      <template v-else-if="shape">
-                        {{
-                          shape.voxelSize > 1
-                            ? t('schematics.shapeCoarse', { size: shape.voxelSize })
-                            : t('schematics.shapeExact')
-                        }}
-                        · {{ n(shape.count) }}
-                      </template>
+                    <!-- The slider's own position, so the control answers during the drag that
+                         does not yet ask for anything. -->
+                    <span class="w-20 shrink-0 text-right text-xs tabular-nums opacity-40">
+                      {{ t('schematics.detailAcross', { count: pendingDetail }) }}
                     </span>
                   </label>
                 </div>
+
+                <!--
+                  What came back, on a line of its own with its height reserved. Alongside the
+                  slider it was the thing that moved; truncated to one line it cannot push anything
+                  even while the column is narrow, and the full sentence is on the title.
+                -->
+                <p
+                  v-if="view === 'shape'"
+                  class="min-h-4 truncate text-xs opacity-40"
+                  :title="shapeNote ?? ''"
+                >
+                  <span v-if="loadingShape" class="loading loading-spinner loading-xs align-middle"></span>
+                  <template v-else>{{ shapeNote }}</template>
+                </p>
               </div>
 
               <div class="flex min-w-0 flex-col gap-3">
