@@ -1,6 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["osmium-agent","osmium-router"]
+members = ["osmium-agent", "osmium-common","osmium-router"]
 
 [workspace.dependencies]
+osmium-agent = { version = "0.1.0", path = "osmium-agent" }
+osmium-router = { version = "0.1.0", path = "osmium-router" }
+osmium-common = { version = "0.1.0", path = "osmium-common" }
+
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "macros"] }
+pretty_env_logger = "0.5.0"
+log = "0.4.33"
+thiserror = "2.0.20"
+uuid = { version = "1.24.0", features = ["v4", "rng"] }
+serde = { version = "1.0.229", features = ["alloc", "derive", "rc"] }
+serde_json = "1.0.151"

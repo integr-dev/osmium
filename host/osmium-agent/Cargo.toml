@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+osmium-common.workspace = true
+
+tokio.workspace = true
+uuid.workspace = true
+pretty_env_logger.workspace = true
+thiserror.workspace = true
+log.workspace = true

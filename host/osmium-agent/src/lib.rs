@@ -1,3 +1,2 @@
-pub mod chat;
-pub mod player;
-pub mod state;
+pub mod bot;
+pub mod error;

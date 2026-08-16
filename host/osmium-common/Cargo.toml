@@ -1,0 +1,17 @@
+[package]
+name = "osmium-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+uuid.workspace = true
+serde.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+azalea-auth = "0.16.0"
+azalea-client = "0.16.0"
+async-trait = "0.1.92"
+futures = "0.3.34"
+reqwest = "0.13.4"
+rand = "0.10.2"

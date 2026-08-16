@@ -24,3 +24,4 @@ build/
 *.log
 
 target/
+frontend/meow.sh

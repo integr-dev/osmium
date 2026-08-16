@@ -1,11 +1,18 @@
-use tokio::{net::TcpStream, sync::mpsc::Sender};
+use osmium_common::message::WsMessage;
+use tokio::{
+    net::TcpStream,
+    sync::mpsc::{Receiver, Sender},
+};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::client::IntoClientRequest};
 
-use super::message::Message;
-
 /// connects a websocket client to the given address and handles incoming messages
-/// tx - channel to dispatch
-pub async fn ws_client(addr: String, token: String, tx: Sender<Message>) {
+/// tx - channel to dispatch, rx - channel from dispatch
+pub async fn ws_client(
+    addr: String,
+    token: String,
+    tx: Sender<WsMessage>,
+    rx: Receiver<WsMessage>,
+) {
     let stream = spawn(addr, token).await;
 }
 
