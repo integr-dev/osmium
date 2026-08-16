@@ -89,15 +89,14 @@ const selected = computed(() => schematics.value.find((item) => item.id === sele
 const ready = computed(() => selected.value?.status === 'READY')
 
 /**
- * Two ways of looking at the same schematic.
+ * Two ways of looking at the same schematic, **in the library only**.
  *
  * **Shape** is the building itself, as voxels: what an operator wants when the question is "is this
- * the right one". **Bounds** is the box, which is what a split is expressed in — a segment is a
- * range of coordinates, and drawing the division over a voxel model would hide the division behind
- * the thing being divided.
+ * the right one". **Bounds** is the box it occupies, with its corner coordinates — the numbers that
+ * get typed into a placement.
  *
- * So the default follows the step rather than being a preference: shape while choosing, bounds
- * while dividing. Either is one click from the other.
+ * The split step has no such choice. A division is a set of coordinate ranges, so only the box can
+ * draw one; offering shape there was a tab that hid the thing the operator had just asked for.
  */
 const view = ref<'shape' | 'bounds'>('shape')
 
@@ -296,12 +295,6 @@ function go(to: Step) {
   if (target > here && !canAdvance.value) return
   step.value = to
 }
-
-// Shape while choosing, bounds while dividing — the split is drawn in coordinates, and a division
-// over a voxel model hides the very thing being divided.
-watch(step, (to) => {
-  view.value = to === 'split' ? 'bounds' : 'shape'
-})
 
 function next() {
   const at = STEPS.indexOf(step.value)
@@ -893,43 +886,16 @@ function progressOf(schematic: SchematicResponse): string | null {
 
       <div class="flex flex-col gap-3">
         <!--
-          One viewer for both pictures. The split is the same shape divided, and drawing it
-          differently would make it harder to recognise as the thing it came from — so the boxes
-          change and nothing else does. Corner coordinates are dropped once there are several:
-          eight labels per segment is not a reading of anything.
+          Boxes only, with no way to switch. A division is a set of coordinate ranges, so the voxel
+          model cannot draw one — offering it here gave the operator a tab that hid the very thing
+          they had just asked for, and a caption apologising for it. Corner coordinates are dropped
+          once there are several: eight labels per segment is not a reading of anything.
+
+          The shape is what the schematic *is*, and that question belongs to the library.
         -->
-        <VoxelViewer v-if="view === 'shape'" :shape="shape" />
-        <BoxViewer v-else :boxes="splitBoxes ?? boxes" :corners="!splitBoxes" />
+        <BoxViewer :boxes="splitBoxes ?? boxes" :corners="!splitBoxes" />
 
-        <div class="flex flex-wrap items-center gap-3">
-          <div role="tablist" class="tabs tabs-box tabs-xs">
-            <button
-              type="button"
-              role="tab"
-              class="tab"
-              :class="view === 'shape' ? 'tab-active' : ''"
-              @click="view = 'shape'"
-            >
-              {{ t('schematics.viewShape') }}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              class="tab"
-              :class="view === 'bounds' ? 'tab-active' : ''"
-              @click="view = 'bounds'"
-            >
-              {{ t('schematics.viewBounds') }}
-            </button>
-          </div>
-
-          <!-- The division is drawn in coordinates, so it only exists on the box view. Said here
-               rather than left as a picture that silently stops showing what was just computed. -->
-          <p v-if="view === 'shape' && split" class="text-xs opacity-50">
-            {{ t('schematics.splitOnBounds') }}
-          </p>
-          <p v-else class="text-xs opacity-50">{{ t('schematics.dragHint') }}</p>
-        </div>
+        <p class="text-xs opacity-50">{{ t('schematics.dragHint') }}</p>
       </div>
     </div>
 

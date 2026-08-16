@@ -392,7 +392,6 @@ export const en = {
     shapeExact: 'One voxel per block.',
     shapeCoarse: 'One voxel per {size} blocks — a massing model, not a picture.',
     shapeOf: 'A model of a build {x} by {y} by {z} blocks',
-    splitOnBounds: 'The division is drawn on Bounds.',
     uploadedBy: 'Uploaded by {name}',
     builders: 'Agents',
     buildingOn: 'Building on',

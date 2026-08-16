@@ -194,11 +194,15 @@ disjoint and axis-aligned, and the geometry stays testable, which nothing drawn 
 
 ### Shape, and bounds
 
-Two views of one schematic, and the switch between them is not a preference. **Shape** is the
-building itself as voxels, which is what answers "is this the right one". **Bounds** is the box, and
-a split is expressed in coordinates — drawing the division over a voxel model would hide the
-division behind the thing being divided. So the default follows the step: shape while choosing,
-bounds while dividing, either one click from the other.
+Two views of one schematic, **and only in the library**. **Shape** is the building itself as voxels,
+which is what answers "is this the right one". **Bounds** is the box it occupies with its corner
+coordinates, which are the numbers that get typed into a placement.
+
+The split step has no such switch: it draws boxes and nothing else. A division *is* a set of
+coordinate ranges, so the voxel model cannot express one — offering shape there was a tab that hid
+the thing the operator had just asked for, and a caption underneath apologising for it. Which
+question belongs where turns out to be the whole point of the steps: what a schematic *is* is asked
+in the library, and how it divides is asked while dividing it.
 
 `VoxelViewer.vue` is **canvas**, unlike everything else here. Tens of thousands of cubes is hundreds
 of thousands of polygons and the DOM will not hold that many nodes, let alone re-lay them out during

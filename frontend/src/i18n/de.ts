@@ -361,7 +361,6 @@ export const de: Copy = {
     shapeExact: 'Ein Voxel je Block.',
     shapeCoarse: 'Ein Voxel je {size} Blöcke — ein Massenmodell, kein Abbild.',
     shapeOf: 'Modell eines Baus von {x} mal {y} mal {z} Blöcken',
-    splitOnBounds: 'Die Aufteilung wird unter „Maße" gezeichnet.',
     uploadedBy: 'Hochgeladen von {name}',
     builders: 'Agenten',
     buildingOn: 'Gebaut auf',
