@@ -53,7 +53,9 @@ class SchematicAnalyser(
         // SchematicDecoder for why there are two.
         schematic.analysisTotalBytes = schematic.sizeBytes * 2
         schematic.failure = null
-        touch(schematic)
+        // Said now, not at commit. Everything below runs inside this transaction and takes minutes,
+        // so a deferred announcement of having *started* would arrive after finishing.
+        touch(schematic, immediately = true)
 
         try {
             read(schematic)
@@ -120,6 +122,10 @@ class SchematicAnalyser(
      * A pass hands back a few kilobytes at a time, which is tens of thousands of updates a second.
      * Throttling to a couple of seconds is the difference between a progress bar and a second
      * workload alongside the one being measured.
+     *
+     * Delivered immediately, for the reason the whole method exists. Handed to the ordinary
+     * publish it would wait for this transaction — which is the entire read — and every report
+     * would arrive at once, after the thing they were reporting on had finished.
      */
     private fun report(schematic: Schematic, bytes: Long) {
         val now = System.currentTimeMillis()
@@ -127,19 +133,29 @@ class SchematicAnalyser(
         lastReport = now
 
         schematic.analysedBytes = bytes
-        broker.publish(
+        broker.publishNow(
             LiveUpdateEvent(type = LiveUpdateType.SCHEMATIC_CHANGED, data = schematic.toResponse(properties.maxDataVersion))
         )
     }
 
-    private fun touch(schematic: Schematic) {
+    /**
+     * @param immediately for a state the row passes *through*. The settled one at the end waits for
+     *   the commit, so a pass that fails to write its result never leaves a client believing it.
+     */
+    private fun touch(schematic: Schematic, immediately: Boolean = false) {
         schematic.updatedAt = Instant.now()
         repository.save(schematic)
-        broker.publish(
+
+        val event =
             LiveUpdateEvent(type = LiveUpdateType.SCHEMATIC_CHANGED, data = schematic.toResponse(properties.maxDataVersion))
-        )
+        if (immediately) broker.publishNow(event) else broker.publish(event)
     }
 
+    /**
+     * Shared across schematics and never reset, so the first report of a pass can be swallowed by
+     * the previous one. Harmless: the pass has just announced itself starting, and the next report
+     * is two seconds away.
+     */
     private var lastReport = 0L
 
     /** Counts what comes off the disk, which is the only part of the work whose size is known. */

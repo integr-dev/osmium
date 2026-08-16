@@ -17,6 +17,24 @@ import java.util.concurrent.CopyOnWriteArrayList
 interface LiveUpdateBroker {
     fun publish(event: LiveUpdateEvent)
 
+    /**
+     * Delivers now, whatever transaction is open.
+     *
+     * For **progress**, where [publish] is not merely unnecessary but wrong. A unit of work that
+     * runs for minutes inside one transaction and reports how far it has got has nothing left to
+     * say by the time that transaction commits: deferred, every report lands in one burst at the
+     * end, and the whole pass reads as silence followed by a finished job. The schematic reader is
+     * the case — it held a browser on "queued" for the entire length of a read.
+     *
+     * Also the only thing that works from inside an `afterCommit` callback. Synchronizations are
+     * still registered there but the list has already been walked, so [publish] would hand the
+     * event to a callback that is never invoked and drop it without a word.
+     *
+     * Not for state changes. Those are what the deferral protects: announcing one that a rollback
+     * then discards leaves every client holding a value nothing will ever correct.
+     */
+    fun publishNow(event: LiveUpdateEvent)
+
     fun subscribe(listener: (LiveUpdateEvent) -> Unit)
 }
 
@@ -49,6 +67,8 @@ class InMemoryLiveUpdateBroker : LiveUpdateBroker {
             },
         )
     }
+
+    override fun publishNow(event: LiveUpdateEvent) = deliver(event)
 
     private fun deliver(event: LiveUpdateEvent) {
         for (listener in listeners) {

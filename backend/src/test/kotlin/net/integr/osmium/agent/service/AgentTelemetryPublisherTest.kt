@@ -37,6 +37,10 @@ class AgentTelemetryPublisherTest {
             published += event
         }
 
+        override fun publishNow(event: LiveUpdateEvent) {
+            published += event
+        }
+
         override fun subscribe(listener: (LiveUpdateEvent) -> Unit) = Unit
 
         fun telemetryFor(agentId: Long) = published
