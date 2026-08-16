@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { clampPitch, clampZoom, MAX_PITCH, MAX_ZOOM, MIN_ZOOM, project, type Box } from './box3d'
+import {
+  clampPitch,
+  clampZoom,
+  DEFAULT_PITCH,
+  MAX_PITCH,
+  MAX_ZOOM,
+  MIN_PITCH,
+  MIN_ZOOM,
+  project,
+  type Box,
+} from './box3d'
 
 /**
  * The renderer is a few `<polygon>` tags; all of the ways it can be wrong are here. Every one of
@@ -161,8 +171,33 @@ describe('project', () => {
   it('stops short of looking straight down the axis', () => {
     // At exactly vertical a box collapses to a rectangle and every face but one disappears, so a
     // drag that reached it would look like the picture had broken.
+    expect(clampPitch(-3)).toBe(MIN_PITCH)
+    expect(clampPitch(-0.5)).toBe(-0.5)
+  })
+
+  it('lets the view drop far below the model but barely rise under it', () => {
+    // Deliberately lopsided, and the asymmetry is the fix for two complaints at once. Under the
+    // model, dragging left turns it the way dragging right does from above — correct arithmetic
+    // that reads as the control inverting itself. So the range stops just past the horizon going
+    // up, and stays generous going down where the useful views are.
     expect(clampPitch(3)).toBe(MAX_PITCH)
-    expect(clampPitch(-3)).toBe(-MAX_PITCH)
-    expect(clampPitch(0.5)).toBe(0.5)
+    expect(MAX_PITCH).toBeLessThan(Math.abs(MIN_PITCH))
+    expect(MAX_PITCH).toBeGreaterThan(0)
+  })
+
+  it('starts above the model rather than underneath it', () => {
+    // Negative pitch looks down. Nothing in the arithmetic says so, and having that sign backwards
+    // is exactly how the viewer used to open looking up at the underside of a building.
+    //
+    // Corner positions cannot tell the two apart — the top of a box projects above its bottom at
+    // any pitch either side of vertical. Which horizontal face survives backface culling can, and
+    // with the light fixed to the world the top face is the brightest of the six, so the brightest
+    // visible face is the tell.
+    const brightestAt = (pitch: number) =>
+      Math.max(...project([cube], { ...VIEW, pitch }).boxes[0].faces.map((face) => face.shade))
+
+    expect(DEFAULT_PITCH).toBeLessThan(0)
+    expect(DEFAULT_PITCH).toBeGreaterThanOrEqual(MIN_PITCH)
+    expect(brightestAt(DEFAULT_PITCH)).toBeGreaterThan(brightestAt(-DEFAULT_PITCH))
   })
 })

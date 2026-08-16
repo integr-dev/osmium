@@ -92,14 +92,28 @@ export function clampZoom(zoom: number): number {
 }
 
 /**
- * Looking straight down the axis is a degenerate view: the box collapses to a rectangle and every
- * face but one disappears. Stopping short of it keeps a sense of three dimensions at every angle a
- * drag can reach.
+ * How far the view may tilt.
+ *
+ * **Negative pitch looks down at the model, positive looks up at it.** Worth stating, because the
+ * sign is not obvious from the arithmetic and getting it backwards is how a viewer ends up opening
+ * underneath the building — which is where it started.
+ *
+ * The range is deliberately lopsided. Looking down stops short of straight down, where the model
+ * collapses to a plan and every face but the roof disappears. Looking *up* stops almost
+ * immediately, just past the horizon, and that is about the feel rather than the picture: from
+ * underneath, dragging left turns the model the way dragging right does from above. The maths is
+ * right and it reads as the control inverting itself. A shallow angle still shows an overhang or
+ * the underside of a floor; being properly beneath a building is not a view anybody asked for.
  */
-export const MAX_PITCH = 1.4
+export const MIN_PITCH = -1.4
+export const MAX_PITCH = 0.38
+
+/** Tilted down at the model to begin with, the way anybody would first look at a building. */
+export const DEFAULT_PITCH = -0.42
+export const DEFAULT_YAW = 0.7
 
 export function clampPitch(pitch: number): number {
-  return Math.min(MAX_PITCH, Math.max(-MAX_PITCH, pitch))
+  return Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch))
 }
 
 /**
@@ -135,10 +149,13 @@ const EDGES: Array<[number, number]> = [
 ]
 
 /**
- * Where the light comes from. Fixed in view space rather than in the world, so a face keeps its
- * brightness as the box turns — the alternative makes the whole thing flicker while dragging.
+ * Where the light comes from, **in the world** rather than in the view.
+ *
+ * Fixed to the camera it would keep each face at one brightness through a drag, which looks calmer
+ * and costs the only thing the shading is for: nothing in the picture would say which way is up.
+ * Fixed to the world, the top of a box is always its brightest face.
  */
-const LIGHT: Vec3 = { x: -0.4, y: 0.82, z: -0.4 }
+const LIGHT: Vec3 = { x: -0.45, y: 0.8, z: -0.28 }
 
 /**
  * Projects every box into one scene, scaled so all of them fit.
@@ -180,8 +197,10 @@ export function project(boxes: Box[], view: View): Scene {
 
       return [{
         points: face.corners.map((index) => flat[index]),
-        // Half ambient, half directional: unlit faces stay legible rather than going black.
-        shade: 0.45 + 0.55 * Math.max(0, dot(normal, light)),
+        // Lit by the face's own direction, not its rotated one, so the top stays the top.
+        // Wrapped rather than clamped at zero: clamping puts every face turned away from the light
+        // on the same ambient floor, and three identical greys read as one surface.
+        shade: 0.35 + 0.65 * ((dot(face.normal, light) + 1) / 2),
       }]
     })
 
@@ -228,8 +247,13 @@ function dimensionsOf(box: Box, flat: Point[]): Dimension[] {
   }))
 }
 
-/** Yaw about the vertical axis, then pitch about the horizontal one. */
-function rotation(yaw: number, pitch: number): (point: Vec3) => Vec3 {
+/**
+ * Yaw about the vertical axis, then pitch about the horizontal one.
+ *
+ * Exported because the voxel preview needs the same rotation: two models of the same schematic that
+ * disagreed about which way is up would be worse than either alone.
+ */
+export function rotation(yaw: number, pitch: number): (point: Vec3) => Vec3 {
   const cosYaw = Math.cos(yaw)
   const sinYaw = Math.sin(yaw)
   const cosPitch = Math.cos(pitch)

@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Minus, Plus, RotateCcw } from 'lucide-vue-next'
-import { clampPitch, clampZoom, project, type Box } from '../lib/box3d'
+import { clampPitch, clampZoom, DEFAULT_PITCH, DEFAULT_YAW, project, type Box } from '../lib/box3d'
 
 /**
  * An axis-aligned box, or several, that the operator can turn around.
@@ -37,8 +37,8 @@ const WIDTH = 640
 const HEIGHT = 440
 
 /** Turned a little off-axis to start, so the first look already reads as three dimensions. */
-const START_YAW = 0.7
-const START_PITCH = 0.42
+const START_YAW = DEFAULT_YAW
+const START_PITCH = DEFAULT_PITCH
 
 const yaw = ref(START_YAW)
 const pitch = ref(START_PITCH)
@@ -106,7 +106,10 @@ function onPointerMove(event: PointerEvent) {
   if (dragging !== event.pointerId) return
 
   yaw.value += (event.clientX - lastX) * SENSITIVITY
-  pitch.value = clampPitch(pitch.value + (event.clientY - lastY) * SENSITIVITY)
+  // Dragging down raises the camera rather than lowering it, so the gesture reads as taking hold
+  // of the model and rolling its top towards you. This used to be the other way round while the
+  // arrow keys did it this way, which is why the control felt inverted on and off.
+  pitch.value = clampPitch(pitch.value - (event.clientY - lastY) * SENSITIVITY)
   lastX = event.clientX
   lastY = event.clientY
 }
