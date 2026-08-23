@@ -140,6 +140,27 @@ class AgentController(private val agentService: AgentService) {
         @Valid @RequestBody request: SetupAgentRequest,
     ): AgentResponse = agentService.setup(id, request)
 
+    /**
+     * The way out of SETUP_PENDING. `agent.setup`, the same authority that starts one — anyone who
+     * can begin a login can decide it is not coming.
+     */
+    @DeleteMapping("/{id}/setup")
+    @PreAuthorize("hasAuthority('agent.setup')")
+    @Operation(
+        summary = "Stop waiting on a setup that was never completed.",
+        description = "Returns the agent to UNLINKED so it can be set up again. **Nothing is sent " +
+            "to the host** — Osmium cannot cancel a login it does not perform, only stop asserting " +
+            "one is in progress. A host that finishes it afterwards still reports, and the agent " +
+            "still links.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Updated agent, now UNLINKED."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.setup`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "No setup is in progress."),
+    )
+    fun cancelSetup(@PathVariable id: Long): AgentResponse = agentService.cancelSetup(id)
+
     @PostMapping("/{id}/connect")
     @PreAuthorize("hasAuthority('agent.run')")
     @Operation(

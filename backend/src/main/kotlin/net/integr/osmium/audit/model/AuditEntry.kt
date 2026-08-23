@@ -27,6 +27,13 @@ enum class AuditAction {
     AGENT_UPDATE,
     AGENT_DELETE,
     AGENT_SETUP,
+
+    /**
+     * The operator stopped waiting on a setup. Recorded apart from [AGENT_SETUP] because it is a
+     * different act with a different consequence: no command goes to the host, and the login it was
+     * waiting on may well still be sitting open on somebody's screen.
+     */
+    AGENT_SETUP_CANCEL,
     AGENT_CONNECT,
     AGENT_DISCONNECT,
     AGENT_CHAT,

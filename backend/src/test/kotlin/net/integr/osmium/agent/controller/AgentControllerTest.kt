@@ -220,6 +220,40 @@ class AgentControllerTest : AbstractRestTest() {
         assertEquals(AgentState.CONNECTING, agentRepository.findById(agent.id!!).orElseThrow().state)
     }
 
+    /**
+     * SETUP_PENDING has no timeout and should not have one — the backend cannot see how far along a
+     * login is. So the way out is the operator saying it is not coming, and the point of the test is
+     * that afterwards the agent can be set up again rather than being stuck asking for a setup that
+     * is refused because a setup is in progress.
+     */
+    @Test
+    fun `an operator can stop waiting on a setup that was never completed`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.SETUP_PENDING)
+
+        mockMvc.delete("/api/agents/${agent.id}/setup") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.state") { value(AgentState.UNLINKED.name) }
+        }
+
+        assertEquals(AgentState.UNLINKED, agentRepository.findById(agent.id!!).orElseThrow().state)
+    }
+
+    /** Nothing to stop waiting on. A 409 rather than a silent success, which would imply it did. */
+    @Test
+    fun `stopping a setup that is not running is refused`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.delete("/api/agents/${agent.id}/setup") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
     @Test
     fun `setup is refused while another setup is already running`() {
         val auth = authAs("root", RoleNames.ADMINISTRATOR)

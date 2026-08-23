@@ -142,6 +142,13 @@ Answer with the identity only:
 `type` may be either `setup_agent` or `setup_result`; both are accepted. `reason` is logged, not
 shown to the operator, so write it for whoever reads host logs.
 
+**Send it late rather than not at all.** An operator can stop Osmium waiting on a setup — a sign-in
+begun on a machine they cannot get back to has no other way out, since nothing here can time a login
+out. That returns the agent to `UNLINKED` and **sends you nothing**: it is not a cancellation, and
+there is no command to implement for it. Keep going, and report the result whenever it arrives. A
+success reaching a backend that has given up still links the agent, because the result is applied on
+its own merits rather than on the state the backend expected to find.
+
 > ⚠️ **Changed — the backend no longer invents the list.** It used to offer four placeholders,
 > `method_a`–`method_d`, to every host regardless of what that host could do. Now it offers exactly
 > what you advertise, and refuses anything else with a **400** before the command is ever sent.

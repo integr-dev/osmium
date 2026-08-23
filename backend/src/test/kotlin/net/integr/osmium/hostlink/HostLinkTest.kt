@@ -261,6 +261,44 @@ class HostLinkTest {
     }
 
     /**
+     * Giving up on a setup tells the host nothing, so a login finished afterwards still counts.
+     *
+     * That is the whole reason cancelling is safe to offer. Osmium cannot cancel a login it does not
+     * perform; it only stops asserting one is in progress. Refusing the late result would throw away
+     * a credential that was genuinely obtained and leave the host holding one the backend denies.
+     */
+    @Test
+    fun `a setup result that arrives after the operator gave up still links the agent`() {
+        val socket = connect(token())
+        socket.send(announce(loginMethods = listOf("device_code")))
+        awaitUntil { setup().statusCode.value() == 200 }
+        awaitUntil { socket.received.any { it.type == CommandType.SETUP_AGENT } }
+
+        // The operator stops waiting. Nothing goes to the host, which is still working on it.
+        assertEquals(200, cancelSetup().statusCode.value())
+        assertEquals(AgentState.UNLINKED, agentRepository.findById(agent.id!!).orElseThrow().state)
+
+        val command = socket.received.first { it.type == CommandType.SETUP_AGENT }
+        socket.send(
+            HostEnvelope(
+                id = command.id,
+                kind = MessageKind.RESULT,
+                type = CommandType.SETUP_AGENT,
+                agentId = agent.id,
+                ok = true,
+                payload = objectMapper.valueToTree(
+                    mapOf("mcUsername" to "Probe_01", "mcUuid" to "069a79f4-44e9-4726-a5be-fca90e38aaf5"),
+                ),
+            ),
+        )
+
+        awaitUntil { agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.LINKED }
+        assertEquals("Probe_01", agentRepository.findById(agent.id!!).orElseThrow().mcUsername)
+
+        socket.close()
+    }
+
+    /**
      * The interval the state exists for, end to end.
      *
      * Accepting `connect` takes milliseconds and joining a Minecraft server takes seconds. What is
@@ -435,6 +473,12 @@ class HostLinkTest {
         .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
         .contentType(MediaType.APPLICATION_JSON)
         .body("""{"method":"$method"}""")
+        .exchange { _, response -> response }
+
+    private fun cancelSetup() = RestClient.create()
+        .delete()
+        .uri("http://localhost:$port/api/agents/${agent.id}/setup")
+        .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
         .exchange { _, response -> response }
 
     /** Named apart from [connect], which opens a host socket rather than driving an agent. */

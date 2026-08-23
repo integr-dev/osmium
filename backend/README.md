@@ -50,6 +50,7 @@ set to `osmium`.
 | `osmium.cors.origins` | `OSMIUM_CORS_ORIGINS` | empty | comma-separated exact origins for `/api/**` |
 | `osmium.audit.retention` | `OSMIUM_AUDIT_RETENTION` | `30d` | how long audit entries are kept |
 | `osmium.activity.retention` | `OSMIUM_ACTIVITY_RETENTION` | `10d` | how long agent incidents are kept |
+| `osmium.agent.connect-window` | `OSMIUM_AGENT_CONNECT_WINDOW` | `90s` | how long a host gets to report a connect before the agent falls back to LINKED |
 | `osmium.chat.retention` | `OSMIUM_CHAT_RETENTION` | `3d` | how long chat is kept |
 | `osmium.chat.messages-per-minute` | `OSMIUM_CHAT_MESSAGES_PER_MINUTE` | `30` | outbound chat allowance, per agent |
 | `osmium.avatar.upstream` | `OSMIUM_AVATAR_UPSTREAM` | Minotar | skin service URL with `{id}`/`{size}`; **blank turns heads off** |
@@ -199,7 +200,8 @@ changes automatically.
 | `PUT` | `/api/agents/{id}/server` | `agent.write` (assign a server, or null for none; offline only) |
 | `DELETE` | `/api/agents/{id}` | `agent.delete` |
 | `POST` | `/api/agents/{id}/setup` | `agent.setup` |
-| `POST` | `/api/agents/{id}/connect`, `/disconnect` | `agent.run` |
+| `DELETE` | `/api/agents/{id}/setup` | `agent.setup` (stop waiting on one; sends the host nothing) |
+| `POST` | `/api/agents/{id}/connect`, `/disconnect` | `agent.run` (connect holds the agent at CONNECTING; **409** while one is in flight) |
 | `POST` | `/api/agents/{id}/chat` | `chat.speak` (rate limited per agent; **429** when exceeded) |
 | `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
 | `GET` | `/api/schematics`, `/api/schematics/{id}` | `schematic.read` |
@@ -875,6 +877,8 @@ src/main/resources/db/migration/
   V9__schematic_index.sql          what a pass leaves behind: cells, materials, the origin
   V10__schematic_cell_block.sql    the dominant block per cell, so a shape can be coloured
   V11__builds.sql                  build plans: where a schematic stands and what it is built of
+  V12__agent_connecting.sql        CONNECTING, and the timestamp that stops it lasting forever
+  V13__setup_cancel_audit.sql      AGENT_SETUP_CANCEL added to the audit action constraint
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -1273,7 +1277,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-384 tests across 32 classes. Most run against a real Postgres 18 through Testcontainers with
+421 tests across 33 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

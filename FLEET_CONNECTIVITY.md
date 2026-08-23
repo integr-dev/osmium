@@ -204,6 +204,7 @@ stateDiagram-v2
     UNLINKED --> SETUP_PENDING: setup_agent sent
     SETUP_PENDING --> LINKED: host reports success
     SETUP_PENDING --> UNLINKED: host reports failure
+    SETUP_PENDING --> UNLINKED: operator stops waiting
     LINKED --> CONNECTING: connect sent
     CONNECTING --> ONLINE: host reports the agent in game
     CONNECTING --> CONNECT_FAILED: server refused
@@ -227,6 +228,18 @@ prompt a human, so it must be distinguishable from a generic failure.
 visibility into how far along the login is, so this state is open-ended by design: the UI shows
 "awaiting setup on <host>" with no progress bar, because there is no progress to report. The host
 decides when to give up and reports a failure reason.
+
+**But open-ended is not the same as inescapable.** A sign-in started on a machine nobody can get
+back to, or one whose device code expired, produces a host that will never report — and the agent
+sat pending forever with its Set-up button disabled *because a setup was in progress*, which is a
+dead end rather than a state. `DELETE /api/agents/{id}/setup` is the way out: it returns the agent to
+`UNLINKED` so it can be set up again.
+
+It is deliberately **not** a cancellation. Nothing is sent to the host, because Osmium cannot cancel
+a login it does not perform and has no standing to order one abandoned; it only stops asserting one
+is in progress. A host that finishes the original login afterwards still reports, and the agent still
+links — `applySetupResult` applies a result on its own merits rather than on the state it expected to
+find, and throwing away a credential that was genuinely obtained would be the worse outcome.
 
 `CONNECTING` is the same idea with the opposite deadline. It also means "a command is out and the
 host has not answered", but a join is seconds of work rather than a human at a browser, so it is

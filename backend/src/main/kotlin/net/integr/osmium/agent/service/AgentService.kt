@@ -228,6 +228,43 @@ class AgentService(
     }
 
     /**
+     * Stops waiting on a setup that is never going to be answered.
+     *
+     * Setup is open-ended **by design** — the backend hands the login to the host and cannot see how
+     * far along it is, so unlike a connect there is nothing here that can honestly time it out. That
+     * left SETUP_PENDING as a dead end: an operator whose sign-in was never finished, because it was
+     * started on the wrong machine or the device code expired, had a permanently pending agent whose
+     * Set-up button was disabled precisely because a setup was in progress.
+     *
+     * **Nothing is sent to the host.** This is not "cancel the login", which the backend has no
+     * standing to order and no way to perform; it is "stop asserting one is in progress". If the
+     * host does complete it afterwards the result still arrives and still links the agent, because
+     * [HostReportService] applies a setup result on its own merits rather than on the state it
+     * expected to find.
+     */
+    @Transactional
+    fun cancelSetup(id: Long): AgentResponse {
+        val agent = require(id)
+        check(agent.state == AgentState.SETUP_PENDING) { "'${agent.label}' is not being set up" }
+
+        // Where a failed setup lands, which is what this is being treated as: nothing came back.
+        agent.state = AgentState.UNLINKED
+        auditService.record(
+            action = AuditAction.AGENT_SETUP_CANCEL,
+            target = agent.label,
+            detail = "Stopped waiting on ${agent.host.name}; no command was sent to it",
+        )
+        activityService.record(
+            agent = agent,
+            scope = ActivityScope.LIFECYCLE,
+            severity = ActivitySeverity.INFO,
+            text = "An operator stopped waiting on this setup; the host was not told to stop",
+        )
+        publish(agent)
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /**
      * Asks the host to bring the agent into game, and moves it to CONNECTING while that happens.
      *
      * The state is the point. Accepting the command takes milliseconds and joining a Minecraft
