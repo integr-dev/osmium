@@ -60,7 +60,7 @@ export function buildCommands(context: CommandContext): Command[] {
   const commands: Command[] = [
     { id: 'go:dashboard', section: 'navigate', label: t('nav.dashboard'), to: { name: 'dashboard' } },
     { id: 'go:map', section: 'navigate', label: t('nav.map'), to: { name: 'map' } },
-    { id: 'go:hosts', section: 'navigate', label: t('nav.hosts'), to: { name: 'hosts' } },
+    { id: 'go:resources', section: 'navigate', label: t('nav.resources'), to: { name: 'resources' } },
     { id: 'go:account', section: 'navigate', label: t('nav.myAccount'), to: { name: 'account' } },
   ]
 
@@ -101,7 +101,7 @@ export function buildCommands(context: CommandContext): Command[] {
       section: 'hosts',
       label: host.name,
       hint: host.hostVersion ?? t('hosts.notConnected'),
-      to: { name: 'hosts' },
+      to: { name: 'host', params: { id: host.id } },
     })
   }
 

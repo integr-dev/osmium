@@ -36,9 +36,9 @@ describe('route guard', () => {
     setActivePinia(createPinia())
 
     // No token, which is exactly what a reload starts with: the access token is memory-only.
-    await router.push('/hosts')
+    await router.push('/resources')
 
-    expect(router.currentRoute.value.name).toBe('hosts')
+    expect(router.currentRoute.value.name).toBe('resources')
   })
 
   it('sends a signed-out visitor to the login screen, remembering where they were going', async () => {
@@ -56,7 +56,7 @@ describe('route guard', () => {
     signIn([])
     // Navigate off /login first: vue-router discards a push to the current location without
     // running the guard, which would make this pass for the wrong reason.
-    await router.push('/hosts')
+    await router.push('/resources')
 
     await router.push('/login')
 
@@ -125,12 +125,21 @@ describe('route guard', () => {
     expect(router.currentRoute.value.name).toBe('dashboard')
   })
 
-  it('admits routes that require no node', async () => {
+  /** The host table moved into Resources; the path it used to live at is a bookmark people have. */
+  it('sends the old hosts path to Resources rather than nowhere', async () => {
     signIn([])
 
     await router.push('/hosts')
 
-    expect(router.currentRoute.value.name).toBe('hosts')
+    expect(router.currentRoute.value.name).toBe('resources')
+  })
+
+  it('admits routes that require no node', async () => {
+    signIn([])
+
+    await router.push('/resources')
+
+    expect(router.currentRoute.value.name).toBe('resources')
   })
 })
 

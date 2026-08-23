@@ -103,6 +103,68 @@ advertising nothing, gets a warning naming the host rather than an empty radio l
 button stays disabled. The backend refuses an unadvertised method with a 400 regardless, so this is
 the interface agreeing with the API rather than guarding it.
 
+## Resources
+
+What the deployment is *made of*, as opposed to what is being done with it — which is the line
+between this page and Operations. Three tabs, and an operator moves between them in one sitting:
+which agents exist, which machines run them, and how the two are wired together right now.
+
+| Tab | What it answers |
+|---|---|
+| Bots | what have I got — account, host, server, state, across the whole fleet |
+| Hosts | which machines are answering, and the three things that can be done to one |
+| Graph | what is connected to what, at this moment |
+
+The host table used to be its own page at `/hosts`. That path now redirects here rather than 404ing,
+because it is the one URL an operator may have bookmarked.
+
+**Bots is not the sidebar list again.** The sidebar answers "take me to one"; this answers "what
+have I got" — four facts per agent, compared down a column, which is the thing a list of links
+cannot do. It carries no per-row actions either: everything doable to an agent lives on its own page
+or, for a group, on Operations, and a third place would be a third thing to keep in step.
+
+### The graph
+
+Three tiers — Osmium, the hosts dialled into it, the agents each host runs. Not four: a Minecraft
+server would be a different kind of line entirely, because nothing on that link reports to Osmium,
+so its health would have to be invented.
+
+**Colour and motion both carry health**, which is not redundancy. Colour alone fails anyone who
+cannot separate the hues, and across a whole graph the eye catches movement long before it reads a
+legend. A live link is green with three packets crossing every 2.4s; a faltering one is amber with a
+single packet crawling; a dead one is a grey dashed line with nothing on it.
+
+`stale` is not a lesser `down`. It is where something is genuinely in flight or genuinely unknown —
+a setup command mid-air, or an agent whose host has gone — and drawing either as a dead line claims
+knowledge we do not have. A host inside its grace window but overdue for a heartbeat fades to amber
+before it drops, so a machine on its way out is visible before it is gone.
+
+**An agent can never be healthier than the socket carrying it.** Its stored state may say `ONLINE`,
+but if its host is unreachable the only party that can see that session has gone, so the node greys
+out with the host.
+
+The layout and the health rules are in `fleetGraph.ts` and specced; the component is paint. It is
+**SVG rather than canvas**, the opposite call from the voxel viewer — there are tens of nodes here,
+not tens of thousands, and each wants to be a link with a tooltip, all of which the DOM gives free.
+Packets are `<animateMotion>` rather than a JS loop: the browser runs them off the main thread, and
+they stop dead under `prefers-reduced-motion` instead of being throttled.
+
+The one wrinkle is that `RouterLink` cannot be used inside the `<svg>` — the anchor it renders lands
+in the wrong namespace — so nodes are real SVG `<a>` elements with real hrefs, and a plain left
+click is intercepted and handed to the router. Modified clicks are left alone so open-in-new-tab
+keeps working.
+
+### A host has its own page
+
+`/hosts/:id`, reached from the sidebar, the list, the graph or the command palette. The list answers
+"which of these is in trouble"; this answers "what is going on with *that* one" — the agents that go
+down with it, when it was last heard from, and the login methods it advertised. That last panel is
+where an operator ends up when the setup dialog refuses, because an empty list there is the reason.
+
+Its three actions are shared with the list rather than written twice: `HostActions.vue` owns the
+dialogs and exposes the openers. They are the only place a rotated token is shown in the clear,
+which is markup worth having exactly once.
+
 ## Operations
 
 Three tabs, because they are the same act with a different verb — pick a group, then do one thing to

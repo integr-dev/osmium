@@ -43,6 +43,7 @@ export const en = {
     dashboard: 'Dashboard',
     map: 'Map',
     hosts: 'Hosts',
+    resources: 'Resources',
     agents: 'Agents',
     addAgent: 'Add agent',
     myAccount: 'My account',
@@ -211,6 +212,32 @@ export const en = {
     removeTitle: 'Remove {name}?',
     tokenWarning: 'Copy this now. It is shown once and cannot be retrieved later.',
     tokenHint: 'Set this as OSMIUM_HOST_TOKEN on the host.',
+    notFound: 'Host not found.',
+    lastSeen: 'Last seen',
+    neverSeen: 'Never',
+    agentsHere: 'Agents on this host',
+    noAgentsHere: 'This host runs no agents yet.',
+    loginMethods: 'Login methods',
+    noMethodsAdvertised: 'This host has not said what it can log in with. It reports that when it connects.',
+  },
+
+  /** What this deployment is made of, as opposed to what is being done with it. */
+  resources: {
+    title: 'Resources',
+    subtitle: 'The agents, the machines that run them, and how the two are wired together.',
+    tabBots: 'Bots',
+    tabHosts: 'Hosts',
+    tabGraph: 'Graph',
+  },
+
+  /** The wiring, drawn. The three link states are the same three the rest of the app uses. */
+  graph: {
+    hint: 'Every line is a live connection. Packets flow while it is carrying traffic.',
+    live: 'Connected',
+    stale: 'Faltering',
+    down: 'Not connected',
+    empty: 'No hosts have connected yet, so there is nothing to draw.',
+    reducedMotion: 'Motion is off, so the packets are not shown.',
   },
 
   agents: {
@@ -228,6 +255,9 @@ export const en = {
     hostStepHint: 'Which host should run this agent? A host that is offline can be chosen now and connected later.',
     noHosts: 'No hosts yet. Add one under Hosts first.',
     notFound: 'Agent not found.',
+    none: 'No agents yet.',
+    onlineCount: '{online} of {total} in game.',
+    account: 'Account',
     hostOffline: '{host} is not connected, so commands cannot be sent. The host must connect to Osmium before this agent can be set up or connected.',
     editTitle: 'Edit {name}',
     editHint: 'Moving to another server keeps the same Minecraft account. The agent has to be offline first.',

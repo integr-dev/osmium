@@ -46,6 +46,7 @@ export const de: Copy = {
     dashboard: 'Übersicht',
     map: 'Karte',
     hosts: 'Hosts',
+    resources: 'Ressourcen',
     agents: 'Agenten',
     addAgent: 'Agent hinzufügen',
     myAccount: 'Mein Konto',
@@ -196,6 +197,30 @@ export const de: Copy = {
     removeTitle: '{name} entfernen?',
     tokenWarning: 'Jetzt kopieren: Das Token wird nur einmal angezeigt und lässt sich später nicht mehr abrufen.',
     tokenHint: 'Auf dem Host als OSMIUM_HOST_TOKEN hinterlegen.',
+    notFound: 'Host nicht gefunden.',
+    lastSeen: 'Zuletzt gesehen',
+    neverSeen: 'Nie',
+    agentsHere: 'Agenten auf diesem Host',
+    noAgentsHere: 'Auf diesem Host läuft noch kein Agent.',
+    loginMethods: 'Anmeldemethoden',
+    noMethodsAdvertised: 'Dieser Host hat nicht mitgeteilt, womit er sich anmelden kann. Das meldet er beim Verbinden.',
+  },
+
+  resources: {
+    title: 'Ressourcen',
+    subtitle: 'Die Agenten, die Maschinen, die sie ausführen, und wie beides verbunden ist.',
+    tabBots: 'Bots',
+    tabHosts: 'Hosts',
+    tabGraph: 'Graph',
+  },
+
+  graph: {
+    hint: 'Jede Linie ist eine bestehende Verbindung. Pakete fließen, solange sie Daten trägt.',
+    live: 'Verbunden',
+    stale: 'Wackelig',
+    down: 'Nicht verbunden',
+    empty: 'Noch hat sich kein Host verbunden, es gibt also nichts zu zeichnen.',
+    reducedMotion: 'Bewegung ist deaktiviert, daher werden keine Pakete angezeigt.',
   },
 
   agents: {
@@ -213,6 +238,9 @@ export const de: Copy = {
     hostStepHint: 'Welcher Host soll diesen Agenten ausführen? Ein Host, der gerade offline ist, lässt sich trotzdem wählen und später verbinden.',
     noHosts: 'Noch keine Hosts. Legen Sie zuerst unter „Hosts“ einen an.',
     notFound: 'Agent nicht gefunden.',
+    none: 'Noch keine Agenten.',
+    onlineCount: '{online} von {total} im Spiel.',
+    account: 'Konto',
     hostOffline: '{host} ist nicht verbunden, daher lassen sich keine Befehle senden. Der Host muss sich erst mit Osmium verbinden, bevor dieser Agent eingerichtet oder verbunden werden kann.',
     editTitle: '{name} bearbeiten',
     editHint: 'Beim Wechsel auf einen anderen Server bleibt das Minecraft-Konto dasselbe. Der Agent muss dafür offline sein.',

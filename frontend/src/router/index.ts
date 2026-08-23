@@ -20,10 +20,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/DashboardView.vue'),
       },
       {
-        path: 'hosts',
-        name: 'hosts',
-        component: () => import('../views/HostsView.vue'),
+        // What the deployment is made of: the fleet, the machines under it, and the wiring.
+        path: 'resources',
+        name: 'resources',
+        component: () => import('../views/ResourcesView.vue'),
       },
+      {
+        path: 'hosts/:id',
+        name: 'host',
+        component: () => import('../views/HostDetailView.vue'),
+      },
+      // Where the host table used to live. A redirect rather than a removal: it is the one path
+      // an operator may have bookmarked, and a 404 would read as the page having been deleted.
+      { path: 'hosts', redirect: { name: 'resources' } },
       {
         path: 'agents/:id',
         name: 'agent',

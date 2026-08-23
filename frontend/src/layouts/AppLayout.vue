@@ -16,6 +16,7 @@ import {
   RotateCw,
   ScrollText,
   Search,
+  Network,
   Server,
   ServerOff,
   ShieldAlert,
@@ -27,6 +28,7 @@ import {
   Workflow,
 } from 'lucide-vue-next'
 import AddAgentModal from '../components/AddAgentModal.vue'
+import AddHostModal from '../components/AddHostModal.vue'
 import ChatRail from '../components/ChatRail.vue'
 import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
@@ -51,9 +53,16 @@ useHistoryStore()
 const router = useRouter()
 
 const addAgentOpen = ref(false)
+const addHostOpen = ref(false)
 
 /** The fleet section, open by default: it is the reason most operators open the sidebar. */
 const agentsOpen = ref(true)
+
+/**
+ * The hosts section, **shut** by default. There are far fewer hosts than agents and they change far
+ * less often, so it is the fleet that earns the open state and the vertical room it costs.
+ */
+const hostsOpen = ref(false)
 const retrying = ref(false)
 
 const palette = ref<InstanceType<typeof CommandPalette> | null>(null)
@@ -236,6 +245,7 @@ async function logout() {
     </div>
 
     <AddAgentModal v-model:open="addAgentOpen" />
+    <AddHostModal v-model:open="addHostOpen" />
     <!-- Listens on the window, so it opens from anywhere inside the app. -->
     <CommandPalette ref="palette" @add-agent="addAgentOpen = true" />
 
@@ -372,15 +382,77 @@ async function logout() {
               </RouterLink>
             </li>
             <li>
-              <RouterLink :to="{ name: 'hosts' }" class="gap-3">
+              <RouterLink :to="{ name: 'resources' }" class="gap-3">
+                <Network class="size-4 shrink-0" />
+                {{ t('nav.resources') }}
+              </RouterLink>
+            </li>
+          </ul>
+        </div>
+
+        <!--
+          The machines, on the same disclosure as the fleet below and for the same reason: this is
+          the one place all of them are on screen at once, and a host going unreachable takes its
+          agents with it without anybody having pressed anything.
+
+          Capped rather than flexible, unlike the fleet. Two lists both claiming the leftover height
+          would leave neither with enough of it, and hosts are the shorter list by an order of
+          magnitude — so this one takes what it needs and the fleet keeps the rest.
+        -->
+        <div class="px-3">
+          <ul class="menu w-full flex-nowrap gap-0.5 p-0">
+            <li>
+              <button
+                type="button"
+                class="gap-3"
+                :aria-expanded="hostsOpen"
+                aria-controls="sidebar-hosts"
+                @click="hostsOpen = !hostsOpen"
+              >
                 <Server class="size-4 shrink-0" />
                 {{ t('nav.hosts') }}
                 <span class="badge badge-xs ml-auto">
                   {{ agentStore.hosts.filter((host) => host.reachable).length }}/{{ agentStore.hosts.length }}
                 </span>
-              </RouterLink>
+                <ChevronDown
+                  class="size-4 shrink-0 opacity-60 transition-transform"
+                  :class="hostsOpen ? '' : '-rotate-90'"
+                />
+              </button>
             </li>
           </ul>
+        </div>
+
+        <div v-show="hostsOpen" id="sidebar-hosts" class="max-h-56 overflow-y-auto px-3">
+          <!-- The indent and hairline daisyUI would have drawn for a nested menu, by hand. -->
+          <div class="border-base-content/10 ms-4 border-s ps-2">
+            <ul class="menu w-full flex-nowrap gap-0.5 p-0">
+              <li v-for="host in agentStore.hosts" :key="host.id">
+                <RouterLink
+                  v-flash="host.reachable"
+                  :to="{ name: 'host', params: { id: host.id } }"
+                  class="gap-2.5"
+                >
+                  <span
+                    class="size-2 shrink-0 rounded-full"
+                    :class="host.reachable ? 'bg-success' : 'bg-error'"
+                    :title="host.reachable ? t('hosts.reachable') : t('hosts.unreachable')"
+                  ></span>
+                  <span class="min-w-0 flex-1 truncate">{{ host.name }}</span>
+                  <span class="badge badge-ghost badge-xs shrink-0">{{ host.agentCount }}</span>
+                </RouterLink>
+              </li>
+              <li v-if="!agentStore.hosts.length">
+                <span class="text-xs opacity-50">{{ t('hosts.none') }}</span>
+              </li>
+              <li v-if="auth.can('host.write')">
+                <button type="button" class="gap-2.5 opacity-70" @click="addHostOpen = true">
+                  <Plus class="size-4 shrink-0" />
+                  {{ t('hosts.enrol') }}
+                </button>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <!--
