@@ -331,6 +331,7 @@ export const de: Copy = {
   schematics: {
     title: 'Baupläne',
     step_schematic: 'Bauplan',
+    step_plan: 'Planung',
     step_agents: 'Agenten',
     step_split: 'Aufteilung',
     back: 'Zurück',
@@ -612,6 +613,9 @@ export const de: Copy = {
     SCHEMATIC_UPLOAD: 'Bauplan hochgeladen',
     SCHEMATIC_RENAME: 'Bauplan umbenannt',
     SCHEMATIC_DELETE: 'Bauplan gelöscht',
+    BUILD_CREATE: 'Bau geplant',
+    BUILD_UPDATE: 'Bauplanung geändert',
+    BUILD_DELETE: 'Bauplanung gelöscht',
   },
 
   permission: {
@@ -638,6 +642,27 @@ export const de: Copy = {
     'host.write': 'Hosts registrieren und umbenennen',
     'host.token': 'Host-Token neu ausstellen',
     'host.delete': 'Hosts entfernen',
+  },
+
+  builds: {
+    title: 'Die Planung',
+    whichPlan: 'Welche Planung',
+    placement: 'Platzierung',
+    placementHint: 'Wohin die unterste Ecke des Bauplans kommt. Leer lassen, um das später zu entscheiden.',
+    unplaced: 'Noch nicht platziert.',
+    offsetBy: 'Alles verschiebt sich um {x}, {y}, {z}.',
+    substitutions: 'Ersetzungen',
+    substitutionsHint: 'Einen Block aus etwas anderem bauen. Ersatz leer lassen, um ihn ganz wegzulassen.',
+    addSubstitution: 'Ersetzung hinzufügen',
+    placeNothing: 'weglassen',
+    inThisBuild: 'in diesem Bau',
+    createPlan: 'Planung speichern',
+    save: 'Änderungen speichern',
+    asBuilt: 'Was dabei herauskommt',
+    blocksPlaced: 'Platzierte Blöcke',
+    leftOut: 'Weggelassen',
+    mergedFrom: 'enthält {from}',
+    omittedFrom: 'wird nicht platziert',
   },
 
   errors: {

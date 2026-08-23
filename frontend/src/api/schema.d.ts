@@ -171,6 +171,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/builds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_3"];
+        put?: never;
+        post: operations["create_2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/sessions/revoke-all": {
         parameters: {
             query?: never;
@@ -299,13 +315,13 @@ export interface paths {
             cookie?: never;
         };
         /** List every agent. */
-        get: operations["list_3"];
+        get: operations["list_4"];
         put?: never;
         /**
          * Create an agent slot.
          * @description Nothing has touched Minecraft at this point; the agent starts UNLINKED.
          */
-        post: operations["create_2"];
+        post: operations["create_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -470,6 +486,22 @@ export interface paths {
         patch: operations["rename_1"];
         trace?: never;
     };
+    "/api/builds/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["find_1"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_3"];
+        options?: never;
+        head?: never;
+        patch: operations["update_1"];
+        trace?: never;
+    };
     "/api/agents/{id}": {
         parameters: {
             query?: never;
@@ -482,14 +514,14 @@ export interface paths {
         put?: never;
         post?: never;
         /** Delete an agent. */
-        delete: operations["delete_3"];
+        delete: operations["delete_4"];
         options?: never;
         head?: never;
         /**
          * Rename an agent.
          * @description Omitted fields are left alone. Where an agent plays is set through `PUT /api/agents/{id}/server`, which has its own preconditions.
          */
-        patch: operations["update_1"];
+        patch: operations["update_2"];
         trace?: never;
     };
     "/api/stream": {
@@ -590,7 +622,7 @@ export interface paths {
             cookie?: never;
         };
         /** List every role with its permission nodes. */
-        get: operations["list_4"];
+        get: operations["list_5"];
         put?: never;
         post?: never;
         delete?: never;
@@ -622,7 +654,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
          *                 from the previous response to continue. Kept for 3 days.
          */
-        get: operations["list_5"];
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -703,7 +735,7 @@ export interface paths {
          *
          *                 Entries are kept for 30 days by default and purged daily.
          */
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -757,7 +789,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: incidents arrive while the feed is being read. Send
          *                 `nextCursor` from the previous response to continue. Kept for 10 days.
          */
-        get: operations["list_7"];
+        get: operations["list_8"];
         put?: never;
         post?: never;
         delete?: never;
@@ -982,6 +1014,60 @@ export interface components {
             /** @description What this host can log in with, from its handshake. Empty while it is disconnected, and empty for a host that advertises nothing - which can then set nothing up. */
             loginMethods?: components["schemas"]["LoginMethodResponse"][];
         };
+        /** @description A login mechanism the host advertised in its handshake. The id is opaque to the backend and is relayed to the host verbatim; the copy describes a mechanism, never an account. */
+        LoginMethodResponse: {
+            /** @example device_code */
+            id?: string;
+            label?: string | null;
+            description?: string | null;
+        };
+        /** @description Creates a build. Placement and substitutions can both be settled later. */
+        CreateBuildRequest: {
+            name: string;
+            /** Format: int64 */
+            schematicId?: number;
+            placement?: components["schemas"]["PlacementRequest"] | null;
+            substitutions?: components["schemas"]["SubstitutionRequest"][];
+        };
+        /** @description Where the schematic's minimum corner lands in the world. */
+        PlacementRequest: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+        };
+        /** @description One block swapped for another. A null or blank replacement means place nothing at all, which is the honest answer to not having the material. */
+        SubstitutionRequest: {
+            /** @example minecraft:diamond_block */
+            from: string;
+            /** @example minecraft:stone */
+            to?: string | null;
+        };
+        /** @description A build: a schematic, where it goes, and what it is built out of. */
+        BuildResponse: {
+            /** Format: int64 */
+            id?: number;
+            name?: string;
+            /** Format: int64 */
+            schematicId?: number;
+            schematicName?: string;
+            /** @description Null until the build has been placed. */
+            placement?: components["schemas"]["PlacementRequest"] | null;
+            substitutions?: components["schemas"]["SubstitutionResponse"][];
+            /** @description False while it has nowhere to stand, whatever else is settled. */
+            placed?: boolean;
+            createdBy?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        SubstitutionResponse: {
+            from?: string;
+            to?: string | null;
+        };
         /** @description A freshly issued access token. */
         LoginResponse: {
             /** @description Signed JWT to send as `Authorization: Bearer <token>`. */
@@ -1014,7 +1100,10 @@ export interface components {
         };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
-            /** @example method_a */
+            /**
+             * @description One of the ids the owning host advertised in its handshake. Anything else is refused, and a host that advertised nothing can set nothing up.
+             * @example device_code
+             */
             method: string;
         };
         /** @description Sends a chat message as an agent. This is impersonation - gated on chat. */
@@ -1037,6 +1126,13 @@ export interface components {
         /** @description Renames a host. Everything else about a host is observed, not configured. */
         UpdateHostRequest: {
             name: string;
+        };
+        /** @description Edits a build. Omitted fields are left as they are. */
+        UpdateBuildRequest: {
+            name?: string | null;
+            placement?: components["schemas"]["PlacementRequest"] | null;
+            unplace?: boolean;
+            substitutions?: components["schemas"]["SubstitutionRequest"][] | null;
         };
         /** @description Renames an agent. Where it plays is set through `PUT /api/agents/{id}/server`, which is a different kind of change and has its own preconditions. */
         UpdateAgentRequest: {
@@ -1162,7 +1258,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -1190,13 +1286,6 @@ export interface components {
         ActivityPageResponse: {
             items?: components["schemas"]["ActivityEntryResponse"][];
             nextCursor?: string | null;
-        };
-        /** @description A login mechanism the host advertised in its handshake. The id is opaque to the backend and is relayed to the host verbatim; the copy describes a mechanism, never an account. */
-        LoginMethodResponse: {
-            /** @example device_code */
-            id?: string;
-            label?: string | null;
-            description?: string | null;
         };
     };
     responses: never;
@@ -1655,6 +1744,50 @@ export interface operations {
             };
         };
     };
+    list_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildResponse"][];
+                };
+            };
+        };
+    };
+    create_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildResponse"];
+                };
+            };
+        };
+    };
     revokeAllSessions: {
         parameters: {
             query?: never;
@@ -1811,7 +1944,7 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    list_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -1840,7 +1973,7 @@ export interface operations {
             };
         };
     };
-    create_2: {
+    create_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -2467,6 +2600,74 @@ export interface operations {
             };
         };
     };
+    find_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildResponse"];
+                };
+            };
+        };
+    };
+    delete_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildResponse"];
+                };
+            };
+        };
+    };
     get: {
         parameters: {
             query?: never;
@@ -2507,7 +2708,7 @@ export interface operations {
             };
         };
     };
-    delete_3: {
+    delete_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -2541,7 +2742,7 @@ export interface operations {
             };
         };
     };
-    update_1: {
+    update_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -2734,7 +2935,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -2763,7 +2964,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_6: {
         parameters: {
             query?: {
                 /** @description Conversation to or about this agent. Excludes the server's global chat. */
@@ -2922,7 +3123,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_7: {
         parameters: {
             query?: {
                 /** @description How many entries to return. Clamped to 1..500. */
@@ -3010,7 +3211,7 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    list_8: {
         parameters: {
             query?: {
                 /** @description Narrow to one agent. Omit for the whole fleet. */

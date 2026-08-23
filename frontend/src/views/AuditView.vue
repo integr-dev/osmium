@@ -5,6 +5,7 @@ import {
   Bot as Agent,
   Download,
   KeyRound,
+  MapPin,
   MessageSquare,
   Power,
   ScrollText,
@@ -43,6 +44,9 @@ const agentStore = useAgentStore()
 type AuditAction = AuditEntryResponse['action']
 
 const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
+  BUILD_CREATE: MapPin,
+  BUILD_UPDATE: MapPin,
+  BUILD_DELETE: Trash2,
   SCHEMATIC_UPLOAD: Upload,
   SCHEMATIC_RENAME: SquarePen,
   SCHEMATIC_DELETE: Trash2,
@@ -73,6 +77,10 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
  * alike would defeat the point of scanning.
  */
 const ACTION_BADGE: Record<AuditAction, string> = {
+  BUILD_CREATE: 'badge-ghost',
+  BUILD_UPDATE: 'badge-ghost',
+  // Takes the coordinates and the substitutions with it; making the plan again is not undoing this.
+  BUILD_DELETE: 'badge-error badge-soft',
   SCHEMATIC_UPLOAD: 'badge-ghost',
   SCHEMATIC_RENAME: 'badge-ghost',
   // Takes the file, and with it every plan and every measure of progress computed from it.

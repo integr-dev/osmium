@@ -13,6 +13,7 @@
 | Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry and schematics |
 | Reading a schematic: upload, `.litematic` / `.schem`, the occupancy index, materials | **Built** in `backend/`, covered by tests |
 | Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
+| Placement and block substitution, as a build plan | **Built** in `backend/`, set on the Operations page |
 | Assigning a segment to a host and building it | **Not built**: needs the host side |
 
 Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
@@ -833,6 +834,33 @@ means a compromised host learns only its slice rather than the entire schematic.
 The host stays deliberately dumb about work: it receives a segment, builds it, and reports progress.
 Anything more and it becomes a distributed scheduler without a coordinator — a much harder problem
 than the one being solved.
+
+### Placement and substitution belong to a plan, not to the file
+
+A schematic is what was uploaded; a **build** is a decision about it — where it stands, and what it
+is built out of. They are separate rows because the same schematic is legitimately built more than
+once: the same tower on two servers, or twice on one at different coordinates and under different
+substitutions. Hanging placement off the schematic would have made the second of those an upload of
+the same gigabytes again.
+
+**Placement is an anchor for the minimum corner**, not an offset. That is the number an operator
+has: they stand somewhere, read the coordinate, and want the corner there. The offset the arithmetic
+needs is derived from it and the schematic's own origin, which is a subtraction nobody should do by
+hand. All three coordinates or none — two of three does not describe a position, and defaulting the
+missing one would put a half-placed build at bedrock without anybody having said so.
+
+**A substitution replaces one block with another, or with nothing.** "I do not have forty stacks of
+diamond" is the ordinary reason to reach for one, and the honest answer to it is a hole rather than
+a wrong block quietly standing in where somebody finds it a week later. Neither name is validated:
+Osmium stores block names as strings and never resolves them against a registry — the same property
+that lets it accept a schematic from an older Minecraft — so a name that does not exist looks
+exactly like one that does.
+
+**The backend resolves both before dispatch.** A segment will carry world coordinates and final
+block names, so the host receives what to place and where, and needs no rules engine of its own.
+That follows the rule the whole work-assignment design rests on: the host stays deliberately dumb,
+because anything more makes it a distributed scheduler without a coordinator. Nothing dispatches
+yet, so this is the shape the segment will take rather than a description of running code.
 
 ### Schematic formats
 

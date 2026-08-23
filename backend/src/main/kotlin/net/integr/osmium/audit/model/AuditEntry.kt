@@ -80,6 +80,11 @@ enum class AuditAction {
 
     /** Takes the file with it, and with the file every plan and every measure of progress on it. */
     SCHEMATIC_DELETE,
+
+    /** A build plan: where a schematic goes and what it is built out of. */
+    BUILD_CREATE,
+    BUILD_UPDATE,
+    BUILD_DELETE,
 }
 
 

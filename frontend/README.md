@@ -136,8 +136,15 @@ single packet crawling; a dead one is a grey dashed line with nothing on it.
 
 `stale` is not a lesser `down`. It is where something is genuinely in flight or genuinely unknown —
 a setup command mid-air, or an agent whose host has gone — and drawing either as a dead line claims
-knowledge we do not have. A host inside its grace window but overdue for a heartbeat fades to amber
-before it drops, so a machine on its way out is visible before it is gone.
+knowledge we do not have.
+
+**A host is green or grey, never amber for being slow.** An earlier version read freshness off
+`lastSeenAt` to fade a host whose heartbeat was overdue, which cannot work: heartbeats are not
+published, deliberately, so that timestamp freezes at the moment the host connected and ages
+forever. Every host went amber a few seconds after the page loaded and stayed there — the graph was
+measuring how long the tab had been open. The backend owns that judgement, against the heartbeats it
+actually receives, and now announces every change; the browser simply believes `reachable`. Amber is
+left to the one case it can see for itself: reachable, but never once heard from.
 
 **An agent can never be healthier than the socket carrying it.** Its stored state may say `ONLINE`,
 but if its host is unreachable the only party that can see that session has gone, so the node greys
@@ -190,7 +197,7 @@ Nothing stays selected once it leaves the list.
 ### The build is three steps
 
 ```
-Schematic  ->  Agents  ->  Split
+Schematic  ->  Plan  ->  Agents  ->  Split
 ```
 
 The order is strict rather than a preference: nothing can be divided before it has been read, and
@@ -208,6 +215,29 @@ second control for it would be a way to disagree with the agents.
 
 **The count is the selection.** Asking for a number of agents *and* which agents is asking the same
 question twice, and lets the two disagree.
+
+### The plan: where it goes, and what out of
+
+Placement and substitutions belong to a **build**, not to the schematic — the same schematic is
+legitimately built twice, in two places, under different rules. So the step offers the plans for a
+schematic rather than editing one set of fields hanging off the file.
+
+**Placement does not gate the rest of the pipeline.** A plan usually exists before anybody has stood
+in the world and read a coordinate off the screen, and requiring it would stop an operator dividing a
+build they have not sited yet. Dispatch is where it becomes mandatory, and dispatch does not exist.
+
+What the plan comes to is computed here, not fetched — `lib/placement.ts`, and specced, because it
+is the part that can be wrong without looking wrong. Two rules in it are worth stating:
+
+- **Blocks replaced by the same target merge into one line.** Somebody counting out chests wants one
+  number for stone, not three lines to add up.
+- **Blocks replaced by nothing stay on the list, struck through and counted separately.** What is
+  being left out is exactly what an operator wants to see before agreeing to it, and a line that
+  silently vanished would read as a material the schematic never had.
+
+An empty replacement field means "leave it out", which is what the placeholder says. It is stored as
+null rather than as an empty name, so "place nothing" has one representation instead of two that
+behave alike but do not compare equal.
 
 ### Getting there takes a while, so say where it got to
 

@@ -14,6 +14,7 @@ import {
 } from 'lucide-vue-next'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
+import BuildPlanner from './BuildPlanner.vue'
 import VoxelViewer from './VoxelViewer.vue'
 import SchematicUploadModal from './SchematicUploadModal.vue'
 import {
@@ -28,9 +29,12 @@ import {
   type SplitMode,
   type SplitResponse,
 } from '../api/schematics'
+import type { BuildResponse } from '../api/builds'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import type { Box as Box3d } from '../lib/box3d'
+import { blockColour } from '../lib/blockColours'
+import { blockName } from '../lib/blockNames'
 import { bytes } from '../lib/bytes'
 
 /**
@@ -54,10 +58,18 @@ const agentStore = useAgentStore()
 
 const emit = defineEmits<{ failed: [string] }>()
 
-const STEPS = ['schematic', 'agents', 'split'] as const
+const STEPS = ['schematic', 'plan', 'agents', 'split'] as const
 type Step = (typeof STEPS)[number]
 
 const step = ref<Step>('schematic')
+
+/**
+ * The plan being worked under, once one has been saved.
+ *
+ * Held here rather than in the planner because the steps after it show its consequences: a division
+ * is expressed in coordinates, and which coordinates depends on where the build stands.
+ */
+const plan = ref<BuildResponse | null>(null)
 const uploadOpen = ref(false)
 
 const schematics = ref<SchematicResponse[]>([])
@@ -283,8 +295,20 @@ const splitBoxes = computed<Box3d[] | null>(() => {
 })
 
 /** What has to be true before the next step means anything. */
+/**
+    * Placement is **not** required to move on. A plan usually exists before anybody has stood in the
+    * world and read a coordinate off the screen, and gating the rest of the pipeline on it would
+    * stop an operator dividing a build they have not sited yet. Dispatch is where it becomes
+    * mandatory, and dispatch does not exist.
+    */
 const canAdvance = computed(() =>
-  step.value === 'schematic' ? ready.value : step.value === 'agents' ? parts.value > 0 : false,
+  step.value === 'schematic'
+    ? ready.value
+    : step.value === 'plan'
+      ? true
+      : step.value === 'agents'
+        ? parts.value > 0
+        : false,
 )
 
 function go(to: Step) {
@@ -387,6 +411,10 @@ async function runSplit() {
 // them changes, it would be a picture of a different question's answer.
 watch([selectedId, mode, parts], () => {
   split.value = null
+})
+
+watch(selectedId, () => {
+  plan.value = null
 })
 
 /** Materials exist only once the file has been read, and only for the one being looked at. */
@@ -754,9 +782,11 @@ function progressOf(schematic: SchematicResponse): string | null {
                       :key="material.name"
                       class="flex items-center justify-between gap-3 px-3 py-1.5"
                     >
-                      <span class="truncate opacity-80">
-                        {{ material.name.replace('minecraft:', '') }}
-                      </span>
+                      <span
+                        class="border-base-content/20 size-3 shrink-0 rounded-[3px] border"
+                        :style="{ background: blockColour(material.name) }"
+                      ></span>
+                      <span class="truncate opacity-80">{{ blockName(material.name) }}</span>
                       <span class="shrink-0 tabular-nums opacity-60">{{ n(material.blocks) }}</span>
                     </li>
                   </ul>
@@ -771,6 +801,23 @@ function progressOf(schematic: SchematicResponse): string | null {
           </template>
         </div>
       </div>
+    </div>
+
+    <!-- ─── Where it goes, and what out of ───────────────────────────────────── -->
+    <div v-else-if="step === 'plan'">
+      <p v-if="!ready" class="text-sm opacity-60">{{ t('schematics.needSchematic') }}</p>
+      <BuildPlanner
+        v-else-if="selected"
+        :schematic-id="selected.id"
+        :schematic-name="selected.name"
+        :origin="{
+          x: selected.content.originX ?? 0,
+          y: selected.content.originY ?? 0,
+          z: selected.content.originZ ?? 0,
+        }"
+        :materials="materials"
+        @planned="plan = $event"
+      />
     </div>
 
     <!-- ─── Choose who builds it ─────────────────────────────────────────────── -->

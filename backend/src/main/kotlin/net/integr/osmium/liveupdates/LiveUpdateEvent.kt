@@ -79,6 +79,13 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      */
     SCHEMATIC_CHANGED("schematic", Nodes.SCHEMATIC_READ),
     SCHEMATIC_REMOVED("schematic-removed", Nodes.SCHEMATIC_READ),
+
+    /**
+     * A build plan. Gated on the schematic node, like the plan itself: it says where a design goes
+     * and what it is built out of, and nothing about the fleet carrying it out.
+     */
+    BUILD_CHANGED("build", Nodes.SCHEMATIC_READ),
+    BUILD_REMOVED("build-removed", Nodes.SCHEMATIC_READ),
 }
 
 /**

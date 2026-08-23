@@ -537,6 +537,12 @@ Three properties are load-bearing:
   the endpoint itself is gated on — closes it. It also never outlives the token that opened it.
 - **Deleting a host announces each cascaded agent** before the host itself. Publishing only the host
   would leave every browser holding agents that no longer exist.
+- **A host going quiet is announced by a sweep**, because nothing else can. Reachability is derived
+  from the heartbeat rather than stored, so a host that stops talking writes no row and fires no
+  event — every browser kept showing it green until something unrelated republished it. A 5s task
+  compares each host against what was last announced and publishes only on a change, so a quiet
+  fleet still sends nothing. Heartbeats themselves stay unpublished: ten seconds per host across
+  every open browser is the noise that avoids.
 
 Connect, disconnect and chat publish nothing: they change no stored state. The agent's state moves
 when the host reports back, and *that* is what reaches the browser.
@@ -1084,6 +1090,36 @@ reaches the end of today.
 
 It is null for the moment between the last chunk landing and the queue being joined, because joining
 waits for that transaction to commit. The announcement that follows carries the real place.
+
+## A build is a plan, not the file
+
+`builds` is where a schematic goes and what it is built out of: a placement, a set of
+substitutions, and the schematic it applies to. Its own table because the same schematic is
+legitimately built more than once — the same tower on two servers, or twice on one at different
+coordinates — and placement on the schematic row would have made the second of those an upload of
+the same gigabytes again. A plan is deleted with its schematic: a plan to build a file that no
+longer exists cannot be carried out.
+
+Placement is an **anchor for the minimum corner**, all three coordinates or none, enforced by a
+check constraint. Two of three does not describe a position, and a column default would put a
+half-placed build at the world origin without anybody having said so.
+
+A substitution's replacement is nullable, and null means **place nothing**. That is the ordinary
+case rather than an edge one: not having the material is why somebody reaches for this, and a hole
+is a more honest answer than a wrong block quietly standing in. One rule per source block, enforced
+by a unique constraint — a plan saying a block becomes two different things does not say what it
+means.
+
+**Gated on the schematic nodes**, not a pair of its own. A plan is a decision *about* a schematic and
+drives no agent by existing; the moment that changes is dispatch, which is `agent.run`. Deleting one
+sits with `schematic.delete`, because it is not the reverse of creating it — the coordinates and the
+rule set go with it.
+
+**Nothing derived is stored or served.** The offset a placement implies, the material totals once
+substitutions are applied, the world bounds of a segment: all of it is arithmetic over the plan and
+the index, so it is computed where it is read. Same reasoning as the split, which is a pure function
+of the index and its two arguments and is never persisted. The frontend does that arithmetic today
+(`lib/placement.ts`, specced); the backend will do the same when there is a segment to dispatch.
 
 ## What a pass leaves behind
 

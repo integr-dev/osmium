@@ -358,6 +358,7 @@ export const en = {
   schematics: {
     title: 'Schematics',
     step_schematic: 'Schematic',
+    step_plan: 'Plan',
     step_agents: 'Agents',
     step_split: 'Split',
     back: 'Back',
@@ -663,6 +664,9 @@ export const en = {
     SCHEMATIC_UPLOAD: 'Schematic uploaded',
     SCHEMATIC_RENAME: 'Schematic renamed',
     SCHEMATIC_DELETE: 'Schematic deleted',
+    BUILD_CREATE: 'Build planned',
+    BUILD_UPDATE: 'Build plan changed',
+    BUILD_DELETE: 'Build plan deleted',
   },
 
   /**
@@ -693,6 +697,28 @@ export const en = {
     'host.write': 'Enrol and rename hosts',
     'host.token': 'Rotate a host enrolment token',
     'host.delete': 'Remove hosts',
+  },
+
+  /** Where a build stands and what it is built out of. Both belong to a plan, not to the file. */
+  builds: {
+    title: 'The plan',
+    whichPlan: 'Which plan',
+    placement: 'Placement',
+    placementHint: 'Where the schematic’s lowest corner lands. Leave these empty to decide later.',
+    unplaced: 'Not placed yet.',
+    offsetBy: 'Everything shifts by {x}, {y}, {z}.',
+    substitutions: 'Substitutions',
+    substitutionsHint: 'Build a block out of something else. Leave the replacement empty to leave it out entirely.',
+    addSubstitution: 'Add a substitution',
+    placeNothing: 'leave it out',
+    inThisBuild: 'in this build',
+    createPlan: 'Save plan',
+    save: 'Save changes',
+    asBuilt: 'What it comes to',
+    blocksPlaced: 'Blocks placed',
+    leftOut: 'Left out',
+    mergedFrom: 'includes {from}',
+    omittedFrom: 'not placed',
   },
 
   errors: {
