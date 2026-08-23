@@ -13,6 +13,7 @@ import net.integr.osmium.activity.model.ActivityScope
 import net.integr.osmium.activity.model.ActivitySeverity
 import net.integr.osmium.activity.service.ActivityService
 import net.integr.osmium.agent.repository.AgentRepository
+import net.integr.osmium.build.service.BuildJobService
 import net.integr.osmium.chat.model.ChatScope
 import net.integr.osmium.chat.service.ChatService
 import net.integr.osmium.liveupdates.LiveUpdateEvent
@@ -38,6 +39,7 @@ class HostReportService(
     private val hostService: HostService,
     private val chatService: ChatService,
     private val activityService: ActivityService,
+    private val buildJobs: BuildJobService,
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val broker: LiveUpdateBroker,
@@ -178,6 +180,7 @@ class HostReportService(
             agent.onlineSince = null
             agent.connectingSince = null
             agent.chatListener = false
+            buildJobs.releaseSegmentsOf(agent)
             // The operator did not cause this and would otherwise see a state change with no
             // explanation, which is exactly what the activity feed is for.
             activityService.record(
@@ -238,6 +241,13 @@ class HostReportService(
             // An agent that left the game has stopped forwarding whatever it was forwarding. Saying
             // so here means the next election sees a vacancy rather than a listener that is gone.
             if (state != AgentState.ONLINE) agent.chatListener = false
+            // And it has stopped building. The segment goes back to the pool rather than to FAILED:
+            // losing the builder is not failure of the work.
+            if (state != AgentState.ONLINE) buildJobs.releaseSegmentsOf(agent)
+            // Coming back is the other half of that. Without it a reconnect left the agent standing
+            // beside the build it had been on doing nothing, because releasing its segment was the
+            // last thing anybody did about it.
+            if (state == AgentState.ONLINE) buildJobs.reassignIdle(agent)
             publish(agent)
         }
     }

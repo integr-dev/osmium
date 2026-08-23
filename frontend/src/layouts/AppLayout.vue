@@ -35,7 +35,7 @@ import LanguagePicker from '../components/LanguagePicker.vue'
 import PlayerHead from '../components/PlayerHead.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
-import { STATE_DOT, stateLabel } from '../lib/agentState'
+import { agentDot, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { useResizable } from '../lib/resizable'
 import { isShortcut, shortcutLabel } from '../lib/shortcuts'
@@ -558,11 +558,11 @@ async function logout() {
                       :to="{ name: 'agent', params: { id: agent.id } }"
                       class="gap-2.5"
                     >
-                      <span class="relative shrink-0" :title="stateLabel(agent.state)">
+                      <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))">
                         <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
                         <span
                           class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                          :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                          :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
                         ></span>
                       </span>
                       <!--

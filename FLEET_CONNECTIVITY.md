@@ -10,16 +10,18 @@
 | Chat listener election and outbound rate limiting | **Built** in `backend/`, covered by tests |
 | Telemetry: ingest, in-memory store, staleness, coalesced live event | **Built** in `backend/`, covered by tests |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
-| Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry, schematics and build plans |
+| Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry, schematics, build plans and jobs |
 | Reading a schematic: upload, `.litematic` / `.schem`, the occupancy index, materials | **Built** in `backend/`, covered by tests |
 | Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
 | Placement and block substitution, as a build plan | **Built** in `backend/`, set on the Operations page |
-| Assigning a segment to a host and building it | **Not built**: needs the host side |
+| Recording a job: a plan frozen, divided, assigned and resumable | **Built** in `backend/`, started from the Operations page |
+| Carrying a segment to a host and building it | **Not built**: needs the host side, and two wire messages that are not designed |
 
 Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
-sectors and throughput. The schematics themselves are real: uploaded, read and divided. What no
-schematic has yet is an agent building it, because nothing can carry a segment to a host.
-Everything else is real but empty until a host connects.
+sectors and throughput. The schematics themselves are real: uploaded, read, divided, and now
+started — a **job** records what is being built, where, by whom and how far along, and its
+segments are real rows. What no schematic has yet is an agent actually placing a block, because
+nothing can carry a segment to a host. Everything else is real but empty until a host connects.
 Sections not marked built are design, not description.
 
 **Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator
@@ -872,6 +874,14 @@ means a compromised host learns only its slice rather than the entire schematic.
 The host stays deliberately dumb about work: it receives a segment, builds it, and reports progress.
 Anything more and it becomes a distributed scheduler without a coordinator — a much harder problem
 than the one being solved.
+
+The backend half of that now exists as a **job** (see `backend/README.md`): the split is frozen into
+rows, in world coordinates, each assigned to one agent, with the plan’s anchor and substitutions
+copied in so editing the plan cannot move a build that is under way. An agent that drops out has its
+segment freed and gets one back when it returns, so the fleet self-heals across a blip. What is missing is only the
+crossing: a command carrying a segment, an event reporting blocks against it, and a way for the
+host to fetch the blocks in that box. None of the three is designed, and nothing should be
+implemented against them yet.
 
 ### Placement and substitution belong to a plan, not to the file
 

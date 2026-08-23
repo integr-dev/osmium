@@ -2,6 +2,17 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, errorMessage, type AgentResponse, type HostResponse, type UserResponse } from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
+import {
+  assignSegment,
+  pauseJob,
+  deleteJob,
+  listJobs,
+  releaseSegment,
+  resumeJob,
+  startJob,
+  type BuildJob,
+  type SplitMode,
+} from '../api/jobs'
 import { useAuthStore } from './auth'
 import { t } from '../i18n'
 import { buildFigures } from '../lib/build'
@@ -67,6 +78,7 @@ export { isOnline }
 export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
   const agents = ref<FleetAgent[]>([])
+  const jobs = ref<BuildJob[]>([])
   const loading = ref(false)
   const loaded = ref(false)
   const error = ref<string | null>(null)
@@ -102,7 +114,7 @@ export const useAgentStore = defineStore('agents', () => {
     loading.value = true
     error.value = null
     try {
-      await Promise.all([loadHosts(), loadAgents()])
+      await Promise.all([loadHosts(), loadAgents(), loadJobs()])
     } finally {
       loading.value = false
       loaded.value = true
@@ -130,6 +142,60 @@ export const useAgentStore = defineStore('agents', () => {
       ...agent,
       build: previous.get(agent.id) ?? mockBuild(agent),
     }))
+  }
+
+  /**
+   * What the fleet has been given to build.
+   *
+   * Held here rather than by the panel that shows them, because an agent's assignment is a fact
+   * about the agent: it is what the fleet list needs to say which bots are on a build, and the
+   * list has no business fetching them to find out.
+   */
+  async function loadJobs(): Promise<void> {
+    // Reading jobs needs the same node as reading agents, so anyone who got this far may ask.
+    try {
+      jobs.value = await listJobs()
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : t('errors.generic')
+    }
+  }
+
+  /**
+   * Which agent is on which piece, for the agents that are on one.
+   *
+   * Only live assignments: a finished or released segment is not something an agent is doing, and
+   * a badge that outlived the work would be worse than none.
+   */
+  const assignments = computed(() => {
+    const held = new Map<number, { jobId: number; buildName: string; ordinal: number }>()
+    for (const job of jobs.value) {
+      if (job.state !== 'ACTIVE') continue
+      for (const segment of job.segments) {
+        if (segment.agentId === null) continue
+        if (segment.state !== 'ASSIGNED' && segment.state !== 'BUILDING') continue
+        held.set(segment.agentId, {
+          jobId: job.id,
+          buildName: job.buildName,
+          ordinal: segment.ordinal,
+        })
+      }
+    }
+    return held
+  })
+
+  function assignmentOf(agentId: number) {
+    return assignments.value.get(agentId) ?? null
+  }
+
+  /**
+   * Whether this agent is on a build right now.
+   *
+   * The badge and the sidebar dot ask only this, and asking it here keeps `lib/agentState` free of
+   * the store — those helpers are imported by the store itself, and the cycle that would make has
+   * already bitten this project once.
+   */
+  function isBuilding(agentId: number): boolean {
+    return assignments.value.has(agentId)
   }
 
   // ---- live updates --------------------------------------------------------------------------
@@ -203,6 +269,15 @@ export const useAgentStore = defineStore('agents', () => {
         // accumulated here: the store has no way to know which page a line belongs on.
         for (const listener of feedListeners) listener(name, data)
         break
+      // Runs are not a paged list and not owned by one view: an agent's assignment is a fact about
+      // the agent, which the fleet list reads without knowing anything about jobs. A job also moves
+      // with nobody watching — a segment is freed the moment its agent leaves the game.
+      case 'build-job':
+        upsertJob(data as BuildJob)
+        break
+      case 'build-job-removed':
+        jobs.value = jobs.value.filter((job) => job.id !== (data as { id: number }).id)
+        break
       // 'ready' and anything this build does not know about are ignored, so a newer backend
       // sending a new event type never breaks an older tab.
     }
@@ -221,6 +296,12 @@ export const useAgentStore = defineStore('agents', () => {
   function onFeedEvent(listener: (name: string, data: unknown) => void): () => void {
     feedListeners.add(listener)
     return () => feedListeners.delete(listener)
+  }
+
+  function upsertJob(incoming: BuildJob): void {
+    const index = jobs.value.findIndex((job) => job.id === incoming.id)
+    if (index === -1) jobs.value = [incoming, ...jobs.value]
+    else jobs.value[index] = incoming
   }
 
   /** Mock build progress is kept across the update, exactly as `loadAgents` does. */
@@ -377,6 +458,50 @@ export const useAgentStore = defineStore('agents', () => {
     return data.token
   }
 
+  // ---- jobs ----------------------------------------------------------------------------------
+
+  /**
+   * Every act on a job, wrapped so the answer is applied here rather than waited on.
+   *
+   * The stream carries the same change a moment later and applying it twice is idempotent — but a
+   * panel where an operator's own click appears to do nothing until an unrelated socket catches up
+   * is the failure this whole page exists to avoid.
+   */
+  async function beginJob(buildId: number, mode: SplitMode, agentIds: number[]): Promise<BuildJob> {
+    const job = await startJob(buildId, { mode, agentIds })
+    upsertJob(job)
+    return job
+  }
+
+  async function stopJob(id: number): Promise<BuildJob> {
+    const job = await pauseJob(id)
+    upsertJob(job)
+    return job
+  }
+
+  async function restartJob(id: number): Promise<BuildJob> {
+    const job = await resumeJob(id)
+    upsertJob(job)
+    return job
+  }
+
+  async function giveSegment(jobId: number, segmentId: number, agentId: number): Promise<BuildJob> {
+    const job = await assignSegment(jobId, segmentId, agentId)
+    upsertJob(job)
+    return job
+  }
+
+  async function freeSegment(jobId: number, segmentId: number): Promise<BuildJob> {
+    const job = await releaseSegment(jobId, segmentId)
+    upsertJob(job)
+    return job
+  }
+
+  async function removeJob(id: number): Promise<void> {
+    await deleteJob(id)
+    jobs.value = jobs.value.filter((job) => job.id !== id)
+  }
+
   async function removeHost(id: number): Promise<void> {
     const { error: failure } = await api.DELETE('/api/hosts/{id}', { params: { path: { id } } })
     if (failure) throw new Error(errorMessage(failure, t('errors.removeHost')))
@@ -466,6 +591,17 @@ export const useAgentStore = defineStore('agents', () => {
   return {
     hosts,
     agents,
+    jobs,
+    assignments,
+    assignmentOf,
+    isBuilding,
+    loadJobs,
+    beginJob,
+    stopJob,
+    restartJob,
+    giveSegment,
+    freeSegment,
+    removeJob,
     loading,
     loaded,
     error,

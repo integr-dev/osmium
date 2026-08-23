@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Box, Power, Server, TriangleAlert, Workflow } from 'lucide-vue-next'
+import { Box, Hammer, Power, Server, TriangleAlert, Workflow } from 'lucide-vue-next'
+import BuildJobs from '../components/BuildJobs.vue'
 import FleetConnections from '../components/FleetConnections.vue'
 import SchematicLibrary from '../components/SchematicLibrary.vue'
 import ServerAssignment from '../components/ServerAssignment.vue'
@@ -23,9 +24,9 @@ const { t } = useI18n()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 
-type Tab = 'schematics' | 'servers' | 'power'
+type Tab = 'schematics' | 'jobs' | 'servers' | 'power'
 
-const TABS = ['schematics', 'servers', 'power'] as const
+const TABS = ['schematics', 'jobs', 'servers', 'power'] as const
 
 /** In the URL, so this page can be linked to and Back means the previous tab. See lib/queryState.ts. */
 const tab = useQueryTab<Tab>('tab', TABS, 'schematics')
@@ -34,6 +35,9 @@ const done = ref<string | null>(null)
 
 const tabs: Array<{ id: Tab; label: string; icon: typeof Box; node: string }> = [
   { id: 'schematics', label: 'operations.tabSchematics', icon: Box, node: 'schematic.read' },
+  // Beside the wizard rather than on the dashboard: this is where a job is started, so it is where
+  // an operator looks for the one they just started.
+  { id: 'jobs', label: 'operations.tabJobs', icon: Hammer, node: 'agent.read' },
   { id: 'servers', label: 'operations.tabServers', icon: Server, node: 'agent.write' },
   { id: 'power', label: 'operations.tabPower', icon: Power, node: 'agent.run' },
 ]
@@ -116,6 +120,16 @@ watch(tab, clearReport)
 
     <SchematicLibrary
       v-if="tab === 'schematics' && auth.can('schematic.read')"
+      @done="report($event, false)"
+      @failed="report($event, true)"
+      @started="tab = 'jobs'"
+    />
+    <!--
+      Moving the operator to what they just made. A run started from the wizard leaves the last step
+      looking exactly as it did, and "did that work" is not a question the banner alone answers.
+    -->
+    <BuildJobs
+      v-else-if="tab === 'jobs' && auth.can('agent.read')"
       @done="report($event, false)"
       @failed="report($event, true)"
     />

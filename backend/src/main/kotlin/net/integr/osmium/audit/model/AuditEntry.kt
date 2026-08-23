@@ -92,6 +92,35 @@ enum class AuditAction {
     BUILD_CREATE,
     BUILD_UPDATE,
     BUILD_DELETE,
+
+    /**
+     * A plan put to work, and taken off it again.
+     *
+     * These and not the assignments underneath them. A job is started once and paused a handful of
+     * times, while segments move between agents whenever one drops out or cannot finish — and a
+     * trail carrying every reassignment is one in which the decision to build at all is buried.
+     * Where a piece went is fleet activity, which the agent's own feed already records.
+     */
+    BUILD_JOB_START,
+
+    /**
+     * Stopped, and started again.
+     *
+     * Pausing rather than cancelling because cancel was a dead end: it stopped a job and left
+     * nothing to do with it but delete it, so an operator performed two acts to express one.
+     */
+    BUILD_JOB_PAUSE,
+    BUILD_JOB_RESUME,
+
+    /**
+     * A finished job cleared out of the list.
+     *
+     * Recorded because it is irreversible — the segments and their last reported counts go with the
+     * row — and because it is otherwise the one act on a job that leaves no trace. The start and
+     * the pause stay here regardless, which is what makes removing the row a tidy-up rather
+     * than a way to erase what the fleet did.
+     */
+    BUILD_JOB_DELETE,
 }
 
 

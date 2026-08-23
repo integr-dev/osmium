@@ -86,6 +86,16 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      */
     BUILD_CHANGED("build", Nodes.SCHEMATIC_READ),
     BUILD_REMOVED("build-removed", Nodes.SCHEMATIC_READ),
+
+    /**
+     * A build job: a plan frozen and being carried out.
+     *
+     * Gated on `agent.read` rather than on the schematic node its plan uses, because what a job
+     * actually carries is which agents are on which piece and how far each has got. Someone
+     * entitled to read designs is not thereby entitled to read the fleet.
+     */
+    BUILD_JOB_CHANGED("build-job", Nodes.AGENT_READ),
+    BUILD_JOB_REMOVED("build-job-removed", Nodes.AGENT_READ),
 }
 
 /**

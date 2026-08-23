@@ -27,7 +27,7 @@ import PlayerHead from '../components/PlayerHead.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
-import { STATE_BADGE, stateLabel } from '../lib/agentState'
+import { agentBadge, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -337,9 +337,26 @@ async function confirmRemove() {
             a host reporting a disconnect, a relink coming through. The vitals beside it change
             every second, which is why nothing there flashes: constant motion carries no news.
           -->
-          <span v-flash="agent.state" class="badge badge-sm" :class="STATE_BADGE[agent.state]">
-            {{ stateLabel(agent.state) }}
+          <span
+            v-flash="agent.state"
+            class="badge badge-sm"
+            :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
+          >
+            {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
           </span>
+          <!-- Which piece of which build, spelled out: this page has the room the fleet table did not. -->
+          <RouterLink
+            v-if="agentStore.assignmentOf(agent.id)"
+            :to="{ name: 'operations', query: { tab: 'jobs' } }"
+            class="link-hover mt-1 block text-xs opacity-60"
+          >
+            {{
+              t('agents.buildingOn', {
+                build: agentStore.assignmentOf(agent.id)?.buildName,
+                ordinal: agentStore.assignmentOf(agent.id)?.ordinal,
+              })
+            }}
+          </RouterLink>
         </div>
         <div>
           <div class="text-xs uppercase opacity-50">{{ t('agents.uptime') }}</div>

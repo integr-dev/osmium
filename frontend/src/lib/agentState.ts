@@ -47,3 +47,35 @@ export function isOnline(agent: Pick<AgentResponse, 'state'>): boolean {
 export function stateLabel(state: AgentState): string {
   return i18n.global.t('agentState.' + state)
 }
+
+/**
+ * Building, shown in place of the lifecycle state rather than beside it.
+ *
+ * **A display substitution, not a state.** The backend has no such state and never will: an agent
+ * is `ONLINE` and separately holds a piece of a run, and collapsing the two would mean the host
+ * reporting something it cannot know. What an operator wants at a glance is the more specific of
+ * the two facts, and "building" already says "in game" — so the badge is replaced rather than
+ * doubled, which is also the only version that fits in a sidebar dot.
+ *
+ * Only ever substituted over `ONLINE`. An agent that leaves the game has its segments released, so
+ * the pairing cannot outlive the session; guarding on it anyway means a stale assignment can never
+ * paint a disconnected agent as busy.
+ */
+const BUILDING_DOT = 'bg-info'
+const BUILDING_BADGE = 'badge-info badge-soft'
+
+function substituted(state: AgentState, building: boolean): boolean {
+  return building && state === 'ONLINE'
+}
+
+export function agentDot(state: AgentState, building = false): string {
+  return substituted(state, building) ? BUILDING_DOT : (STATE_DOT[state] ?? 'bg-base-content/30')
+}
+
+export function agentBadge(state: AgentState, building = false): string {
+  return substituted(state, building) ? BUILDING_BADGE : STATE_BADGE[state]
+}
+
+export function agentStateLabel(state: AgentState, building = false): string {
+  return substituted(state, building) ? i18n.global.t('agentState.BUILDING') : stateLabel(state)
+}

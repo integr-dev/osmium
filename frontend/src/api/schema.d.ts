@@ -130,6 +130,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{jobId}/segments/{segmentId}/assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["assign"];
+        delete: operations["release"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts": {
         parameters: {
             query?: never;
@@ -181,6 +229,22 @@ export interface paths {
         get: operations["list_3"];
         put?: never;
         post: operations["create_2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builds/{buildId}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["start"];
         delete?: never;
         options?: never;
         head?: never;
@@ -638,6 +702,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_6"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["find_2"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_5"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -661,7 +757,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
          *                 from the previous response to continue. Kept for 3 days.
          */
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -742,7 +838,7 @@ export interface paths {
          *
          *                 Entries are kept for 30 days by default and purged daily.
          */
-        get: operations["list_7"];
+        get: operations["list_8"];
         put?: never;
         post?: never;
         delete?: never;
@@ -796,7 +892,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: incidents arrive while the feed is being read. Send
          *                 `nextCursor` from the previous response to continue. Kept for 10 days.
          */
-        get: operations["list_8"];
+        get: operations["list_9"];
         put?: never;
         post?: never;
         delete?: never;
@@ -996,6 +1092,108 @@ export interface components {
             /** Format: int64 */
             sizeBytes?: number;
         };
+        /** @description Hands one segment to one agent. */
+        AssignSegmentRequest: {
+            /** Format: int64 */
+            agentId?: number;
+        };
+        /** @description One execution of one build, on one server. */
+        BuildJobResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            buildId?: number;
+            buildName?: string;
+            /** Format: int64 */
+            schematicId?: number;
+            schematicName?: string;
+            serverAddress?: string;
+            /** @description ACTIVE, DONE or CANCELLED. There is no failed job. */
+            state?: string;
+            splitMode?: string;
+            /**
+             * Format: int32
+             * @description How many pieces were asked for. `segments` can be fewer.
+             */
+            requestedParts?: number;
+            /** @description The anchor as it stood when the job started. */
+            placement?: components["schemas"]["PlacementRequest"];
+            /** Format: int64 */
+            totalBlocks?: number;
+            /**
+             * Format: int64
+             * @description The sum of the segments' last reported counts.
+             */
+            blocksPlaced?: number;
+            substitutions?: components["schemas"]["JobSubstitutionResponse"][];
+            segments?: components["schemas"]["JobSegmentResponse"][];
+            createdBy?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /**
+             * Format: date-time
+             * @description Null while the job is active.
+             */
+            finishedAt?: string | null;
+        };
+        /** @description One agent's share of a job, in world coordinates. `max` is exclusive. */
+        JobSegmentResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int32 */
+            ordinal?: number;
+            /** Format: int32 */
+            minX?: number;
+            /** Format: int32 */
+            minY?: number;
+            /** Format: int32 */
+            minZ?: number;
+            /** Format: int32 */
+            maxX?: number;
+            /** Format: int32 */
+            maxY?: number;
+            /** Format: int32 */
+            maxZ?: number;
+            /** Format: int64 */
+            blocks?: number;
+            /** Format: int32 */
+            sharePercent?: number;
+            /** @description PENDING, ASSIGNED, BUILDING, DONE or FAILED. */
+            state?: string;
+            /**
+             * Format: int64
+             * @description Null when nobody holds it, or when the agent has since been removed.
+             */
+            agentId?: number | null;
+            /** @description Kept after the agent is gone, so the record still says who built it. */
+            agentLabel?: string | null;
+            /**
+             * Format: int64
+             * @description Last reported, never accumulated. Survives a release.
+             */
+            blocksPlaced?: number;
+            /**
+             * Format: date-time
+             * @description Null until a host has reported on this segment.
+             */
+            lastReportAt?: string | null;
+            /** @description Why the host could not build it. Null unless FAILED. */
+            failureReason?: string | null;
+        };
+        /** @description One block swapped for another, as it stood when the job started. */
+        JobSubstitutionResponse: {
+            from?: string;
+            to?: string | null;
+        };
+        /** @description Where the schematic's minimum corner lands in the world. */
+        PlacementRequest: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+        };
         /** @description Enrols a host. No address: the host dials in, so its location is observed. */
         CreateHostRequest: {
             name: string;
@@ -1036,15 +1234,6 @@ export interface components {
             placement?: components["schemas"]["PlacementRequest"] | null;
             substitutions?: components["schemas"]["SubstitutionRequest"][];
         };
-        /** @description Where the schematic's minimum corner lands in the world. */
-        PlacementRequest: {
-            /** Format: int32 */
-            x?: number;
-            /** Format: int32 */
-            y?: number;
-            /** Format: int32 */
-            z?: number;
-        };
         /** @description One block swapped for another. A null or blank replacement means place nothing at all, which is the honest answer to not having the material. */
         SubstitutionRequest: {
             /** @example minecraft:diamond_block */
@@ -1074,6 +1263,15 @@ export interface components {
         SubstitutionResponse: {
             from?: string;
             to?: string | null;
+        };
+        /** @description Starts building a plan with a set of agents. One job, one server. */
+        StartJobRequest: {
+            /**
+             * @description How to divide the build. COLUMNS is the safe default.
+             * @enum {string}
+             */
+            mode?: "COLUMNS" | "LAYERS" | "GRID";
+            agentIds: number[];
         };
         /** @description A freshly issued access token. */
         LoginResponse: {
@@ -1265,7 +1463,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -1631,6 +1829,109 @@ export interface operations {
             };
         };
     };
+    assign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: number;
+                segmentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignSegmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Assigned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+            /** @description The job is finished, the segment is built, or the agent is offline, on another server, or already holding a segment. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
+    release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: number;
+                segmentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
+    resume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
+    pause: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
     list_2: {
         parameters: {
             query?: never;
@@ -1791,6 +2092,50 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["BuildResponse"];
+                };
+            };
+        };
+    };
+    start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                buildId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Started. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+            /** @description The plan is unplaced, its schematic is not read, the agents are not all online on one server, or this build is already running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
                 };
             };
         };
@@ -3023,6 +3368,84 @@ export interface operations {
     list_6: {
         parameters: {
             query?: {
+                buildId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"][];
+                };
+            };
+        };
+    };
+    find_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
+    delete_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `agent.delete`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The job is still building; pause it first. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_7: {
+        parameters: {
+            query?: {
                 /** @description Conversation to or about this agent. Excludes the server's global chat. */
                 agentId?: number;
                 /**
@@ -3179,7 +3602,7 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    list_8: {
         parameters: {
             query?: {
                 /** @description How many entries to return. Clamped to 1..500. */
@@ -3267,7 +3690,7 @@ export interface operations {
             };
         };
     };
-    list_8: {
+    list_9: {
         parameters: {
             query?: {
                 /** @description Narrow to one agent. Omit for the whole fleet. */

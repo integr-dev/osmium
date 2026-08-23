@@ -5,7 +5,7 @@ import { Bot as Agent, Plus, Server } from 'lucide-vue-next'
 import AddAgentModal from './AddAgentModal.vue'
 import PlayerHead from './PlayerHead.vue'
 import TableSkeleton from './TableSkeleton.vue'
-import { STATE_BADGE, stateLabel } from '../lib/agentState'
+import { agentBadge, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -74,9 +74,26 @@ const addOpen = ref(false)
                   <span class="link-hover font-medium">{{ agent.label }}</span>
                 </RouterLink>
               </td>
+              <!--
+                Building replaces the state rather than sitting beside it: it already says the agent
+                is in game, and the more specific of two true things is the one worth the column.
+                Which piece of which build is the tooltip — a table scanned across twenty rows has
+                room for the fact, not for the detail.
+              -->
               <td>
-                <span class="badge badge-sm" :class="STATE_BADGE[agent.state]">
-                  {{ stateLabel(agent.state) }}
+                <span
+                  class="badge badge-sm"
+                  :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
+                  :title="
+                    agentStore.assignmentOf(agent.id)
+                      ? t('agents.buildingOn', {
+                          build: agentStore.assignmentOf(agent.id)?.buildName,
+                          ordinal: agentStore.assignmentOf(agent.id)?.ordinal,
+                        })
+                      : undefined
+                  "
+                >
+                  {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
                 </span>
               </td>
               <!--

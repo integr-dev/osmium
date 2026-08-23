@@ -13,7 +13,7 @@ import {
 } from 'lucide-vue-next'
 import HostActions from '../components/HostActions.vue'
 import PlayerHead from '../components/PlayerHead.vue'
-import { STATE_BADGE, stateLabel } from '../lib/agentState'
+import { agentBadge, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -152,8 +152,11 @@ function afterRemove() {
                       </span>
                     </span>
                   </span>
-                  <span class="badge badge-sm shrink-0" :class="STATE_BADGE[agent.state]">
-                    {{ stateLabel(agent.state) }}
+                  <span
+                    class="badge badge-sm shrink-0"
+                    :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
+                  >
+                    {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
                   </span>
                 </RouterLink>
               </li>

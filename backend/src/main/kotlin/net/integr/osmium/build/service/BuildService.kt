@@ -8,8 +8,10 @@ import net.integr.osmium.build.dto.SubstitutionRequest
 import net.integr.osmium.build.dto.UpdateBuildRequest
 import net.integr.osmium.build.dto.toResponse
 import net.integr.osmium.build.model.Build
+import net.integr.osmium.build.model.BuildJobState
 import net.integr.osmium.build.model.BuildSubstitution
 import net.integr.osmium.build.repository.BuildRepository
+import net.integr.osmium.build.repository.BuildJobRepository
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateType
@@ -32,6 +34,7 @@ import java.time.Instant
 @Transactional(readOnly = true)
 class BuildService(
     private val repository: BuildRepository,
+    private val jobs: BuildJobRepository,
     private val schematics: SchematicRepository,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
@@ -115,10 +118,22 @@ class BuildService(
         return build.toResponse()
     }
 
+    /**
+     * Removes a plan.
+     *
+     * **Refused while a job of it is active.** A job pins its own copy of the anchor and the rules,
+     * so deleting the plan underneath one would not disturb the agents placing blocks — it would
+     * take away the row saying what they are building, and cascade the job away with it. Pausing is
+     * a decision somebody should make deliberately rather than as a side effect of tidying up.
+     */
     @Transactional
     fun delete(id: Long) {
         val build = load(id)
         val name = build.name
+
+        check(!jobs.existsByBuildIdAndState(id, BuildJobState.ACTIVE)) {
+            "'$name' is being built; pause the job before removing the plan"
+        }
 
         repository.delete(build)
 

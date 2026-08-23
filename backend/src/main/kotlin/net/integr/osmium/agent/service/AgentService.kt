@@ -15,6 +15,7 @@ import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.activity.model.ActivityScope
 import net.integr.osmium.activity.model.ActivitySeverity
 import net.integr.osmium.activity.service.ActivityService
+import net.integr.osmium.build.service.BuildJobService
 import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.host.repository.HostRepository
 import net.integr.osmium.liveupdates.LiveUpdateEvent
@@ -48,6 +49,7 @@ class AgentService(
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
     private val activityService: ActivityService,
+    private val buildJobs: BuildJobService,
     private val properties: AgentProperties,
 ) {
     fun findAll(): List<AgentResponse> =
@@ -155,6 +157,11 @@ class AgentService(
         // Read the label before the delete: it is the only thing that makes the entry legible after.
         val label = agent.label
         val hostName = agent.host.name
+
+        // Before the delete, so the segments go back to the pool rather than being left assigned to
+        // a null the foreign key put there. The alternative is a live segment nobody owns and no
+        // interface can offer to reassign.
+        buildJobs.releaseSegmentsOf(agent)
 
         agentRepository.delete(agent)
         // Otherwise the limiter's map keeps a bucket per agent that has ever existed in this process.

@@ -215,7 +215,12 @@ changes automatically.
 | `GET` | `/api/builds`, `/api/builds/{id}` | `schematic.read` (a plan: where a schematic goes, and what out of) |
 | `POST` | `/api/builds` | `schematic.write` (placement and substitutions both settleable later) |
 | `PATCH` | `/api/builds/{id}` | `schematic.write` (omitted fields are left alone; `unplace` clears a placement) |
-| `DELETE` | `/api/builds/{id}` | `schematic.delete` (the coordinates and the rules go with it) |
+| `DELETE` | `/api/builds/{id}` | `schematic.delete` (the coordinates and the rules go with it; **409** while a job is building) |
+| `GET` | `/api/jobs`, `/api/jobs/{id}` | `agent.read` (a job: a plan frozen and being carried out; `buildId` filters) |
+| `POST` | `/api/builds/{buildId}/jobs` | `agent.run` (freezes the plan and hands out the pieces; the agents *are* the part count) |
+| `POST` | `/api/jobs/{id}/pause`, `/resume` | `agent.run` (stops it keeping its crew, and picks it up again) |
+| `DELETE` | `/api/jobs/{id}` | `agent.delete` (clears the record and frees the crew; **409** while it is still building) |
+| `POST`/`DELETE` | `/api/jobs/{jobId}/segments/{segmentId}/assignment` | `agent.run` (give a piece to an agent, or take it back) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -509,6 +514,15 @@ on REST, where they are node-gated and audited.
 | `permissions` | `user.read.self` | the recipient's own account | replaces what it may do |
 | `schematic` | `schematic.read` | the resource, in the shape REST returns it | replaces it in place |
 | `schematic-removed` | `schematic.read` | `{ id }` | drops it |
+| `build` | `schematic.read` | the plan, in the shape REST returns it | replaces it in place |
+| `build-removed` | `schematic.read` | `{ id }` | drops it |
+| `build-job` | `agent.read` | the job and its segments | replaces it in place |
+| `build-job-removed` | `agent.read` | `{ id }` | drops it |
+
+`build-job` is gated on `agent.read` rather than on the schematic node its plan uses, because what
+it carries is which agents are on which piece: reading designs does not entitle you to read the
+fleet. It also moves with nobody watching — a segment is freed the moment its agent leaves the game,
+and handed back the moment it returns.
 
 `schematic` is the only event here that fires while nothing has changed in the world: a large file
 takes minutes to arrive and minutes more to read, and without it the interface shows a row saying
@@ -879,6 +893,10 @@ src/main/resources/db/migration/
   V11__builds.sql                  build plans: where a schematic stands and what it is built of
   V12__agent_connecting.sql        CONNECTING, and the timestamp that stops it lasting forever
   V13__setup_cancel_audit.sql      AGENT_SETUP_CANCEL added to the audit action constraint
+  V14__build_runs.sql              jobs and their segments: a plan frozen and being carried out
+  V15__build_run_delete_audit.sql  clearing a finished one away, as an audit action
+  V16__build_run_pause.sql         cancel becomes pause; one live segment per agent
+  V17__build_jobs_rename.sql       run becomes job — `agent.run` already meant something else
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -1126,11 +1144,71 @@ drives no agent by existing; the moment that changes is dispatch, which is `agen
 sits with `schematic.delete`, because it is not the reverse of creating it — the coordinates and the
 rule set go with it.
 
-**Nothing derived is stored or served.** The offset a placement implies, the material totals once
-substitutions are applied, the world bounds of a segment: all of it is arithmetic over the plan and
-the index, so it is computed where it is read. Same reasoning as the split, which is a pure function
-of the index and its two arguments and is never persisted. The frontend does that arithmetic today
-(`lib/placement.ts`, specced); the backend will do the same when there is a segment to dispatch.
+**Nothing derived is stored or served *on the plan*.** The offset a placement implies and the
+material totals once substitutions are applied are arithmetic over the plan and the index, so they
+are computed where they are read. The split is the same: a pure function of the index and its two
+arguments, recomputed on every `GET`. What changes that is a **run** — see below — which is the one
+place a division is written down, because the moment it becomes work somebody is doing it needs an
+identity to hang progress off.
+
+## A job is a plan being carried out
+
+`build_jobs` is one execution of one build, on one server, against a **frozen** division of it. The
+plan stays editable while agents are working from it, so a job copies what it needs — the anchor,
+the substitutions, and the schematic it was divided from — and reads nothing back through
+`build_id`. An operator editing a plan mid-job is editing the *next* job, which is the only reading
+that does not leave half a building under one rule set and half under another.
+
+**Job, not run.** `agent.run` is the permission for operating the fleet and "running the fleet" is
+what an operator does all day; a third meaning for the same word, sitting next to both, was one
+reading too many. Job is the word for a unit of dispatched work and collides with nothing.
+
+The segments are rows for the same reason the job is. A recomputed segment has no identity, and
+progress has to attach to something; they are stored in **world coordinates** with the anchor
+already applied, and half-open, so a host is told a box and does no transform of its own.
+
+**One live job per build per server**, enforced by a partial unique index — two would claim the same
+blocks in the same place for two sets of agents, and only the database sees both requests. **One
+live segment per agent** is enforced the same way: a bot cannot be in two places, and the version
+that looks reasonable in an interface is two segments of the *same* build. A job also pins its
+schematic so that deleting *or re-reading* one can be refused while it is live: re-analysis looks
+harmless and rewrites the very grid the segments were cut out of.
+
+### Three states, and none of them a dead end
+
+`ACTIVE` is building. `PAUSED` is stopped and resumable. `DONE` is finished, and is the only one
+with a finishing time.
+
+Cancel used to be the second of those and was a mistake worth recording: it stopped a job and then
+left nothing to do with it but delete it, so an operator performed two acts to express one, and the
+work that had been divided and crewed could not be picked up again. Pause keeps the segments, the
+assignees and the counts, and resuming is one call.
+
+**A paused job keeps holding its crew.** That is the honest reading — those agents are on this job —
+and it is what makes resuming a single act rather than a reassignment of everybody. The way out is
+named in the refusal: release the segment, or delete the job.
+
+**There is no failed job.** One with failed segments is still `ACTIVE` and needs an operator, because
+deciding it is over means picking how many failures are too many and there is no honest number.
+
+### Losing a builder is not losing the work
+
+An agent that leaves the game has its segments returned to `PENDING`, never `FAILED`, and its last
+reported block count is deliberately kept — those blocks are still standing, and the number stays
+the last thing anybody observed until the next agent surveys the box itself.
+
+An agent that comes **back** is given a waiting segment from an active job on its own server,
+lowest ordinal first. Without that half, a reconnect left an agent standing beside the build it had
+been on until somebody noticed and reassigned it by hand — for every agent, after every blip. A
+paused job is skipped: somebody stopped it deliberately, and quietly re-crewing it would undo that.
+
+Starting one takes **agents, not a part count**: how many pieces a build divides into is how many
+agents are carrying them, and the server is derived from the agents rather than asked for. Both
+would otherwise be a second place to say something the request already says.
+
+**Nothing is dispatched yet.** There is no `build_segment` command and no way to serve a segment's
+blocks, so a segment is assigned and stays assigned. Everything up to that point is real, which is
+why the missing piece is a wire message rather than a model.
 
 ## What a pass leaves behind
 

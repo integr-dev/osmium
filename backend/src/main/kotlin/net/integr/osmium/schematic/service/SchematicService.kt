@@ -2,6 +2,8 @@ package net.integr.osmium.schematic.service
 
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.service.AuditService
+import net.integr.osmium.build.model.BuildJobState
+import net.integr.osmium.build.repository.BuildJobRepository
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateType
@@ -40,6 +42,8 @@ class SchematicService(
     private val properties: SchematicProperties,
     private val index: SchematicIndexRepository,
     private val queue: SchematicAnalysisQueue,
+    /** Only ever asked whether a job is live — see [checkNotBuilding]. */
+    private val jobs: BuildJobRepository,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
 ) {
@@ -260,6 +264,10 @@ class SchematicService(
             "'${schematic.name}' is ${schematic.status.name.lowercase()}, so it is already being read"
         }
         check(storage.exists(id)) { "The file for '${schematic.name}' is missing from storage" }
+        // A job froze a division of the current index. Rewriting the cells underneath it would
+        // leave segments whose block counts describe a grid that no longer exists — and unlike a
+        // delete, nothing about this one would look broken afterwards.
+        checkNotBuilding(id, schematic.name, "re-read")
 
         schematic.status = SchematicStatus.PENDING
         schematic.analysedBytes = 0
@@ -296,6 +304,8 @@ class SchematicService(
         val schematic = load(id)
         val name = schematic.name
 
+        checkNotBuilding(id, name, "removed")
+
         repository.delete(schematic)
         // After the row, not before. A file with no row is swept up on the next boot; a row with no
         // file is a schematic that lists, opens and fails on everything.
@@ -308,6 +318,19 @@ class SchematicService(
             detail = "Schematic and its file removed",
         )
         broker.publish(LiveUpdateEvent(type = LiveUpdateType.SCHEMATIC_REMOVED, data = mapOf("id" to id)))
+    }
+
+    /**
+     * Refuses anything that would move the ground under a live job.
+     *
+     * A job pins the schematic it was divided from precisely so this question can be asked. Both
+     * callers are irreversible in their own way: a delete takes the file, and a re-read replaces
+     * the occupancy index the segments were cut out of.
+     */
+    private fun checkNotBuilding(id: Long, name: String, verb: String) {
+        check(!jobs.existsBySchematicIdAndState(id, BuildJobState.ACTIVE)) {
+            "'$name' is being built right now, so it cannot be $verb"
+        }
     }
 
     private fun load(id: Long): Schematic =

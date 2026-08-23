@@ -340,6 +340,8 @@ export const en = {
     serverLaterHint: 'Leave blank to decide later. An agent can be set up before it has anywhere to play.',
     noServer: 'No server',
     notLinked: 'Not set up',
+    /** The tooltip behind the substituted badge — which piece of which build. */
+    buildingOn: "Segment {ordinal} of '{build}'",
     setServer: 'Server',
     setServerTitle: 'Where should {name} play?',
     setServerHint: 'The account is the same account wherever it joins, so this changes nothing about its credentials.',
@@ -374,6 +376,64 @@ export const en = {
   },
 
   /** A placeholder screen. Nothing is built behind it yet. */
+  /**
+   * Build jobs: a plan frozen and being carried out.
+   *
+   * The vocabulary is deliberately different from the plan's. A plan is *placed* and *substituted*;
+   * a job is *started*, its pieces are *assigned*, and it is *paused* rather than stopped — because
+   * a job that has been divided and crewed is something you come back to, not something you throw
+   * away. Deleting one is a separate act, and the only one that is final.
+   */
+  jobs: {
+    /** Said once at the top of the panel, not as a caption under every stalled progress bar. */
+    awaitingHost: 'Segments are assigned but not yet sent: the host cannot receive work yet. Everything up to that point is real.',
+    empty: 'Nothing has been built yet. Start a job from the Schematics tab.',
+    subtitle: '{schematic} on {server}',
+    startedBy: 'Started by {who}, {at}',
+    anchor: 'Anchored at {x}, {y}, {z}',
+    placed: '{placed} of {total} blocks',
+    waiting: '{count} segment(s) waiting for somebody to build them',
+    started: "Building '{name}' in {count} segment(s).",
+    pause: 'Pause',
+    resume: 'Resume',
+    paused: "Paused '{name}'. Its builders stay on it.",
+    resumed: "Resumed '{name}'.",
+    /** Said on the card, because this is where somebody looks when a bot will not take other work. */
+    pausedNote: 'Stopped, and still holding its builders. Resume it, or delete it to free them.',
+    remove: 'Delete',
+    removed: "Deleted '{name}'. What it did is still in the audit trail.",
+    segment: 'Segment',
+    box: 'From → to',
+    blocks: 'Blocks',
+    assignee: 'Builder',
+    assignTo: 'Assign to…',
+    nobodyAvailable: 'Nobody free on this server',
+    unassigned: 'Unassigned',
+    release: 'Release',
+    released: 'Segment {ordinal} is free again.',
+    assigned: 'Segment {ordinal} assigned.',
+    /** What is still missing before a plan can be handed to anybody. */
+    needNode: 'You may design a build but not dispatch the fleet.',
+    needPlan: 'Save a plan first — a build needs somewhere to stand.',
+    needPlacement: 'Place the plan before building it.',
+    state: {
+      ACTIVE: 'Building',
+      PAUSED: 'Paused',
+      DONE: 'Built',
+    },
+    /**
+     * Per segment. 'Assigned' and 'Building' are separate words even though nothing dispatches yet:
+     * the day a host can be sent work, the difference between having been given a piece and having
+     * started it is the first thing an operator will look for.
+     */
+    segmentState: {
+      PENDING: 'Free',
+      ASSIGNED: 'Assigned',
+      BUILDING: 'Building',
+      DONE: 'Built',
+      FAILED: 'Failed',
+    },
+  },
   operations: {
     title: 'Operations',
     subtitle: 'Run work across the fleet.',
@@ -382,6 +442,7 @@ export const en = {
 
     /** The three things this screen does, as tabs. Nouns: they are places, not commands. */
     tabSchematics: 'Schematics',
+    tabJobs: 'Jobs',
     tabServers: 'Servers',
     tabPower: 'Connections',
 
@@ -442,7 +503,6 @@ export const en = {
     worldCoords: 'World coordinates, as placed by {plan}',
     fileCoords: "The schematic's own coordinates — nothing has placed it yet",
     startBuilding: 'Start building',
-    awaitingHost: 'Waiting on the host to support building.',
     subtitle: 'What the fleet builds from.',
     empty: 'No schematics yet. Upload a .litematic or .schem to start.',
     filterPlaceholder: 'Search schematics',
@@ -731,6 +791,11 @@ export const en = {
     NEEDS_RELINK: 'Needs sign-in',
     CONNECT_FAILED: 'Connection failed',
     STALE: 'Unknown',
+    /**
+     * Not a state the backend has. Shown in place of ONLINE for an agent holding a piece of a run,
+     * because building already says in game and the more specific fact is the useful one.
+     */
+    BUILDING: 'Building',
   },
 
   auditAction: {
@@ -760,6 +825,9 @@ export const en = {
     BUILD_CREATE: 'Build planned',
     BUILD_UPDATE: 'Build plan changed',
     BUILD_DELETE: 'Build plan deleted',
+    BUILD_JOB_START: 'Build started',
+    BUILD_JOB_PAUSE: 'Build cancelled',
+    BUILD_JOB_DELETE: 'Build record removed',
   },
 
   /**

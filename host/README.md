@@ -313,9 +313,19 @@ current. Nothing needs to be sent to clear them.
 `STALE` is derived from the heartbeat, because a host that can talk to the backend is by definition
 not stale.
 
-> **Blocks placed and the current task are not consumed yet** — they belong with work assignment,
-> which does not exist. Extra payload keys are accepted and ignored, so sending them early is
-> harmless but does nothing.
+> **Blocks placed and the current task are still not consumed** — but the half of work assignment
+> that lives on the backend now exists, so this is closer than it was.
+>
+> A **job** is a build plan frozen: its own copy of the anchor and the substitutions, divided into
+> segments that are stored rows in world coordinates, each assigned to one agent. What is missing is
+> the two messages that would carry one to you — a `build_segment` command, and a `build_progress`
+> event coming back — plus a way for you to fetch the blocks in a segment's box. **None of that is
+> settled yet, so do not implement against it.** It is written here so the shape is not a surprise:
+> a segment is a half-open box in world coordinates, and the backend intends to serve its blocks
+> with the substitutions already applied, so a host places what it is given and decodes nothing.
+>
+> Extra payload keys are still accepted and ignored, so sending them early is harmless but does
+> nothing.
 
 ### 4.3 `chat`
 

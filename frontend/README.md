@@ -54,6 +54,12 @@ Two things are still mock. **Build progress** — blocks placed, sectors, throug
 hangs off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not
 mixed in one object. Marked in `src/stores/agents.ts`.
 
+**Jobs are not part of that mock.** `agentStore.jobs` is real: a plan frozen, divided into segments,
+each assigned to an agent, all of it stored by the backend. What is still missing is a host that can
+be sent a segment and report blocks against it, so every job reads 0% — which the Jobs panel states
+outright. The two live side by side in one store and are easy to confuse: `agent.build.blocksPlaced`
+is invented, `job.segments[].blocksPlaced` is a real column nothing has written to yet.
+
 **And marked on the screen, not only in the source.** Configuration has carried a banner since it
 was built; the dashboard had nothing, while being both the landing page and the most numerically
 confident screen in the application — its invented figures roll, animate and carry sparklines
@@ -71,10 +77,11 @@ What is meant to survive that mock is the **shape**: fields are declared as a sc
 generically by type, so adding a setting later is an entry in that file plus a copy key, not another
 block of markup. The field list itself is a placeholder, not a specification.
 
-**Schematics are real**: uploaded, read through, measured and divided. What no schematic has yet is
-an agent building it — carrying a segment to a host needs the host side, which does not exist. So
-the pipeline stops at a division nothing is sent, and the last step says so rather than offering a
-button that would do nothing.
+**Schematics are real**: uploaded, read through, measured, divided, and started. A job records what
+is being built, where, by whom and how far along. What no schematic has yet is an agent actually
+placing a block — carrying a segment to a host needs the host side, which does not exist — so the
+pipeline now stops one step later, with segments assigned and nothing sent. Both the last wizard
+step and the Jobs panel say so rather than leaving it to be inferred.
 
 **Operations** holds everything done to the fleet as a group. See below.
 
@@ -182,13 +189,14 @@ which is markup worth having exactly once.
 
 ## Operations
 
-Three tabs, because they are the same act with a different verb — pick a group, then do one thing to
+Four tabs, because they are the same act with a different verb — pick a group, then do one thing to
 all of it — and because an operator moves between them in one sitting: choose what to build, point
 the agents at the server, bring them in.
 
 | Tab | What it does |
 |---|---|
-| Schematics | upload, read, divide between agents |
+| Schematics | upload, read, divide between agents, start building |
+| Jobs | what the fleet is building: segments, who is on each, how far along |
 | Servers | point a group of agents at one Minecraft server |
 | Connections | bring a group in or out of game |
 
@@ -196,7 +204,7 @@ Each tab is **node-gated**. A viewer reaches the page for the library and is not
 would answer 403 — an interface offering what it will refuse reads as broken rather than as
 restricted.
 
-All three share `AgentPicker.vue` in the same column at the same width, so moving between them does
+The first three share `AgentPicker.vue` in the same column at the same width, so moving between them does
 not move the thing being reached for. Two of them **lock the selection**, which the picker has to
 know about: choosing a builder narrows the list to that agent's server, and selecting all would
 otherwise leave agents selected but invisible — the count saying nine while the list shows four.
@@ -225,6 +233,36 @@ second control for it would be a way to disagree with the agents.
 **The count is the selection.** Asking for a number of agents *and* which agents is asking the same
 question twice, and lets the two disagree.
 
+### Starting a job
+
+The last step's **Start building** is live: it freezes the plan into a job — its own copy of the
+anchor and the substitutions, divided into segments assigned to the chosen agents — and moves the
+operator to the Jobs tab. Which of its four preconditions is missing is *said*, not left to a
+disabled button: the node, a saved plan, a placement, and at least one builder.
+
+The division on screen is **not** sent. It is a pure function of the index, the mode and the number
+of agents, and the backend recomputes it as it writes the segments down; sending the one on screen
+would ask it to trust a division a stale tab produced.
+
+**Nothing is dispatched yet.** A segment is assigned and stays assigned, because carrying one to a
+host needs a wire message that does not exist. The Jobs panel says so at the top rather than leaving
+an operator to infer it from a progress bar that never moves.
+
+Jobs live in the **fleet store**, not in the panel that shows them. An agent’s assignment is a fact
+about the agent — the fleet list, the sidebar, the picker and its own page all read it — and two
+copies would disagree the first time one was refreshed.
+
+**Building replaces the state badge rather than sitting beside it.** There is no such backend state
+and never will be: an agent is `ONLINE` and separately holds a piece of a job. Shown as two badges
+it invites somebody to explain why an agent is both; shown as one it says the more specific of two
+true things, and building already says in game. Substituted only over `ONLINE`, so a stale
+assignment can never paint a disconnected agent as busy — and it is the same substitution for the
+sidebar dot, which has room for exactly one colour.
+
+**Pause, resume, delete — and no cancel.** Cancel stopped a job and then left nothing to do with it
+but delete it, so the interface offered two buttons for one decision and the divided, crewed work
+could not be picked up again. A paused job keeps its crew, which the card says outright, because
+that is what an operator needs to know when a bot will not take other work.
 ### The plan: where it goes, and what out of
 
 Placement and substitutions belong to a **build**, not to the schematic — the same schematic is
@@ -233,7 +271,8 @@ schematic rather than editing one set of fields hanging off the file.
 
 **Placement does not gate the rest of the pipeline.** A plan usually exists before anybody has stood
 in the world and read a coordinate off the screen, and requiring it would stop an operator dividing a
-build they have not sited yet. Dispatch is where it becomes mandatory, and dispatch does not exist.
+build they have not sited yet. Starting a job is where it becomes mandatory — a job has to know
+where the blocks go — and that is the only step that refuses without it.
 
 What the plan comes to is computed here, not fetched — `lib/placement.ts`, and specced, because it
 is the part that can be wrong without looking wrong. Two rules in it are worth stating:

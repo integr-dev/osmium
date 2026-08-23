@@ -58,7 +58,7 @@ const { t, n } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 
-const emit = defineEmits<{ done: [string]; failed: [string] }>()
+const emit = defineEmits<{ done: [string]; failed: [string]; started: [] }>()
 
 const STEPS = ['schematic', 'plan', 'agents', 'split'] as const
 type Step = (typeof STEPS)[number]
@@ -498,6 +498,46 @@ async function runSplit() {
     emit('failed', failure instanceof Error ? failure.message : t('errors.generic'))
   } finally {
     splitting.value = false
+  }
+}
+
+const starting = ref(false)
+
+/**
+ * What is still missing before this plan can be handed to anybody, or null when nothing is.
+ *
+ * Said rather than only refused. Every one of these is a state the wizard can legitimately be in —
+ * a plan usually exists before anybody has stood in the world and read a coordinate — so a disabled
+ * button with no explanation would be the interface declining to say which of them applies.
+ */
+const blocking = computed<string | null>(() => {
+  if (!auth.can('agent.run')) return t('jobs.needNode')
+  if (!plan.value) return t('jobs.needPlan')
+  if (!plan.value.placement) return t('jobs.needPlacement')
+  if (!builders.value.length) return t('schematics.needBuilders')
+  return null
+})
+
+/**
+ * Freezes the plan and hands the pieces out.
+ *
+ * The split is not sent. It is a pure function of the index, the mode and the number of agents, and
+ * the backend recomputes it as it writes the segments down — sending the one on screen would be
+ * asking it to trust a division a stale tab could have produced.
+ */
+async function startBuilding() {
+  const build = plan.value
+  if (!build || blocking.value) return
+
+  starting.value = true
+  try {
+    const job = await agentStore.beginJob(build.id, mode.value, [...builders.value])
+    emit('done', t('jobs.started', { name: job.buildName, count: job.segments.length }))
+    emit('started')
+  } catch (failure) {
+    emit('failed', failure instanceof Error ? failure.message : t('errors.generic'))
+  } finally {
+    starting.value = false
   }
 }
 
@@ -1120,9 +1160,16 @@ function progressOf(schematic: SchematicResponse): string | null {
       </button>
 
       <div v-else class="ml-auto flex items-center gap-3">
-        <span class="text-xs opacity-50">{{ t('schematics.awaitingHost') }}</span>
-        <button type="button" class="btn btn-primary btn-sm gap-2" disabled>
-          <Hammer class="size-4" />
+        <!-- Which of the four preconditions is missing, rather than a button that only refuses. -->
+        <span v-if="blocking" class="text-xs opacity-50">{{ blocking }}</span>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm gap-2"
+          :disabled="!!blocking || starting"
+          @click="startBuilding"
+        >
+          <span v-if="starting" class="loading loading-spinner loading-xs" />
+          <Hammer v-else class="size-4" />
           {{ t('schematics.startBuilding') }}
         </button>
       </div>

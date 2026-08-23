@@ -4,9 +4,12 @@ import { useI18n } from 'vue-i18n'
 import {
   Bot as Agent,
   Download,
+  Hammer,
   KeyRound,
   MapPin,
   MessageSquare,
+  Pause,
+  Play,
   Power,
   ScrollText,
   Server,
@@ -47,6 +50,10 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
   BUILD_CREATE: MapPin,
   BUILD_UPDATE: MapPin,
   BUILD_DELETE: Trash2,
+  BUILD_JOB_START: Hammer,
+  BUILD_JOB_PAUSE: Pause,
+  BUILD_JOB_RESUME: Play,
+  BUILD_JOB_DELETE: Trash2,
   SCHEMATIC_UPLOAD: Upload,
   SCHEMATIC_RENAME: SquarePen,
   SCHEMATIC_DELETE: Trash2,
@@ -82,6 +89,14 @@ const ACTION_BADGE: Record<AuditAction, string> = {
   BUILD_UPDATE: 'badge-ghost',
   // Takes the coordinates and the substitutions with it; making the plan again is not undoing this.
   BUILD_DELETE: 'badge-error badge-soft',
+  // Putting agents to work is fleet operation, not destruction — and stopping them leaves
+  // everything already placed standing, so neither is red.
+  BUILD_JOB_START: 'badge-success badge-soft',
+  BUILD_JOB_PAUSE: 'badge-ghost',
+  BUILD_JOB_RESUME: 'badge-success badge-soft',
+  // Takes the segments and their reported counts with it — though not the two entries above, which
+  // are what makes clearing the record a tidy-up rather than a way to erase what the fleet did.
+  BUILD_JOB_DELETE: 'badge-error badge-soft',
   SCHEMATIC_UPLOAD: 'badge-ghost',
   SCHEMATIC_RENAME: 'badge-ghost',
   // Takes the file, and with it every plan and every measure of progress computed from it.

@@ -3,8 +3,8 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot as Agent } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
-import { STATE_DOT, stateLabel } from '../lib/agentState'
-import type { FleetAgent } from '../stores/agents'
+import { agentDot, agentStateLabel } from '../lib/agentState'
+import { useAgentStore, type FleetAgent } from '../stores/agents'
 
 /**
  * Checkboxed list of agents, for the screens that act on several at once.
@@ -29,6 +29,7 @@ const props = withDefaults(
 )
 
 const { t } = useI18n()
+const agentStore = useAgentStore()
 
 const allSelected = computed(
   () => props.agents.length > 0 && selected.value.length === props.agents.length,
@@ -98,11 +99,11 @@ watch(
             class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5"
           >
             <input v-model="selected" type="checkbox" :value="agent.id" class="checkbox checkbox-sm" />
-            <span class="relative shrink-0" :title="stateLabel(agent.state)">
+            <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))">
               <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
               <span
                 class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
               ></span>
             </span>
             <span class="min-w-0 flex-1">
@@ -137,13 +138,13 @@ watch(
             v-for="agent in unavailable"
             :key="agent.id"
             class="flex items-center gap-3 px-2 py-1.5"
-            :title="stateLabel(agent.state)"
+            :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))"
           >
             <span class="relative shrink-0">
               <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
               <span
                 class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                :class="STATE_DOT[agent.state] ?? 'bg-base-content/30'"
+                :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
               ></span>
             </span>
             <span class="min-w-0 flex-1">
