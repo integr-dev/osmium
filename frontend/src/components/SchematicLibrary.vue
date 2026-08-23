@@ -32,10 +32,12 @@ import {
 import type { BuildResponse } from '../api/builds'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
-import type { Box as Box3d } from '../lib/box3d'
+import type { Box as Box3d, Vec3 } from '../lib/box3d'
 import { blockColour } from '../lib/blockColours'
 import { blockName } from '../lib/blockNames'
+import { blocksToPlace, offsetOf, plannedMaterials, toWorld } from '../lib/placement'
 import { bytes } from '../lib/bytes'
+import { useQueryTab, useQueryValue } from '../lib/queryState'
 
 /**
  * Starting a build: choose what, choose who, divide it up.
@@ -56,12 +58,22 @@ const { t, n } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 
-const emit = defineEmits<{ failed: [string] }>()
+const emit = defineEmits<{ done: [string]; failed: [string] }>()
 
 const STEPS = ['schematic', 'plan', 'agents', 'split'] as const
 type Step = (typeof STEPS)[number]
 
-const step = ref<Step>('schematic')
+/**
+ * Which step, in the URL.
+ *
+ * Held in a `ref` this cost the three things a wizard can least afford: it could not be linked, a
+ * reload dropped the operator back at step one, and **browser Back left Operations entirely** —
+ * part way through a four-step pipeline, which is precisely where Back gets pressed.
+ *
+ * See `wanted` and `step` below: what the URL asks for and what the screen can honestly show are
+ * two different things once anyone can type a step into the address bar.
+ */
+const wanted = useQueryTab<Step>('step', STEPS, 'schematic')
 
 /**
  * The plan being worked under, once one has been saved.
@@ -73,7 +85,29 @@ const plan = ref<BuildResponse | null>(null)
 const uploadOpen = ref(false)
 
 const schematics = ref<SchematicResponse[]>([])
-const selectedId = ref<number | null>(null)
+
+/**
+ * Which schematic, also in the URL — otherwise a linked `?step=plan` reloads into "pick one", and
+ * the step in the address bar describes nothing.
+ *
+ * Replaced rather than pushed, unlike the step. Clicking down a list of rows is refining the view
+ * rather than moving through it, and pushing would make Back walk every row that was tried before
+ * it reached the step the operator actually wanted.
+ */
+const selectedParam = useQueryValue('schematic')
+
+const selectedId = computed<number | null>({
+  // Anything can be typed into a query string. A non-numeric one reads as nothing selected rather
+  // than as NaN, which would otherwise reach every comparison downstream and match nothing quietly.
+  get: () => {
+    const raw = selectedParam.value
+    return raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
+  },
+  set: (value) => {
+    selectedParam.value = value === null ? null : String(value)
+  },
+})
+
 const materials = ref<Array<{ name: string; blocks: number }>>([])
 
 const query = ref('')
@@ -281,16 +315,53 @@ const split = ref<SplitResponse | null>(null)
  * The segments, as boxes. Null until a split has been asked for, which is what the viewer uses to
  * decide whether it is showing the schematic or its division.
  */
+/**
+ * What the plan moves a schematic coordinate by, or zero while nothing is placed.
+ *
+ * The backend divides the file, so a split comes back in the schematic's own space. The plan step
+ * exists precisely to say where that file stands in the world, so reading one set of coordinates in
+ * step two and a different set for the same corner in step four is the pipeline contradicting
+ * itself — and the numbers in step four are the ones somebody flies to.
+ */
+const worldOffset = computed<Vec3>(() => {
+  const placement = plan.value?.placement
+  const content = selected.value?.content
+  if (!placement || !content) return { x: 0, y: 0, z: 0 }
+
+  return offsetOf(placement, {
+    x: content.originX ?? 0,
+    y: content.originY ?? 0,
+    z: content.originZ ?? 0,
+  })
+})
+
+/**
+ * The whole schematic in world space, for the split step's empty state.
+ *
+ * `boxes` deliberately stays in file coordinates: the library labels its corners so an operator can
+ * read them off and type them into a placement, which only works if they are the file's own. Here
+ * the question is the opposite one, so the same box is offered shifted — and switching between the
+ * outline and its segments must not switch coordinate space underneath.
+ */
+const placedBoxes = computed<Box3d[]>(() =>
+  boxes.value.map((box) => ({
+    ...box,
+    min: toWorld(box.min, worldOffset.value),
+    max: toWorld(box.max, worldOffset.value),
+  })),
+)
+
 const splitBoxes = computed<Box3d[] | null>(() => {
   const segments = split.value?.segments
   if (!segments?.length) return null
 
+  const offset = worldOffset.value
   return segments.map((segment) => ({
     id: `segment-${segment.ordinal}`,
     label: String(segment.ordinal),
     blocks: segment.blocks,
-    min: { x: segment.minX, y: segment.minY, z: segment.minZ },
-    max: { x: segment.maxX, y: segment.maxY, z: segment.maxZ },
+    min: toWorld({ x: segment.minX, y: segment.minY, z: segment.minZ }, offset),
+    max: toWorld({ x: segment.maxX, y: segment.maxY, z: segment.maxZ }, offset),
   }))
 })
 
@@ -311,23 +382,46 @@ const canAdvance = computed(() =>
         : false,
 )
 
+/**
+ * The furthest step the current state can actually fill, as an index into [STEPS].
+ *
+ * Nothing chosen means only the library; a schematic that has been read unlocks the plan and the
+ * agent picker; a set of builders unlocks the division. The same conditions `canAdvance` uses, said
+ * as a ceiling rather than one step at a time.
+ */
+const furthest = computed(() => (!ready.value ? 0 : parts.value > 0 ? 3 : 2))
+
+/**
+ * The step actually shown: what the URL asked for, clamped to what can be shown.
+ *
+ * `go` guards forward movement *within* the page, and that was enough while the step lived in a
+ * `ref` nobody outside could write. Once it is in the address bar anyone can arrive at `?step=split`
+ * with nothing selected — from a bookmark taken mid-pipeline, a shared link, or Back after the
+ * selection was cleared — and land on a panel with nothing in it, which reads as the screen being
+ * broken rather than as a step that is not ready.
+ *
+ * Clamping rather than redirecting: the URL is left saying what was asked for, so choosing a
+ * schematic opens the step that was wanted instead of making the operator ask a second time.
+ */
+const step = computed<Step>(() => STEPS[Math.min(STEPS.indexOf(wanted.value), furthest.value)]!)
+
 function go(to: Step) {
   // Backwards is always allowed; forwards only past a step that has been answered. A step reached
   // without its answer is a panel that cannot do anything, which reads as the screen being broken.
   const target = STEPS.indexOf(to)
   const here = STEPS.indexOf(step.value)
   if (target > here && !canAdvance.value) return
-  step.value = to
+  wanted.value = to
 }
 
 function next() {
   const at = STEPS.indexOf(step.value)
-  if (at < STEPS.length - 1 && canAdvance.value) step.value = STEPS[at + 1]!
+  if (at < STEPS.length - 1 && canAdvance.value) wanted.value = STEPS[at + 1]!
 }
 
 function back() {
   const at = STEPS.indexOf(step.value)
-  if (at > 0) step.value = STEPS[at - 1]!
+  if (at > 0) wanted.value = STEPS[at - 1]!
 }
 
 onMounted(async () => {
@@ -417,6 +511,23 @@ watch(selectedId, () => {
   plan.value = null
 })
 
+/**
+ * How many blocks this build actually places, which is not what the file contains.
+ *
+ * The agent step divided `content.blockCount` by the number of builders — the schematic's own
+ * total, before substitutions. An operator who had just told the previous step to place nothing for
+ * forty thousand beacons was still shown a division that included them, so the one number they
+ * would plan around was wrong by exactly the amount they had asked to leave out.
+ *
+ * The same arithmetic the planner's own "Blocks placed" stat shows, one step earlier. Falls back to
+ * the file's count while no plan is selected, since then there is nothing to subtract.
+ */
+const buildBlocks = computed(() => {
+  const inFile = selected.value?.content.blockCount ?? 0
+  if (!plan.value) return inFile
+  return blocksToPlace(plannedMaterials(materials.value, plan.value.substitutions))
+})
+
 /** Materials exist only once the file has been read, and only for the one being looked at. */
 watch(
   () => [selectedId.value, selected.value?.status] as const,
@@ -441,6 +552,7 @@ watch(
  */
 const pendingDelete = ref<SchematicResponse | null>(null)
 const deleteDialog = ref<HTMLDialogElement | null>(null)
+const removing = ref(false)
 
 function askToRemove(schematic: SchematicResponse) {
   pendingDelete.value = schematic
@@ -449,15 +561,22 @@ function askToRemove(schematic: SchematicResponse) {
 
 async function confirmRemove() {
   const schematic = pendingDelete.value
-  if (!schematic) return
+  if (!schematic || removing.value) return
 
+  removing.value = true
   try {
     await deleteSchematic(schematic.id)
     schematics.value = schematics.value.filter((item) => item.id !== schematic.id)
     if (selectedId.value === schematic.id) selectedId.value = null
+    // The only act on this tab whose outcome is not visible on the screen it happened on: an
+    // unselected row simply disappears from a list of thirty, and the file it took with it is
+    // gone for good. Upload, re-read and split all announce themselves by changing what is drawn,
+    // so adding banners for those would be noise rather than news.
+    emit('done', t('schematics.deleted', { name: schematic.name }))
   } catch (failure) {
     emit('failed', failure instanceof Error ? failure.message : t('errors.generic'))
   } finally {
+    removing.value = false
     deleteDialog.value?.close()
   }
 }
@@ -843,9 +962,26 @@ function progressOf(schematic: SchematicResponse): string | null {
               <Box class="text-primary size-4 shrink-0" />
               <span class="opacity-60">{{ t('schematics.buildingWhat') }}</span>
               <span class="font-medium">{{ selected?.name }}</span>
+              <!--
+                What the plan places, not what the file holds. Named as such when the two differ,
+                because a total that silently shrank would look like a miscount rather than like the
+                substitutions the operator asked for one step ago.
+              -->
               <span class="ml-auto tabular-nums opacity-60">
-                {{ n(selected?.content.blockCount ?? 0) }} {{ t('schematics.blocks').toLowerCase() }}
+                {{ n(buildBlocks) }} {{ t('schematics.blocks').toLowerCase() }}
               </span>
+            </p>
+
+            <p
+              v-if="plan && buildBlocks !== (selected?.content.blockCount ?? 0)"
+              class="text-warning -mt-1 text-xs"
+            >
+              {{
+                t('schematics.afterSubstitutions', {
+                  plan: plan.name,
+                  omitted: n((selected?.content.blockCount ?? 0) - buildBlocks),
+                })
+              }}
             </p>
 
             <p class="flex items-center gap-2">
@@ -860,7 +996,7 @@ function progressOf(schematic: SchematicResponse): string | null {
               <span class="opacity-60">{{ t('schematics.builders') }}</span>
               <span class="font-medium">{{ parts }}</span>
               <span class="ml-auto tabular-nums opacity-60">
-                {{ n(Math.round((selected?.content.blockCount ?? 0) / parts)) }}
+                {{ n(Math.round(buildBlocks / parts)) }}
                 {{ t('schematics.blocksEach') }}
               </span>
             </p>
@@ -940,9 +1076,19 @@ function progressOf(schematic: SchematicResponse): string | null {
 
           The shape is what the schematic *is*, and that question belongs to the library.
         -->
-        <BoxViewer :boxes="splitBoxes ?? boxes" :corners="!splitBoxes" />
+        <BoxViewer :boxes="splitBoxes ?? placedBoxes" :corners="!splitBoxes" />
 
-        <p class="text-xs opacity-50">{{ t('schematics.dragHint') }}</p>
+        <!--
+          Which space these coordinates are in. The backend divides the file, so a split arrives in
+          the schematic's own space, and the plan step exists to say where that file stands — two
+          steps reading different numbers for the same corner is the pipeline contradicting itself.
+          Shifted when a plan places it, and said either way, because "is this where I fly to" has no
+          answer an operator can infer from the numbers alone.
+        -->
+        <p class="text-xs opacity-50">
+          {{ plan?.placement ? t('schematics.worldCoords', { plan: plan.name }) : t('schematics.fileCoords') }}
+          · {{ t('schematics.dragHint') }}
+        </p>
       </div>
     </div>
 
@@ -996,9 +1142,9 @@ function progressOf(schematic: SchematicResponse): string | null {
           <button class="btn btn-ghost btn-sm" type="button" @click="deleteDialog?.close()">
             {{ t('common.cancel') }}
           </button>
-          <button class="btn btn-error btn-sm gap-2" type="button" @click="confirmRemove">
+          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removing" @click="confirmRemove">
             <Trash2 class="size-4" />
-            {{ t('schematics.delete') }}
+            {{ removing ? t('common.deleting') : t('schematics.delete') }}
           </button>
         </div>
       </div>

@@ -113,3 +113,28 @@ export function plannedMaterials(
 export function blocksToPlace(planned: PlannedMaterial[]): number {
   return planned.reduce((total, entry) => (entry.omitted ? total : total + entry.blocks), 0)
 }
+
+/**
+ * Whether two rule sets say the same thing, which is not the same as being written the same way.
+ *
+ * Here rather than in the planner because it is the same kind of judgement as everything else in
+ * this file, and because getting it wrong is invisible: it produces a form that insists it has
+ * unsaved changes forever, which reads as a broken save rather than as a broken comparison.
+ *
+ * Two things do not count as a difference. **The namespace** — a rule seeded from a material list
+ * carries `minecraft:stone` because that is what the file calls it, while the backend stores every
+ * rule on the bare id so its one-rule-per-block constraint means what it says. And **the order**,
+ * since substitutions come back as a collection with no promised order and a set of rules is not
+ * different for having been listed differently.
+ */
+export function sameSubstitutions(left: Substitution[], right: Substitution[]): boolean {
+  return canonical(left) === canonical(right)
+}
+
+function canonical(rules: Substitution[]): string {
+  return JSON.stringify(
+    rules
+      .map((rule) => ({ from: blockId(rule.from), to: rule.to === null ? null : blockId(rule.to) }))
+      .sort((a, b) => a.from.localeCompare(b.from)),
+  )
+}

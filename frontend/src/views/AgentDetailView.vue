@@ -33,7 +33,7 @@ import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
 
-const { t } = useI18n()
+const { t, n } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -155,6 +155,61 @@ async function run(action: () => Promise<void>) {
  */
 const loginMethods = computed(() => host.value?.loginMethods ?? [])
 
+/**
+ * Why each action is unavailable, or null when it is not.
+ *
+ * Connect carried five separate disabling conditions inline and showed none of them: the button was
+ * simply grey. The schematic wizard three files away does the opposite and says so out loud —
+ * *"a disabled button with no reason is the interface declining to explain itself"* — and the
+ * principle was right, it just had never been applied here.
+ *
+ * Ordered most fundamental first, so an unreachable host is named once rather than each action
+ * reporting whichever of its own preconditions it happened to check first. The same shape as
+ * `ChatPanel`'s `blocked`, which answers the same question for the send box.
+ */
+const setupBlocked = computed<string | null>(() => {
+  if (!agent.value) return null
+  if (!hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
+  if (agent.value.state === 'SETUP_PENDING') return t('agents.blockedSettingUp')
+  if (isOnline(agent.value)) return t('agents.blockedOnlineSetup')
+  return null
+})
+
+const connectBlocked = computed<string | null>(() => {
+  if (!agent.value) return null
+  if (!hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
+  if (agent.value.state === 'CONNECTING') return t('agents.blockedConnecting')
+  if (isOnline(agent.value)) return t('agents.blockedAlreadyOnline')
+  if (agent.value.state === 'SETUP_PENDING') return t('agents.blockedSettingUp')
+  if (agent.value.state === 'UNLINKED') return t('agents.blockedUnlinked')
+  if (!agent.value.serverAddress) return t('agents.blockedNoServer')
+  return null
+})
+
+const disconnectBlocked = computed<string | null>(() => {
+  if (!agent.value) return null
+  if (!hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
+  if (!isOnline(agent.value)) return t('agents.blockedNotOnline')
+  return null
+})
+
+/**
+ * The reasons worth printing under the row, without repeating one that applies to everything.
+ *
+ * Only for actions this operator can actually see: naming a precondition of a button that is not
+ * on their screen explains nothing and reads as a fault.
+ */
+const blockedReasons = computed(() => {
+  const shown = [
+    auth.can('agent.setup') ? setupBlocked.value : null,
+    auth.can('agent.run') ? connectBlocked.value : null,
+    auth.can('agent.run') ? disconnectBlocked.value : null,
+  ].filter((reason): reason is string => reason !== null)
+
+  // An unreachable host blocks all three and would otherwise be printed three times.
+  return [...new Set(shown)]
+})
+
 /** Chosen per setup rather than remembered: the list belongs to the host and can change under it. */
 function openSetup() {
   setupMethod.value = loginMethods.value[0]?.id ?? ''
@@ -192,19 +247,34 @@ function openServer() {
   serverDialog.value?.showModal()
 }
 
+/**
+ * Each of these guards on its own flag, and each disables its buttons for the round trip.
+ *
+ * They stayed live throughout, so a second press sent a second request. Harmless on a rename and
+ * not on a delete, and in every case the operator had no way to tell a slow request from an
+ * unresponsive button — which is exactly what invites the second press.
+ */
+const serverBusy = ref(false)
+const editBusy = ref(false)
+const removeBusy = ref(false)
+
 async function saveServer() {
-  if (!agent.value) return
+  if (!agent.value || serverBusy.value) return
+  serverBusy.value = true
   serverError.value = null
   try {
     await agentStore.assignServer(agent.value.id, serverDraft.value.trim() || null)
     serverDialog.value?.close()
   } catch (failure) {
     serverError.value = failure instanceof Error ? failure.message : t('errors.assignServer')
+  } finally {
+    serverBusy.value = false
   }
 }
 
 async function saveEdit() {
-  if (!agent.value) return
+  if (!agent.value || editBusy.value) return
+  editBusy.value = true
   editError.value = null
   try {
     await agentStore.updateAgent(agent.value.id, {
@@ -213,11 +283,14 @@ async function saveEdit() {
     editDialog.value?.close()
   } catch (failure) {
     editError.value = failure instanceof Error ? failure.message : t('errors.updateAgent')
+  } finally {
+    editBusy.value = false
   }
 }
 
 async function confirmRemove() {
-  if (!agent.value) return
+  if (!agent.value || removeBusy.value) return
+  removeBusy.value = true
   try {
     await agentStore.removeAgent(agent.value.id)
     removeDialog.value?.close()
@@ -225,6 +298,8 @@ async function confirmRemove() {
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : t('errors.removeAgent')
     removeDialog.value?.close()
+  } finally {
+    removeBusy.value = false
   }
 }
 </script>
@@ -389,7 +464,7 @@ async function confirmRemove() {
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
               <span class="block truncate text-sm tabular-nums">
-                {{ agent.build.blocksPlaced.toLocaleString() }}
+                {{ n(agent.build.blocksPlaced) }}
               </span>
             </span>
           </div>
@@ -477,25 +552,57 @@ async function confirmRemove() {
           {{ t('common.actions') }}
         </h2>
 
+        <!--
+          The way out of a setup that is never going to finish.
+
+          SETUP_PENDING is open-ended on purpose — the backend cannot see how far along a login is,
+          so nothing can honestly time it out — and that made it a dead end: a sign-in started on the
+          wrong machine, or one whose device code expired, left the agent pending forever with the
+          Set-up button disabled *because a setup was in progress*.
+
+          The copy is careful about what this does. It stops Osmium waiting; it does not reach into
+          the host and cancel anything, and a login finished afterwards still links the agent.
+        -->
+        <div
+          v-if="agent.state === 'SETUP_PENDING' && auth.can('agent.setup')"
+          role="status"
+          class="alert alert-info alert-soft items-start"
+        >
+          <KeyRound class="mt-0.5 size-4 shrink-0" />
+          <span class="min-w-0 flex-1">
+            <span class="block font-medium">{{ t('agents.pendingTitle', { host: agent.hostName }) }}</span>
+            <span class="block text-sm opacity-80">{{ t('agents.pendingBody') }}</span>
+          </span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs"
+            :disabled="busy"
+            @click="run(() => agentStore.cancelSetup(agent!.id))"
+          >
+            {{ t('agents.stopWaiting') }}
+          </button>
+        </div>
+
         <div class="flex flex-wrap gap-2">
+          <!--
+            Each carries its reason on the title as well as in the line under the row, so hovering a
+            grey button answers the question where it was asked.
+          -->
           <button
             v-if="auth.can('agent.setup')"
             class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || !hostReachable || agent.state === 'SETUP_PENDING' || isOnline(agent)"
+            :disabled="busy || setupBlocked !== null"
+            :title="setupBlocked ?? ''"
             @click="openSetup"
           >
             <KeyRound class="size-4" />
             {{ t('agents.setUp') }}
           </button>
-          <!--
-            No server is nowhere to connect to, and the backend refuses it with a 409. So does a
-            connect that is already out: the button says so rather than going quiet, because the
-            whole point of CONNECTING is that the wait is visible.
-          -->
           <button
             v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || !hostReachable || !agent.serverAddress || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING' || agent.state === 'CONNECTING'"
+            :disabled="busy || connectBlocked !== null"
+            :title="connectBlocked ?? ''"
             @click="run(() => agentStore.connect(agent!.id))"
           >
             <RotateCw class="size-4" :class="agent.state === 'CONNECTING' ? 'animate-spin' : ''" />
@@ -504,7 +611,8 @@ async function confirmRemove() {
           <button
             v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || !hostReachable || !isOnline(agent)"
+            :disabled="busy || disconnectBlocked !== null"
+            :title="disconnectBlocked ?? ''"
             @click="run(() => agentStore.disconnect(agent!.id))"
           >
             <Power class="size-4" />
@@ -525,6 +633,16 @@ async function confirmRemove() {
             {{ t('agents.chat') }}
           </button>
         </div>
+
+        <!--
+          Why the grey buttons are grey. Deduplicated, so an unreachable host — which blocks all
+          three — is stated once rather than three times.
+        -->
+        <ul v-if="blockedReasons.length" class="flex flex-col gap-1">
+          <li v-for="reason in blockedReasons" :key="reason" class="text-xs opacity-50">
+            {{ reason }}
+          </li>
+        </ul>
       </div>
     </div>
 
@@ -550,8 +668,10 @@ async function confirmRemove() {
           </div>
 
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
-            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="editBusy" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="editBusy">
+              {{ editBusy ? t('common.saving') : t('common.save') }}
+            </button>
           </div>
         </form>
       </div>
@@ -585,9 +705,9 @@ async function confirmRemove() {
           </div>
 
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent)">
-              {{ t('common.save') }}
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="serverBusy" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent) || serverBusy">
+              {{ serverBusy ? t('common.saving') : t('common.save') }}
             </button>
           </div>
         </form>
@@ -652,16 +772,16 @@ async function confirmRemove() {
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <TriangleAlert class="text-error size-5" />
-          Delete {{ agent.label }}?
+          {{ t('agents.removeTitle', { name: agent.label }) }}
         </h3>
         <p class="mt-3 text-sm opacity-70">
           {{ t('agents.removeWarning', { host: agent.hostName }) }}
         </p>
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
-          <button class="btn btn-error btn-sm gap-2" type="button" @click="confirmRemove">
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="removeBusy" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
+          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
             <Trash2 class="size-4" />
-            {{ t('common.delete') }}
+            {{ removeBusy ? t('common.deleting') : t('common.delete') }}
           </button>
         </div>
       </div>

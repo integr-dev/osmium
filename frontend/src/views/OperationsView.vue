@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Box, Power, Server, TriangleAlert, Workflow } from 'lucide-vue-next'
 import FleetConnections from '../components/FleetConnections.vue'
 import SchematicLibrary from '../components/SchematicLibrary.vue'
 import ServerAssignment from '../components/ServerAssignment.vue'
+import { useQueryTab } from '../lib/queryState'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
@@ -24,7 +25,10 @@ const auth = useAuthStore()
 
 type Tab = 'schematics' | 'servers' | 'power'
 
-const tab = ref<Tab>('schematics')
+const TABS = ['schematics', 'servers', 'power'] as const
+
+/** In the URL, so this page can be linked to and Back means the previous tab. See lib/queryState.ts. */
+const tab = useQueryTab<Tab>('tab', TABS, 'schematics')
 const error = ref<string | null>(null)
 const done = ref<string | null>(null)
 
@@ -43,6 +47,20 @@ function report(message: string, failed: boolean) {
   error.value = failed ? message : null
   done.value = failed ? null : message
 }
+
+function clearReport() {
+  error.value = null
+  done.value = null
+}
+
+/**
+ * The banner is about one act on one tab, so it does not follow the operator to the next.
+ *
+ * Nothing cleared it before — not a tab change, not a new selection, not time — so "12 agents
+ * connected" stayed pinned above the Schematics tab for the rest of the session, describing
+ * something that had happened somewhere the operator was no longer looking.
+ */
+watch(tab, clearReport)
 </script>
 
 <template>
@@ -77,17 +95,28 @@ function report(message: string, failed: boolean) {
       </template>
     </div>
 
+    <!--
+      Dismissible, both of them. A tab change clears the banner on its own, but an operator who has
+      read the outcome and wants the room back should not have to leave the tab to get it.
+    -->
     <div v-if="error" role="alert" class="alert alert-error alert-soft">
       <TriangleAlert class="size-4" />
-      <span>{{ error }}</span>
+      <span class="min-w-0 flex-1">{{ error }}</span>
+      <button type="button" class="btn btn-ghost btn-xs" @click="clearReport">
+        {{ t('common.dismiss') }}
+      </button>
     </div>
     <div v-if="done" role="alert" class="alert alert-success alert-soft">
       <Workflow class="size-4" />
-      <span>{{ done }}</span>
+      <span class="min-w-0 flex-1">{{ done }}</span>
+      <button type="button" class="btn btn-ghost btn-xs" @click="clearReport">
+        {{ t('common.dismiss') }}
+      </button>
     </div>
 
     <SchematicLibrary
       v-if="tab === 'schematics' && auth.can('schematic.read')"
+      @done="report($event, false)"
       @failed="report($event, true)"
     />
     <ServerAssignment

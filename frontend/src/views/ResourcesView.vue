@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot as Agent, Server, Share2, TriangleAlert } from 'lucide-vue-next'
 import AgentList from '../components/AgentList.vue'
 import FleetGraph from '../components/FleetGraph.vue'
 import HostList from '../components/HostList.vue'
+import { useQueryTab } from '../lib/queryState'
 import { useAgentStore } from '../stores/agents'
 
 /**
@@ -24,7 +25,10 @@ const agentStore = useAgentStore()
 
 type Tab = 'bots' | 'hosts' | 'graph'
 
-const tab = ref<Tab>('bots')
+const TABS = ['bots', 'hosts', 'graph'] as const
+
+/** In the URL, like Operations beside it, so a tab can be linked to and Back returns to it. */
+const tab = useQueryTab<Tab>('tab', TABS, 'bots')
 
 const tabs: Array<{ id: Tab; label: string; icon: typeof Agent }> = [
   { id: 'bots', label: 'resources.tabBots', icon: Agent },

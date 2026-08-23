@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { prefersReducedMotion } from '../lib/motion'
 
@@ -37,10 +38,17 @@ watch(
   },
 )
 
+const { n } = useI18n()
+
 onBeforeUnmount(() => cancelAnimationFrame(frame))
 </script>
 
 <template>
   <!-- Tabular figures: without them the whole line jitters as the digits change width. -->
-  <span class="tabular-nums">{{ shown.toLocaleString() }}</span>
+  <!--
+    Grouped through vue-i18n rather than `toLocaleString`, which follows the *browser's* locale.
+    The two disagree the moment somebody picks German in an en-US browser, and this component sits
+    beside figures formatted the other way on the same row.
+  -->
+  <span class="tabular-nums">{{ n(shown) }}</span>
 </template>

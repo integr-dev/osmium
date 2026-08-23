@@ -17,7 +17,7 @@ import { schematicField } from '../lib/schematic'
  * is what keeps it a texture rather than something the eye tracks while somebody is typing a
  * password.
  */
-const LOOP_SECONDS = 42
+const LOOP_SECONDS = 64
 
 /**
  * The disc is sized to overrun the page rather than to sit on it, so `radius` is a block count as
@@ -27,8 +27,15 @@ const LOOP_SECONDS = 42
  */
 const field = schematicField({ radius: 264, size: 22, stagger: LOOP_SECONDS / 4 })
 
-/** The three faces, unshaded. A light source implied rather than drawn, which is enough here. */
-const FACE = { top: 0.15, left: 0.1, right: 0.055 }
+/**
+ * The three faces, unshaded. A light source implied rather than drawn, which is enough here.
+ *
+ * Roughly half what it was. The disc sits behind a translucent, blurred card carrying a login form,
+ * and at the old weight the blocks read as content — something the eye kept returning to while
+ * somebody was typing a password. The ratios between the faces are unchanged, so it is the same
+ * solid seen in a dimmer room rather than a flatter one.
+ */
+const FACE = { top: 0.075, left: 0.05, right: 0.028 }
 </script>
 
 <template>

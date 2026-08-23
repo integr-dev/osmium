@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { blockId } from './blockNames'
-import { blocksToPlace, offsetOf, plannedMaterials, toWorld, type Substitution } from './placement'
+import {
+  blocksToPlace,
+  offsetOf,
+  plannedMaterials,
+  sameSubstitutions,
+  toWorld,
+  type Substitution,
+} from './placement'
 
 describe('offsetOf', () => {
   it('is the distance from where the schematic thinks it is to where it is going', () => {
@@ -172,5 +179,65 @@ describe('blocksToPlace', () => {
     )
 
     expect(blocksToPlace(planned)).toBe(580)
+  })
+})
+
+/**
+ * A freshly saved plan reported itself as still unsaved, and the comparison was the reason: the
+ * draft holds what the picker and the material list gave it, the backend hands back what it stored.
+ */
+describe('sameSubstitutions', () => {
+  it('ignores the namespace, which the two sides spell differently', () => {
+    // The draft seeds a rule from the material list, so it carries `minecraft:`; the backend stores
+    // every rule on the bare id so its one-rule-per-block constraint means what it says.
+    expect(
+      sameSubstitutions(
+        [{ from: 'minecraft:diamond_block', to: 'minecraft:stone' }],
+        [{ from: 'diamond_block', to: 'stone' }],
+      ),
+    ).toBe(true)
+  })
+
+  it('ignores the order, since a set of rules is not different for being listed differently', () => {
+    expect(
+      sameSubstitutions(
+        [
+          { from: 'gold_block', to: 'stone' },
+          { from: 'diamond_block', to: 'stone' },
+        ],
+        [
+          { from: 'diamond_block', to: 'stone' },
+          { from: 'gold_block', to: 'stone' },
+        ],
+      ),
+    ).toBe(true)
+  })
+
+  it('still notices a real difference', () => {
+    expect(
+      sameSubstitutions(
+        [{ from: 'diamond_block', to: 'stone' }],
+        [{ from: 'diamond_block', to: 'cobblestone' }],
+      ),
+    ).toBe(false)
+
+    // Placing nothing is a rule, not an absence, so it is not the same as replacing with something.
+    expect(
+      sameSubstitutions(
+        [{ from: 'beacon', to: null }],
+        [{ from: 'beacon', to: 'stone' }],
+      ),
+    ).toBe(false)
+
+    expect(sameSubstitutions([{ from: 'beacon', to: null }], [])).toBe(false)
+  })
+
+  it('does not reorder the array it was given', () => {
+    const rules = [
+      { from: 'gold_block', to: 'stone' },
+      { from: 'diamond_block', to: 'stone' },
+    ]
+    sameSubstitutions(rules, [])
+    expect(rules[0].from).toBe('gold_block')
   })
 })

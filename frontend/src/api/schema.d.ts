@@ -342,7 +342,11 @@ export interface paths {
          * @description Sends `setup_agent` and moves the agent to SETUP_PENDING. Osmium does not perform or observe the login - the host reports back a verdict.
          */
         post: operations["setup"];
-        delete?: never;
+        /**
+         * Stop waiting on a setup that was never completed.
+         * @description Returns the agent to UNLINKED so it can be set up again. **Nothing is sent to the host** — Osmium cannot cancel a login it does not perform, only stop asserting one is in progress. A host that finishes it afterwards still reports, and the agent still links.
+         */
+        delete: operations["cancelSetup"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1261,7 +1265,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -2080,6 +2084,55 @@ export interface operations {
             };
             /** @description The owning host is not connected. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    cancelSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated agent, now UNLINKED. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.setup`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No setup is in progress. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

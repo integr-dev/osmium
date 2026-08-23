@@ -43,6 +43,15 @@ const draft = ref({
   role: null as string | null,
 })
 const editing = ref<{ user: UserResponse; role: string | null } | null>(null)
+/**
+ * Whether a dialog submit is in flight.
+ *
+ * One flag for all four, because only one of these dialogs can be open at a time — four booleans
+ * that could only ever disagree through a bug is four chances to write that bug. It exists because
+ * every one of these buttons stayed live for the whole round trip, so a second press sent a second
+ * request, and the operator had no way to tell a slow request from a dead button.
+ */
+const submitting = ref(false)
 const createStep = ref<1 | 2>(1)
 const createError = ref<string | null>(null)
 const editingUser = ref<{
@@ -146,23 +155,29 @@ function submitCreate() {
 }
 
 async function createUser() {
+  if (submitting.value) return
+  submitting.value = true
   createError.value = null
 
-  const { error: failure } = await api.POST('/api/users', {
-    body: {
-      username: draft.value.username,
-      password: draft.value.password,
-      role: draft.value.role,
-    },
-  })
-  if (failure) {
-    // Conflicts and validation errors come from the step 1 fields, so send the user back.
-    createStep.value = 1
-    createError.value = errorMessage(failure, t('errors.createAccount'))
-    return
+  try {
+    const { error: failure } = await api.POST('/api/users', {
+      body: {
+        username: draft.value.username,
+        password: draft.value.password,
+        role: draft.value.role,
+      },
+    })
+    if (failure) {
+      // Conflicts and validation errors come from the step 1 fields, so send the user back.
+      createStep.value = 1
+      createError.value = errorMessage(failure, t('errors.createAccount'))
+      return
+    }
+    dialog('create-user')?.close()
+    await loadUsers()
+  } finally {
+    submitting.value = false
   }
-  dialog('create-user')?.close()
-  await loadUsers()
 }
 
 /**
@@ -181,38 +196,51 @@ function askSignOut(user: UserResponse) {
 
 async function confirmSignOut() {
   const user = signingOut.value
-  if (!user) return
+  if (!user || submitting.value) return
+
+  submitting.value = true
   error.value = null
 
-  const { error: failure } = await api.POST('/api/users/{id}/sessions/revoke-all', {
-    params: { path: { id: user.id } },
-  })
-  dialog('sign-out-user')?.close()
-  if (failure) {
-    error.value = errorMessage(failure, t('errors.generic'))
-    return
+  try {
+    const { error: failure } = await api.POST('/api/users/{id}/sessions/revoke-all', {
+      params: { path: { id: user.id } },
+    })
+    dialog('sign-out-user')?.close()
+    if (failure) {
+      error.value = errorMessage(failure, t('errors.generic'))
+      return
+    }
+    signedOut.value = t('accounts.signedOut', { name: user.username })
+  } finally {
+    submitting.value = false
   }
-  signedOut.value = t('accounts.signedOut', { name: user.username })
 }
 
 async function saveRole() {
-  if (!editing.value) return
+  if (!editing.value || submitting.value) return
+
+  submitting.value = true
   error.value = null
-  const { error: failure } = await api.PUT('/api/users/{id}/role', {
-    params: { path: { id: editing.value.user.id } },
-    body: { role: editing.value.role },
-  })
-  if (failure) {
-    error.value = errorMessage(failure, t('errors.changeRole'))
-    return
+
+  try {
+    const { error: failure } = await api.PUT('/api/users/{id}/role', {
+      params: { path: { id: editing.value.user.id } },
+      body: { role: editing.value.role },
+    })
+    if (failure) {
+      error.value = errorMessage(failure, t('errors.changeRole'))
+      return
+    }
+    editing.value = null
+    dialog('edit-role')?.close()
+    await loadUsers()
+  } finally {
+    submitting.value = false
   }
-  editing.value = null
-  dialog('edit-role')?.close()
-  await loadUsers()
 }
 
 async function saveUser() {
-  if (!editingUser.value) return
+  if (!editingUser.value || submitting.value) return
   error.value = null
 
   // Not trimmed: leading and trailing spaces are legitimate password characters.
@@ -222,25 +250,58 @@ async function saveUser() {
     return
   }
 
-  const { error: failure } = await api.PATCH('/api/users/{id}', {
-    params: { path: { id: editingUser.value.user.id } },
-    // Omitting the password leaves the existing one untouched.
-    body: { username: editingUser.value.username, password: password || undefined },
-  })
-  if (failure) {
-    error.value = errorMessage(failure, t('errors.updateAccount'))
-    return
+  submitting.value = true
+
+  try {
+    const { error: failure } = await api.PATCH('/api/users/{id}', {
+      params: { path: { id: editingUser.value.user.id } },
+      // Omitting the password leaves the existing one untouched.
+      body: { username: editingUser.value.username, password: password || undefined },
+    })
+    if (failure) {
+      error.value = errorMessage(failure, t('errors.updateAccount'))
+      return
+    }
+    editingUser.value = null
+    dialog('edit-user')?.close()
+    await loadUsers()
+  } finally {
+    submitting.value = false
   }
-  editingUser.value = null
-  dialog('edit-user')?.close()
-  await loadUsers()
 }
 
-async function remove(user: UserResponse) {
+/**
+ * Deleting an account asks first, like every other destructive act here.
+ *
+ * It used to fire straight from the click handler — no dialog, no undo, and the row simply vanished.
+ * That sat two buttons along from *signing a user out*, which does ask, and whose own reasoning says
+ * it "should not happen on a stray click next to Edit". Deleting the account is the more permanent
+ * of the two by a wide margin.
+ *
+ * The name is in the question and the consequence is spelled out, because an account is not a thing
+ * anyone can identify from a row that has already gone.
+ */
+const removing = ref<UserResponse | null>(null)
+const removeBusy = ref(false)
+
+function askRemove(user: UserResponse) {
+  removing.value = user
+  error.value = null
+  dialog('remove-user')?.showModal()
+}
+
+async function confirmRemove() {
+  const user = removing.value
+  if (!user || removeBusy.value) return
+
+  removeBusy.value = true
   error.value = null
   const { error: failure } = await api.DELETE('/api/users/{id}', {
     params: { path: { id: user.id } },
   })
+  removeBusy.value = false
+  dialog('remove-user')?.close()
+
   if (failure) {
     error.value = errorMessage(failure, t('errors.removeAccount'))
     return
@@ -390,7 +451,7 @@ function openEdit(user: UserResponse) {
                   <button
                     v-if="auth.can('user.delete') && user.username !== auth.user?.username"
                     class="btn btn-ghost btn-xs text-error gap-1"
-                    @click="remove(user)"
+                    @click="askRemove(user)"
                   >
                     <Trash2 class="size-3.5" />
                     {{ t('common.delete') }}
@@ -524,8 +585,8 @@ function openEdit(user: UserResponse) {
             >
               {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm gap-1" type="submit">
-              {{ createStep === 1 ? t('accounts.next') : t('accounts.create') }}
+            <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="submitting">
+              {{ createStep === 1 ? t('accounts.next') : submitting ? t('common.saving') : t('accounts.create') }}
               <ChevronRight v-if="createStep === 1" class="size-4" />
             </button>
           </div>
@@ -584,7 +645,9 @@ function openEdit(user: UserResponse) {
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-user')?.close()">
               {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
+              {{ submitting ? t('common.saving') : t('common.save') }}
+            </button>
           </div>
         </form>
       </div>
@@ -648,7 +711,9 @@ function openEdit(user: UserResponse) {
             <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-role')?.close()">
               {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
+              {{ submitting ? t('common.saving') : t('common.save') }}
+            </button>
           </div>
         </form>
       </div>
@@ -668,9 +733,38 @@ function openEdit(user: UserResponse) {
           <button class="btn btn-ghost btn-sm" type="button" @click="dialog('sign-out-user')?.close()">
             {{ t('common.cancel') }}
           </button>
-          <button class="btn btn-warning btn-sm gap-2" type="button" @click="confirmSignOut">
+          <button class="btn btn-warning btn-sm gap-2" type="button" :disabled="submitting" @click="confirmSignOut">
             <ShieldAlert class="size-4" />
             {{ t('accounts.signOut') }}
+          </button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+    </dialog>
+
+    <!--
+      The destructive one, and the last to get a dialog. Error styling rather than the warning the
+      sign-out beside it uses: that ends a session and this ends the account.
+    -->
+    <dialog id="remove-user" class="modal" @close="removing = null">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <Trash2 class="text-error size-5" />
+          {{ t('accounts.removeTitle', { name: removing?.username }) }}
+        </h3>
+        <p class="mt-3 text-sm opacity-70">{{ t('accounts.removeWarning') }}</p>
+        <div class="modal-action">
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :disabled="removeBusy"
+            @click="dialog('remove-user')?.close()"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
+            <Trash2 class="size-4" />
+            {{ removeBusy ? t('accounts.removing') : t('accounts.removeAction') }}
           </button>
         </div>
       </div>

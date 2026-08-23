@@ -54,6 +54,7 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
   AGENT_UPDATE: SquarePen,
   AGENT_DELETE: Trash2,
   AGENT_SETUP: KeyRound,
+  AGENT_SETUP_CANCEL: KeyRound,
   AGENT_CONNECT: Power,
   AGENT_DISCONNECT: Power,
   AGENT_CHAT: MessageSquare,
@@ -89,6 +90,8 @@ const ACTION_BADGE: Record<AuditAction, string> = {
   AGENT_UPDATE: 'badge-ghost',
   AGENT_DELETE: 'badge-error badge-soft',
   AGENT_SETUP: 'badge-info badge-soft',
+  // Ghost rather than info: nothing was done to the fleet, an operator stopped waiting on it.
+  AGENT_SETUP_CANCEL: 'badge-ghost',
   AGENT_CONNECT: 'badge-success badge-soft',
   AGENT_DISCONNECT: 'badge-ghost',
   AGENT_CHAT: 'badge-warning badge-soft',

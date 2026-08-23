@@ -26,6 +26,9 @@ export const en = {
     loading: 'Loading…',
     none: 'None',
     save: 'Save',
+    /** In-flight labels, so a slow request reads as work rather than as a dead button. */
+    saving: 'Saving…',
+    deleting: 'Deleting…',
     status: 'Status',
   },
 
@@ -162,6 +165,20 @@ export const en = {
     perMinute: 'blocks / minute',
     remaining: 'Est. remaining',
     atCurrentRate: 'at the current rate',
+    /**
+     * Which numbers here are invented. Configuration has carried a banner like this since it was
+     * built; this page — the landing page, and the most numerically confident in the application —
+     * had nothing, while its figures rolled and animated exactly like the real ones.
+     */
+    mockTitle: 'Some of these numbers are placeholders',
+    mockBody: 'Blocks placed, throughput, the estimate, the progress bar and the sectors are invented, and stay invented until an agent reports build progress. Agents online, vitals, what needs attention and the activity feed are real.',
+    /** On each invented panel, because a banner at the top of a scrolling page is not always in view. */
+    mockTag: 'placeholder',
+    ofTarget: 'of {total}',
+    layerOf: 'Layer {current} of {total}',
+    unassigned: 'unassigned',
+    /** No rate means no arithmetic to do, rather than an estimate of zero. */
+    noEta: 'stalled',
     needsAttention: 'Needs attention',
     vitals: 'Vitals',
     reporting: '{reporting}/{online} reporting',
@@ -223,6 +240,8 @@ export const en = {
     rotateTitle: 'Rotate the token for {name}?',
     removeAction: 'Remove',
     rotate: 'Rotate',
+    rotating: 'Rotating…',
+    removing: 'Removing…',
     remove: 'Remove host',
     removeTitle: 'Remove {name}?',
     tokenWarning: 'Copy this now. It is shown once and cannot be retrieved later.',
@@ -290,6 +309,25 @@ export const en = {
     connect: 'Connect',
     /** While the command is out and the host has not answered. See AgentState.CONNECTING. */
     connecting: 'Connecting…',
+    /**
+     * Why a grey button is grey. The wizard in Operations already says this out loud; these are the
+     * same sentence for the three commands on an agent's own page.
+     */
+    blockedHost: '{host} is not connected, so nothing can be sent to it.',
+    blockedSettingUp: 'A sign-in is already running on the host.',
+    blockedOnlineSetup: 'Disconnect this agent before setting it up again.',
+    blockedConnecting: 'Already on its way in — waiting for the host to report.',
+    blockedAlreadyOnline: 'Already in game.',
+    blockedUnlinked: 'Not set up yet: it has no Minecraft account to join with.',
+    blockedNoServer: 'Assigned to no server, so there is nowhere to connect to.',
+    blockedNotOnline: 'Not in game, so there is no session to end.',
+    /**
+     * SETUP_PENDING is open-ended by design, so the way out is the operator saying it is not coming.
+     * The copy is careful: this stops Osmium waiting, it does not reach into the host.
+     */
+    pendingTitle: 'Waiting on a sign-in at {host}',
+    pendingBody: 'Osmium cannot see how far along it is, so it waits indefinitely. If the sign-in was started somewhere you cannot get back to, stop waiting and set the agent up again — nothing is sent to the host, and if it does finish the agent still links.',
+    stopWaiting: 'Stop waiting',
     disconnect: 'Disconnect',
     edit: 'Edit agent',
     move: 'Move to another Minecraft server',
@@ -307,6 +345,7 @@ export const en = {
     setServerHint: 'The account is the same account wherever it joins, so this changes nothing about its credentials.',
     unassignHint: 'Leave blank to take it off its server. It stays set up and can be assigned again later.',
     needsServer: 'Assign a server before connecting.',
+    removeTitle: 'Delete {name}?',
     removeWarning: 'The agent is removed from Osmium. Credentials stored on {host} are not affected — revoke the account there if it should stop working.',
 
     uptime: 'Uptime',
@@ -394,6 +433,14 @@ export const en = {
     buildTitle: 'What is being built',
     buildingWhat: 'Building',
     blocksEach: 'each',
+    /**
+     * Named when the plan and the file disagree. A total that silently shrank would read as a
+     * miscount rather than as the substitutions the operator asked for one step ago.
+     */
+    afterSubstitutions: 'After {plan}: {omitted} blocks are left out.',
+    /** Which coordinate space the split is drawn in — "is this where I fly to" has no other answer. */
+    worldCoords: 'World coordinates, as placed by {plan}',
+    fileCoords: "The schematic's own coordinates — nothing has placed it yet",
     startBuilding: 'Start building',
     awaitingHost: 'Waiting on the host to support building.',
     subtitle: 'What the fleet builds from.',
@@ -411,6 +458,8 @@ export const en = {
     namePlaceholder: 'Name this schematic',
     name: 'Name',
     deleteTitle: 'Delete {name}?',
+    /** The one act on this tab whose outcome is not visible where it happened: the row just goes. */
+    deleted: 'Deleted {name}.',
     deleteWarning: 'The file goes with it, and so does everything measured from it — the material list, the shape, any division worked out from it. Anything already being built carries on.',
     pickFile: 'Choose a file',
     rename: 'Rename',
@@ -622,6 +671,14 @@ export const en = {
     signOut: 'Sign out everywhere',
     signOutTitle: 'Sign {name} out of every session?',
     signOutWarning: 'Every browser signed in as {name} is signed out, and access already granted stops working immediately. The account itself is untouched and they can sign in again.',
+    removeTitle: 'Delete {name}?',
+    /**
+     * Says what survives as well as what does not. The audit trail outliving its subject is the
+     * whole reason entries carry a name rather than a foreign key.
+     */
+    removeWarning: 'The account and its sessions are gone for good, and anyone signed in as it stops working at once. What they already did stays in the audit trail. This cannot be undone.',
+    removeAction: 'Delete account',
+    removing: 'Deleting…',
     signedOut: '{name} has been signed out everywhere.',
   },
 
@@ -681,6 +738,7 @@ export const en = {
     AGENT_UPDATE: 'Agent edited',
     AGENT_DELETE: 'Agent deleted',
     AGENT_SETUP: 'Set up',
+    AGENT_SETUP_CANCEL: 'Setup abandoned',
     AGENT_CONNECT: 'Connect',
     AGENT_DISCONNECT: 'Disconnect',
     AGENT_CHAT: 'Chat',
@@ -738,6 +796,19 @@ export const en = {
   builds: {
     title: 'The plan',
     whichPlan: 'Which plan',
+    /**
+     * The row beside the selector is how a second plan gets made, so a plan being written is in the
+     * list too — the control never claims the operator is editing something they are not.
+     */
+    newPlanOption: 'New plan (unsaved)',
+    newPlan: 'Start another plan for this schematic',
+    rename: 'Rename this plan',
+    renameTitle: 'Rename plan',
+    renameHint: 'Only a label. Where the build stands and what it is made of are unchanged.',
+    planName: 'Plan name',
+    removePlan: 'Delete plan',
+    removeTitle: 'Delete {name}?',
+    removeWarning: 'The placement and every substitution in it go with it. The schematic itself is untouched, and any other plan for it carries on.',
     placement: 'Placement',
     placementHint: 'Where the schematic’s lowest corner lands. Leave these empty to decide later.',
     unplaced: 'Not placed yet.',
@@ -790,6 +861,7 @@ export const en = {
     updateAgent: 'Could not update the agent.',
     removeAgent: 'Could not remove the agent.',
     setUpAgent: 'Could not start setup.',
+    cancelSetup: 'Could not stop waiting on the setup.',
     connectAgent: 'Could not connect.',
     disconnectAgent: 'Could not disconnect.',
     sendMessage: 'Could not send the message.',

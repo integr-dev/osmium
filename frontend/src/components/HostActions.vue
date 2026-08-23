@@ -26,6 +26,7 @@ const renameDialog = ref<HTMLDialogElement | null>(null)
 const renaming = ref<HostResponse | null>(null)
 const renameDraft = ref('')
 const renameError = ref<string | null>(null)
+const renameBusy = ref(false)
 
 const rotateDialog = ref<HTMLDialogElement | null>(null)
 const rotating = ref<HostResponse | null>(null)
@@ -34,26 +35,39 @@ const rotateError = ref<string | null>(null)
 const copied = ref(false)
 /** Set when the clipboard refused. The token is shown once, so this cannot be swallowed. */
 const copyFailed = ref(false)
+const rotateBusy = ref(false)
 
 const removeDialog = ref<HTMLDialogElement | null>(null)
 const pendingRemove = ref<HostResponse | null>(null)
 const removeError = ref<string | null>(null)
+const removeBusy = ref(false)
 
 function rename(host: HostResponse) {
   renaming.value = host
   renameDraft.value = host.name
   renameError.value = null
+  renameBusy.value = false
   renameDialog.value?.showModal()
 }
 
+/**
+ * All three of these guard on their own busy flag.
+ *
+ * Their buttons stayed live for the whole round trip, and rotate is the one that bites: a second
+ * press mints a second token, and the one on screen — which the operator may already have copied
+ * into the host's config — is dead, with nothing to indicate that it changed.
+ */
 async function saveRename() {
-  if (!renaming.value) return
+  if (!renaming.value || renameBusy.value) return
+  renameBusy.value = true
   renameError.value = null
   try {
     await agentStore.renameHost(renaming.value.id, renameDraft.value)
     renameDialog.value?.close()
   } catch (failure) {
     renameError.value = failure instanceof Error ? failure.message : t('errors.renameHost')
+  } finally {
+    renameBusy.value = false
   }
 }
 
@@ -63,16 +77,22 @@ function rotate(host: HostResponse) {
   rotateError.value = null
   copied.value = false
   copyFailed.value = false
+  rotateBusy.value = false
   rotateDialog.value?.showModal()
 }
 
 async function confirmRotate() {
-  if (!rotating.value) return
+  // Also guarded on the token already being here: this is the one action where a second press
+  // silently invalidates what the first press put on screen.
+  if (!rotating.value || rotateBusy.value || rotatedToken.value) return
+  rotateBusy.value = true
   rotateError.value = null
   try {
     rotatedToken.value = await agentStore.rotateHostToken(rotating.value.id)
   } catch (failure) {
     rotateError.value = failure instanceof Error ? failure.message : t('errors.rotateToken')
+  } finally {
+    rotateBusy.value = false
   }
 }
 
@@ -96,13 +116,15 @@ async function copyToken() {
 function remove(host: HostResponse) {
   pendingRemove.value = host
   removeError.value = null
+  removeBusy.value = false
   removeDialog.value?.showModal()
 }
 
 async function confirmRemove() {
   const host = pendingRemove.value
-  if (!host) return
+  if (!host || removeBusy.value) return
 
+  removeBusy.value = true
   removeError.value = null
   try {
     await agentStore.removeHost(host.id)
@@ -112,6 +134,8 @@ async function confirmRemove() {
     emit('removed', host)
   } catch (failure) {
     removeError.value = failure instanceof Error ? failure.message : t('errors.removeHost')
+  } finally {
+    removeBusy.value = false
   }
 }
 
@@ -141,17 +165,30 @@ defineExpose({ rename, rotate, remove })
             <span>{{ renameError }}</span>
           </div>
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">
+            <button
+              class="btn btn-ghost btn-sm"
+              type="button"
+              :disabled="renameBusy"
+              @click="renameDialog?.close()"
+            >
               {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="renameBusy">
+              {{ renameBusy ? t('common.saving') : t('common.save') }}
+            </button>
           </div>
         </form>
       </div>
       <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
-    <dialog ref="rotateDialog" class="modal">
+    <!--
+      Escape is refused while the token is on screen. `cancel` is the event a `<dialog>` fires for
+      Escape, and preventing it is the only way to keep the key from dismissing the one and only
+      display of a credential that cannot be retrieved. Done still closes, so nobody is trapped —
+      what is blocked is the accidental dismissal, not the deliberate one.
+    -->
+    <dialog ref="rotateDialog" class="modal" @cancel="rotatedToken && $event.preventDefault()">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <KeyRound class="text-primary size-5" />
@@ -165,11 +202,21 @@ defineExpose({ rename, rotate, remove })
             <span>{{ rotateError }}</span>
           </div>
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="rotateDialog?.close()">
+            <button
+              class="btn btn-ghost btn-sm"
+              type="button"
+              :disabled="rotateBusy"
+              @click="rotateDialog?.close()"
+            >
               {{ t('common.cancel') }}
             </button>
-            <button class="btn btn-primary btn-sm" type="button" @click="confirmRotate">
-              {{ t('hosts.rotate') }}
+            <button
+              class="btn btn-primary btn-sm"
+              type="button"
+              :disabled="rotateBusy"
+              @click="confirmRotate"
+            >
+              {{ rotateBusy ? t('hosts.rotating') : t('hosts.rotate') }}
             </button>
           </div>
         </div>
@@ -200,7 +247,14 @@ defineExpose({ rename, rotate, remove })
           </div>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      <!--
+        The backdrop closes this only up to the point where there is something to lose. daisyUI's
+        backdrop is a form that submits the dialog, so it is simply not rendered once the token is
+        showing — an off-target click there would otherwise take the credential with it.
+      -->
+      <form v-if="!rotatedToken" method="dialog" class="modal-backdrop">
+        <button>{{ t('common.close') }}</button>
+      </form>
     </dialog>
 
     <dialog ref="removeDialog" class="modal" @close="pendingRemove = null">
@@ -227,12 +281,22 @@ defineExpose({ rename, rotate, remove })
           <span>{{ removeError }}</span>
         </div>
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="removeDialog?.close()">
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :disabled="removeBusy"
+            @click="removeDialog?.close()"
+          >
             {{ t('common.cancel') }}
           </button>
-          <button class="btn btn-error btn-sm gap-2" type="button" @click="confirmRemove">
+          <button
+            class="btn btn-error btn-sm gap-2"
+            type="button"
+            :disabled="removeBusy"
+            @click="confirmRemove"
+          >
             <Trash2 class="size-4" />
-            {{ t('hosts.removeAction') }}
+            {{ removeBusy ? t('hosts.removing') : t('hosts.removeAction') }}
           </button>
         </div>
       </div>

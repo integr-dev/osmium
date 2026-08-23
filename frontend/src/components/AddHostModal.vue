@@ -64,7 +64,12 @@ async function copy() {
 </script>
 
 <template>
-  <dialog ref="dialogEl" class="modal" @close="open = false">
+  <!--
+    Escape is refused while the token is on screen. It is shown once and never again, and `cancel`
+    is the event a <dialog> fires for that key, so preventing it is the only way to stop an idle
+    keystroke taking the credential with it. Done still closes; only the accidental exit is blocked.
+  -->
+  <dialog ref="dialogEl" class="modal" @close="open = false" @cancel="token && $event.preventDefault()">
     <div class="modal-box">
       <h3 class="flex items-center gap-2 text-lg font-semibold">
         <Server class="text-primary size-5" />
@@ -124,7 +129,9 @@ async function copy() {
         </div>
       </div>
     </div>
-    <form method="dialog" class="modal-backdrop">
+    <!-- Not rendered once there is something to lose: daisyUI's backdrop is a form that submits
+         the dialog, so an off-target click would dismiss the only display of the token. -->
+    <form v-if="!token" method="dialog" class="modal-backdrop">
       <button>{{ t('common.close') }}</button>
     </form>
   </dialog>

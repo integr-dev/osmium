@@ -54,6 +54,14 @@ Two things are still mock. **Build progress** — blocks placed, sectors, throug
 hangs off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not
 mixed in one object. Marked in `src/stores/agents.ts`.
 
+**And marked on the screen, not only in the source.** Configuration has carried a banner since it
+was built; the dashboard had nothing, while being both the landing page and the most numerically
+confident screen in the application — its invented figures roll, animate and carry sparklines
+exactly as the real ones do. It now names them in a banner, *and* each invented panel carries a
+`placeholder` badge of its own: a banner at the top of a scrolling page cannot be relied on to still
+be in view beside the sector table. Agents online, vitals, what needs attention and the activity feed
+are real and unmarked, which is the distinction the marking exists to draw.
+
 **Configuration** is mock end to end: `src/lib/configuration.ts` holds the field list, the values
 and a `saveSettings` that writes to a map in that module and resolves. Nothing reaches a host, and
 the screen says so in a banner rather than only in a comment. It is kept out of the fleet store for
@@ -239,6 +247,24 @@ is the part that can be wrong without looking wrong. Two rules in it are worth s
 An empty replacement field means "leave it out", which is what the placeholder says. It is stored as
 null rather than as an empty name, so "place nothing" has one representation instead of two that
 behave alike but do not compare equal.
+
+**The steps after it use the plan, not the file.** Two places were still reading the schematic raw,
+which is the same number only until somebody substitutes something.
+
+The agent step divided `content.blockCount` by the number of builders — the file's own total, before
+substitutions. An operator who had just told the previous step to place nothing for forty thousand
+beacons was shown a division that still included them, so the one figure they would plan around was
+wrong by exactly the amount they had asked to leave out. It now divides `blocksToPlace`, the same
+arithmetic the planner's own "Blocks placed" stat shows, and names the difference when there is one —
+a total that silently shrank would read as a miscount rather than as the rules they had just written.
+
+The split step drew the segments in the **schematic's** coordinates. The backend divides the file, so
+that is what comes back; the plan step exists precisely to say where that file stands in the world,
+and two steps reading different numbers for the same corner is the pipeline contradicting itself.
+Segments are shifted by the plan's offset, and the caption says which space is on screen either way —
+"is this where I fly to" has no answer an operator can infer from the numbers alone. The library's
+own bounds view stays in file coordinates on purpose: its corner labels exist to be read off and
+typed *into* a placement, which only works if they are the file's.
 
 ### Blocks have names, and the picker knows them
 
@@ -667,6 +693,130 @@ worst place to be quietly wrong.
 dashboard. Doing that silently made a bookmarked `/audit` read as a broken link rather than as a
 restriction, so the node travels along as `?denied=` and the dashboard names it once, dismissibly.
 
+**An outcome does not outlive what it described.** Operations shows one banner for all three of its
+tabs, and nothing used to clear it — not a tab change, not a new selection, not time — so "12 agents
+connected" stayed pinned above the Schematics tab for the rest of the session, describing something
+that happened somewhere the operator was no longer looking. It now clears on a tab change and can be
+dismissed where it stands.
+
+**But a banner only where the screen does not already say it.** Schematics was the one tab that
+never reported success, and the fix is one message rather than four: deleting is the only act there
+whose outcome is invisible where it happened — an unselected row simply disappears from a list of
+thirty, and the file is gone for good. Upload, re-read and split all announce themselves by changing
+what is drawn, so banners for those would be noise rather than news.
+
+## The sign-in screen
+
+**The status line asks for itself.** It reads `backendReachable`, which every request writes as a
+side effect — and on this page the only request is the session refresh the route guard makes on the
+way in. One answer, at page load, from a call made for another purpose: a backend that stopped while
+somebody was reading the page went on being reported as fine until they tried to sign in, which is
+the worst moment to find out. `probeBackend()` runs on mount and every ten seconds while the page is
+open.
+
+It probes an *authenticated* endpoint on purpose. **Any HTTP answer counts, the 401 included** — the
+same reasoning `session.ts` already applies, that a refusal is the backend refusing and therefore
+proof it is running. Only a transport failure means it is not. So no public health endpoint is
+needed, and the probe carries `credentials: 'omit'`: it runs on a timer, and the one thing it must
+never do is spend a refresh cookie or rotate a session.
+
+**The backdrop is deliberately faint.** `SchematicBackdrop` draws a disc of blocks placing
+themselves, at roughly half the opacity it started at and over a longer loop. It sits behind a
+translucent, blurred card carrying a password field, and at the old weight the blocks read as
+content — something the eye kept returning to mid-keystroke. The ratios between the three faces are
+unchanged, so it is the same solid in a dimmer room rather than a flatter one. `prefers-reduced-motion`
+stops it entirely; it conveys nothing, so there is nothing to restore.
+
+## No dead ends
+
+**A schematic can have more than one plan, and now there is a way to make one.** That a plan is its
+own entity rather than fields hanging off the file is justified by the same building going up on two
+servers, or twice on one under different substitutions — and none of it was reachable. `load()`
+always selected the first plan, nothing ever cleared that selection, so once one plan existed the
+button was permanently "Save changes" and the `mine.length > 1` selector could never render.
+`deleteBuild()` was exported and called from nowhere; `updateBuild` took a `name` no control set,
+under a comment saying renaming was the operator's.
+
+The selector now shows from the *first* plan, because the row beside it — add, rename, delete — is
+how a second one gets made. A plan being written appears in the list as "New plan (unsaved)", so the
+control never claims the operator is editing something they are not.
+
+**A pending setup can be abandoned.** `SETUP_PENDING` is open-ended by design and should stay that
+way — see FLEET_CONNECTIVITY.md — but open-ended is not the same as inescapable, and the Set-up
+button being disabled *because a setup is in progress* made it a dead end. The agent page offers
+"Stop waiting" while pending. The copy is careful about what that does: it stops Osmium waiting, it
+does not reach into the host, and a login finished afterwards still links the agent.
+
+**A disabled button says why it is disabled.** Connect carried five separate disabling conditions
+inline and showed none of them. The wizard in Operations already did the opposite — *"a disabled
+button with no reason is the interface declining to explain itself"* — so the three commands on an
+agent's page now compute a reason or null, the same shape `ChatPanel`'s `blocked` uses for its send
+box. The reason is on each button's `title` and in a line under the row, deduplicated: an unreachable
+host blocks all three and is said once. Only reasons for actions this operator can actually see are
+listed, since naming a precondition of a button that is not on their screen explains nothing.
+
+## Tabs and steps live in the URL
+
+Operations' three tabs, Resources' three, and the four-step schematic pipeline all kept their
+position in a `ref`. That cost the same three things every time: nothing could be linked or
+bookmarked, a reload dropped the operator back on the first tab at step one, and **browser Back left
+the page entirely** rather than stepping back — at the one moment in the app where Back is most
+likely to be pressed, part way through a wizard.
+
+`src/lib/queryState.ts` holds the two composables. The route is the only source of truth, so Back
+and Forward work with no listener of ours.
+
+A **query parameter rather than a nested route**. These are panels within one screen, not screens of
+their own: the page keeps its header, its node gate and its loaded fleet across a tab change, and
+modelling that as a route would mean restructuring the router to describe something that is not a
+navigation.
+
+**Tabs and steps push; a selection replaces.** `useQueryTab` pushes, because moving to the next step
+is a move an operator expects Back to undo. `useQueryValue` — which holds *which* schematic is being
+looked at — replaces, because picking a row refines the view they are already on. Pushing it would
+make Back walk every row that was tried before it reached the step they actually wanted. Replacing
+still survives a reload and still travels in a shared link; it simply does not stack.
+
+**The default is kept out of the address bar.** Writing `?tab=bots` when bots is what an absent
+parameter already means adds length and says nothing, so the key is removed instead.
+
+**What the URL asks for and what the screen can show are two different things.** The pipeline's
+`go()` guards forward movement within the page, which was enough while the step lived in a `ref`
+nobody outside could write. Once it is in the address bar, anyone can arrive at `?step=split` with
+nothing selected — from a bookmark taken mid-pipeline, a shared link, or Back after the selection
+was cleared — and land on a panel with nothing in it. So `wanted` is what the URL says and `step` is
+that clamped to `furthest`, the last step the current state can actually fill. It clamps rather than
+redirects: the URL is left saying what was asked for, so choosing a schematic opens the step that was
+wanted instead of making the operator ask twice.
+
+## Asking before acting
+
+**Anything destructive asks, in a `<dialog>` rather than `window.confirm`.** The native one cannot
+name what is being destroyed, cannot be read by anyone using the interface in German, and looks like
+the browser warning about a script. The question is part of the application, the thing is named in
+the title, and the consequence is spelled out — not just "are you sure".
+
+Deleting an account was the last one still firing straight from its click handler. It sat two
+buttons along from *signing a user out*, which does ask, and whose own comment says it "should not
+happen on a stray click next to Edit". The permanent one should not either.
+
+**Every dialog submit guards against a second press.** They all stayed live for the whole round
+trip, so a slow request and a dead button looked identical — which is exactly what invites the
+second click. Each now sets a flag, disables both its buttons, and changes the primary label to
+say what is happening. `AllAccountsView` uses **one** flag for its four dialogs rather than four,
+since only one can be open at a time and four booleans that could only ever disagree through a bug
+is four chances to write that bug.
+
+Rotating a host token is the one where this was doing real damage: a second press mints a second
+token, and the one on screen — which the operator may already have pasted into the host's config —
+is dead, with nothing on screen indicating it changed. That one guards on the token being present
+as well as on the flag.
+
+**A one-time secret cannot be dismissed by accident.** Both token panels refuse Escape while the
+token is showing, by preventing the `cancel` event a `<dialog>` fires for that key, and daisyUI's
+backdrop — which is a form that submits the dialog — is simply not rendered in that state. Done
+still closes, so nobody is trapped: what is blocked is the accidental exit, not the deliberate one.
+
 ## Loading states
 
 **Skeletons where the shape is known, an indicator where it is not.** A table already has its
@@ -744,16 +894,22 @@ Two icons, never both. `ServerOff` means the backend is unreachable and nothing 
 first being fine, because a dead backend takes the stream with it — and when both fired they said
 the same thing twice, with the stream noticing up to 45s later than the first failed request.
 
+**The stream case also raises a banner**, after a six-second grace. An icon in the corner of the
+sidebar was not enough to carry it: every list here is stream-fed and none of them poll, so a
+dropped stream freezes upload bars, agent states and arriving rows while each page goes on looking
+entirely normal. See *Saying what happened*.
+
 `backendReachable` and `backendEverReached` live in `src/api/reachability.ts` rather than a store, so
 every call updates them — including the account lookup a viewer makes without ever touching the
 fleet. `src/api/client.ts` re-exports them and stays the module everything imports from; they sit in
 their own file only because `session.ts` writes them too, and `client.ts` already imports
 `session.ts`.
 
-That second writer is what the **sign-in screen** reads. Refreshing the session is the only request
-a signed-out tab makes, and the route guard has already awaited it by the time the screen renders,
-so the screen can say whether Osmium is answering **before** a password is spent finding out. Any
-response counts, including the 401 that means there is simply no session to resume.
+The **sign-in screen** used to read whatever that second writer had left: refreshing the session is
+the only request a signed-out tab makes, and the route guard awaits it before the screen renders. One
+answer, at page load, from a call made for another purpose — so a backend that stopped while somebody
+was reading the page went on being reported as fine. It probes for itself now; see *The sign-in
+screen*.
 
 Two things make this work that are easy to get wrong:
 
@@ -783,7 +939,16 @@ plural form loses the singular.
 **Nothing user-facing is written in a component.** That includes error fallbacks in `<script>` and
 the task and alert wording the fleet store derives — those were the last places English leaked
 through with a locale selected. The rule is worth stating because the compiler cannot enforce it:
-a string literal in a template is legal code.
+a string literal in a template is legal code. Five had slipped past it — `of {total}`,
+`Layer n of m`, `unassigned`, `stalled` and a delete dialog's `Delete {name}?` — all on the two
+screens whose numbers move most, which is exactly where a stray literal is least likely to be read
+as text at all.
+
+**Numbers go through `n()`, never `toLocaleString()`.** The two disagree: vue-i18n's formatter
+follows the locale the operator picked, `Number.toLocaleString` follows the *browser's*. A German
+interface in an `en-US` browser printed `1,000` on one tile and `1.000` on the next — including
+inside `RollingNumber`, which is the shared counter behind three dashboard tiles and therefore the
+one place that decides how every animated figure is grouped.
 
 The picker is at the bottom of the sidebar. Switching is instant, since every component reads its
 copy through `useI18n()`; the choice persists in `localStorage` and moves `<html lang>` with it. A
@@ -825,7 +990,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-233 unit tests on Vitest with jsdom, in two groups.
+295 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in

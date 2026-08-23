@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, MapPin, Plus, Replace, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { Check, MapPin, Plus, Replace, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
 import {
   createBuild,
+  deleteBuild,
   listBuilds,
   updateBuild,
   type BuildResponse,
 } from '../api/builds'
 import BlockPicker from './BlockPicker.vue'
+import FormField from './FormField.vue'
 import { blockColour } from '../lib/blockColours'
 import { blockId, blockName } from '../lib/blockNames'
-import { blocksToPlace, offsetOf, plannedMaterials, type Substitution } from '../lib/placement'
+import {
+  blocksToPlace,
+  offsetOf,
+  plannedMaterials,
+  sameSubstitutions,
+  type Substitution,
+} from '../lib/placement'
 import type { Vec3 } from '../lib/box3d'
 import { useAuthStore } from '../stores/auth'
 
@@ -74,10 +82,19 @@ const selected = computed(() => plans.value.find((plan) => plan.id === selectedI
 
 const mine = computed(() => plans.value.filter((plan) => plan.schematicId === props.schematicId))
 
-/** All three or none: two coordinates do not describe a position. */
+/**
+ * All three or none: two coordinates do not describe a position.
+ *
+ * Tested for being an actual number rather than for not being null. A cleared `<input type=number>`
+ * hands `v-model.number` back the **empty string**, not null — `parseFloat('')` is NaN, so the
+ * modifier keeps what it was given — and an empty string is not null, so a half-cleared placement
+ * used to pass this check and go up the wire. Jackson coerces `""` to null on the way in and then
+ * refuses to put null in an `Int`, which is the `Cannot coerce null to int value` that came back.
+ */
 const placement = computed(() => {
   const { x, y, z } = place.value
-  return x !== null && y !== null && z !== null ? { x, y, z } : null
+  const filled = [x, y, z].every((value) => typeof value === 'number' && Number.isFinite(value))
+  return filled ? { x: x as number, y: y as number, z: z as number } : null
 })
 
 /**
@@ -105,7 +122,7 @@ const dirty = computed(() => {
 
   return (
     JSON.stringify(placement.value) !== JSON.stringify(wasPlaced) ||
-    JSON.stringify(asSubstitutions.value) !== JSON.stringify(stored.substitutions)
+    !sameSubstitutions(asSubstitutions.value, stored.substitutions)
   )
 })
 
@@ -206,6 +223,67 @@ function nextName(): string {
   while (used.has(`${props.schematicName} ${suffix}`)) suffix += 1
   return `${props.schematicName} ${suffix}`
 }
+
+/** The empty option is the plan being written, which has no id yet. */
+function pickedId(event: Event): number | null {
+  const value = (event.target as HTMLSelectElement).value
+  return value === '' ? null : Number(value)
+}
+
+/**
+ * Renaming and deleting a plan, both of which the API has always supported.
+ *
+ * `deleteBuild` was exported and called from nowhere, and `updateBuild` took a `name` no control
+ * ever set — under a comment saying "renaming is the operator's". It was not: there was nothing to
+ * rename it with, and no way to reach a second plan to need distinguishing in the first place.
+ */
+const renameDialog = ref<HTMLDialogElement | null>(null)
+const removeDialog = ref<HTMLDialogElement | null>(null)
+const nameDraft = ref('')
+
+function openRename() {
+  if (!selected.value) return
+  nameDraft.value = selected.value.name
+  error.value = null
+  renameDialog.value?.showModal()
+}
+
+async function saveName() {
+  const plan = selected.value
+  if (!plan || busy.value || !nameDraft.value.trim()) return
+
+  busy.value = true
+  error.value = null
+  try {
+    const renamed = await updateBuild(plan.id, { name: nameDraft.value.trim() })
+    plans.value = plans.value.map((entry) => (entry.id === renamed.id ? renamed : entry))
+    renameDialog.value?.close()
+    emit('planned', renamed)
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : t('errors.generic')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function removePlan() {
+  const plan = selected.value
+  if (!plan || busy.value) return
+
+  busy.value = true
+  error.value = null
+  try {
+    await deleteBuild(plan.id)
+    plans.value = plans.value.filter((entry) => entry.id !== plan.id)
+    removeDialog.value?.close()
+    // Onto whatever is left for this schematic, or to a blank draft when nothing is.
+    choose(mine.value[0]?.id ?? null)
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : t('errors.generic')
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -214,18 +292,60 @@ function nextName(): string {
       <div class="card-body gap-4">
         <h2 class="card-title text-base">{{ t('builds.title') }}</h2>
 
-        <!-- Several plans for one schematic is the reason a plan is its own thing: the same
-             building goes up on two servers, or twice on one at different coordinates. -->
-        <label v-if="mine.length > 1" class="form-control">
+        <!--
+          Several plans for one schematic is the reason a plan is its own thing: the same building
+          goes up on two servers, or twice on one at different coordinates.
+
+          The selector used to be the only control here and could never appear — `load` always chose
+          the first plan and nothing ever cleared that, so once one existed the panel was locked to
+          it and `mine.length > 1` stayed false forever. It shows from the first plan now, because
+          the row beside it is how a second one gets made.
+        -->
+        <div v-if="mine.length" class="form-control">
           <span class="label-text text-xs opacity-60">{{ t('builds.whichPlan') }}</span>
-          <select
-            class="select select-sm w-full"
-            :value="selectedId"
-            @change="choose(Number(($event.target as HTMLSelectElement).value))"
-          >
-            <option v-for="plan in mine" :key="plan.id" :value="plan.id">{{ plan.name }}</option>
-          </select>
-        </label>
+          <div class="mt-1 flex items-center gap-1">
+            <select
+              class="select select-sm min-w-0 flex-1"
+              :value="selectedId ?? ''"
+              @change="choose(pickedId($event))"
+            >
+              <option v-for="plan in mine" :key="plan.id" :value="plan.id">{{ plan.name }}</option>
+              <!-- The unsaved plan is in the list while it is being written, so the control never
+                   claims the operator is editing something they are not. -->
+              <option v-if="selectedId === null" value="">{{ t('builds.newPlanOption') }}</option>
+            </select>
+
+            <template v-if="auth.can('schematic.write')">
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm shrink-0 px-2"
+                :title="t('builds.newPlan')"
+                :disabled="selectedId === null"
+                @click="choose(null)"
+              >
+                <Plus class="size-4" />
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm shrink-0 px-2"
+                :title="t('builds.rename')"
+                :disabled="!selected"
+                @click="openRename"
+              >
+                <SquarePen class="size-4" />
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm shrink-0 px-2"
+                :title="t('builds.removePlan')"
+                :disabled="!selected"
+                @click="removeDialog?.showModal()"
+              >
+                <Trash2 class="size-4" />
+              </button>
+            </template>
+          </div>
+        </div>
 
         <div>
           <p class="flex items-center gap-2 text-sm font-medium">
@@ -396,5 +516,66 @@ function nextName(): string {
         </ul>
       </div>
     </div>
+
+    <dialog ref="renameDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <SquarePen class="text-primary size-5" />
+          {{ t('builds.renameTitle') }}
+        </h3>
+        <p class="mt-1 text-sm opacity-60">{{ t('builds.renameHint') }}</p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveName">
+          <FormField
+            v-model="nameDraft"
+            :label="t('builds.planName')"
+            :icon="SquarePen"
+            type="text"
+            maxlength="128"
+            required
+          />
+          <div class="modal-action">
+            <button
+              class="btn btn-ghost btn-sm"
+              type="button"
+              :disabled="busy"
+              @click="renameDialog?.close()"
+            >
+              {{ t('common.cancel') }}
+            </button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="busy">
+              {{ busy ? t('common.saving') : t('common.save') }}
+            </button>
+          </div>
+        </form>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+    </dialog>
+
+    <!-- Asked for like every other destructive act, and it names which plan: the whole point of
+         this row is that there can be more than one. -->
+    <dialog ref="removeDialog" class="modal">
+      <div class="modal-box">
+        <h3 class="flex items-center gap-2 text-lg font-semibold">
+          <Trash2 class="text-error size-5" />
+          {{ t('builds.removeTitle', { name: selected?.name ?? '' }) }}
+        </h3>
+        <p class="mt-3 text-sm opacity-70">{{ t('builds.removeWarning') }}</p>
+        <div class="modal-action">
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :disabled="busy"
+            @click="removeDialog?.close()"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="busy" @click="removePlan">
+            <Trash2 class="size-4" />
+            {{ busy ? t('common.deleting') : t('builds.removePlan') }}
+          </button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+    </dialog>
   </div>
 </template>

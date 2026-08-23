@@ -29,7 +29,7 @@ import { isOnline, useAgentStore } from '../stores/agents'
 import { nodeLabel } from '../lib/nodeLabel'
 import { useHistoryStore } from '../stores/history'
 
-const { t } = useI18n()
+const { t, n } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -94,7 +94,7 @@ const SECTOR_PROGRESS: Record<Sector['status'], string> = {
 
 const eta = computed(() => {
   const minutes = build.value.etaMinutes
-  if (minutes === null) return 'stalled'
+  if (minutes === null) return t('dashboard.noEta')
   const hours = Math.floor(minutes / 60)
   return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
 })
@@ -281,6 +281,25 @@ function percent(part: number, whole: number): number {
     </header>
 
     <!--
+      Which numbers on this page are invented.
+
+      Configuration has carried a banner like this since it was built, and this page — the landing
+      page, and the most numerically confident screen in the application — had nothing. Blocks
+      placed, throughput, the estimate, the progress bar, the layer count and every sector are all
+      `mockBuild()`, and they roll and animate and carry sparklines exactly like the real ones do.
+
+      The banner names them and each of those panels carries a marker of its own, because a banner
+      at the top of a scrolling page cannot be relied on to still be in view beside the sector table.
+    -->
+    <div role="alert" class="alert alert-warning alert-soft items-start">
+      <TriangleAlert class="mt-0.5 size-4 shrink-0" />
+      <span class="min-w-0 flex-1">
+        <span class="block font-medium">{{ t('dashboard.mockTitle') }}</span>
+        <span class="block text-sm opacity-80">{{ t('dashboard.mockBody') }}</span>
+      </span>
+    </div>
+
+    <!--
       These four move on their own, from the live stream, with nobody having asked for it — so the
       three that are counts travel to their new value rather than swapping it. The remaining figure
       is a formatted duration, and there is nothing to count through between "12m" and "2h 4m".
@@ -313,14 +332,14 @@ function percent(part: number, whole: number): number {
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.blocksPlaced') }}</div>
+        <div class="stat-title">{{ t('dashboard.blocksPlaced') }}<span class="badge badge-warning badge-soft badge-xs ml-1.5 align-middle">{{ t('dashboard.mockTag') }}</span></div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-28"></div>
         <div v-else class="stat-value text-3xl"><RollingNumber :value="build.placed" /></div>
-        <div class="stat-desc">of {{ build.target.toLocaleString() }}</div>
+        <div class="stat-desc">{{ t('dashboard.ofTarget', { total: n(build.target) }) }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Gauge class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.throughput') }}</div>
+        <div class="stat-title">{{ t('dashboard.throughput') }}<span class="badge badge-warning badge-soft badge-xs ml-1.5 align-middle">{{ t('dashboard.mockTag') }}</span></div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-16"></div>
         <div v-else class="stat-value text-3xl"><RollingNumber :value="build.perMinute" /></div>
         <div class="stat-desc mt-1 flex flex-col gap-0.5">
@@ -330,7 +349,7 @@ function percent(part: number, whole: number): number {
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Clock class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.remaining') }}</div>
+        <div class="stat-title">{{ t('dashboard.remaining') }}<span class="badge badge-warning badge-soft badge-xs ml-1.5 align-middle">{{ t('dashboard.mockTag') }}</span></div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-24"></div>
         <div v-else class="stat-value text-3xl">{{ eta }}</div>
         <div class="stat-desc">{{ t('dashboard.atCurrentRate') }}</div>
@@ -343,9 +362,15 @@ function percent(part: number, whole: number): number {
           <h2 class="card-title flex items-center gap-2 text-base">
             <Layers class="text-primary size-4" />
             {{ t('dashboard.progress') }}
+          <span class="badge badge-warning badge-soft badge-xs">{{ t('dashboard.mockTag') }}</span>
           </h2>
           <span class="text-sm opacity-60">
-            Layer {{ agentStore.schematic.currentLayer }} of {{ agentStore.schematic.layers }}
+            {{
+              t('dashboard.layerOf', {
+                current: agentStore.schematic.currentLayer,
+                total: agentStore.schematic.layers,
+              })
+            }}
           </span>
         </div>
         <progress
@@ -359,7 +384,7 @@ function percent(part: number, whole: number): number {
             {{
               t(
                 'dashboard.blocksRemaining',
-                { count: blocksRemaining.toLocaleString() },
+                { count: n(blocksRemaining) },
                 blocksRemaining,
               )
             }}
@@ -546,6 +571,7 @@ function percent(part: number, whole: number): number {
         <h2 class="card-title flex items-center gap-2 text-base">
           <Map class="text-primary size-4" />
           {{ t('dashboard.sectors') }}
+          <span class="badge badge-warning badge-soft badge-xs">{{ t('dashboard.mockTag') }}</span>
           <span class="badge badge-ghost badge-sm">
             {{ agentStore.sectors.filter((sector) => sector.status === 'done').length }}/{{
               agentStore.sectors.length
@@ -569,11 +595,11 @@ function percent(part: number, whole: number): number {
             ></progress>
             <div class="mt-1 flex items-center justify-between gap-2 text-xs opacity-60">
               <span class="truncate">
-                {{ sector.assigned.length ? sector.assigned.join(', ') : 'unassigned' }}
+                {{ sector.assigned.length ? sector.assigned.join(', ') : t('dashboard.unassigned') }}
               </span>
               <span class="shrink-0 tabular-nums">
-                {{ sector.blocksPlaced.toLocaleString() }} /
-                {{ sector.totalBlocks.toLocaleString() }}
+                {{ n(sector.blocksPlaced) }} /
+                {{ n(sector.totalBlocks) }}
               </span>
             </div>
           </li>

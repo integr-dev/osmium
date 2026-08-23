@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { safeRedirect } from '../router'
 import { CircleAlert, KeyRound, LogIn, TriangleAlert, UserRound } from 'lucide-vue-next'
 import { backendReachable } from '../api/client'
+import { probeBackend } from '../api/reachability'
 import FormField from '../components/FormField.vue'
 import SchematicBackdrop from '../components/SchematicBackdrop.vue'
 import { useAuthStore } from '../stores/auth'
@@ -42,6 +43,27 @@ function trackCapsLock(event: KeyboardEvent) {
  * exactly what success looks like, which is why the failure has to say so out loud.
  */
 const revokeFailed = ref(route.query.revoked === 'failed')
+
+/**
+ * The status line asks for itself, rather than believing what something else happened to leave.
+ *
+ * It used to read whatever the route guard's session refresh had set on the way in — one answer, at
+ * page load, from a request made for another purpose. So a backend that stopped while somebody was
+ * reading this page went on being reported as fine until they tried to sign in and found out from a
+ * failed login, which is the worst moment to learn it.
+ *
+ * Cheap enough to repeat: a 401 is an answer, and answering is the whole question. See
+ * `probeBackend`.
+ */
+const PROBE_MS = 10_000
+let probeTimer: ReturnType<typeof setInterval> | undefined
+
+onMounted(() => {
+  void probeBackend()
+  probeTimer = setInterval(() => void probeBackend(), PROBE_MS)
+})
+
+onUnmounted(() => clearInterval(probeTimer))
 
 async function submit() {
   busy.value = true
@@ -158,8 +180,12 @@ async function submit() {
       <!--
         The dot shows in both states, green included. Same reasoning as the favicon's: with nothing
         else on the page reporting, an absent dot reads as a line that has not loaded rather than as
-        a backend that is fine. It is answered by the session refresh the route guard has already
-        awaited, so it is true by the time this renders.
+        a backend that is fine.
+
+        Kept true by a probe on this page rather than by whatever the route guard's session refresh
+        left behind. That was one answer at page load, from a request made for another purpose, so
+        the dot stayed green through a backend going down and only corrected itself when somebody
+        tried to sign in.
       -->
       <div class="mt-6 flex flex-col items-center gap-1.5 text-center">
         <p

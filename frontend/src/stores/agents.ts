@@ -428,6 +428,20 @@ export const useAgentStore = defineStore('agents', () => {
     if (failure) throw new Error(errorMessage(failure, t('errors.setUpAgent')))
   }
 
+  /**
+   * Stops waiting on a setup, which is not the same as cancelling the login.
+   *
+   * Nothing reaches the host — Osmium cannot cancel a sign-in it does not perform. It returns the
+   * agent to UNLINKED so it can be set up again, and a host that finishes the original login
+   * afterwards still reports and still links it.
+   */
+  async function cancelSetup(id: number): Promise<void> {
+    const { error: failure } = await api.DELETE('/api/agents/{id}/setup', {
+      params: { path: { id } },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.cancelSetup')))
+  }
+
   async function connect(id: number): Promise<void> {
     const { error: failure } = await api.POST('/api/agents/{id}/connect', { params: { path: { id } } })
     if (failure) throw new Error(errorMessage(failure, t('errors.connectAgent')))
@@ -483,6 +497,7 @@ export const useAgentStore = defineStore('agents', () => {
     assignServer,
     removeAgent,
     setupAgent,
+    cancelSetup,
     connect,
     disconnect,
     say,
