@@ -260,6 +260,75 @@ class HostLinkTest {
         socket.close()
     }
 
+    /**
+     * The interval the state exists for, end to end.
+     *
+     * Accepting `connect` takes milliseconds and joining a Minecraft server takes seconds. What is
+     * asserted here is the gap between them: that the agent is visibly on its way in for as long as
+     * the host has not answered, rather than sitting at LINKED - which is what it read before the
+     * operator pressed anything, and therefore says nothing about whether the press did anything.
+     */
+    @Test
+    fun `an agent is visibly connecting until the host says what came of it`() {
+        agent.state = AgentState.LINKED
+        agentRepository.saveAndFlush(agent)
+
+        val socket = connect(token())
+        socket.send(announce())
+        awaitUntil { connectAgent().statusCode.value() == 200 }
+
+        // The command is out and unanswered. This is the whole of the finding: something is visibly
+        // happening, and it is distinguishable from nothing happening.
+        assertEquals(AgentState.CONNECTING, agentRepository.findById(agent.id!!).orElseThrow().state)
+        awaitUntil { socket.received.any { it.type == CommandType.CONNECT } }
+
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.AGENT_STATUS,
+                agentId = agent.id,
+                payload = objectMapper.valueToTree(mapOf("state" to "ONLINE")),
+            ),
+        )
+
+        awaitUntil { agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.ONLINE }
+
+        socket.close()
+    }
+
+    /** A second press while the first is still out would dispatch the same join twice. */
+    @Test
+    fun `connecting again while a connect is still unanswered is refused`() {
+        agent.state = AgentState.LINKED
+        agentRepository.saveAndFlush(agent)
+
+        val socket = connect(token())
+        socket.send(announce())
+        awaitUntil { connectAgent().statusCode.value() == 200 }
+
+        assertEquals(409, connectAgent().statusCode.value())
+
+        socket.close()
+    }
+
+    /**
+     * The same reasoning as the mid-setup case, to a different place. The credentials outlived the
+     * restart and are still on the host's disk, so LINKED rather than UNLINKED - and *not* left at
+     * CONNECTING, which would go on claiming a join that nothing is performing.
+     */
+    @Test
+    fun `an unannounced agent mid-connect stops claiming to be connecting`() {
+        agent.state = AgentState.CONNECTING
+        agentRepository.saveAndFlush(agent)
+
+        val socket = connect(token())
+        socket.send(announce(agents = emptyList()))
+
+        awaitUntil { agentRepository.findById(agent.id!!).orElseThrow().state == AgentState.LINKED }
+
+        socket.close()
+    }
+
     /** Omitting the announcement has to change nothing, or an older host breaks on upgrade. */
     @Test
     fun `a host that never announces leaves state alone`() {
@@ -366,6 +435,13 @@ class HostLinkTest {
         .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
         .contentType(MediaType.APPLICATION_JSON)
         .body("""{"method":"$method"}""")
+        .exchange { _, response -> response }
+
+    /** Named apart from [connect], which opens a host socket rather than driving an agent. */
+    private fun connectAgent() = RestClient.create()
+        .post()
+        .uri("http://localhost:$port/api/agents/${agent.id}/connect")
+        .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
         .exchange { _, response -> response }
 
     private fun hosts() = RestClient.create()

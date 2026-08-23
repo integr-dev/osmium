@@ -112,10 +112,18 @@ export const useAuthStore = defineStore('auth', () => {
    * The local session is cleared whatever the call returns: this is the button someone presses when
    * they believe they are compromised, and leaving them signed in because the request was awkward
    * would be the worst possible reading of a failure.
+   *
+   * **Returns whether the server actually did it.** Clearing locally and routing to the login screen
+   * looks exactly like success, so a failed revoke used to leave the operator believing every other
+   * session was dead when all of them were still live. Of everywhere in this application, that is
+   * the worst place to be quietly wrong — so the caller is told, and says so.
    */
-  async function endAllSessions(): Promise<void> {
+  async function endAllSessions(): Promise<boolean> {
     try {
-      await api.POST('/api/auth/sessions/revoke-all')
+      const { error } = await api.POST('/api/auth/sessions/revoke-all')
+      return !error
+    } catch {
+      return false
     } finally {
       token.value = null
       user.value = null

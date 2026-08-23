@@ -142,14 +142,19 @@ class AgentController(private val agentService: AgentService) {
 
     @PostMapping("/{id}/connect")
     @PreAuthorize("hasAuthority('agent.run')")
-    @Operation(summary = "Connect the agent to its Minecraft server.")
+    @Operation(
+        summary = "Connect the agent to its Minecraft server.",
+        description = "Sends `connect` and moves the agent to CONNECTING. The outcome arrives on " +
+            "the host's own schedule as ONLINE or CONNECT_FAILED; a host that reports neither is " +
+            "given a fixed window, after which the agent falls back to LINKED.",
+    )
     @ApiResponses(
-        ApiResponse(responseCode = "200", description = "Command accepted."),
+        ApiResponse(responseCode = "200", description = "Command accepted; agent is CONNECTING."),
         ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
         ApiResponse(responseCode = "404", description = "No such agent."),
         ApiResponse(
             responseCode = "409",
-            description = "The agent has not been set up, or is assigned to no server.",
+            description = "Already connecting, not set up, or assigned to no server.",
         ),
         ApiResponse(responseCode = "503", description = "The owning host is not connected."),
     )

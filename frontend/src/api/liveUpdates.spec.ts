@@ -121,16 +121,28 @@ describe('live update client', () => {
     expect(onDisconnect).not.toHaveBeenCalled()
   })
 
-  /** Retrying a 403 cannot help: the account lost the node. */
-  it('does not reconnect after a 403', async () => {
-    respondWith(() => ({ status: 403, body: { message: 'Forbidden' } }))
+  /**
+   * Retrying a 403 cannot help: the account lost the node. Giving up is right — going quiet about
+   * it is not.
+   *
+   * Announcing the disconnect is what stops every stream-fed list on screen freezing behind an
+   * indicator that still claims the connection is live. Said exactly once, because nothing is
+   * going to reconnect and repeating it would suggest something is still trying.
+   */
+  it('announces the disconnect after a 403, and does not reconnect', async () => {
+    let attempts = 0
+    respondWith(() => {
+      attempts += 1
+      return { status: 403, body: { message: 'Forbidden' } }
+    })
     const onDisconnect = vi.fn()
 
     const handle = openLiveUpdates('/api/stream', { onEvent: () => {}, onDisconnect })
     await settle()
     await vi.advanceTimersByTimeAsync(120_000)
 
-    expect(onDisconnect).not.toHaveBeenCalled()
+    expect(onDisconnect).toHaveBeenCalledOnce()
+    expect(attempts).toBe(1)
     handle.close()
   })
 })

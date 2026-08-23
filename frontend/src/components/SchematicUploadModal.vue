@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Box, TriangleAlert, Upload } from 'lucide-vue-next'
+import { Box, Info, TriangleAlert, Upload } from 'lucide-vue-next'
 import FormField from './FormField.vue'
 import { uploadSchematic, type SchematicResponse } from '../api/schematics'
 import { bytes } from '../lib/bytes'
@@ -26,6 +26,8 @@ const dialogEl = ref<HTMLDialogElement | null>(null)
 const name = ref('')
 const file = ref<File | null>(null)
 const error = ref<string | null>(null)
+/** What a cancellation came to. Not an error - the operator asked for it - but still an outcome. */
+const cancelled = ref<string | null>(null)
 const sending = ref(false)
 const percent = ref(0)
 /**
@@ -49,6 +51,7 @@ watch(open, (isOpen) => {
       sent.value = 0
     }
     error.value = null
+    cancelled.value = null
     dialogEl.value?.showModal()
   } else {
     dialogEl.value?.close()
@@ -69,6 +72,7 @@ async function send() {
   percent.value = 0
   sent.value = 0
   error.value = null
+  cancelled.value = null
   upload.value = new AbortController()
 
   try {
@@ -84,9 +88,12 @@ async function send() {
     emit('created', created)
     open.value = false
   } catch (failure) {
-    // Cancelling is a choice, not a failure. What is left behind is a partial upload the operator
-    // can continue, which is the point of sending it in chunks at all.
-    if (!upload.value?.signal.aborted) {
+    // Cancelling is a choice, not a failure — so it is not an error. It is still an outcome, and
+    // saying nothing left the bar simply vanishing from a dialog that otherwise looked untouched,
+    // with no word on how much had already been sent or what became of it.
+    if (upload.value?.signal.aborted) {
+      cancelled.value = t('schematics.cancelledAt', { sent: bytes(sent.value) })
+    } else {
       error.value = failure instanceof Error ? failure.message : t('errors.generic')
     }
   } finally {
@@ -144,6 +151,16 @@ async function send() {
         <div v-if="error" role="alert" class="alert alert-error alert-soft">
           <TriangleAlert class="size-4" />
           <span>{{ error }}</span>
+        </div>
+
+        <!--
+          Info rather than a warning: the operator asked for this. What it has to say is what became
+          of the bytes already sent, because once the bar disappears there is nothing on screen to
+          say the half-finished row now sitting in the library came from here.
+        -->
+        <div v-if="cancelled" role="status" class="alert alert-info alert-soft">
+          <Info class="size-4" />
+          <span>{{ cancelled }}</span>
         </div>
 
         <div class="modal-action">

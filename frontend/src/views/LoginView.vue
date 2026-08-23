@@ -34,6 +34,15 @@ function trackCapsLock(event: KeyboardEvent) {
   capsLock.value = event.getModifierState('CapsLock')
 }
 
+/**
+ * "End every session" cleared this browser but the server refused the rest. See AccountSessions.
+ *
+ * It belongs here rather than on the page it was pressed on, because that page is unmounted by the
+ * navigation — and this is the only screen the operator sees afterwards. Landing on a login form is
+ * exactly what success looks like, which is why the failure has to say so out loud.
+ */
+const revokeFailed = ref(route.query.revoked === 'failed')
+
 async function submit() {
   busy.value = true
   error.value = null
@@ -125,6 +134,15 @@ async function submit() {
               <div v-if="error" role="alert" class="alert alert-error alert-soft">
                 <CircleAlert class="size-4" />
                 <span>{{ error }}</span>
+              </div>
+
+              <!--
+                Above the sign-in button rather than below it: whoever is reading this has to decide
+                whether to keep going or go and pull the plug, and that decision comes first.
+              -->
+              <div v-if="revokeFailed" role="alert" class="alert alert-warning alert-soft items-start">
+                <TriangleAlert class="mt-0.5 size-4 shrink-0" />
+                <span>{{ t('sessions.endAllFailed') }}</span>
               </div>
 
               <button class="btn btn-primary btn-block gap-2" type="submit" :disabled="busy">

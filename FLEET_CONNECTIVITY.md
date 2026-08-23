@@ -10,7 +10,7 @@
 | Chat listener election and outbound rate limiting | **Built** in `backend/`, covered by tests |
 | Telemetry: ingest, in-memory store, staleness, coalesced live event | **Built** in `backend/`, covered by tests |
 | Phases 2–4 — the host side of setup, connect and telemetry | **Not built**: `host/` is a placeholder |
-| Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry and schematics |
+| Live updates over SSE | **Built**, for hosts, agents, chat, activity, telemetry, schematics and build plans |
 | Reading a schematic: upload, `.litematic` / `.schem`, the occupancy index, materials | **Built** in `backend/`, covered by tests |
 | Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
 | Placement and block substitution, as a build plan | **Built** in `backend/`, set on the Operations page |
@@ -162,12 +162,28 @@ entirely.
 
 ```
 operator → backend    POST /api/agents/{id}/connect
+backend               Agent row: status = CONNECTING
+backend  → frontend   status CONNECTING
 backend  → host      connect(agentId, host, port, version)
 host                 loads cached tokens, refreshing MSA → XBL → XSTS → MC if expired
 host                 starts the azalea client   
 host    → backend    online(agentId, position, health, food, ping)
 backend  → frontend   status ONLINE
 ```
+
+`CONNECTING` exists because the two ends of that exchange run on completely different timescales.
+The backend accepts the command in milliseconds; the host needs a session handshake, an
+authentication round trip and a world load, and a busy server queues the lot. Without a state for
+the interval the badge went on reading `LINKED` — the same thing it read before the operator pressed
+anything — so a working button and a broken one produced identical screens.
+
+**The claim expires.** Only the host can say how a join went, so an agent that reaches
+`osmium.agent.connect-window` (90s by default) without a verdict falls back to `LINKED`, and an
+activity entry says why. Back to `LINKED` rather than `CONNECT_FAILED`: nothing refused this agent,
+the host simply went quiet, and a refusal would blame a Minecraft server that was never asked. The
+same correction happens at once when a host reconnects without announcing the agent — see
+*Recovering from a host restart*. A pending state that could not end would be worse than the
+`LINKED` it replaced, since it refuses the retry as well as claiming something is happening.
 
 Phases 2 and 3 are separate because linking needs a human and connecting does not. That is what lets
 an agent recover from a crash at 03:00 without waking anyone.
@@ -188,13 +204,15 @@ stateDiagram-v2
     UNLINKED --> SETUP_PENDING: setup_agent sent
     SETUP_PENDING --> LINKED: host reports success
     SETUP_PENDING --> UNLINKED: host reports failure
-    LINKED --> ONLINE: connect
+    LINKED --> CONNECTING: connect sent
+    CONNECTING --> ONLINE: host reports the agent in game
+    CONNECTING --> CONNECT_FAILED: server refused
+    CONNECTING --> LINKED: no verdict inside the connect window
     ONLINE --> LINKED: disconnect
     LINKED --> NEEDS_RELINK: refresh token rejected
     ONLINE --> NEEDS_RELINK: refresh token rejected
     NEEDS_RELINK --> SETUP_PENDING: setup_agent sent again
-    ONLINE --> CONNECT_FAILED: server refused
-    CONNECT_FAILED --> LINKED: retry
+    CONNECT_FAILED --> CONNECTING: retry
     ONLINE --> STALE: host unreachable
     LINKED --> STALE: host unreachable
     STALE --> ONLINE: host reconnects, agent still in game
@@ -209,6 +227,11 @@ prompt a human, so it must be distinguishable from a generic failure.
 visibility into how far along the login is, so this state is open-ended by design: the UI shows
 "awaiting setup on <host>" with no progress bar, because there is no progress to report. The host
 decides when to give up and reports a failure reason.
+
+`CONNECTING` is the same idea with the opposite deadline. It also means "a command is out and the
+host has not answered", but a join is seconds of work rather than a human at a browser, so it is
+**bounded**: past `osmium.agent.connect-window` the backend stops asserting it. The two share a
+colour in the interface for that reason — one fact about the fleet, told twice.
 
 `STALE` is covered in its own section below, because an agent enters it for a reason external to the
 agent: its host went unreachable.
@@ -258,7 +281,9 @@ open anything.
 2. **The host is the source of truth on reconnect.** When the WebSocket returns, the host
    re-enumerates its actual live clients and reports the real set. The backend reconciles to that
    view — agents still in-game return to `ONLINE`, the rest fall to `LINKED` — and never asserts state
-   back onto the host.
+   back onto the host. An agent left mid-`SETUP_PENDING` goes back to `UNLINKED` and one left
+   mid-`CONNECTING` to `LINKED`: in both cases the command went with the process that was going to
+   answer it, so nothing is coming.
 3. **A host restart is not an agent restart.** Every client lives inside the one host process, so
    after that process restarts its agents are genuinely offline and must be reconnected
    via Phase 3. The host reports them `LINKED` on reconnect; the token cache survives, so no fresh

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from 'vue-router'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Bot as Agent,
@@ -119,6 +119,40 @@ const statusShown = computed(
   () => degraded.value || (auth.can('agent.read') && !agentStore.liveUpdatesConnected),
 )
 
+/**
+ * Whether the live stream has been down long enough to be worth a banner.
+ *
+ * Nearly every list in the application is stream-fed and none of them poll, deliberately. So a
+ * dropped stream freezes upload bars, agent states and arriving rows while every page goes on
+ * looking entirely normal — and the only thing that said so was a 16px glyph in the corner of the
+ * sidebar behind a hover tooltip.
+ *
+ * Delayed rather than immediate. The stream is not connected for the first moment of every page
+ * load and reconnects with backoff after any blip, and a banner that flashed on each of those would
+ * be noise that teaches an operator to ignore it.
+ */
+const streamDown = ref(false)
+let streamTimer: ReturnType<typeof setTimeout> | undefined
+
+const STREAM_GRACE_MS = 6_000
+
+watch(
+  () => auth.can('agent.read') && !agentStore.liveUpdatesConnected,
+  (lost) => {
+    clearTimeout(streamTimer)
+    if (!lost) {
+      streamDown.value = false
+      return
+    }
+    streamTimer = setTimeout(() => {
+      streamDown.value = true
+    }, STREAM_GRACE_MS)
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => clearTimeout(streamTimer))
+
 const backendTip = computed(() =>
   retrying.value
     ? t('connection.retrying')
@@ -235,6 +269,27 @@ async function logout() {
             <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
               {{ t('sessions.alertDismiss') }}
             </button>
+          </div>
+
+          <!--
+            The one thing nothing on a page can say for itself: what is on screen is real but has
+            stopped moving. Every list here is fed by the stream and none of them poll, so without
+            this a frozen page and a quiet one are the same picture.
+
+            Not dismissible, unlike the notice above it. That one is about something that already
+            happened; this one is about the state of the screen right now, and it goes away by
+            being fixed.
+          -->
+          <div
+            v-if="streamDown"
+            role="status"
+            class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+          >
+            <WifiOff class="mt-0.5 size-5 shrink-0" />
+            <span class="min-w-0 flex-1">
+              <span class="block font-medium">{{ t('connection.streamLost') }}</span>
+              <span class="block text-sm opacity-80">{{ t('connection.streamLostBody') }}</span>
+            </span>
           </div>
 
           <RouterView />

@@ -6,10 +6,15 @@ type AgentState = AgentResponse['state']
 /**
  * Presentation for the agent lifecycle. STALE is deliberately neutral rather than red: an unreachable
  * host means the state is unknown, and rendering it as offline would claim knowledge we do not have.
+ *
+ * CONNECTING and SETUP_PENDING share a colour on purpose. They are the same fact about the fleet —
+ * a command is out and the host has not answered — and an operator who has learnt to read one of
+ * them has learnt to read the other.
  */
 export const STATE_DOT: Record<AgentState, string> = {
   ONLINE: 'bg-success',
   LINKED: 'bg-base-content/40',
+  CONNECTING: 'bg-info',
   UNLINKED: 'bg-base-content/25',
   SETUP_PENDING: 'bg-info',
   NEEDS_RELINK: 'bg-error',
@@ -20,6 +25,7 @@ export const STATE_DOT: Record<AgentState, string> = {
 export const STATE_BADGE: Record<AgentState, string> = {
   ONLINE: 'badge-success badge-soft',
   LINKED: 'badge-ghost',
+  CONNECTING: 'badge-info badge-soft',
   UNLINKED: 'badge-ghost',
   SETUP_PENDING: 'badge-info badge-soft',
   NEEDS_RELINK: 'badge-error badge-soft',

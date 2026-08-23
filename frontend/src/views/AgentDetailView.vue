@@ -487,15 +487,19 @@ async function confirmRemove() {
             <KeyRound class="size-4" />
             {{ t('agents.setUp') }}
           </button>
-          <!-- No server is nowhere to connect to, and the backend refuses it with a 409. -->
+          <!--
+            No server is nowhere to connect to, and the backend refuses it with a 409. So does a
+            connect that is already out: the button says so rather than going quiet, because the
+            whole point of CONNECTING is that the wait is visible.
+          -->
           <button
             v-if="auth.can('agent.run')"
             class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || !hostReachable || !agent.serverAddress || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING'"
+            :disabled="busy || !hostReachable || !agent.serverAddress || isOnline(agent) || agent.state === 'UNLINKED' || agent.state === 'SETUP_PENDING' || agent.state === 'CONNECTING'"
             @click="run(() => agentStore.connect(agent!.id))"
           >
-            <RotateCw class="size-4" />
-            {{ t('agents.connect') }}
+            <RotateCw class="size-4" :class="agent.state === 'CONNECTING' ? 'animate-spin' : ''" />
+            {{ agent.state === 'CONNECTING' ? t('agents.connecting') : t('agents.connect') }}
           </button>
           <button
             v-if="auth.can('agent.run')"

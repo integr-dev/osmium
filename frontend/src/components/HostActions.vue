@@ -32,6 +32,8 @@ const rotating = ref<HostResponse | null>(null)
 const rotatedToken = ref<string | null>(null)
 const rotateError = ref<string | null>(null)
 const copied = ref(false)
+/** Set when the clipboard refused. The token is shown once, so this cannot be swallowed. */
+const copyFailed = ref(false)
 
 const removeDialog = ref<HTMLDialogElement | null>(null)
 const pendingRemove = ref<HostResponse | null>(null)
@@ -60,6 +62,7 @@ function rotate(host: HostResponse) {
   rotatedToken.value = null
   rotateError.value = null
   copied.value = false
+  copyFailed.value = false
   rotateDialog.value?.showModal()
 }
 
@@ -73,10 +76,21 @@ async function confirmRotate() {
   }
 }
 
+/**
+ * The one place in the application where a silent failure cannot be recovered from.
+ *
+ * `writeText` rejects on a denied permission and in any non-secure context. Unhandled, the promise
+ * died quietly and the button simply stayed on "Copy" — so an operator who clicked it, saw nothing
+ * change, clicked Done and pasted an empty clipboard had permanently lost the host's credential.
+ */
 async function copyToken() {
   if (!rotatedToken.value) return
-  await navigator.clipboard.writeText(rotatedToken.value)
-  copied.value = true
+  try {
+    await navigator.clipboard.writeText(rotatedToken.value)
+    copied.value = true
+  } catch {
+    copyFailed.value = true
+  }
 }
 
 function remove(host: HostResponse) {
@@ -173,6 +187,12 @@ defineExpose({ rename, rotate, remove })
               {{ copied ? t('common.copied') : t('common.copy') }}
             </button>
           </label>
+          <!-- Says what to do instead. The token is still on screen, so this is recoverable — but
+               only if the operator is told the click did not work. -->
+          <div v-if="copyFailed" role="alert" class="alert alert-warning alert-soft">
+            <TriangleAlert class="size-4" />
+            <span>{{ t('common.copyFailed') }}</span>
+          </div>
           <div class="modal-action">
             <button class="btn btn-primary btn-sm" type="button" @click="rotateDialog?.close()">
               {{ t('common.done') }}

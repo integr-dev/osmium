@@ -166,7 +166,20 @@ this payload rather than anything it remembers.
 
 Fire and forget: **do not send a result.** Report the outcome as an `agent_status` event instead —
 `ONLINE` on success, `CONNECT_FAILED` if the server refused, `NEEDS_RELINK` if the stored credential
-was rejected. The backend advances state only when the host reports, never when it sends.
+was rejected.
+
+**Report it, and report it inside 90 seconds.** Dispatching this moves the agent to `CONNECTING` on
+the backend — the one state it sets on its own, and the only one it is prepared to take back. It is
+what tells an operator the button did something during the seconds a join takes. An agent still
+`CONNECTING` after `osmium.agent.connect-window` falls back to `LINKED`, with an activity entry
+saying the host never answered.
+
+That fallback is a display correction and nothing else: no command is sent, nothing is cancelled,
+and a host reporting `ONLINE` late is still believed. A join that genuinely runs longer than the
+window is a reason to raise the setting, not to stay quiet.
+
+The backend advances state only when the host reports, never when it sends — `CONNECTING` included,
+which it *withdraws* rather than advances.
 
 ### `disconnect`
 
@@ -284,6 +297,7 @@ current. Nothing needs to be sent to clear them.
 | `UNLINKED` | no credentials cached for this agent | host |
 | `SETUP_PENDING` | login in progress | **backend only** — do not report it |
 | `LINKED` | credentials held, not in game | host |
+| `CONNECTING` | `connect` sent, no verdict yet | **backend only** — do not report it |
 | `ONLINE` | in game | host |
 | `NEEDS_RELINK` | stored credentials rejected; cannot self-heal | host |
 | `CONNECT_FAILED` | server refused — whitelist, ban, version | host |
@@ -356,6 +370,7 @@ What the backend does with it, for every agent it owns on this host:
 |---|---|---|
 | `ONLINE` | applied as reported | → `LINKED` — credentials survived the restart, the session did not |
 | `SETUP_PENDING` | applied as reported | → `UNLINKED` — the command went with the process that was going to answer it |
+| `CONNECTING` | applied as reported | → `LINKED` — same reason, and the credentials are still on disk |
 | anything else | applied as reported | left alone — none of them claim a live session |
 
 An unannounced agent also loses the listener role, so the next election sees a vacancy rather than a

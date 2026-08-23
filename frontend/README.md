@@ -194,7 +194,7 @@ know about: choosing a builder narrows the list to that agent's server, and sele
 otherwise leave agents selected but invisible — the count saying nine while the list shows four.
 Nothing stays selected once it leaves the list.
 
-### The build is three steps
+### The build is four steps
 
 ```
 Schematic  ->  Plan  ->  Agents  ->  Split
@@ -202,8 +202,9 @@ Schematic  ->  Plan  ->  Agents  ->  Split
 
 The order is strict rather than a preference: nothing can be divided before it has been read, and
 nothing can be divided at all until somebody is going to build it. All of it on one screen was a
-library, a viewer, a material list, a picker, a mode and a set of segments competing for the same
-attention, with that order invisible. Steps make it the shape of the screen.
+library, a viewer, a material list, a placement, a substitution table, a picker, a mode and a set of
+segments competing for the same attention, with that order invisible. Steps make it the shape of the
+screen.
 
 Forward is gated and **says what is missing** rather than only grimacing at a disabled button;
 backwards is always free.
@@ -238,6 +239,35 @@ is the part that can be wrong without looking wrong. Two rules in it are worth s
 An empty replacement field means "leave it out", which is what the placeholder says. It is stored as
 null rather than as an empty name, so "place nothing" has one representation instead of two that
 behave alike but do not compare equal.
+
+### Blocks have names, and the picker knows them
+
+`minecraft:white_terracotta` is what the file says and what the host is told; **White Terracotta** is
+what a person chooses between. Both are shown — the readable name to pick by, the id underneath
+because that is what is actually stored and sent — with a colour chip from the same table the voxel
+viewer paints with.
+
+The names are **generated and committed** (`scripts/generate-block-names.mjs`, from PrismarineJS
+`minecraft-data`; about 1,200 blocks in 50 KB). Not fetched at runtime: Osmium sits behind a strict
+CSP and may run with no route to GitHub, and a picker that needs the internet to show a block name
+is empty exactly when somebody is working offline. Regenerate it when the game moves.
+
+**Nothing treats an unknown block as an error.** The dataset lags the game by a version or two, and a
+schematic can legitimately name a block newer than it — or from a mod. So `blockName` falls through
+to prettifying the id (`some_future_block` → *Some Future Block*), the picker accepts anything typed
+and marks it as unrecognised, and the suggestions are help rather than a gate. Refusing an unknown
+block would make the picker worse than the plain text box it replaced.
+
+A combobox rather than a `<select>`: eleven hundred options is past what a dropdown can be scrolled.
+Suggestions are **ranked, not filtered** — exact id, then prefix, then a word inside the name
+starting with the query, then anything containing it, shortest first within a rank. Alphabetical
+buries **Stone** under its own variants, and word-start is what puts **Bricks** ahead of **Nether
+Bricks** for somebody typing a material rather than a modifier. Blocks already in the schematic come
+first and are badged, because substituting is almost always swapping something already there.
+
+The suggestion list is allowed to be wider than the field it hangs off, and the id truncates before
+the name does. Two pickers side by side in one column left about 150px each, which holds none of
+those three things — so a substitution rule is two stacked lines rather than one row.
 
 ### Getting there takes a while, so say where it got to
 
@@ -430,7 +460,19 @@ cost is that reconnection is ours to write, so it backs off from 1s to 30s.
 
 A **401 is retried once** after a refresh. The token is checked when the request arrives and never
 again, so a stream outlives its own access token and only discovers it on the next connect — that is
-routine, not an expiry. A second 401, or a 403, is not fixed by reconnecting and stops the loop.
+routine, not an expiry. A second 401, or a 403, is not fixed by reconnecting and stops the loop —
+but it still **announces the disconnect on the way out**. Returning in silence left the connection
+indicator claiming a live stream forever, so every list on screen quietly stopped updating with
+nothing anywhere saying why.
+
+**Losing the stream gets a banner, not just an icon.** Every list here is stream-fed and none of them
+poll, deliberately — so a dropped stream freezes upload bars, agent states and arriving rows while
+each page goes on looking entirely normal. A 16px glyph in the corner of the sidebar behind a hover
+tooltip was not enough to carry that, so `AppLayout` also puts a line above the router view saying
+what is on screen is real but has stopped moving, and that nothing has been lost. It waits six
+seconds first: the stream is disconnected for the first moment of every page load and reconnects
+with backoff after any blip, and a banner that flashed on each of those teaches an operator to
+ignore it.
 
 `AppLayout` holds one stream open for the session. Events land in the store's `applyEvent`, which is
 the seam between transport and state — exported so the ingest is testable without a socket.
@@ -555,6 +597,18 @@ since it is the one already forwarding the conversation being read. A server nob
 has no global feed at all, so the rail says so rather than showing an empty panel, which would read
 as a quiet server instead of a missing one.
 
+**A sent line is shown before it is confirmed, and marked as unconfirmed.** A 2xx from the send
+endpoint means the backend accepted the message for delivery, not that anything was said — the line
+enters the transcript when the host echoes it back, a round trip through a Minecraft server away.
+Clearing the box on that 2xx and drawing nothing meant the message was simply gone from the screen
+in between, and gone permanently if the host dropped it.
+
+So it appears at once, dimmed and italic with a clock beside it, and the echo retires it. Matched on
+text rather than id, because the two have no id in common: the backend mints one when the host
+reports the line, long after the placeholder was drawn. After ten seconds with no echo the clock
+becomes a warning and the line reads *not confirmed* — not *failed*, since the message may well have
+been said and only the echo lost, but not left looking like ordinary chat either.
+
 Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
 store hands `chat`, `activity`, `audit`, `user` and `user-removed` events to whichever view is
 showing the matching list, via `onFeedEvent`, and that view prepends or replaces.
@@ -562,6 +616,56 @@ showing the matching list, via `onFeedEvent`, and that view prepends or replaces
 A live audit entry is only prepended **while the search box is empty**. It has not been through the
 server-side search, so prepending it during one would put a row on screen that does not match what
 was typed.
+
+## Saying what happened
+
+A screen that does something and then reports nothing is indistinguishable from one that did
+nothing. That is one bug, and it turned up in nine places at once; the fixes share a shape, so the
+reasoning lives here rather than nine times over.
+
+**A save says it saved, and a form says when it is unsaved.** `ConfigurationView` had the pattern
+already — a `dirty` computed comparing draft to stored, a marker while they differ, a named
+confirmation after, and a button whose label changes while it works — and `BuildPlanner` now uses
+it. Without it there was no way to tell an edited plan from a written one: the button read the same
+before and after, the coordinates read the same, and the material list beside them was already
+showing the *unsaved* draft. Both compare serialised values rather than field by field, so
+whitespace cannot make an unchanged form look edited.
+
+**A long-running command gets a state, not just a disabled button.** See `CONNECTING` in
+FLEET_CONNECTIVITY.md: the backend accepts a connect in milliseconds and the host answers in
+seconds, so the badge used to go on reading `LINKED` throughout — the same thing it read before the
+click. The frontend's whole part in this is rendering the state and refusing a second connect while
+one is out, in `FleetConnections` as well as on the agent page.
+
+**A bulk run says how far it got.** Both bulk panels loop sequentially on purpose, so stopping part
+way is the normal case — one banned agent, one full server. Reporting only the failure left the
+operator unable to tell an untouched fleet from a half-moved one, so the message now carries both
+halves (*"Stopped at Mason_08 after 7 went through — …"*), the button counts through the run rather
+than saying "Applying…" for a minute, and **only the agents that succeeded leave the selection**, so
+pressing the button again does not re-run work that is already done.
+
+**A cancellation is an outcome.** Cancelling an upload is a choice rather than a failure, so it is
+not an error — but saying nothing left the bar vanishing from a dialog that otherwise looked
+untouched. It now says how far it got and what became of it: the partial transfer stays in the
+library as an unfinished schematic, and sending again starts a new one rather than resuming.
+
+**A one-time secret cannot fail quietly.** `navigator.clipboard.writeText` rejects on a denied
+permission and in any non-secure context. Unhandled, the promise died and the button simply stayed
+on "Copy" — so an operator who clicked it, saw nothing change, clicked Done and pasted an empty
+clipboard had permanently lost a host's credential. Both token dialogs now catch it and say to
+select the value by hand while it is still on screen.
+
+**Never claim something was done when that cannot be checked.** "End every session" clears this
+browser whatever the server said — someone pressing it believes they are compromised, and leaving
+them signed in over an awkward request would be the worst reading of a failure. But it then lands on
+a login screen, which is exactly what success looks like. So `endAllSessions` returns whether the
+server actually did it, and a failure carries `?revoked=failed` to the login view, which says the
+other sessions should be treated as still active. Of everywhere in this application, that is the
+worst place to be quietly wrong.
+
+**A redirect explains itself.** The route guard sends anyone without a route's node to the
+dashboard. Doing that silently made a bookmarked `/audit` read as a broken link rather than as a
+restriction, so the node travels along as `?denied=` and the dashboard names it once, dismissibly.
 
 ## Loading states
 
@@ -871,16 +975,22 @@ src/api/         generated schema, typed client, token storage, live-update and 
 src/components/  FormField and AgentPicker, the add-host, add-agent and upload modals, the chat
                  rail and panel, the command palette, the sparkline and hourly bars, the language
                  picker, the sign-in backdrop, the schematic library, the box and voxel viewers,
-                 the server-assignment and connection panels
+                 the build planner and block picker, the agent and host lists and the host
+                 action dialogs, the fleet graph, the server-assignment and connection panels
 src/layouts/     AppLayout: sidebar, nav, drawer
 src/i18n/        every user-facing string, one file per locale
 src/lib/         everything computed away from a component: cursor-paged feeds, chat scopes,
-                 build and vitals arithmetic, chart, box and voxel geometry, shortcuts, panel
-                 resizing, and presentation maps for agent state, roles and permissions
+                 build and vitals arithmetic, chart, box and voxel geometry, fleet-graph layout
+                 and link health, placement offsets and substituted materials, block names and
+                 their search, shortcuts, panel resizing, and presentation maps for agent state,
+                 roles and permissions. `blockNames.generated.ts` is generated — see
+                 `scripts/`
 src/router/      routes and node-based guards
 src/stores/      auth, fleet, the chat rail, and the sampled history behind the sparklines (Pinia)
 src/test/        Vitest setup and the fetch stub
-src/views/       dashboard, map, operations, configuration, hosts, agent detail, accounts, audit, login
+src/views/       dashboard, map, operations, resources, configuration, agent detail, host detail,
+                 accounts, audit, login
+scripts/         one-off generators, run by hand: the block-name table
 ```
 
 Specs sit next to what they test as `*.spec.ts`, so they are type-checked with everything else — but

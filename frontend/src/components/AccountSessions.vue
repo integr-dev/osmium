@@ -50,10 +50,18 @@ async function end(session: SessionResponse) {
   }
 }
 
+/**
+ * The local session goes either way — see the store. What the server made of it does not.
+ *
+ * Carried to the login screen rather than shown here, because this component is about to be
+ * unmounted by the navigation. Without it, a revoke the server refused looked identical to one it
+ * performed: same login screen, same silence, and an operator who pressed this because they
+ * believed they were compromised walked away thinking every other session was dead.
+ */
 async function endEverywhere() {
   revokeAllDialog.value?.close()
-  await auth.endAllSessions()
-  void router.push({ name: 'login' })
+  const revoked = await auth.endAllSessions()
+  void router.push({ name: 'login', query: revoked ? {} : { revoked: 'failed' } })
 }
 
 /** Relative where it is short, because "2 hours ago" is read faster than a timestamp. */

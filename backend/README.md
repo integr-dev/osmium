@@ -210,6 +210,10 @@ changes automatically.
 | `PUT` | `/api/schematics/{id}/content` | `schematic.write` (raw bytes at `offset`; **409** carries the real one) |
 | `PATCH` | `/api/schematics/{id}` | `schematic.write` (rename) |
 | `DELETE` | `/api/schematics/{id}` | `schematic.delete` (takes the file and the index with it) |
+| `GET` | `/api/builds`, `/api/builds/{id}` | `schematic.read` (a plan: where a schematic goes, and what out of) |
+| `POST` | `/api/builds` | `schematic.write` (placement and substitutions both settleable later) |
+| `PATCH` | `/api/builds/{id}` | `schematic.write` (omitted fields are left alone; `unplace` clears a placement) |
+| `DELETE` | `/api/builds/{id}` | `schematic.delete` (the coordinates and the rules go with it) |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -449,8 +453,9 @@ it against what the backend owns for that host:
 - **Announced** agents are applied exactly as `agent_status` would apply them, so a host that kept
   its sessions across a dropped socket changes nothing by saying so.
 - **Unannounced** `ONLINE` becomes `LINKED` — credentials live on the host's disk and survive a
-  restart; the session does not. `SETUP_PENDING` becomes `UNLINKED`, where a failed setup lands,
-  because the command went with the process that was going to answer it.
+  restart; the session does not. `SETUP_PENDING` becomes `UNLINKED`, where a failed setup lands, and
+  `CONNECTING` becomes `LINKED`, where a connect that runs out of time lands — in both cases the
+  command went with the process that was going to answer it.
 - **Every other state is left alone.** None of them claim a live session, so silence says nothing
   about them.
 
@@ -868,6 +873,8 @@ src/main/resources/db/migration/
   V7__optional_agent_server.sql    an agent no longer has to be pointed at a server
   V8__schematics.sql               the library: uploads, their progress and their failures
   V9__schematic_index.sql          what a pass leaves behind: cells, materials, the origin
+  V10__schematic_cell_block.sql    the dominant block per cell, so a shape can be coloured
+  V11__builds.sql                  build plans: where a schematic stands and what it is built of
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The

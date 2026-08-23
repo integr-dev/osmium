@@ -28,6 +28,16 @@ enum class AgentState {
     /** The host holds credentials for this agent. Not in game. */
     LINKED,
 
+    /**
+     * `connect` sent; the host is joining a Minecraft server and has not reported the outcome.
+     *
+     * The same shape as [SETUP_PENDING], for the same reason. The command is accepted here in
+     * milliseconds and answered by the host in seconds, and with no state for the gap between them
+     * an operator who pressed Connect saw the badge still reading LINKED - which is exactly what it
+     * read before the press, so a working button and a broken one looked identical.
+     */
+    CONNECTING,
+
     ONLINE,
 
     /** The host's stored credentials were rejected. Cannot self-heal; needs a fresh setup. */
@@ -91,6 +101,19 @@ class Agent(
      */
     @Column(name = "online_since")
     var onlineSince: Instant? = null,
+
+    /**
+     * When `connect` went out, or null whenever the agent is not [AgentState.CONNECTING].
+     *
+     * The expiry date on the claim. CONNECTING says a join is in progress, and only the host can
+     * say how it went - so without something to measure the wait against, a host that answers
+     * neither ONLINE nor CONNECT_FAILED leaves the agent asserting a join nobody is performing, and
+     * refusing the retry that would have fixed it.
+     *
+     * Stored rather than timed in memory so a restart cannot strand an agent here.
+     */
+    @Column(name = "connecting_since")
+    var connectingSince: Instant? = null,
 
     /**
      * Whether this agent is the one forwarding its server's global chat.

@@ -95,7 +95,14 @@ export function openLiveUpdates(path: string, handlers: LiveUpdateHandlers): Liv
       // Still refused. A 403 means the account lost the node and a second 401 means the session is
       // genuinely over; neither is fixed by reconnecting, so give up and let the next REST call
       // drive the user back to the login screen.
-      if (response.status === 401 || response.status === 403) return
+      //
+      // Announced on the way out. Returning in silence left whatever is showing a connection
+      // indicator believing the stream was still up, so every list on screen quietly stopped
+      // updating and nothing anywhere said why.
+      if (response.status === 401 || response.status === 403) {
+        handlers.onDisconnect?.()
+        return
+      }
 
       if (!response.ok || !response.body) throw new Error(`Stream failed: ${response.status}`)
 

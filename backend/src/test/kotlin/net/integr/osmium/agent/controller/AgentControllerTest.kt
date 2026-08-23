@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath
 import net.integr.osmium.AbstractRestTest
 import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.agent.service.AgentService
 import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.security.RoleNames
 import org.junit.jupiter.api.Test
@@ -15,12 +16,16 @@ import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.put
+import java.time.Duration
+import java.time.Instant
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class AgentControllerTest : AbstractRestTest() {
 
     @Autowired private lateinit var chatRateLimiter: ChatRateLimiter
     @Autowired private lateinit var auditEntryRepository: AuditEntryRepository
+    @Autowired private lateinit var agentService: AgentService
 
     @Test
     fun `orchestrator creates an agent, which starts unlinked`() {
@@ -166,6 +171,53 @@ class AgentControllerTest : AbstractRestTest() {
         }.andExpect {
             status { isConflict() }
         }
+    }
+
+    /** Same shape as the setup guard below, and the same reason: one command in flight at a time. */
+    @Test
+    fun `connect is refused while a connect is already running`() {
+        val auth = authAs("root", RoleNames.ADMINISTRATOR)
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.CONNECTING)
+
+        mockMvc.post("/api/agents/${agent.id}/connect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
+    /**
+     * The state has to be able to end on its own, or it is worse than what it replaced.
+     *
+     * Before CONNECTING existed, a connect nobody answered left the agent at LINKED, where the
+     * operator could simply press the button again. A pending state that never clears refuses the
+     * retry *and* goes on claiming something is happening.
+     */
+    @Test
+    fun `a connect the host never answers stops claiming to be connecting`() {
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.CONNECTING)
+        agent.connectingSince = Instant.now().minus(Duration.ofHours(1))
+        agentRepository.saveAndFlush(agent)
+
+        agentService.abandonStalledConnects()
+
+        val expired = agentRepository.findById(agent.id!!).orElseThrow()
+        // LINKED, not CONNECT_FAILED: nothing refused this agent, the host simply went quiet, and a
+        // red badge would blame a Minecraft server that was never asked.
+        assertEquals(AgentState.LINKED, expired.state)
+        assertNull(expired.connectingSince)
+    }
+
+    /** The window is generous on purpose, and a join still inside it is not a stall. */
+    @Test
+    fun `a connect still within its window is left alone`() {
+        val agent = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.CONNECTING)
+        agent.connectingSince = Instant.now()
+        agentRepository.saveAndFlush(agent)
+
+        agentService.abandonStalledConnects()
+
+        assertEquals(AgentState.CONNECTING, agentRepository.findById(agent.id!!).orElseThrow().state)
     }
 
     @Test

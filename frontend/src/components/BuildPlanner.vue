@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MapPin, Plus, Replace, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { Check, MapPin, Plus, Replace, Trash2, TriangleAlert } from 'lucide-vue-next'
 import {
   createBuild,
   listBuilds,
@@ -10,7 +10,7 @@ import {
 } from '../api/builds'
 import BlockPicker from './BlockPicker.vue'
 import { blockColour } from '../lib/blockColours'
-import { blockName } from '../lib/blockNames'
+import { blockId, blockName } from '../lib/blockNames'
 import { blocksToPlace, offsetOf, plannedMaterials, type Substitution } from '../lib/placement'
 import type { Vec3 } from '../lib/box3d'
 import { useAuthStore } from '../stores/auth'
@@ -43,6 +43,8 @@ const plans = ref<BuildResponse[]>([])
 const selectedId = ref<number | null>(null)
 const busy = ref(false)
 const error = ref<string | null>(null)
+/** What the last save came to, cleared the moment the draft moves away from it again. */
+const saved = ref<string | null>(null)
 
 /** The draft, which is what the fields edit. Committed to the plan only when saved. */
 const place = ref<{ x: number | null; y: number | null; z: number | null }>({ x: null, y: null, z: null })
@@ -78,16 +80,56 @@ const placement = computed(() => {
   return x !== null && y !== null && z !== null ? { x, y, z } : null
 })
 
+/**
+ * Whether the fields say something the stored plan does not.
+ *
+ * Without it there was no way to tell an edited plan from a saved one: the button reads the same
+ * before and after, the coordinates read the same, and the material list beside them was already
+ * showing the unsaved draft. The only honest response to that was to press Save again.
+ *
+ * Compared as the API sees it, not field by field, so whitespace and the empty-means-omit
+ * conversion cannot make an unchanged plan look edited. A plan that does not exist yet is dirty as
+ * soon as anything has been typed, which is what makes Create appear for a reason.
+ *
+ * **Declared after [placement], and it has to be.** `watch` evaluates its source once at setup to
+ * take a baseline, so the getter below runs during setup rather than lazily like an unwatched
+ * computed — and reading a `const` declared further down the file throws on its temporal dead zone.
+ */
+const dirty = computed(() => {
+  const stored = selected.value
+  if (!stored) return placement.value !== null || asSubstitutions.value.length > 0
+
+  const wasPlaced = stored.placement
+    ? { x: stored.placement.x, y: stored.placement.y, z: stored.placement.z }
+    : null
+
+  return (
+    JSON.stringify(placement.value) !== JSON.stringify(wasPlaced) ||
+    JSON.stringify(asSubstitutions.value) !== JSON.stringify(stored.substitutions)
+  )
+})
+
+// The confirmation is about a particular set of values, so the moment they move again it is no
+// longer true. Anything else leaves "Saved" sitting under a plan that has since been edited.
+watch(dirty, (changed) => {
+  if (changed) saved.value = null
+})
+
 const offset = computed(() => (placement.value ? offsetOf(placement.value, props.origin) : null))
 
 const planned = computed(() => plannedMaterials(props.materials, asSubstitutions.value))
 const placing = computed(() => blocksToPlace(planned.value))
 const omitted = computed(() => planned.value.filter((entry) => entry.omitted))
 
-/** Blocks in the file that no rule has claimed, offered as the next substitution to add. */
+/**
+ * Blocks in the file that no rule has claimed, offered as the next substitution to add.
+ *
+ * Compared on the bare id: the file says `minecraft:stone` and the picker stores `stone`, so a
+ * plain string compare kept offering a block that already had a rule.
+ */
 const unruled = computed(() => {
-  const taken = new Set(rules.value.map((rule) => rule.from))
-  return props.materials.filter((material) => !taken.has(material.name))
+  const taken = new Set(rules.value.map((rule) => blockId(rule.from)))
+  return props.materials.filter((material) => !taken.has(blockId(material.name)))
 })
 
 onMounted(load)
@@ -106,6 +148,7 @@ async function load() {
 
 function choose(id: number | null) {
   selectedId.value = id
+  saved.value = null
   const plan = plans.value.find((entry) => entry.id === id) ?? null
 
   place.value = plan?.placement
@@ -143,6 +186,9 @@ async function save() {
 
     plans.value = [plan, ...plans.value.filter((entry) => entry.id !== plan.id)]
     selectedId.value = plan.id
+    // Named rather than a bare tick: several plans can exist for one schematic, and "Saved" alone
+    // does not say which of them the operator has just written to.
+    saved.value = t('builds.savedAs', { name: plan.name })
     emit('planned', plan)
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : t('errors.generic')
@@ -270,15 +316,27 @@ function nextName(): string {
           <span>{{ error }}</span>
         </div>
 
-        <button
-          v-if="auth.can('schematic.write')"
-          type="button"
-          class="btn btn-primary btn-sm"
-          :disabled="busy"
-          @click="save"
-        >
-          {{ selected ? t('builds.save') : t('builds.createPlan') }}
-        </button>
+        <!--
+          Which of the two is showing is the answer to "did that go through". The same shape
+          Configuration uses, for the same reason: a save that reports nothing is indistinguishable
+          from a button that does nothing.
+        -->
+        <div v-if="auth.can('schematic.write')" class="flex items-center gap-2">
+          <span v-if="dirty" class="text-warning text-xs">{{ t('builds.unsaved') }}</span>
+          <span v-else-if="saved" class="text-success flex items-center gap-1 text-xs">
+            <Check class="size-3.5" />
+            {{ saved }}
+          </span>
+
+          <button
+            type="button"
+            class="btn btn-primary btn-sm ml-auto"
+            :disabled="busy || !dirty"
+            @click="save"
+          >
+            {{ busy ? t('builds.saving') : selected ? t('builds.save') : t('builds.createPlan') }}
+          </button>
+        </div>
       </div>
     </div>
 

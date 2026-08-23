@@ -189,12 +189,13 @@ class MockHost(private val url: String, private val token: String) {
                 clock.schedule({ completeSetup(command, agentId) }, 2, TimeUnit.SECONDS)
             }
 
+            // Answered late on purpose, exactly like setup above it. A real host needs a session
+            // handshake, an authentication round trip and a world load before it can say anything,
+            // which is the whole reason the backend holds the agent at CONNECTING meanwhile - and a
+            // mock that replied instantly meant that state never appeared in development at all.
             CommandType.CONNECT -> {
                 if (agentId == null) return
-                agents.computeIfAbsent(agentId, ::MockAgent).online = true
-                result(command, ok = true)
-                state(agentId, "ONLINE")
-                activity(agentId, "lifecycle", "info", "Joined the server")
+                clock.schedule({ completeConnect(agentId) }, 3, TimeUnit.SECONDS)
             }
 
             CommandType.DISCONNECT -> {
@@ -240,6 +241,19 @@ class MockHost(private val url: String, private val token: String) {
                 ),
             ),
         )
+    }
+
+    /**
+     * The agent is in game, a few seconds after being told to go.
+     *
+     * No `result` frame: per host/README.md, `connect` is fire and forget and its outcome is an
+     * `agent_status` event. The backend held the agent at CONNECTING from the moment it dispatched
+     * the command, and this is what ends that.
+     */
+    private fun completeConnect(agentId: Long) {
+        agents.computeIfAbsent(agentId, ::MockAgent).online = true
+        state(agentId, "ONLINE")
+        activity(agentId, "lifecycle", "info", "Joined the server")
     }
 
     /**

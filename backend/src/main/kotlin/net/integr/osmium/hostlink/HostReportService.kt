@@ -148,6 +148,8 @@ class HostReportService(
      *   the session does not.
      * - `SETUP_PENDING` becomes `UNLINKED`, the same place a failed setup lands. The command went
      *   with the process that was going to answer it, so nothing is coming.
+     * - `CONNECTING` becomes `LINKED`, the same place a connect that runs out of time lands. The
+     *   credentials outlived the restart; the join that was in flight did not.
      *
      * Every other state is left alone: none of them assert a session, so the host's silence says
      * nothing about them.
@@ -167,12 +169,14 @@ class HostReportService(
             val corrected = when (agent.state) {
                 AgentState.ONLINE -> AgentState.LINKED
                 AgentState.SETUP_PENDING -> AgentState.UNLINKED
+                AgentState.CONNECTING -> AgentState.LINKED
                 else -> continue
             }
 
             log.info("Host {} did not announce agent {}; {} -> {}", hostId, agent.label, agent.state, corrected)
             agent.state = corrected
             agent.onlineSince = null
+            agent.connectingSince = null
             agent.chatListener = false
             // The operator did not cause this and would otherwise see a state change with no
             // explanation, which is exactly what the activity feed is for.
@@ -228,6 +232,9 @@ class HostReportService(
             // Chat listener election ranks by session length, so the clock starts on entering the
             // game and stops on leaving it. A reconnect is a new session, not a continuation.
             agent.onlineSince = if (state == AgentState.ONLINE) Instant.now() else null
+            // The host has answered, so the clock the answer was being waited on stops. Left set, a
+            // later CONNECTING would inherit a deadline that expired long before it began.
+            agent.connectingSince = if (state == AgentState.CONNECTING) agent.connectingSince else null
             // An agent that left the game has stopped forwarding whatever it was forwarding. Saying
             // so here means the next election sees a vacancy rather than a listener that is gone.
             if (state != AgentState.ONLINE) agent.chatListener = false

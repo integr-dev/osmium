@@ -374,7 +374,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Connect the agent to its Minecraft server. */
+        /**
+         * Connect the agent to its Minecraft server.
+         * @description Sends `connect` and moves the agent to CONNECTING. The outcome arrives on the host's own schedule as ONLINE or CONNECT_FAILED; a host that reports neither is given a fixed window, after which the agent falls back to LINKED.
+         */
         post: operations["connect"];
         delete?: never;
         options?: never;
@@ -916,7 +919,7 @@ export interface components {
              * @description Stored state, adjusted to STALE when the owning host is unreachable.
              * @enum {string}
              */
-            state?: "UNLINKED" | "SETUP_PENDING" | "LINKED" | "ONLINE" | "NEEDS_RELINK" | "CONNECT_FAILED" | "STALE";
+            state?: "UNLINKED" | "SETUP_PENDING" | "LINKED" | "CONNECTING" | "ONLINE" | "NEEDS_RELINK" | "CONNECT_FAILED" | "STALE";
             mcUsername?: string | null;
             mcUuid?: string | null;
             /**
@@ -2155,7 +2158,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Command accepted. */
+            /** @description Command accepted; agent is CONNECTING. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2182,7 +2185,7 @@ export interface operations {
                     "*/*": components["schemas"]["AgentResponse"];
                 };
             };
-            /** @description The agent has not been set up, or is assigned to no server. */
+            /** @description Already connecting, not set up, or assigned to no server. */
             409: {
                 headers: {
                     [name: string]: unknown;

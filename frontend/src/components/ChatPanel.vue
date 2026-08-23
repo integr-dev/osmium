@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Send, TriangleAlert } from 'lucide-vue-next'
+import { Clock, Send, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
 import type { ChatMessageResponse } from '../api/client'
 import { fetchChatPage } from '../api/feeds'
@@ -59,10 +59,57 @@ watch(
   },
 )
 
+/**
+ * Lines sent from here that the host has not echoed back yet.
+ *
+ * Sending cleared the box on a 2xx and put nothing anywhere. But a 2xx only means the backend
+ * accepted the message for delivery — the line enters the transcript when the host echoes it, which
+ * is a round trip through a Minecraft server away. In between, the message was simply gone from the
+ * screen; and if the host dropped it, gone for good with nothing ever saying so.
+ *
+ * So it is shown immediately, marked as unconfirmed, and either replaced by the real line or —
+ * after [ECHO_GRACE_MS] — marked as never having arrived. What is never done is claim it was said.
+ */
+interface PendingLine {
+  key: number
+  text: string
+  at: string
+  stalled: boolean
+}
+
+const pending = ref<PendingLine[]>([])
+
+/** Local identity only. The backend's id arrives with the echo, by which point this line is gone. */
+let nextKey = 0
+
+/**
+ * How long the host gets to echo before the line is called into question.
+ *
+ * A message goes to the host, into Minecraft, and comes back on the chat feed. Several seconds is
+ * ordinary; ten is not, and quietly waiting forever is what this exists to stop.
+ */
+const ECHO_GRACE_MS = 10_000
+
 const stopListening = agentStore.onFeedEvent((name, data) => {
   if (name !== 'chat') return
   const line = data as ChatMessageResponse
-  if (belongsTo(line, props.scope)) feed.prepend(line)
+  if (!belongsTo(line, props.scope)) return
+
+  // The echo of something sent from here retires its placeholder. Matched on the text of the
+  // oldest unconfirmed line rather than on an id, because the two have no id in common: the
+  // backend mints one when the host reports the line, long after this was drawn.
+  if (line.scope === 'OUTBOUND') {
+    const at = pending.value.findIndex((entry) => entry.text === line.text)
+    if (at !== -1) pending.value = pending.value.filter((_, index) => index !== at)
+  }
+
+  feed.prepend(line)
+})
+
+// A pending line belongs to the conversation it was sent into. Carried across a scope change it
+// would appear under somebody else's transcript as though it had been said there.
+watch(() => scopeKey(props.scope), () => {
+  pending.value = []
 })
 
 onBeforeUnmount(stopListening)
@@ -88,11 +135,24 @@ const blocked = computed(() => {
 
 async function send(): Promise<void> {
   if (!props.speaker || !message.value.trim()) return
+
+  const text = message.value.trim()
   sending.value = true
   sendError.value = null
+
   try {
-    await agentStore.say(props.speaker.id, message.value)
+    await agentStore.say(props.speaker.id, text)
     message.value = ''
+
+    // Only once the backend has accepted it. Drawn before the request, a refused message would
+    // have appeared in the transcript and then vanished, which is worse than never showing it.
+    const entry: PendingLine = { key: nextKey++, text, at: new Date().toISOString(), stalled: false }
+    pending.value = [entry, ...pending.value]
+
+    window.setTimeout(() => {
+      const waiting = pending.value.find((line) => line.key === entry.key)
+      if (waiting) waiting.stalled = true
+    }, ECHO_GRACE_MS)
   } catch (failure) {
     sendError.value = failure instanceof Error ? failure.message : t('errors.sendMessage')
   } finally {
@@ -128,6 +188,31 @@ function formatAt(at: string): string {
         the full note.
       -->
       <TransitionGroup name="feed" tag="div" class="flex flex-col-reverse gap-1">
+        <!--
+          Unconfirmed lines, newest-first like everything else, and therefore first in the reversed
+          column. Dimmed and marked rather than drawn as ordinary chat: the point is that the host
+          has not said this was said, and rendering it identically would be claiming that it was.
+        -->
+        <p
+          v-for="line in pending"
+          :key="`pending-${line.key}`"
+          class="flex items-start gap-2 px-1 text-sm"
+        >
+          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ formatAt(line.at) }}</span>
+          <component
+            :is="line.stalled ? TriangleAlert : Clock"
+            class="mt-1 size-3.5 shrink-0"
+            :class="line.stalled ? 'text-warning' : 'opacity-40'"
+          />
+          <span class="min-w-0 flex-1 break-words italic opacity-50">{{ line.text }}</span>
+          <span
+            class="shrink-0 pt-0.5 text-xs"
+            :class="line.stalled ? 'text-warning' : 'opacity-40'"
+          >
+            {{ line.stalled ? t('chat.notEchoed') : t('chat.sending') }}
+          </span>
+        </p>
+
         <p v-for="line in items" :key="line.id" class="flex items-start gap-2 px-1 text-sm">
           <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ formatAt(line.at) }}</span>
           <!--
@@ -153,7 +238,7 @@ function formatAt(at: string): string {
       </TransitionGroup>
 
       <p v-if="loading" class="py-4 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
-      <p v-else-if="!items.length" class="py-10 text-center text-sm opacity-50">
+      <p v-else-if="!items.length && !pending.length" class="py-10 text-center text-sm opacity-50">
         {{ t('dashboard.noChat') }}
       </p>
 

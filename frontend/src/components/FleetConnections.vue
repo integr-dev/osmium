@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Play, Power } from 'lucide-vue-next'
 import AgentPicker from './AgentPicker.vue'
-import { isOnline, useAgentStore } from '../stores/agents'
+import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 
 /**
  * Bringing a group of agents in or out of game at once.
@@ -19,6 +19,8 @@ const emit = defineEmits<{ done: [string]; failed: [string] }>()
 
 const selected = ref<number[]>([])
 const busy = ref(false)
+/** How far through the run it is, so a long sequential loop is not one motionless word. */
+const progress = ref<{ done: number; total: number } | null>(null)
 
 /**
  * Which agents the chosen action can act on, and which cannot. Both directions are shown rather
@@ -27,11 +29,19 @@ const busy = ref(false)
  */
 const going = ref<'connect' | 'disconnect'>('connect')
 
+/**
+ * An agent already on its way in cannot be connected again — the backend answers 409 — so it is
+ * unavailable here rather than selectable. Disconnect is unaffected: only a live session can end.
+ */
+function connectable(agent: FleetAgent): boolean {
+  return !isOnline(agent) && agent.state !== 'CONNECTING'
+}
+
 const eligible = computed(() =>
-  agentStore.agents.filter((agent) => (going.value === 'connect' ? !isOnline(agent) : isOnline(agent))),
+  agentStore.agents.filter((agent) => (going.value === 'connect' ? connectable(agent) : isOnline(agent))),
 )
 const blocked = computed(() =>
-  agentStore.agents.filter((agent) => (going.value === 'connect' ? isOnline(agent) : !isOnline(agent))),
+  agentStore.agents.filter((agent) => (going.value === 'connect' ? !connectable(agent) : !isOnline(agent))),
 )
 
 const blockedNote = computed(() =>
@@ -43,12 +53,21 @@ async function run(action: 'connect' | 'disconnect') {
   if (!agents.length) return
 
   busy.value = true
+  progress.value = { done: 0, total: agents.length }
+
+  // What actually happened, rather than what was asked for. A run that stops halfway is the normal
+  // case here — one banned agent, one full server — and reporting only the failure left the
+  // operator not knowing whether the ones before it went in.
+  const succeeded: number[] = []
+
   try {
     // One at a time, like the server assignment beside it. These reach real Minecraft servers, and
     // twenty simultaneous logins from one host is the shape of a thing that gets a host banned.
     for (const id of agents) {
       if (action === 'connect') await agentStore.connect(id)
       else await agentStore.disconnect(id)
+      succeeded.push(id)
+      progress.value = { done: succeeded.length, total: agents.length }
     }
     emit(
       'done',
@@ -56,11 +75,26 @@ async function run(action: 'connect' | 'disconnect') {
         ? t('operations.connected', { count: agents.length })
         : t('operations.disconnected', { count: agents.length }),
     )
-    selected.value = []
   } catch (failure) {
     const fallback = action === 'connect' ? t('errors.connectAgent') : t('errors.disconnectAgent')
-    emit('failed', failure instanceof Error ? failure.message : fallback)
+    const reason = failure instanceof Error ? failure.message : fallback
+    const stopped = agentStore.byId(agents[succeeded.length])
+
+    emit(
+      'failed',
+      succeeded.length
+        ? t('operations.stoppedAfter', {
+            count: succeeded.length,
+            name: stopped?.label ?? '',
+            reason,
+          })
+        : reason,
+    )
   } finally {
+    // Only what went through. Left in place, pressing the button again would re-run every agent
+    // that already succeeded — and a second connect for one already in game is a refusal per agent.
+    selected.value = selected.value.filter((id) => !succeeded.includes(id))
+    progress.value = null
     busy.value = false
   }
 }
@@ -123,9 +157,13 @@ async function run(action: 'connect' | 'disconnect') {
             @click="run(going)"
           >
             <component :is="going === 'connect' ? Play : Power" class="size-4" />
+            <!--
+              Which one of twenty, not just "applying". These run sequentially and reach real
+              Minecraft servers, so the wait is long enough that a motionless label reads as a stall.
+            -->
             {{
-              busy
-                ? t('operations.applying')
+              busy && progress
+                ? t('operations.applyingOne', { done: progress.done + 1, total: progress.total })
                 : going === 'connect'
                   ? t('operations.connect')
                   : t('operations.disconnect')

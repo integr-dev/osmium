@@ -123,6 +123,10 @@ router.beforeEach(async (to) => {
   await auth.ensureLoaded()
 
   // Dashboard needs no node, so it is the safe landing spot when one is missing.
+  //
+  // The node travels with the redirect. Bouncing silently meant a bookmarked `/audit` simply landed
+  // on the dashboard, which reads as a broken link rather than as a restriction — and the operator
+  // had no way to know they were missing an authority rather than a page.
   const node = to.meta.node as string | undefined
-  return node && !auth.can(node) ? { name: 'dashboard' } : true
+  return node && !auth.can(node) ? { name: 'dashboard', query: { denied: node } } : true
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Activity,
   Bot as Agent,
@@ -12,6 +12,7 @@ import {
   Heart,
   Layers,
   Map,
+  ShieldAlert,
   TriangleAlert,
 } from 'lucide-vue-next'
 import HourlyBars from '../components/HourlyBars.vue'
@@ -25,9 +26,12 @@ import { summariseVitals } from '../lib/vitals'
 import type { Sector } from '../stores/agents'
 import { bucketByHour } from '../lib/series'
 import { isOnline, useAgentStore } from '../stores/agents'
+import { nodeLabel } from '../lib/nodeLabel'
 import { useHistoryStore } from '../stores/history'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const agentStore = useAgentStore()
 const history = useHistoryStore()
 
@@ -94,6 +98,20 @@ const eta = computed(() => {
   const hours = Math.floor(minutes / 60)
   return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
 })
+
+/**
+ * The node the guard turned an operator away for, or null when they arrived here on purpose.
+ *
+ * Read once rather than watched: it describes the navigation that landed here, and re-reading it on
+ * every route change would resurrect the notice when the query is cleared.
+ */
+const denied = ref<string | null>((route.query.denied as string) ?? null)
+
+function dismissDenied() {
+  denied.value = null
+  // Out of the URL as well, so a reload does not bring it back.
+  void router.replace({ query: { ...route.query, denied: undefined } })
+}
 
 /** Still mock — see the store. */
 const blocksRemaining = computed(() => Math.max(0, build.value.target - build.value.placed))
@@ -210,6 +228,19 @@ function percent(part: number, whole: number): number {
 
 <template>
   <div class="mx-auto flex max-w-6xl flex-col gap-6">
+    <!--
+      Why this page rather than the one that was asked for. The guard sends anyone without a route's
+      node here, and doing that silently made a bookmarked link look broken instead of restricted.
+      Dismissible, because it is about one navigation and not about the fleet.
+    -->
+    <div v-if="denied" role="alert" class="alert alert-warning alert-soft">
+      <ShieldAlert class="size-4" />
+      <span>{{ t('errors.deniedRoute', { node: nodeLabel(denied) }) }}</span>
+      <button type="button" class="btn btn-ghost btn-xs" @click="dismissDenied">
+        {{ t('common.dismiss') }}
+      </button>
+    </div>
+
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('dashboard.title') }}</h1>

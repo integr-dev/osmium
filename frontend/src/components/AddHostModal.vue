@@ -14,6 +14,8 @@ const dialogEl = ref<HTMLDialogElement | null>(null)
 const name = ref('')
 const token = ref<string | null>(null)
 const copied = ref(false)
+/** Set when the clipboard refused. The token is shown once, so this cannot be swallowed. */
+const copyFailed = ref(false)
 const error = ref<string | null>(null)
 const busy = ref(false)
 
@@ -22,6 +24,7 @@ watch(open, (isOpen) => {
     name.value = ''
     token.value = null
     copied.value = false
+    copyFailed.value = false
     error.value = null
     dialogEl.value?.showModal()
   } else {
@@ -42,10 +45,21 @@ async function enrol() {
   }
 }
 
+/**
+ * Wrapped, because this is the one click in the application whose silent failure is permanent.
+ *
+ * `writeText` rejects on a denied permission and in any non-secure context. Unhandled, the button
+ * simply stayed on "Copy" - and an operator who clicked it, saw nothing change and closed the dialog
+ * had lost the host's only credential.
+ */
 async function copy() {
   if (!token.value) return
-  await navigator.clipboard.writeText(token.value)
-  copied.value = true
+  try {
+    await navigator.clipboard.writeText(token.value)
+    copied.value = true
+  } catch {
+    copyFailed.value = true
+  }
 }
 </script>
 
@@ -96,6 +110,12 @@ async function copy() {
             {{ copied ? t('common.copied') : t('common.copy') }}
           </button>
         </label>
+        <!-- Says what to do instead. The token is still on screen, so this is recoverable — but
+             only if the operator is told the click did not work. -->
+        <div v-if="copyFailed" role="alert" class="alert alert-warning alert-soft">
+          <TriangleAlert class="size-4" />
+          <span>{{ t('common.copyFailed') }}</span>
+        </div>
         <p class="text-xs opacity-60">{{ t('hosts.tokenHint') }}</p>
         <div class="modal-action">
           <button class="btn btn-primary btn-sm" type="button" @click="open = false">

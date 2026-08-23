@@ -10,7 +10,11 @@ import net.integr.osmium.agent.dto.toResponse
 import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.agent.model.AgentState
+import net.integr.osmium.agent.config.AgentProperties
 import net.integr.osmium.agent.repository.AgentRepository
+import net.integr.osmium.activity.model.ActivityScope
+import net.integr.osmium.activity.model.ActivitySeverity
+import net.integr.osmium.activity.service.ActivityService
 import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.host.repository.HostRepository
 import net.integr.osmium.liveupdates.LiveUpdateEvent
@@ -20,9 +24,13 @@ import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.CommandType
 import net.integr.osmium.hostlink.MessageKind
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import tools.jackson.databind.ObjectMapper
+import java.time.Instant
 import java.util.UUID
 import net.integr.osmium.audit.service.AuditService
 import net.integr.osmium.host.model.Host
@@ -39,6 +47,8 @@ class AgentService(
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
+    private val activityService: ActivityService,
+    private val properties: AgentProperties,
 ) {
     fun findAll(): List<AgentResponse> =
         agentRepository.findAll().sortedBy { it.label }.map { it.toResponse(telemetryStore.find(it.id)) }
@@ -217,9 +227,21 @@ class AgentService(
         return agent.toResponse(telemetryStore.find(agent.id))
     }
 
+    /**
+     * Asks the host to bring the agent into game, and moves it to CONNECTING while that happens.
+     *
+     * The state is the point. Accepting the command takes milliseconds and joining a Minecraft
+     * server takes seconds, and the outcome arrives on the host's own schedule as ONLINE or
+     * CONNECT_FAILED. Without a state for the interval, the badge went on reading LINKED - the same
+     * thing it read before the operator pressed anything.
+     */
     @Transactional
     fun connect(id: Long): AgentResponse {
         val agent = require(id)
+        // Named separately from the set below, because "it must be set up first" is a lie for an
+        // agent that is already on its way in, and telling an operator to set up an agent that is
+        // mid-connect sends them to a button that will refuse them too.
+        check(agent.state != AgentState.CONNECTING) { "'${agent.label}' is already connecting" }
         check(agent.state in CONNECTABLE) {
             "'${agent.label}' cannot connect from ${agent.state}; it must be set up first"
         }
@@ -229,11 +251,14 @@ class AgentService(
             "'${agent.label}' is not assigned to a server"
         }
         dispatch(agent, CommandType.CONNECT, mapOf("serverAddress" to server))
+        agent.state = AgentState.CONNECTING
+        agent.connectingSince = Instant.now()
         auditService.record(
             action = AuditAction.AGENT_CONNECT,
             target = agent.label,
             detail = server,
         )
+        publish(agent)
         return agent.toResponse(telemetryStore.find(agent.id))
     }
 
@@ -301,9 +326,50 @@ class AgentService(
         agentRepository.findById(id).orElseThrow { NoSuchElementException("No agent with id $id") }
 
     /**
-     * Connect, disconnect and chat publish nothing on purpose: they are fire-and-forget commands
-     * that change no stored state. The state advances when the host reports back, and that report
-     * is what the browser is told about.
+     * Gives up on a CONNECTING agent the host never answered for, and says so.
+     *
+     * Without this, CONNECTING would be a worse place to be stuck than LINKED ever was. Before the
+     * state existed, a connect nobody answered left the agent at LINKED and the operator could
+     * simply press the button again; a CONNECTING that never clears both refuses the retry and goes
+     * on claiming something is happening. A pending state that cannot end is not a report, it is a
+     * lie with a spinner on it.
+     *
+     * Back to LINKED rather than CONNECT_FAILED. The Minecraft server did not refuse anything -
+     * nobody said anything at all - and inventing a refusal would put a red badge on an agent whose
+     * only problem is a host that went quiet.
+     */
+    @Scheduled(fixedDelay = CONNECT_SWEEP_MS, initialDelay = CONNECT_SWEEP_MS)
+    @Transactional
+    fun abandonStalledConnects() {
+        val cutoff = Instant.now().minus(properties.connectWindow)
+
+        for (agent in agentRepository.findAllByState(AgentState.CONNECTING)) {
+            // Null would be a row that reached CONNECTING without going through `connect`, which
+            // nothing does. Left alone rather than expired on sight: there is no evidence it has
+            // been waiting at all, and guessing would end a join that may have just started.
+            val since = agent.connectingSince ?: continue
+            if (since.isAfter(cutoff)) continue
+
+            log.info("Host {} did not report on {} within the connect window", agent.host.name, agent.label)
+            agent.state = AgentState.LINKED
+            agent.connectingSince = null
+            // The operator did not cause this and would otherwise watch the badge fall back with no
+            // explanation, which is exactly what the activity feed is for.
+            activityService.record(
+                agent = agent,
+                scope = ActivityScope.LIFECYCLE,
+                severity = ActivitySeverity.WARNING,
+                text = "The host did not say whether this agent got into the game, so it is no longer connecting",
+            )
+            publish(agent)
+        }
+    }
+
+    /**
+     * Disconnect and chat publish nothing on purpose: they are fire-and-forget commands that change
+     * no stored state. The state advances when the host reports back, and that report is what the
+     * browser is told about. Connect is the exception - it moves the agent to CONNECTING, which is
+     * a stored change and therefore has to be announced like any other.
      */
     private fun publish(agent: Agent) = broker.publish(
         LiveUpdateEvent(type = LiveUpdateType.AGENT_CHANGED, data = agent.toResponse(telemetryStore.find(agent.id)), agentId = agent.id),
@@ -323,7 +389,12 @@ class AgentService(
     }
 
     private companion object {
+        val log: Logger = LoggerFactory.getLogger(AgentService::class.java)
+
         val CONNECTABLE = setOf(AgentState.LINKED, AgentState.CONNECT_FAILED, AgentState.STALE)
         const val DEFAULT_PORT = 25565
+
+        /** Frequent enough that the badge falls back while the operator is still looking at it. */
+        const val CONNECT_SWEEP_MS = 5_000L
     }
 }

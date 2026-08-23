@@ -16,7 +16,10 @@ export const en = {
     cancel: 'Cancel',
     close: 'Close',
     copy: 'Copy',
+    dismiss: 'Dismiss',
     copied: 'Copied',
+    /** The token is shown once, so a failed copy has to say what to do rather than nothing. */
+    copyFailed: 'Your browser would not let Osmium reach the clipboard. Select the value above and copy it yourself before closing this.',
     delete: 'Delete',
     done: 'Done',
     edit: 'Edit',
@@ -93,6 +96,13 @@ export const en = {
     noListener: 'No agent is online here, so nothing is forwarding this server’s chat.',
     noServers: 'No servers yet. Assign an agent to one to read its chat.',
     noSpeaker: 'Nobody is in game here to speak through.',
+    /** A line the backend accepted but the host has not echoed back into the transcript yet. */
+    sending: 'sending',
+    /**
+     * The echo never came. Not stated as a failure — the message may well have been said and the
+     * echo lost — but not left looking like an ordinary line either.
+     */
+    notEchoed: 'not confirmed',
     speakerOffline: '{name} is not in game.',
     hostOffline: 'Host {host} is unreachable.',
   },
@@ -120,6 +130,11 @@ export const en = {
     /** Shown once data has loaded and contact is then lost. */
     backendLost: 'Cannot reach Osmium. Showing the last information received. Click to retry.',
     streamLost: 'Live updates paused. Reconnecting…',
+    /**
+     * Nothing on a page can say this for itself. Every list is stream-fed and none of them poll, so
+     * a frozen screen and a quiet one look identical without it.
+     */
+    streamLostBody: 'What is on screen is real but has stopped updating — agent states, upload progress and new rows are all waiting on the connection. Nothing has been lost.',
   },
 
   login: {
@@ -273,6 +288,8 @@ export const en = {
     noLoginMethods: '{host} has not said what it can log in with. It reports that when it connects, so check that it is running and up to date.',
     setUpStart: 'Start setup',
     connect: 'Connect',
+    /** While the command is out and the host has not answered. See AgentState.CONNECTING. */
+    connecting: 'Connecting…',
     disconnect: 'Disconnect',
     edit: 'Edit agent',
     move: 'Move to another Minecraft server',
@@ -334,6 +351,13 @@ export const en = {
     pickAgents: 'Select the agents to change.',
     assign: 'Assign',
     applying: 'Applying…',
+    /** These run one at a time and reach real servers, so which one matters more than that it is busy. */
+    applyingOne: 'Applying {done} of {total}…',
+    /**
+     * A run that stopped part way. Both halves are said: what already took effect, and why the rest
+     * did not — reporting only the failure left the fleet in a state nobody could read off the screen.
+     */
+    stoppedAfter: 'Stopped at {name} after {count} went through — {reason}',
     clearServer: 'Take off server',
     assigned: 'Assigned {count} agents to {server}.',
     cleared: 'Took {count} agents off their server.',
@@ -345,7 +369,7 @@ export const en = {
     disconnect: 'Disconnect',
     connected: 'Connected {count} agents.',
     disconnected: 'Disconnected {count} agents.',
-    offlineOnly: 'Already online.',
+    offlineOnly: 'Already online, or already connecting.',
     onlineOnly: 'Not in game.',
 
     /** Read aloud in place of the box picture, so it says the size rather than the angle. */
@@ -378,6 +402,11 @@ export const en = {
     noMatches: 'Nothing matches that.',
     upload: 'Upload',
     uploading: 'Sending… {sent} of {total} · {percent}%',
+    /**
+     * Sending again starts a new schematic rather than resuming this one, so the abandoned row is
+     * named: it is in the library, and nothing else on screen connects it to the cancel just pressed.
+     */
+    cancelledAt: 'Cancelled after {sent}. The part that arrived is kept as an unfinished schematic in the library — send again to start over, and delete that one when you no longer want it.',
     cancel: 'Cancel',
     namePlaceholder: 'Name this schematic',
     name: 'Name',
@@ -542,6 +571,11 @@ export const en = {
     endAllHint: 'Ends every session including this one, and immediately invalidates access already granted. Use this if you think someone else has your session.',
     endAllConfirm: 'Sign out of every session?',
     endAllWarning: 'Every browser signed in as you is signed out, this one included. You will need to sign in again.',
+    /**
+     * Shown on the login screen, which is otherwise exactly what success looks like. The distinction
+     * matters most to the person who pressed this because they believed they were compromised.
+     */
+    endAllFailed: 'This browser was signed out, but Osmium could not confirm the other sessions were ended. Treat them as still active and try again once you are signed back in.',
     failed: 'Could not end that session.',
 
     /**
@@ -634,6 +668,7 @@ export const en = {
   agentState: {
     ONLINE: 'Online',
     LINKED: 'Ready',
+    CONNECTING: 'Connecting',
     UNLINKED: 'Not set up',
     SETUP_PENDING: 'Setting up',
     NEEDS_RELINK: 'Needs sign-in',
@@ -714,6 +749,10 @@ export const en = {
     inThisBuild: 'in this build',
     createPlan: 'Save plan',
     save: 'Save changes',
+    saving: 'Saving…',
+    /** Named, because one schematic can carry several plans and a bare tick would not say which. */
+    savedAs: 'Saved to {name}',
+    unsaved: 'Unsaved changes',
     asBuilt: 'What it comes to',
     blocksPlaced: 'Blocks placed',
     leftOut: 'Left out',
@@ -725,6 +764,11 @@ export const en = {
     loadSessions: 'Could not load your sessions.',
     assignServer: 'Could not change the server.',
     generic: 'Something went wrong.',
+    /**
+     * The guard sends anyone without a route's node to the dashboard. Doing that in silence made a
+     * bookmarked link read as broken rather than as restricted.
+     */
+    deniedRoute: 'That page needs {node}, which your role does not have — so this is where you landed instead.',
     unreachable: 'Cannot reach Osmium',
     invalidCredentials: 'Incorrect username or password.',
     loginFailed: 'Could not sign in.',

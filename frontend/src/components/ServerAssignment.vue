@@ -20,6 +20,8 @@ const emit = defineEmits<{ done: [string]; failed: [string] }>()
 const selected = ref<number[]>([])
 const target = ref('')
 const busy = ref(false)
+/** How far through the run it is, so a long sequential loop is not one motionless word. */
+const progress = ref<{ done: number; total: number } | null>(null)
 
 /**
  * An online agent cannot be moved — the backend refuses it, because the address decides what the
@@ -35,20 +37,44 @@ async function apply(clear: boolean) {
   if (!clear && !address) return
 
   busy.value = true
+  progress.value = { done: 0, total: agents.length }
+
+  // Which of them actually took. Stopping part way is the intended behaviour, but reporting only
+  // the failure left the operator unable to tell an untouched fleet from a half-moved one.
+  const succeeded: number[] = []
+
   try {
     // Sequential rather than parallel: these are writes against the same fleet, and a failure part
     // way through should stop rather than leave an unpredictable subset applied.
-    for (const id of agents) await agentStore.assignServer(id, address)
+    for (const id of agents) {
+      await agentStore.assignServer(id, address)
+      succeeded.push(id)
+      progress.value = { done: succeeded.length, total: agents.length }
+    }
     emit(
       'done',
       clear
         ? t('operations.cleared', { count: agents.length })
         : t('operations.assigned', { count: agents.length, server: address }),
     )
-    selected.value = []
   } catch (failure) {
-    emit('failed', failure instanceof Error ? failure.message : t('errors.assignServer'))
+    const reason = failure instanceof Error ? failure.message : t('errors.assignServer')
+    const stopped = agentStore.byId(agents[succeeded.length])
+
+    emit(
+      'failed',
+      succeeded.length
+        ? t('operations.stoppedAfter', {
+            count: succeeded.length,
+            name: stopped?.label ?? '',
+            reason,
+          })
+        : reason,
+    )
   } finally {
+    // Only the ones that went through, so a retry does not re-apply what is already applied.
+    selected.value = selected.value.filter((id) => !succeeded.includes(id))
+    progress.value = null
     busy.value = false
   }
 }
@@ -100,7 +126,11 @@ async function apply(clear: boolean) {
             @click="apply(false)"
           >
             <Server class="size-4" />
-            {{ busy ? t('operations.applying') : t('operations.assign') }}
+            {{
+              busy && progress
+                ? t('operations.applyingOne', { done: progress.done + 1, total: progress.total })
+                : t('operations.assign')
+            }}
           </button>
         </div>
       </div>
