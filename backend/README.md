@@ -893,10 +893,7 @@ src/main/resources/db/migration/
   V11__builds.sql                  build plans: where a schematic stands and what it is built of
   V12__agent_connecting.sql        CONNECTING, and the timestamp that stops it lasting forever
   V13__setup_cancel_audit.sql      AGENT_SETUP_CANCEL added to the audit action constraint
-  V14__build_runs.sql              jobs and their segments: a plan frozen and being carried out
-  V15__build_run_delete_audit.sql  clearing a finished one away, as an audit action
-  V16__build_run_pause.sql         cancel becomes pause; one live segment per agent
-  V17__build_jobs_rename.sql       run becomes job — `agent.run` already meant something else
+  V14__build_jobs.sql              jobs and their segments: a plan frozen and being carried out
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
