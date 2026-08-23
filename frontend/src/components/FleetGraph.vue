@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { Bot as Agent, Server, Share2 } from 'lucide-vue-next'
@@ -21,17 +21,14 @@ const router = useRouter()
 const agentStore = useAgentStore()
 
 /**
- * A clock, only because host health is measured against one.
+ * Nothing here is measured against a clock, so there is none.
  *
- * A host inside its grace window but overdue for a heartbeat has to fade without anything arriving
- * to say so — the absence *is* the event, so nothing will re-render this unless something asks the
- * time. Four seconds is well inside the twelve that separate live from faltering.
+ * An earlier version ticked one to fade hosts whose heartbeat was going stale, which turned out to
+ * be unknowable from the browser — see `hostHealth`. Every state this draws now arrives as an
+ * event, including a host going unreachable, so the graph redraws when something has actually
+ * happened rather than on a timer.
  */
-const now = ref(Date.now())
-const clock = setInterval(() => (now.value = Date.now()), 4_000)
-onUnmounted(() => clearInterval(clock))
-
-const graph = computed(() => fleetGraph(agentStore.hosts, agentStore.agents, now.value))
+const graph = computed(() => fleetGraph(agentStore.hosts, agentStore.agents))
 
 const still = prefersReducedMotion()
 

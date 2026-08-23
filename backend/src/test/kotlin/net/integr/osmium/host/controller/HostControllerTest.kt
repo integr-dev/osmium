@@ -1,7 +1,11 @@
 package net.integr.osmium.host.controller
 
 import net.integr.osmium.AbstractRestTest
+import net.integr.osmium.host.dto.HostResponse
 import net.integr.osmium.host.model.Host
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.security.RoleNames
 import net.integr.osmium.host.service.HostService
 import org.hamcrest.Matchers.startsWith
@@ -16,10 +20,15 @@ import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 
 class HostControllerTest : AbstractRestTest() {
 
     @Autowired private lateinit var hostService: HostService
+    @Autowired private lateinit var broker: LiveUpdateBroker
 
     @Test
     fun `administrator enrols a host and receives a token once`() {
@@ -169,6 +178,50 @@ class HostControllerTest : AbstractRestTest() {
             status { isOk() }
             jsonPath("$[0].reachable") { value(true) }
         }
+    }
+
+    /**
+     * Losing a host is the one state change nothing else reports: reachability is derived, so a
+     * host that stops talking writes no row and fires no event. Without the sweep every open
+     * browser kept showing it green until something unrelated happened to republish it.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `a host that goes quiet is announced as unreachable`() {
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
+        val host = reachableHost("host-eu-1")
+
+        // The first sweep sees it reachable and says so, which also seeds what it compares against.
+        hostService.announceReachabilityChanges()
+        broker.subscribe { delivered += it }
+
+        // Older than the grace window, so it is now unreachable without anything having been sent.
+        hostRepository.saveAndFlush(host.apply { lastSeenAt = Instant.now().minus(Host.HEARTBEAT_GRACE).minusSeconds(1) })
+
+        hostService.announceReachabilityChanges()
+
+        val announced = delivered.filter { it.type == LiveUpdateType.HOST_CHANGED }
+        assertEquals(1, announced.size, "the drop was not announced exactly once")
+        assertEquals(false, (announced.single().data as HostResponse).reachable)
+
+        hostRepository.deleteAll()
+    }
+
+    /** On change only, or a quiet fleet would republish itself for as long as the process lives. */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `an unchanged fleet is announced once and then not again`() {
+        reachableHost("host-eu-1")
+        hostService.announceReachabilityChanges()
+
+        val delivered = CopyOnWriteArrayList<LiveUpdateEvent>()
+        broker.subscribe { delivered += it }
+
+        repeat(3) { hostService.announceReachabilityChanges() }
+
+        assertEquals(0, delivered.count { it.type == LiveUpdateType.HOST_CHANGED })
+
+        hostRepository.deleteAll()
     }
 
     @Test

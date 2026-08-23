@@ -16,11 +16,14 @@ import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.LoginMethod
+import org.slf4j.LoggerFactory
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.scheduling.annotation.Scheduled
 import java.security.SecureRandom
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 import net.integr.osmium.audit.service.AuditService
 
 @Service
@@ -33,6 +36,17 @@ class HostService(
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
+    /**
+     * What each host's reachability was last announced as.
+     *
+     * In memory, and empty on boot on purpose: the first sweep after a restart announces every
+     * host once, which is the cheapest way to be sure no browser is holding a value from before
+     * the process that published it went away.
+     */
+    private val announced = ConcurrentHashMap<Long, Boolean>()
+
     fun findAll(): List<HostResponse> =
         hostRepository.findAll().sortedBy { it.name }.map { it.toResponse() }
 
@@ -90,7 +104,35 @@ class HostService(
 
         // Only on the transition. A heartbeat every ten seconds per host, forwarded to every open
         // browser, would be pure noise: what changes is reachable false -> true.
-        if (!wasReachable) publish(host)
+        if (!wasReachable) {
+            announced[hostId] = true
+            publish(host)
+        }
+    }
+
+    /**
+     * Announces hosts whose reachability has **changed on its own**.
+     *
+     * Losing a host is the one state change nothing else can report. Reachability is derived from
+     * the heartbeat rather than stored, so a host that simply stops talking changes no row, fires
+     * no event, and leaves every open browser showing it green until something unrelated happens to
+     * republish it. The arrival of a host is announced by its own heartbeat; only the *absence* of
+     * one needs somebody to come looking.
+     *
+     * On change only, which is what keeps this off the noise budget the heartbeat is kept off: a
+     * quiet fleet publishes nothing however often this runs.
+     */
+    @Scheduled(fixedDelay = REACHABILITY_TICK_MS, initialDelay = REACHABILITY_TICK_MS)
+    @Transactional(readOnly = true)
+    fun announceReachabilityChanges() {
+        for (host in hostRepository.findAll()) {
+            val id = host.id ?: continue
+            val reachable = host.isReachable()
+            if (announced.put(id, reachable) == reachable) continue
+
+            log.info("Host {} is now {}", host.name, if (reachable) "reachable" else "unreachable")
+            publish(host)
+        }
     }
 
     @Transactional
@@ -200,6 +242,12 @@ class HostService(
 
     private companion object {
         const val TOKEN_PREFIX = "osm_host_"
+
+        /**
+         * Well inside the 30s grace, so a host that drops is reported as gone within a few seconds
+         * rather than at whatever moment the next unrelated event happens to fire.
+         */
+        const val REACHABILITY_TICK_MS = 5_000L
 
         /** 32 hex characters plus the prefix stays well inside BCrypt's 72 byte limit. */
         const val TOKEN_BYTES = 16

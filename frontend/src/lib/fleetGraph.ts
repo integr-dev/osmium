@@ -67,14 +67,6 @@ const ROW = 46
 
 const PADDING = 32
 
-/**
- * A heartbeat older than this, on a host still inside its grace window, reads as stale.
- *
- * The backend's window is 30s and it decides `reachable`; this is the softer line in front of it,
- * so a host about to drop off shows as faltering rather than flipping straight from fine to gone.
- */
-const HEARTBEAT_FRESH_MS = 12_000
-
 /** Live is three packets, faltering is one, dead is none. */
 const PACKETS: Record<LinkHealth, number> = { live: 3, stale: 1, down: 0 }
 
@@ -91,11 +83,22 @@ export function agentHealth(state: AgentResponse['state']): LinkHealth {
   return 'down'
 }
 
-/** How a host's socket to Osmium is doing. `now` is passed in so this stays a pure function. */
-export function hostHealth(host: Pick<HostResponse, 'reachable' | 'lastSeenAt'>, now: number): LinkHealth {
+/**
+ * How a host's socket to Osmium is doing.
+ *
+ * **`reachable` is the whole answer, and deliberately so.** Reading freshness off `lastSeenAt` here
+ * looked like a finer-grained version of the same thing and was not: heartbeats are not published,
+ * on purpose — ten seconds per host times every open browser is pure noise — so that timestamp
+ * freezes at the moment the host connected and ages forever. A host was amber within twelve seconds
+ * of the page loading and stayed there. The graph was measuring how long the tab had been open.
+ *
+ * The backend already owns this judgement, against a 30s grace and the heartbeats it actually
+ * receives, and announces every change. Amber is left to the one case the browser can see for
+ * itself: reachable, but nothing has ever been heard from it.
+ */
+export function hostHealth(host: Pick<HostResponse, 'reachable' | 'lastSeenAt'>): LinkHealth {
   if (!host.reachable) return 'down'
-  if (!host.lastSeenAt) return 'stale'
-  return now - Date.parse(host.lastSeenAt) > HEARTBEAT_FRESH_MS ? 'stale' : 'live'
+  return host.lastSeenAt ? 'live' : 'stale'
 }
 
 /**
@@ -106,11 +109,7 @@ export function hostHealth(host: Pick<HostResponse, 'reachable' | 'lastSeenAt'>,
  * host visually inside the group it owns rather than beside it. A host running nothing takes a slot
  * of its own, because it still has a socket worth drawing.
  */
-export function fleetGraph(
-  hosts: HostResponse[],
-  agents: AgentResponse[],
-  now: number,
-): FleetGraph {
+export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): FleetGraph {
   const nodes: GraphNode[] = []
   const links: GraphLink[] = []
 
@@ -120,7 +119,7 @@ export function fleetGraph(
 
   for (const host of hosts) {
     const owned = agents.filter((agent) => agent.hostId === host.id)
-    const health = hostHealth(host, now)
+    const health = hostHealth(host)
     const agentNodes: GraphNode[] = []
 
     for (const agent of owned) {
@@ -176,7 +175,7 @@ export function fleetGraph(
   nodes.unshift({ id: 'osmium', kind: 'osmium', label: 'Osmium', at: osmium, health: 'live' })
 
   hosts.forEach((host, index) => {
-    const health = hostHealth(host, now)
+    const health = hostHealth(host)
     links.unshift({
       id: `osmium-${host.id}`,
       from: osmium,

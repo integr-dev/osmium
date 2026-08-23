@@ -37,18 +37,21 @@ function agent(id: number, hostId: number, over: Partial<AgentResponse> = {}): A
 
 describe('hostHealth', () => {
   it('calls an unreachable host down however recently it was seen', () => {
-    expect(hostHealth({ reachable: false, lastSeenAt: fresh }, NOW)).toBe('down')
+    expect(hostHealth({ reachable: false, lastSeenAt: fresh })).toBe('down')
   })
 
-  it('falters before it drops, so a fading host is visible before it is gone', () => {
-    // The backend's grace window is what decides `reachable`; this is the softer line in front of
-    // it, and without it a host flips straight from fine to gone with nothing in between.
-    expect(hostHealth({ reachable: true, lastSeenAt: fresh }, NOW)).toBe('live')
-    expect(hostHealth({ reachable: true, lastSeenAt: old }, NOW)).toBe('stale')
+  /**
+   * The bug this replaced: health was read off how old `lastSeenAt` was, which cannot work.
+   * Heartbeats are not published — deliberately — so that timestamp freezes when the host connects
+   * and ages forever, and every host turned amber a few seconds after the page loaded.
+   */
+  it('does not age a reachable host out on its own', () => {
+    expect(hostHealth({ reachable: true, lastSeenAt: fresh })).toBe('live')
+    expect(hostHealth({ reachable: true, lastSeenAt: old })).toBe('live')
   })
 
   it('treats a host that has never reported as stale rather than dead', () => {
-    expect(hostHealth({ reachable: true, lastSeenAt: null }, NOW)).toBe('stale')
+    expect(hostHealth({ reachable: true, lastSeenAt: null })).toBe('stale')
   })
 })
 
@@ -68,7 +71,7 @@ describe('agentHealth', () => {
 
 describe('fleetGraph', () => {
   it('gives every agent its own row and centres its host on them', () => {
-    const graph = fleetGraph([host(1)], [agent(10, 1), agent(11, 1)], NOW)
+    const graph = fleetGraph([host(1)], [agent(10, 1), agent(11, 1)])
 
     const agents = graph.nodes.filter((node) => node.kind === 'agent')
     const [owner] = graph.nodes.filter((node) => node.kind === 'host')
@@ -84,7 +87,6 @@ describe('fleetGraph', () => {
     const graph = fleetGraph(
       [host(1), host(2)],
       [agent(10, 1), agent(20, 2), agent(11, 1), agent(21, 2)],
-      NOW,
     )
 
     const rows = graph.nodes
@@ -100,7 +102,7 @@ describe('fleetGraph', () => {
   })
 
   it('still draws a host that is running nothing', () => {
-    const graph = fleetGraph([host(1), host(2)], [agent(10, 1)], NOW)
+    const graph = fleetGraph([host(1), host(2)], [agent(10, 1)])
 
     const idle = graph.nodes.find((node) => node.id === 'host-2')
     expect(idle).toBeDefined()
@@ -111,7 +113,7 @@ describe('fleetGraph', () => {
 
   it('cannot show an agent as healthier than the socket carrying it', () => {
     // Its stored state says ONLINE; the only party that can see the session has gone.
-    const graph = fleetGraph([host(1, { reachable: false })], [agent(10, 1)], NOW)
+    const graph = fleetGraph([host(1, { reachable: false })], [agent(10, 1)])
 
     expect(graph.nodes.find((node) => node.id === 'agent-10')!.health).toBe('down')
   })
@@ -120,7 +122,6 @@ describe('fleetGraph', () => {
     const graph = fleetGraph(
       [host(1), host(2, { reachable: false })],
       [agent(10, 1), agent(20, 2)],
-      NOW,
     )
 
     const link = (id: string) => graph.links.find((entry) => entry.id === id)!
@@ -131,7 +132,7 @@ describe('fleetGraph', () => {
   })
 
   it('puts Osmium first and halfway down, so every edge leaves one point', () => {
-    const graph = fleetGraph([host(1), host(2)], [agent(10, 1), agent(20, 2)], NOW)
+    const graph = fleetGraph([host(1), host(2)], [agent(10, 1), agent(20, 2)])
 
     const [first] = graph.nodes
     expect(first.id).toBe('osmium')
@@ -139,7 +140,7 @@ describe('fleetGraph', () => {
   })
 
   it('is tall enough for an empty fleet to render at all', () => {
-    const graph = fleetGraph([], [], NOW)
+    const graph = fleetGraph([], [])
 
     expect(graph.height).toBeGreaterThan(0)
     expect(graph.nodes).toHaveLength(1)
