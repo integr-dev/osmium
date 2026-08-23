@@ -25,7 +25,16 @@ import org.springframework.transaction.annotation.Transactional
  * Shared wiring for the REST tests. Each test runs in a transaction that is rolled back, so users
  * created here never leak between tests. MockMvc runs on the same thread, so it sees them.
  */
-@SpringBootTest
+@SpringBootTest(
+    properties = [
+        // **Never the real storage directory.** Every Spring context here boots
+        // SchematicReconciler, which sweeps files whose row it cannot find - and the row is in an
+        // empty Testcontainers database, so every file looks like an orphan. Pointed at
+        // `data/schematics`, running the suite silently deletes whatever a developer has uploaded
+        // locally.
+        "osmium.schematic.directory=\${java.io.tmpdir}/osmium-schematic-test",
+    ],
+)
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration::class)
 @Transactional

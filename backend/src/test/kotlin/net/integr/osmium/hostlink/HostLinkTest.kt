@@ -48,7 +48,16 @@ import net.integr.osmium.hostlink.EventType
  * Deliberately not @Transactional. The host runs on other threads, so a rolled-back test
  * transaction would be invisible to it; state is committed and cleaned up explicitly instead.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = [
+        // **Never the real storage directory.** Every Spring context here boots
+        // SchematicReconciler, which sweeps files whose row it cannot find - and the row is in an
+        // empty Testcontainers database, so every file looks like an orphan. Pointed at
+        // `data/schematics`, running the suite silently deletes whatever a developer has uploaded
+        // locally.
+        "osmium.schematic.directory=\${java.io.tmpdir}/osmium-schematic-test",
+    ],
+)
 @Import(TestcontainersConfiguration::class)
 class HostLinkTest {
 

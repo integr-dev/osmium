@@ -100,9 +100,18 @@ class SchematicAnalysisQueue(
      *
      * A snapshot rather than a live view: the worker takes from the same queue on another thread, so
      * anything read one id at a time could report two schematics in the same place.
+     *
+     * **Taken with `toArray`, which is the only snapshot the queue makes under its own locks.**
+     * `toList()` looks equivalent and is not — for a collection of exactly one it reads `size`, sees
+     * 1, and then calls `iterator().next()`. The worker taking that single element in between
+     * leaves the iterator with nothing to return, and it throws `NoSuchElementException` with no
+     * message. That surfaced as a **404 on the first upload after a restart**: the reconciler
+     * requeues whatever was left over at boot, so that is the one moment the queue is being drained
+     * while a request is enqueueing, and the exception escaped the commit and was mapped to "Not
+     * Found" — after the bytes had already been written.
      */
     fun positions(): Map<Long, Int> =
-        pending.toList().withIndex().associate { (index, id) -> id to index + 1 }
+        pending.toTypedArray().withIndex().associate { (index, id) -> id to index + 1 }
 
     fun positionOf(id: Long): Int? = positions()[id]
 
