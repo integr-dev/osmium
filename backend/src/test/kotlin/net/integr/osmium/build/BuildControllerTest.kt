@@ -2,6 +2,7 @@ package net.integr.osmium.build
 
 import com.jayway.jsonpath.JsonPath
 import net.integr.osmium.AbstractRestTest
+import net.integr.osmium.audit.repository.AuditEntryRepository
 import net.integr.osmium.build.repository.BuildRepository
 import net.integr.osmium.schematic.model.Schematic
 import net.integr.osmium.schematic.model.SchematicStatus
@@ -30,6 +31,7 @@ class BuildControllerTest : AbstractRestTest() {
 
     @Autowired private lateinit var builds: BuildRepository
     @Autowired private lateinit var schematics: SchematicRepository
+    @Autowired private lateinit var auditEntries: AuditEntryRepository
 
     /**
      * One header per role, made once. `authAs` creates the account as a side effect, so asking it
@@ -124,7 +126,8 @@ class BuildControllerTest : AbstractRestTest() {
             status { isCreated() }
             jsonPath("$.substitutions.length()") { value(2) }
             // Sorted by source block, so what is read back is what will be read back next time.
-            jsonPath("$.substitutions[0].from") { value("minecraft:beacon") }
+            // Read back without Minecraft's namespace, which is the one form these are kept in.
+            jsonPath("$.substitutions[0].from") { value("beacon") }
             // Null replacement survives as null: "place nothing" is a rule, not a missing value.
             jsonPath("$.substitutions[0].to") { doesNotExist() }
         }.andReturn().response.contentAsString
@@ -139,7 +142,7 @@ class BuildControllerTest : AbstractRestTest() {
             status { isOk() }
             // Wholesale: the previous two are gone rather than merged with.
             jsonPath("$.substitutions.length()") { value(1) }
-            jsonPath("$.substitutions[0].from") { value("minecraft:gold_block") }
+            jsonPath("$.substitutions[0].from") { value("gold_block") }
         }
     }
 
@@ -182,7 +185,7 @@ class BuildControllerTest : AbstractRestTest() {
             .andExpect {
                 status { isOk() }
                 jsonPath("$.substitutions.length()") { value(1) }
-                jsonPath("$.substitutions[0].to") { value("minecraft:cobblestone") }
+                jsonPath("$.substitutions[0].to") { value("cobblestone") }
             }
     }
 
@@ -216,6 +219,40 @@ class BuildControllerTest : AbstractRestTest() {
     }
 
     /**
+     * A schematic's material list says `minecraft:stone`; the picker offers `stone`. They are the
+     * same block, and stored as written they were two — the unique constraint compares strings, so
+     * "one rule per block" stopped meaning anything, and a rule written one way matched a file
+     * written the other way not at all. Substituting simply did nothing, silently.
+     */
+    @Test
+    fun `a block means the same thing with or without Minecraft's namespace`() {
+        val id = schematic().id
+
+        create(
+            """{"name":"namespaced","schematicId":$id,"substitutions":[
+                 {"from":"minecraft:diamond_block","to":"minecraft:stone"}]}""",
+        ).andExpect {
+            status { isCreated() }
+            // Stored in one form, so a rule and a file can be compared at all.
+            jsonPath("$.substitutions[0].from") { value("diamond_block") }
+            jsonPath("$.substitutions[0].to") { value("stone") }
+        }
+
+        // Two spellings of one block in one plan does not say what it means.
+        create(
+            """{"name":"ambiguous namespaces","schematicId":$id,"substitutions":[
+                 {"from":"stone","to":"dirt"},
+                 {"from":"minecraft:stone","to":"sand"}]}""",
+        ).andExpect { status { isBadRequest() } }
+
+        // And a block substituted for itself is still refused across the two spellings.
+        create(
+            """{"name":"pointless namespaces","schematicId":$id,"substitutions":[
+                 {"from":"minecraft:stone","to":"stone"}]}""",
+        ).andExpect { status { isBadRequest() } }
+    }
+
+    /**
      * Not transactional: the cascade is a database constraint, and inside one persistence context
      * Hibernate flushes the plan that still points at the schematic before the delete reaches the
      * database at all. Rows are cleaned up by hand instead.
@@ -245,6 +282,10 @@ class BuildControllerTest : AbstractRestTest() {
         } finally {
             builds.deleteAll()
             schematics.deleteAll()
+            // Audit entries too. Nothing rolls this test back, and the audit trail is global state
+            // that another test class asserts an exact list of — a stray BUILD_CREATE here fails a
+            // cursor test over there, which is a miserable thing to debug.
+            auditEntries.deleteAll()
         }
     }
 

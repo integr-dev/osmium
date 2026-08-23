@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { blockId } from './blockNames'
 import { blocksToPlace, offsetOf, plannedMaterials, toWorld, type Substitution } from './placement'
 
 describe('offsetOf', () => {
@@ -102,6 +103,41 @@ describe('plannedMaterials', () => {
     const cobble = planned.find((entry) => entry.name === 'minecraft:cobblestone')!
     expect(cobble.blocks).toBe(80)
     expect(cobble.substitutedFrom).toEqual(['minecraft:diamond_block'])
+  })
+
+  /**
+   * The file names blocks `minecraft:stone`; the picker stores `stone`. They are the same block, and
+   * a plain string compare silently substituted nothing at all — the rule was there, the list did
+   * not change, and nothing said why.
+   */
+  it('matches a rule to a block whatever the namespace on either side', () => {
+    // A bare rule against a namespaced material list, which is exactly what the picker produces.
+    const bare = plannedMaterials(materials, [{ from: 'diamond_block', to: 'stone' }])
+    const stone = bare.filter((entry) => blockId(entry.name) === 'stone')
+
+    expect(stone).toHaveLength(1)
+    expect(stone[0].blocks).toBe(580)
+    expect(stone[0].substitutedFrom).toEqual(['minecraft:diamond_block'])
+
+    // And the other way round: a namespaced rule against a bare material list.
+    const namespaced = plannedMaterials(
+      [{ name: 'stone', blocks: 500 }],
+      [{ from: 'minecraft:stone', to: 'minecraft:dirt' }],
+    )
+    expect(namespaced[0].name).toBe('minecraft:dirt')
+    expect(namespaced[0].substitutedFrom).toEqual(['stone'])
+  })
+
+  it('still merges into one pile when the two sides are written differently', () => {
+    const planned = plannedMaterials(materials, [
+      { from: 'minecraft:diamond_block', to: 'stone' },
+      { from: 'gold_block', to: 'minecraft:stone' },
+    ])
+
+    // Three ways of writing stone, one pile: 500 + 80 + 40.
+    const stone = planned.filter((entry) => /stone/.test(entry.name))
+    expect(stone).toHaveLength(1)
+    expect(stone[0].blocks).toBe(620)
   })
 
   it('ignores a rule for a block that is not in the schematic', () => {

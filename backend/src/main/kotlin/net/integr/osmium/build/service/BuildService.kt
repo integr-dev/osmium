@@ -147,16 +147,16 @@ class BuildService(
      * constraint.
      */
     private fun apply(build: Build, rules: List<SubstitutionRequest>) {
-        val duplicate = rules.groupBy { it.from.trim() }.entries.firstOrNull { it.value.size > 1 }
+        val duplicate = rules.groupBy { blockId(it.from) }.entries.firstOrNull { it.value.size > 1 }
         require(duplicate == null) {
             "'${duplicate?.key}' is substituted twice, so it is not clear what it should become"
         }
-        require(rules.none { it.from.trim() == it.to?.trim() }) {
+        require(rules.none { blockId(it.from) == blockId(it.to ?: "") }) {
             "A block cannot be substituted for itself"
         }
 
         val wanted = rules.associate { rule ->
-            rule.from.trim() to rule.to?.trim()?.takeIf { it.isNotBlank() }
+            blockId(rule.from) to rule.to?.let(::blockId)?.takeIf { it.isNotBlank() }
         }
 
         // Gone from the plan, so gone from the table. `orphanRemoval` turns this into the delete.
@@ -169,6 +169,17 @@ class BuildService(
             build.substitutions += BuildSubstitution(build = build, from = from, to = to)
         }
     }
+
+    /**
+     * A block name with Minecraft's own namespace stripped.
+     *
+     * `minecraft:stone` and `stone` are the same block, and the two spellings reach here from
+     * different places: a schematic's material list carries the namespace, the picker does not.
+     * Stored in one form so that "one rule per block" — which the unique constraint enforces by
+     * comparing strings — means what it says, and so that a rule written either way matches the
+     * file. A namespace that is not Minecraft's identifies a different block and is left alone.
+     */
+    private fun blockId(name: String): String = name.trim().removePrefix("minecraft:")
 
     private fun where(build: Build) = "${build.placeX}, ${build.placeY}, ${build.placeZ}"
 
