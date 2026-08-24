@@ -32,6 +32,7 @@ import AddHostModal from '../components/AddHostModal.vue'
 import ChatRail from '../components/ChatRail.vue'
 import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
+import InitialTile from '../components/InitialTile.vue'
 import PlayerHead from '../components/PlayerHead.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
@@ -482,6 +483,15 @@ async function logout() {
           <!-- The indent and hairline daisyUI would have drawn for a nested menu, by hand. -->
           <div class="border-base-content/10 ms-4 border-s ps-2">
             <ul class="menu w-full flex-nowrap gap-0.5 p-0">
+              <!--
+                The same row as an agent, deliberately: a lettered tile with the status on its
+                corner, then the name over a line of detail. The two lists sit directly above one
+                another in one column, and reading as two different kinds of thing made the
+                sidebar look like two sidebars.
+
+                A tile rather than a head. A host has no avatar and never will — it is a machine,
+                not a player — so it lands on the same fallback an agent uses before it is set up.
+              -->
               <li v-for="host in agentStore.hosts" :key="host.id">
                 <RouterLink
                   v-flash="host.reachable"
@@ -489,12 +499,28 @@ async function logout() {
                   class="gap-2.5"
                 >
                   <span
-                    class="size-2 shrink-0 rounded-full"
-                    :class="host.reachable ? 'bg-success' : 'bg-error'"
+                    class="relative shrink-0"
                     :title="host.reachable ? t('hosts.reachable') : t('hosts.unreachable')"
-                  ></span>
-                  <span class="min-w-0 flex-1 truncate">{{ host.name }}</span>
-                  <span class="badge badge-ghost badge-xs shrink-0">{{ host.agentCount }}</span>
+                  >
+                    <InitialTile :name="host.name" size="sm" />
+                    <span
+                      class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
+                      :class="host.reachable ? 'bg-success' : 'bg-error'"
+                    ></span>
+                  </span>
+                  <!--
+                    The agent count moves here from a badge on the right. It is detail about the
+                    host rather than a count of anything on screen, and it read as a notification
+                    sitting where one would be — the chat rail puts a real one in that position.
+                  -->
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate">{{ host.name }}</span>
+                    <span class="block truncate text-xs opacity-50">
+                      {{ host.reachable ? t('hosts.reachable') : t('hosts.unreachable') }}
+                      <span class="opacity-60"> · </span>
+                      {{ t('hosts.agentCount', { count: host.agentCount }, host.agentCount) }}
+                    </span>
+                  </span>
                 </RouterLink>
               </li>
               <li v-if="!agentStore.hosts.length">

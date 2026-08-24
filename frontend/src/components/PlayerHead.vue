@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
+import InitialTile, { TILE_SIZES, type TileSize } from './InitialTile.vue'
 import { avatarUrl } from '../lib/avatars'
 
 /**
@@ -21,17 +22,10 @@ const props = withDefaults(
     id?: string | null
     /** Used for the fallback initial. The visible label, not the Minecraft name. */
     name?: string | null
-    size?: 'xs' | 'sm' | 'md' | 'lg'
+    size?: TileSize
   }>(),
   { id: null, name: null, size: 'sm' },
 )
-
-const SIZES: Record<NonNullable<typeof props.size>, string> = {
-  xs: 'size-4 text-[0.5rem]',
-  sm: 'size-6 text-[0.625rem]',
-  md: 'size-8 text-xs',
-  lg: 'size-14 text-lg',
-}
 
 /** Null until the head arrives, and again for any player who has none. Both render the fallback. */
 const source = ref<string | null>(null)
@@ -49,7 +43,6 @@ watch(
   { immediate: true },
 )
 
-const initial = computed(() => (props.name ?? props.id ?? '?').trim().charAt(0).toUpperCase() || '?')
 </script>
 
 <template>
@@ -60,18 +53,11 @@ const initial = computed(() => (props.name ?? props.id ?? '?').trim().charAt(0).
   <img
     v-if="source"
     :src="source"
-    :class="SIZES[size]"
+    :class="TILE_SIZES[size]"
     class="rounded-selector shrink-0 [image-rendering:pixelated]"
     alt=""
     aria-hidden="true"
     decoding="async"
   />
-  <span
-    v-else
-    :class="SIZES[size]"
-    class="rounded-selector bg-base-300 text-base-content/50 flex shrink-0 items-center justify-center font-semibold"
-    aria-hidden="true"
-  >
-    {{ initial }}
-  </span>
+  <InitialTile v-else :name="name ?? id" :size="size" />
 </template>
