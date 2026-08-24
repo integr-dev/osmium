@@ -704,8 +704,9 @@ export const de: Copy = {
     BUILD_UPDATE: 'Bauplanung geändert',
     BUILD_DELETE: 'Bauplanung gelöscht',
     BUILD_JOB_START: 'Bau gestartet',
-    BUILD_JOB_PAUSE: 'Bau abgebrochen',
-    BUILD_JOB_DELETE: 'Bau-Eintrag entfernt',
+    BUILD_JOB_PAUSE: 'Bau pausiert',
+    BUILD_JOB_RESUME: 'Bau fortgesetzt',
+    BUILD_JOB_DELETE: 'Bau-Eintrag gelöscht',
   },
 
   permission: {

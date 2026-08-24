@@ -827,8 +827,9 @@ export const en = {
     BUILD_UPDATE: 'Build plan changed',
     BUILD_DELETE: 'Build plan deleted',
     BUILD_JOB_START: 'Build started',
-    BUILD_JOB_PAUSE: 'Build cancelled',
-    BUILD_JOB_DELETE: 'Build record removed',
+    BUILD_JOB_PAUSE: 'Build paused',
+    BUILD_JOB_RESUME: 'Build resumed',
+    BUILD_JOB_DELETE: 'Build record deleted',
   },
 
   /**

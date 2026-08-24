@@ -3,6 +3,7 @@ import { i18n, t } from '.'
 import { de } from './de'
 import { en } from './en'
 import { nodeLabel } from '../lib/nodeLabel'
+import type { AuditEntryResponse } from '../api/client'
 
 /**
  * A missing key resolves to the key itself, so a typo shows up as `agents.setUp` on screen rather
@@ -22,6 +23,21 @@ describe('copy lookups', () => {
     for (const action of Object.keys(en.auditAction)) {
       expect(resolves(`auditAction.${action}`), action).toBe(true)
     }
+  })
+
+  /**
+   * The loop above walks the keys English *has*, so a key it is missing entirely is invisible to
+   * it — and the copy is indexed by a string built at runtime, so the gap renders as a raw
+   * `auditAction.BUILD_JOB_RESUME` on screen rather than failing anything. Twice now that has been
+   * found by eye.
+   *
+   * Naming the generated union is what closes it: this is a **type-level** check, so a backend that
+   * gains an action fails `vue-tsc` at the copy file rather than the suite here. The assertion has
+   * to be used for `noUnusedLocals`, which is what the expectation below is for.
+   */
+  it('covers every audit action the backend can send', () => {
+    const complete: Record<AuditEntryResponse['action'], string> = en.auditAction
+    expect(Object.keys(complete).length).toBe(Object.keys(en.auditAction).length)
   })
 
   /**
