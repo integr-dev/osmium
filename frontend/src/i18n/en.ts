@@ -444,7 +444,7 @@ export const en = {
     tabSchematics: 'Schematics',
     tabJobs: 'Jobs',
     tabServers: 'Servers',
-    tabPower: 'Connections',
+    tabConnections: 'Connections',
 
     assignTitle: 'Assign a server',
     assignHint: 'Points every selected agent at one Minecraft server. Credentials are untouched — an account is the same account wherever it joins.',
@@ -591,6 +591,10 @@ export const en = {
     subtitle: 'Configure agents without touching the machines they run on.',
     agents: 'Agents',
     selectAll: 'Select all',
+    /** Named for what it takes: under a search, the rows on screen and not the whole fleet. */
+    selectAllShown: 'Select all shown',
+    filterAgents: 'Search agents',
+    noMatches: 'No agents match that.',
     noAgents: 'No agents yet.',
     pickOne: 'Select an agent to see its settings.',
     selected: '{count} selected',

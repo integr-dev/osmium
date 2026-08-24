@@ -374,7 +374,7 @@ export const de: Copy = {
     tabSchematics: 'Baupläne',
     tabJobs: 'Aufträge',
     tabServers: 'Server',
-    tabPower: 'Verbindungen',
+    tabConnections: 'Verbindungen',
 
     assignTitle: 'Server zuweisen',
     assignHint: 'Richtet alle ausgewählten Agenten auf einen Minecraft-Server aus. Zugangsdaten bleiben unberührt — ein Konto ist überall dasselbe Konto.',
@@ -497,6 +497,9 @@ export const de: Copy = {
     subtitle: 'Agenten konfigurieren, ohne die Maschinen anzufassen, auf denen sie laufen.',
     agents: 'Agenten',
     selectAll: 'Alle auswählen',
+    selectAllShown: 'Alle angezeigten auswählen',
+    filterAgents: 'Agenten suchen',
+    noMatches: 'Keine Agenten passen dazu.',
     noAgents: 'Noch keine Agenten.',
     pickOne: 'Wählen Sie einen Agenten, um seine Einstellungen zu sehen.',
     selected: '{count} ausgewählt',

@@ -24,9 +24,9 @@ const { t } = useI18n()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 
-type Tab = 'schematics' | 'jobs' | 'servers' | 'power'
+type Tab = 'schematics' | 'jobs' | 'servers' | 'connections'
 
-const TABS = ['schematics', 'jobs', 'servers', 'power'] as const
+const TABS = ['schematics', 'jobs', 'servers', 'connections'] as const
 
 /** In the URL, so this page can be linked to and Back means the previous tab. See lib/queryState.ts. */
 const tab = useQueryTab<Tab>('tab', TABS, 'schematics')
@@ -39,7 +39,7 @@ const tabs: Array<{ id: Tab; label: string; icon: typeof Box; node: string }> = 
   // an operator looks for the one they just started.
   { id: 'jobs', label: 'operations.tabJobs', icon: Hammer, node: 'agent.read' },
   { id: 'servers', label: 'operations.tabServers', icon: Server, node: 'agent.write' },
-  { id: 'power', label: 'operations.tabPower', icon: Power, node: 'agent.run' },
+  { id: 'connections', label: 'operations.tabConnections', icon: Power, node: 'agent.run' },
 ]
 
 onMounted(() => {
@@ -139,7 +139,7 @@ watch(tab, clearReport)
       @failed="report($event, true)"
     />
     <FleetConnections
-      v-else-if="tab === 'power' && auth.can('agent.run')"
+      v-else-if="tab === 'connections' && auth.can('agent.run')"
       @done="report($event, false)"
       @failed="report($event, true)"
     />

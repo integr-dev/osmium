@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot as Agent } from 'lucide-vue-next'
+import { Bot as Agent, Search } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
 import { agentDot, agentStateLabel } from '../lib/agentState'
 import { useAgentStore, type FleetAgent } from '../stores/agents'
@@ -31,12 +31,55 @@ const props = withDefaults(
 const { t } = useI18n()
 const agentStore = useAgentStore()
 
+const query = ref('')
+const needle = computed(() => query.value.trim().toLowerCase())
+
+/**
+ * Matched against everything the row shows: the label, the Minecraft account and the server.
+ *
+ * All three, because all three are what an operator is looking down the list for — "which of
+ * these is on the build server" is as ordinary a question as "where is Mason_14", and a search
+ * that only read the label would answer neither.
+ */
+function matches(agent: FleetAgent): boolean {
+  return (
+    agent.label.toLowerCase().includes(needle.value) ||
+    (agent.mcUsername?.toLowerCase().includes(needle.value) ?? false) ||
+    (agent.serverAddress?.toLowerCase().includes(needle.value) ?? false)
+  )
+}
+
+/**
+ * **Filtering hides, it does not deselect.** A search is a way to find the next agent to tick, so
+ * an agent already ticked stays ticked while the search looks past it — which is the opposite of
+ * what the watch below does, and deliberately: that one fires when an agent stops being *eligible*,
+ * and this one only changes what is on screen.
+ */
+const visible = computed(() => (needle.value ? props.agents.filter(matches) : props.agents))
+
+const visibleUnavailable = computed(() =>
+  needle.value ? props.unavailable.filter(matches) : props.unavailable,
+)
+
+/**
+ * Select-all is about what is shown, so a search narrows what it takes.
+ *
+ * It adds to the selection rather than replacing it, and clearing takes only the rows on screen:
+ * otherwise ticking all of one search would silently drop everything picked under the last one.
+ * With no search this is exactly what it was, because everything is shown.
+ */
 const allSelected = computed(
-  () => props.agents.length > 0 && selected.value.length === props.agents.length,
+  () =>
+    visible.value.length > 0 &&
+    visible.value.every((agent) => selected.value.includes(agent.id)),
 )
 
 function toggleAll() {
-  selected.value = allSelected.value ? [] : props.agents.map((agent) => agent.id)
+  const shown = visible.value.map((agent) => agent.id)
+
+  selected.value = allSelected.value
+    ? selected.value.filter((id) => !shown.includes(id))
+    : [...new Set([...selected.value, ...shown])]
 }
 
 /**
@@ -75,12 +118,27 @@ watch(
         </span>
       </div>
 
+      <!--
+        Past a handful, on the same threshold the schematic library uses. A search box over three
+        agents is a control that costs more room than the list it searches.
+      -->
+      <label v-if="agents.length + unavailable.length > 5" class="input input-sm">
+        <Search class="size-4 opacity-60" />
+        <input v-model="query" type="search" :placeholder="t('configuration.filterAgents')" />
+      </label>
+
       <label
-        v-if="agents.length"
+        v-if="visible.length"
         class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5 text-sm"
       >
         <input type="checkbox" class="checkbox checkbox-sm" :checked="allSelected" @change="toggleAll" />
-        <span class="opacity-70">{{ t('configuration.selectAll') }}</span>
+        <!--
+          Named for what it actually takes. Under a search that is the rows on screen, and a
+          control saying "all" while taking four of twenty is the interface misreporting itself.
+        -->
+        <span class="opacity-70">
+          {{ needle ? t('configuration.selectAllShown') : t('configuration.selectAll') }}
+        </span>
       </label>
 
       <!--
@@ -94,7 +152,7 @@ watch(
       -->
       <div class="-mr-1 flex max-h-[26rem] flex-col gap-0.5 overflow-y-auto pr-1">
       <ul class="flex flex-col gap-0.5">
-        <li v-for="agent in agents" :key="agent.id">
+        <li v-for="agent in visible" :key="agent.id">
           <label
             class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5"
           >
@@ -131,11 +189,11 @@ watch(
         </li>
       </ul>
 
-      <template v-if="unavailable.length">
+      <template v-if="visibleUnavailable.length">
         <p class="px-2 pt-2 text-xs opacity-50">{{ unavailableNote }}</p>
         <ul class="flex flex-col gap-0.5 opacity-40">
           <li
-            v-for="agent in unavailable"
+            v-for="agent in visibleUnavailable"
             :key="agent.id"
             class="flex items-center gap-3 px-2 py-1.5"
             :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))"
@@ -171,6 +229,13 @@ watch(
 
       <p v-if="!agents.length && !unavailable.length" class="px-2 py-4 text-center text-sm opacity-50">
         {{ t('configuration.noAgents') }}
+      </p>
+      <!-- A search that matches nothing is not an empty fleet, and must not read as one. -->
+      <p
+        v-else-if="!visible.length && !visibleUnavailable.length"
+        class="px-2 py-4 text-center text-sm opacity-50"
+      >
+        {{ t('configuration.noMatches') }}
       </p>
     </div>
   </div>

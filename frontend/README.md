@@ -228,6 +228,20 @@ button, and be told there about one of them. Agents that fail any of the three s
 with the reason — a busy one carries the blue dot and *Building* label, so "why not that one, it is
 right there" answers itself.
 
+**It searches past five agents**, on the same threshold and in the same markup as the schematic
+library, over the label, the Minecraft account and the server — "which of these is on the build
+server" is as ordinary a question as "where is Mason_14". Two rules make it safe on a fleet this
+size:
+
+- **Filtering hides, it does not deselect.** A search is how the next agent to tick gets found, so
+  one already ticked stays ticked while the search looks past it. That is the opposite of what
+  happens when an agent stops being *eligible*, which does drop it — a distinction worth keeping,
+  since one changes what can be acted on and the other only what is on screen.
+- **Select-all takes what is shown**, adding to the selection rather than replacing it, and clears
+  only the rows on screen. Otherwise ticking all of one search would silently drop everything
+  picked under the last one. It says *Select all shown* while a search is active, because a control
+  reading "all" and taking four of twenty is the interface misreporting itself.
+
 ### The build is four steps
 
 ```
@@ -828,6 +842,10 @@ navigation.
 
 **The default is kept out of the address bar.** Writing `?tab=bots` when bots is what an absent
 parameter already means adds length and says nothing, so the key is removed instead.
+
+**A tab id is the tab’s name.** `?tab=power` for a tab labelled *Connections* is a URL an operator
+cannot read back, and one nobody can guess at when writing a link by hand. The ids track the
+labels, and renaming one means renaming the other.
 
 ### The wizard is the exception, and it is the interesting one
 
