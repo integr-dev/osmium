@@ -894,6 +894,7 @@ src/main/resources/db/migration/
   V12__agent_connecting.sql        CONNECTING, and the timestamp that stops it lasting forever
   V13__setup_cancel_audit.sql      AGENT_SETUP_CANCEL added to the audit action constraint
   V14__build_jobs.sql              jobs and their segments: a plan frozen and being carried out
+  V15__build_job_paused_holds_its_place.sql  a paused job keeps its claim on its server
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -1164,8 +1165,11 @@ The segments are rows for the same reason the job is. A recomputed segment has n
 progress has to attach to something; they are stored in **world coordinates** with the anchor
 already applied, and half-open, so a host is told a box and does no transform of its own.
 
-**One live job per build per server**, enforced by a partial unique index — two would claim the same
-blocks in the same place for two sets of agents, and only the database sees both requests. **One
+**One unfinished job per build per server**, enforced by a partial unique index — two would claim the
+same blocks in the same place for two sets of agents, and only the database sees both requests. The
+*per server* half is the point: the same tower on two servers is exactly what a job is for, and it is
+why a build is its own row. Paused counts as unfinished, since it keeps its segments in order to be
+resumed and would otherwise let a second job in beside it. **One
 live segment per agent** is enforced the same way: a bot cannot be in two places, and the version
 that looks reasonable in an interface is two segments of the *same* build. A job also pins its
 schematic so that deleting *or re-reading* one can be refused while it is live: re-analysis looks

@@ -14,12 +14,30 @@ interface BuildJobRepository : JpaRepository<BuildJob, Long> {
     fun findAllByState(state: BuildJobState): List<BuildJob>
 
     /**
-     * Whether a plan is being carried out right now.
+     * Whether a plan is being carried out right now, anywhere.
      *
      * The guard on deleting a build: the plan can go once nothing is executing it, and not while
      * agents are placing blocks from a copy of it.
      */
     fun existsByBuildIdAndState(buildId: Long, state: BuildJobState): Boolean
+
+    /**
+     * Whether this plan is already being built **on this server**.
+     *
+     * The server is half the question and leaving it out was a bug: the same tower on two servers
+     * is the case a job exists to allow, and is why `builds` is its own table rather than columns
+     * on the schematic. `uq_build_jobs_active` had it right; the service asked a narrower question
+     * and refused first.
+     *
+     * **Paused counts.** A paused job is one somebody intends to come back to, still holding its
+     * crew and its counts; a second job started beside it would claim the same blocks in the same
+     * place, and resuming the first would then have two sets of agents building one thing.
+     */
+    fun findFirstByBuildIdAndServerAddressAndStateIn(
+        buildId: Long,
+        serverAddress: String,
+        states: Collection<BuildJobState>,
+    ): BuildJob?
 
     /**
      * The same question about a schematic, which is why a job pins one.

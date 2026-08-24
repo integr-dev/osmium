@@ -87,10 +87,19 @@ class BuildJobService(
         val crew = resolveCrew(request.agentIds)
         val server = checkNotNull(crew.first().serverAddress)
 
-        // Refused here as well as by `uq_build_jobs_active`, so the operator is told which job is in
-        // the way rather than being handed a constraint violation.
-        check(!jobs.existsByBuildIdAndState(buildId, BuildJobState.ACTIVE)) {
-            "'${build.name}' is already being built"
+        // **Per server, not per plan.** The same tower on two servers is the case a job exists to
+        // allow — it is why `builds` is its own table — and asking only about the plan refused it.
+        //
+        // Paused counts as in the way: it holds its crew and will be resumed, so a second job
+        // beside it would end up with two sets of agents on the same blocks.
+        //
+        // Refused here as well as by `uq_build_jobs_active`, so the operator is told which job is
+        // in the way rather than being handed a constraint violation.
+        jobs.findFirstByBuildIdAndServerAddressAndStateIn(buildId, server, UNFINISHED)?.let { existing ->
+            error(
+                "'${build.name}' is already being built on $server" +
+                    if (existing.state == BuildJobState.PAUSED) ", by a job that is paused" else "",
+            )
         }
 
         val split = schematics.split(checkNotNull(schematic.id), request.mode, crew.size)
@@ -451,4 +460,14 @@ class BuildJobService(
 
     private fun currentUsername(): String =
         SecurityContextHolder.getContext().authentication?.name ?: "unknown"
+
+    private companion object {
+        /**
+         * A job that still has a claim on its build, its server and its crew.
+         *
+         * `DONE` is the only state that lets go of all three, which is why it is the one missing
+         * here rather than `ACTIVE` being the only one present.
+         */
+        val UNFINISHED = listOf(BuildJobState.ACTIVE, BuildJobState.PAUSED)
+    }
 }

@@ -262,14 +262,49 @@ class BuildJobControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `one build is built once at a time`() {
+    fun `one build is built once per server, and not twice on one`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val here = onlineAgent("Mason_01", host, server = "mc.example.com:25565")
+        val alsoHere = onlineAgent("Mason_02", host, server = "mc.example.com:25565")
+        val elsewhere = onlineAgent("Mason_03", host, server = "other.example.com:25565")
+
+        start(build.id!!, listOf(here.id!!)).andExpect { status { isCreated() } }
+
+        // The same tower on two servers is the case a job exists to allow — it is the reason a
+        // build is its own row rather than columns on the schematic.
+        start(build.id!!, listOf(elsewhere.id!!)).andExpect { status { isCreated() } }
+
+        // Twice on one server is two sets of agents placing the same blocks in the same place.
+        start(build.id!!, listOf(alsoHere.id!!)).andExpect { status { isConflict() } }
+    }
+
+    /**
+     * The hole behind that: pausing let a second job in beside the first, and resuming then put two
+     * crews on one set of blocks. A paused job is not finished — it keeps its segments so it can be
+     * resumed — so it keeps its claim on the server too.
+     */
+    @Test
+    fun `a paused job still holds its server`() {
         val host = reachableHost()
         val build = placedBuild()
         val one = onlineAgent("Mason_01", host)
         val two = onlineAgent("Mason_02", host)
 
-        start(build.id!!, listOf(one.id!!)).andExpect { status { isCreated() } }
+        val jobId: Int = JsonPath.read(
+            start(build.id!!, listOf(one.id!!)).andReturn().response.contentAsString,
+            "$.id",
+        )
+        pause(jobId).andExpect { status { isOk() } }
+
         start(build.id!!, listOf(two.id!!)).andExpect { status { isConflict() } }
+
+        // Deleting it is what gives the server back, the same act that gives the crew back.
+        mockMvc.delete("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ADMINISTRATOR))
+        }.andExpect { status { isNoContent() } }
+
+        start(build.id!!, listOf(two.id!!)).andExpect { status { isCreated() } }
     }
 
     @Test
