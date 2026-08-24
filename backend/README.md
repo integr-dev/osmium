@@ -1356,7 +1356,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-421 tests across 33 classes. Most run against a real Postgres 18 through Testcontainers with
+445 tests across 34 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

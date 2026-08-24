@@ -138,6 +138,17 @@ have I got" — four facts per agent, compared down a column, which is the thing
 cannot do. It carries no per-row actions either: everything doable to an agent lives on its own page
 or, for a group, on Operations, and a third place would be a third thing to keep in step.
 
+**One column, one row shape.** The sidebar stacks hosts directly above agents, and they were drawn
+as two different kinds of thing: a bare dot, a name and a count badge over a tile, a corner status
+and two lines. One list reading unlike the other made the sidebar look like two sidebars. Hosts now
+take the agent shape — the tile is `InitialTile.vue`, shared with `PlayerHead`’s own fallback rather
+than copied, since a host has no avatar and never will and two copies would drift the first time
+either was touched.
+
+The host’s agent count moved off the right and under the name with that change. It is detail about
+the host rather than a count of anything on screen, and a badge in the far-right slot reads as a
+notification — which is exactly what the chat rail puts there, a few rows below.
+
 ### The graph
 
 Three tiers — Osmium, the hosts dialled into it, the agents each host runs. Not four: a Minecraft
@@ -209,6 +220,13 @@ not move the thing being reached for. Two of them **lock the selection**, which 
 know about: choosing a builder narrows the list to that agent's server, and selecting all would
 otherwise leave agents selected but invisible — the count saying nine while the list shows four.
 Nothing stays selected once it leaves the list.
+
+**A picker offers only what the backend will accept.** Choosing builders asks three questions, not
+one: in game, not already on a job, and on this build’s server. Two of them were the backend’s alone
+for a while, so an operator could pick a crew, walk to the end of a four-step wizard, press the last
+button, and be told there about one of them. Agents that fail any of the three still appear, greyed
+with the reason — a busy one carries the blue dot and *Building* label, so "why not that one, it is
+right there" answers itself.
 
 ### The build is four steps
 
@@ -1036,7 +1054,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-295 unit tests on Vitest with jsdom, in two groups.
+302 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
@@ -1047,7 +1065,8 @@ translation parity, where a missing placeholder swallows a value without errorin
 that computes something is a plain function with its own spec, because the failures are arithmetic
 and they all look fine on screen: a sparkline with one sample or a flat series (`series.ts`),
 distance measured across a dimension or a server (`vitals.ts`), a fleet reported finished because
-two servers' progress was added against one schematic (`build.ts`), which chat scope a live line
+two servers' progress was added against one schematic (`build.ts`), how far along a job is
+(`jobs.ts`), where rounding up would call a build finished one block short of it, which chat scope a live line
 belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), what the tab says
 (`browserStatus.ts`), the isometric projection behind the sign-in screen (`schematic.ts`), which is
 chosen in projected space rather than on a grid that is projected afterwards — the obvious way

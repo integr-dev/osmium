@@ -7,19 +7,20 @@ hands each agent its own slice. The dashboard shows what the fleet is doing: pro
 what needs attention, and what is being said in game.
 
 > **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
-> telemetry, live updates and the host transport are built and tested. So is the front half of the
-> schematic pipeline: uploading a file, reading it, and dividing it between agents. What is missing
-> is the back half — sending a segment to a host and building it — which waits on the host program.
-> That lives outside this repository, Rust on azalea, see [`host/`](host/); the feeds stay empty until
-> one connects and starts reporting. Build progress and remote configuration are the two parts of
-> the UI still running on mock data.
+> telemetry, live updates and the host transport are built and tested. So is the schematic pipeline
+> up to the point of dispatch: uploading a file, reading it, dividing it between agents, and
+> recording the result as a **job** — what is being built, where, by whom, and how far along.
+> What is missing is the crossing: carrying a segment to a host and having blocks reported back,
+> which waits on the host program. That lives outside this repository, Rust on azalea, see
+> [`host/`](host/); the feeds stay empty until one connects and starts reporting. Build progress
+> and remote configuration are the two parts of the UI still running on mock data.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans, and the WebSocket hosts dial into. | Built, 421 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 295 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 445 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 302 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
