@@ -565,7 +565,8 @@ export const en = {
     builders: 'Agents',
     buildingOn: 'Building on',
     pickBuilders: 'Select the agents that will build it.',
-    oneServerOnly: 'A build happens on one server. These are somewhere else, or nowhere.',
+    /** Every reason at once: a per-agent one is the dot and the tooltip beside each row. */
+    cannotBuild: 'These cannot build it: not in game, already on a job, or on another server.',
     splitBetween: 'Split between {count}',
     splitTitle: 'Divide between agents',
     splitting: 'Dividing…',

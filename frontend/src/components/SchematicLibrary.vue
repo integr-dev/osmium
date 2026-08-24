@@ -30,14 +30,13 @@ import {
   type SplitResponse,
 } from '../api/schematics'
 import type { BuildResponse } from '../api/builds'
-import { useAgentStore } from '../stores/agents'
+import { isOnline, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import type { Box as Box3d, Vec3 } from '../lib/box3d'
 import { blockColour } from '../lib/blockColours'
 import { blockName } from '../lib/blockNames'
 import { blocksToPlace, offsetOf, plannedMaterials, toWorld } from '../lib/placement'
 import { bytes } from '../lib/bytes'
-import { useQueryTab, useQueryValue } from '../lib/queryState'
 
 /**
  * Starting a build: choose what, choose who, divide it up.
@@ -64,16 +63,23 @@ const STEPS = ['schematic', 'plan', 'agents', 'split'] as const
 type Step = (typeof STEPS)[number]
 
 /**
- * Which step, in the URL.
+ * Which step, in component state, always opening at the first.
  *
- * Held in a `ref` this cost the three things a wizard can least afford: it could not be linked, a
- * reload dropped the operator back at step one, and **browser Back left Operations entirely** —
- * part way through a four-step pipeline, which is precisely where Back gets pressed.
+ * **This was in the URL and is deliberately not any more.** A step could then be asked for that
+ * the screen could not show — `?step=split` with nobody picked to build — because the crew is a
+ * choice made here and held nowhere a link can carry. That is not an exotic case: start a job,
+ * get moved to the Jobs tab, press Back. What followed was a step that disagreed with the address
+ * bar, and a picker that teleported forward the moment one agent was chosen, because the ceiling
+ * lifted to meet a request still standing from before.
  *
- * See `wanted` and `step` below: what the URL asks for and what the screen can honestly show are
- * two different things once anyone can type a step into the address bar.
+ * Restarting is the honest version. Every step after the first depends on an answer given on the
+ * one before it, so a pipeline that always begins at the beginning can never be asked for a step
+ * it cannot fill — the whole class of bug goes with the persistence rather than being patched.
+ *
+ * The cost is browser Back, which now leaves Operations rather than stepping back through the
+ * wizard. The Back button below is what steps.
  */
-const wanted = useQueryTab<Step>('step', STEPS, 'schematic')
+const step = ref<Step>('schematic')
 
 /**
  * The plan being worked under, once one has been saved.
@@ -82,31 +88,19 @@ const wanted = useQueryTab<Step>('step', STEPS, 'schematic')
  * is expressed in coordinates, and which coordinates depends on where the build stands.
  */
 const plan = ref<BuildResponse | null>(null)
+
 const uploadOpen = ref(false)
 
 const schematics = ref<SchematicResponse[]>([])
 
 /**
- * Which schematic, also in the URL — otherwise a linked `?step=plan` reloads into "pick one", and
- * the step in the address bar describes nothing.
+ * Which schematic, alongside the step and for the same reason.
  *
- * Replaced rather than pushed, unlike the step. Clicking down a list of rows is refining the view
- * rather than moving through it, and pushing would make Back walk every row that was tried before
- * it reached the step the operator actually wanted.
+ * It was in the URL to keep a linked `?step=plan` from reloading into "pick one". With the step
+ * no longer travelling there is nothing left for it to answer for: the wizard opens on the
+ * library, where choosing one is the first thing it asks.
  */
-const selectedParam = useQueryValue('schematic')
-
-const selectedId = computed<number | null>({
-  // Anything can be typed into a query string. A non-numeric one reads as nothing selected rather
-  // than as NaN, which would otherwise reach every comparison downstream and match nothing quietly.
-  get: () => {
-    const raw = selectedParam.value
-    return raw !== null && /^\d+$/.test(raw) ? Number(raw) : null
-  },
-  set: (value) => {
-    selectedParam.value = value === null ? null : String(value)
-  },
-})
+const selectedId = ref<number | null>(null)
 
 const materials = ref<Array<{ name: string; blocks: number }>>([])
 
@@ -292,9 +286,23 @@ const buildServer = computed(() => {
   return first?.serverAddress ?? null
 })
 
+/**
+ * Who can actually be given a piece of this, which is the same three questions the backend asks.
+ *
+ * **In game**, because a job is dispatched to a live session and nothing else. **Free**, because a
+ * bot cannot be in two places — an agent already holding a segment is refused by name, and by a
+ * unique index underneath that. **On this server**, because a build happens in one world.
+ *
+ * All three were the backend’s alone until now, so the picker offered agents it would go on to
+ * refuse: the operator chose a crew, pressed the last button in a four-step wizard, and was told
+ * about one of them there. An interface that offers what it will refuse reads as broken rather
+ * than as restricted.
+ */
 const eligibleBuilders = computed(() =>
   agentStore.agents.filter(
     (agent) =>
+      isOnline(agent) &&
+      !agentStore.isBuilding(agent.id) &&
       agent.serverAddress !== null &&
       (buildServer.value === null || agent.serverAddress === buildServer.value),
   ),
@@ -382,28 +390,6 @@ const canAdvance = computed(() =>
         : false,
 )
 
-/**
- * The furthest step the current state can actually fill, as an index into [STEPS].
- *
- * Nothing chosen means only the library; a schematic that has been read unlocks the plan and the
- * agent picker; a set of builders unlocks the division. The same conditions `canAdvance` uses, said
- * as a ceiling rather than one step at a time.
- */
-const furthest = computed(() => (!ready.value ? 0 : parts.value > 0 ? 3 : 2))
-
-/**
- * The step actually shown: what the URL asked for, clamped to what can be shown.
- *
- * `go` guards forward movement *within* the page, and that was enough while the step lived in a
- * `ref` nobody outside could write. Once it is in the address bar anyone can arrive at `?step=split`
- * with nothing selected — from a bookmark taken mid-pipeline, a shared link, or Back after the
- * selection was cleared — and land on a panel with nothing in it, which reads as the screen being
- * broken rather than as a step that is not ready.
- *
- * Clamping rather than redirecting: the URL is left saying what was asked for, so choosing a
- * schematic opens the step that was wanted instead of making the operator ask a second time.
- */
-const step = computed<Step>(() => STEPS[Math.min(STEPS.indexOf(wanted.value), furthest.value)]!)
 
 function go(to: Step) {
   // Backwards is always allowed; forwards only past a step that has been answered. A step reached
@@ -411,18 +397,19 @@ function go(to: Step) {
   const target = STEPS.indexOf(to)
   const here = STEPS.indexOf(step.value)
   if (target > here && !canAdvance.value) return
-  wanted.value = to
+  step.value = to
 }
 
 function next() {
   const at = STEPS.indexOf(step.value)
-  if (at < STEPS.length - 1 && canAdvance.value) wanted.value = STEPS[at + 1]!
+  if (at < STEPS.length - 1 && canAdvance.value) step.value = STEPS[at + 1]!
 }
 
 function back() {
   const at = STEPS.indexOf(step.value)
-  if (at > 0) wanted.value = STEPS[at - 1]!
+  if (at > 0) step.value = STEPS[at - 1]!
 }
+
 
 onMounted(async () => {
   await refresh()
@@ -547,8 +534,16 @@ watch([selectedId, mode, parts], () => {
   split.value = null
 })
 
+/**
+ * A different schematic is a different pipeline, so it starts again from the top.
+ *
+ * Also the one thing that can pull the ground out from under a later step without the operator
+ * doing it: a schematic deleted by somebody else clears the selection, and every panel after the
+ * library is about a schematic.
+ */
 watch(selectedId, () => {
   plan.value = null
+  step.value = 'schematic'
 })
 
 /**
@@ -985,7 +980,7 @@ function progressOf(schematic: SchematicResponse): string | null {
         v-model="builders"
         :agents="eligibleBuilders"
         :unavailable="blockedBuilders"
-        :unavailable-note="t('schematics.oneServerOnly')"
+        :unavailable-note="t('schematics.cannotBuild')"
         :title="t('schematics.builders')"
       />
 

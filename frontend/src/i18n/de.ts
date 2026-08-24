@@ -473,7 +473,7 @@ export const de: Copy = {
     builders: 'Agenten',
     buildingOn: 'Gebaut auf',
     pickBuilders: 'Die Agenten auswählen, die bauen sollen.',
-    oneServerOnly: 'Ein Bau findet auf einem Server statt. Diese sind woanders oder nirgends.',
+    cannotBuild: 'Diese können nicht bauen: nicht im Spiel, schon auf einem Auftrag oder auf einem anderen Server.',
     splitBetween: 'Auf {count} aufteilen',
     splitTitle: 'Unter Agenten aufteilen',
     splitting: 'Wird aufgeteilt…',

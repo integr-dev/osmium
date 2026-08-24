@@ -794,39 +794,46 @@ box. The reason is on each button's `title` and in a line under the row, dedupli
 host blocks all three and is said once. Only reasons for actions this operator can actually see are
 listed, since naming a precondition of a button that is not on their screen explains nothing.
 
-## Tabs and steps live in the URL
+## Tabs live in the URL; steps do not
 
-Operations' three tabs, Resources' three, and the four-step schematic pipeline all kept their
-position in a `ref`. That cost the same three things every time: nothing could be linked or
-bookmarked, a reload dropped the operator back on the first tab at step one, and **browser Back left
-the page entirely** rather than stepping back — at the one moment in the app where Back is most
-likely to be pressed, part way through a wizard.
+Operations' tabs and Resources' kept their position in a `ref`. That cost the same two things each
+time: nothing could be linked or bookmarked, and **browser Back left the page entirely** rather
+than returning to the tab before it.
 
-`src/lib/queryState.ts` holds the two composables. The route is the only source of truth, so Back
-and Forward work with no listener of ours.
+`src/lib/queryState.ts` holds `useQueryTab`. The route is the only source of truth, so Back and
+Forward work with no listener of ours.
 
 A **query parameter rather than a nested route**. These are panels within one screen, not screens of
 their own: the page keeps its header, its node gate and its loaded fleet across a tab change, and
 modelling that as a route would mean restructuring the router to describe something that is not a
 navigation.
 
-**Tabs and steps push; a selection replaces.** `useQueryTab` pushes, because moving to the next step
-is a move an operator expects Back to undo. `useQueryValue` — which holds *which* schematic is being
-looked at — replaces, because picking a row refines the view they are already on. Pushing it would
-make Back walk every row that was tried before it reached the step they actually wanted. Replacing
-still survives a reload and still travels in a shared link; it simply does not stack.
-
 **The default is kept out of the address bar.** Writing `?tab=bots` when bots is what an absent
 parameter already means adds length and says nothing, so the key is removed instead.
 
-**What the URL asks for and what the screen can show are two different things.** The pipeline's
-`go()` guards forward movement within the page, which was enough while the step lived in a `ref`
-nobody outside could write. Once it is in the address bar, anyone can arrive at `?step=split` with
-nothing selected — from a bookmark taken mid-pipeline, a shared link, or Back after the selection
-was cleared — and land on a panel with nothing in it. So `wanted` is what the URL says and `step` is
-that clamped to `furthest`, the last step the current state can actually fill. It clamps rather than
-redirects: the URL is left saying what was asked for, so choosing a schematic opens the step that was
-wanted instead of making the operator ask twice.
+### The wizard is the exception, and it is the interesting one
+
+The four-step schematic pipeline held its step here too, and it was the case that did not fit. A URL
+can ask for step four; nothing in a URL can carry **who is building**, which is what step four is
+about. So `?step=split` with nobody picked was a request that could never be honoured — and it
+arrived by the most ordinary route there is: start a job, get moved to the Jobs tab, press Back.
+
+That was patched first, and the patch is worth recording because it is what a clamp costs. `step`
+became the *minimum* of what the URL asked for and what the state could fill, so the screen showed
+the agent picker while the address bar said `split` — a disagreement a reload then resolved the
+other way. And because it was a minimum, choosing a single builder lifted the ceiling and teleported
+the operator straight to the division, skipping the button whose whole purpose is to say they had
+finished choosing. Correcting the URL fixed both and added a third moving part to a screen that
+already had two.
+
+**So the step went back into component state and the wizard restarts at the top.** Every step after
+the first depends on an answer given on the one before it, so a pipeline that always begins at the
+beginning can never be asked for a step it cannot fill: the whole class of bug leaves with the
+persistence rather than being defended against. The schematic and the plan went with it — each was
+in the URL to keep the *step* honest, and neither has anything left to answer for.
+
+The cost is real and was paid deliberately: browser Back now leaves Operations rather than stepping
+back through the wizard. The wizard has its own Back button, which is what steps.
 
 ## Asking before acting
 
