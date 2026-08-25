@@ -188,17 +188,6 @@ describe('fleet store', () => {
     })
   })
 
-  it('keeps mock build progress across a refresh so the view does not reset on every poll', async () => {
-    fleet()
-    const store = useAgentStore()
-    await store.refresh()
-    store.byId(6)!.build.blocksPlaced = 999
-
-    await store.refresh()
-
-    expect(store.byId(6)!.build.blocksPlaced).toBe(999)
-  })
-
   /**
    * Vitals arrive on their own event several times a minute, so they are merged in place rather than
    * resending the agent. Anything else about the agent has to survive that merge.
@@ -215,7 +204,7 @@ describe('fleet store', () => {
 
     expect(store.byId(6)!.telemetry?.health).toBe(11)
     expect(store.byId(6)!.label).toBe('Mason_6')
-    expect(store.byId(6)!.build.blocksPlaced).toBeGreaterThan(0)
+    expect(store.byId(6)!.serverAddress).toBe('alpha.example:25565')
   })
 
   it('ignores telemetry for an agent it does not know', async () => {
@@ -267,18 +256,6 @@ describe('live updates', () => {
 
     expect(store.byId(6)!.state).toBe('STALE')
     expect(store.agents).toHaveLength(AGENTS.length)
-  })
-
-  // Mock build progress is stable per id, so losing it on every event would reshuffle the UI.
-  it('keeps mock build progress when an agent is updated by an event', async () => {
-    fleet()
-    const store = useAgentStore()
-    await store.refresh()
-    store.byId(6)!.build.blocksPlaced = 4242
-
-    store.applyEvent('agent', { ...agent({ id: 6, state: 'ONLINE', serverAddress: 'alpha.example:25565' }) })
-
-    expect(store.byId(6)!.build.blocksPlaced).toBe(4242)
   })
 
   it('adds an agent it has never seen', async () => {

@@ -50,28 +50,32 @@ Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**
 **telemetry** and **live updates** are real. They stay empty until a host connects and starts
 reporting, but nothing about them is faked.
 
-Two things are still mock. **Build progress** — blocks placed, sectors, throughput, the schematic —
-hangs off `agent.build` rather than `agent.telemetry`, so the invented and the reported are not
-mixed in one object. Marked in `src/stores/agents.ts`.
+**Build progress is no longer mock.** It was the last one: an invented block count per agent, five
+hardcoded sectors named after parts of a cathedral nobody had uploaded, a layer counter, and a
+throughput of 38 blocks per builder per minute — a constant with no basis at all. All of it is
+gone, along with `agent.build`, `lib/build.ts` and a task string nothing had rendered in months.
 
-**Jobs are not part of that mock.** `agentStore.jobs` is real: a plan frozen, divided into segments,
-each assigned to an agent, all of it stored by the backend. What is still missing is a host that can
-be sent a segment and report blocks against it, so every job reads 0% — which the Jobs panel states
-outright. The two live side by side in one store and are easy to confuse: `agent.build.blocksPlaced`
-is invented, `job.segments[].blocksPlaced` is a real column nothing has written to yet.
+What replaced it comes from hosts reporting against segments they were given: blocks placed per
+segment, a rate measured over the time a job has been open, and an estimate derived from that rate
+rather than from a guess. `src/lib/jobs.ts` holds the arithmetic and has its own spec.
 
-**And marked on the screen, not only in the source.** Configuration has carried a banner since it
-was built; the dashboard had nothing, while being both the landing page and the most numerically
-confident screen in the application — its invented figures roll, animate and carry sparklines
-exactly as the real ones do. It now names them in a banner, *and* each invented panel carries a
-`placeholder` badge of its own: a banner at the top of a scrolling page cannot be relied on to still
-be in view beside the sector table. Agents online, vitals, what needs attention and the activity feed
-are real and unmarked, which is the distinction the marking exists to draw.
+Two consequences worth knowing. A fleet with nothing running now reads **zero and says so**, where
+the mock always had something to show. And the numbers are scoped by the server picker, because a
+job is per-server and a fleet-wide figure is a sum across separate builds — meaningful as a total,
+not as a percentage of anything.
+
+**Configuration is the only mock left.**
+
+**A mock is marked on the screen, not only in the source** — and the marking comes off with the
+mock. The dashboard carried a banner naming its invented figures, plus a `placeholder` badge on
+each panel, because a banner at the top of a scrolling page cannot be relied on to still be in view
+further down. All of it went when the numbers became real: a warning about invented data on a page
+that has none is its own kind of wrong, and it teaches an operator to ignore the next one.
 
 **Configuration** is mock end to end: `src/lib/configuration.ts` holds the field list, the values
 and a `saveSettings` that writes to a map in that module and resolves. Nothing reaches a host, and
 the screen says so in a banner rather than only in a comment. It is kept out of the fleet store for
-the same reason build progress is — a mock inside real state is one that outlives its purpose.
+the same reason build progress was — a mock inside real state is one that outlives its purpose.
 
 What is meant to survive that mock is the **shape**: fields are declared as a schema and rendered
 generically by type, so adding a setting later is an entry in that file plus a copy key, not another

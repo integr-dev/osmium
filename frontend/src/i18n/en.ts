@@ -165,17 +165,13 @@ export const en = {
     perMinute: 'blocks / minute',
     remaining: 'Est. remaining',
     atCurrentRate: 'at the current rate',
-    /**
-     * Which numbers here are invented. Configuration has carried a banner like this since it was
-     * built; this page — the landing page, and the most numerically confident in the application —
-     * had nothing, while its figures rolled and animated exactly like the real ones.
-     */
-    mockTitle: 'Some of these numbers are placeholders',
-    mockBody: 'Blocks placed, throughput, the estimate, the progress bar and the sectors are invented, and stay invented until an agent reports build progress. Agents online, vitals, what needs attention and the activity feed are real.',
-    /** On each invented panel, because a banner at the top of a scrolling page is not always in view. */
-    mockTag: 'placeholder',
     ofTarget: 'of {total}',
-    layerOf: 'Layer {current} of {total}',
+    /** Segments finished, where an invented layer count used to be. */
+    segmentsDone: '{done} of {total} segments built',
+    segmentOf: 'Segment {ordinal} · {build}',
+    /** A fleet with nothing running, which is its ordinary state. */
+    buildingNothing: 'Nothing is being built.',
+    noSegments: 'Nothing is being built here. Start a job from Operations.',
     unassigned: 'unassigned',
     /** No rate means no arithmetic to do, rather than an estimate of zero. */
     noEta: 'stalled',
@@ -197,7 +193,7 @@ export const en = {
     progress: 'Schematic progress',
     percentComplete: '{percent}% complete',
     blocksRemaining: '{count} block remaining | {count} blocks remaining',
-    sectors: 'Sectors',
+    segments: 'Segments',
     activityHint: 'Alerts and status changes.',
     incidentsPerHour: 'Per hour, over the last {hours} hours.',
     incidentsPartial: 'Per hour. Faint hours are older than anything loaded, not quiet.',
@@ -340,6 +336,7 @@ export const en = {
     serverLaterHint: 'Leave blank to decide later. An agent can be set up before it has anywhere to play.',
     noServer: 'No server',
     notLinked: 'Not set up',
+    notBuilding: 'Not building',
     /** The tooltip behind the substituted badge — which piece of which build. */
     buildingOn: "Segment {ordinal} of '{build}'",
     setServer: 'Server',
@@ -771,20 +768,6 @@ export const en = {
     exportOrder: 'Choose a start day on or before the end day.',
   },
 
-  /**
-   * What an agent is doing, shown on its row. Distinct from its state: the state says what Osmium
-   * knows about the agent, this says what it is spending its time on.
-   */
-  agentTask: {
-    awaitingAssignment: 'Awaiting assignment',
-    notSetUp: 'Not set up yet',
-    awaitingSetup: 'Awaiting setup on host',
-    readyToConnect: 'Ready to connect',
-    credentialsRejected: 'Credentials rejected',
-    serverRefused: 'Server refused the connection',
-    hostUnreachable: 'Host unreachable',
-    idle: 'Idle',
-  },
 
   /** The lifecycle of an agent, as an operator reads it. */
   agentState: {

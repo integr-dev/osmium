@@ -52,6 +52,9 @@ const setupMethod = ref('')
 
 const agent = computed(() => agentStore.byId(Number(route.params.id)))
 
+/** What this agent is building, or null. Read once rather than three times in the template. */
+const assignment = computed(() => (agent.value ? agentStore.assignmentOf(agent.value.id) : null))
+
 /**
  * Commands travel to the agent's host, so nothing is deliverable while its agent is disconnected.
  * Checked here so the UI does not offer an action the API will refuse.
@@ -346,14 +349,14 @@ async function confirmRemove() {
           </span>
           <!-- Which piece of which build, spelled out: this page has the room the fleet table did not. -->
           <RouterLink
-            v-if="agentStore.assignmentOf(agent.id)"
+            v-if="assignment"
             :to="{ name: 'operations', query: { tab: 'jobs' } }"
             class="link-hover mt-1 block text-xs opacity-60"
           >
             {{
               t('agents.buildingOn', {
-                build: agentStore.assignmentOf(agent.id)?.buildName,
-                ordinal: agentStore.assignmentOf(agent.id)?.ordinal,
+                build: assignment?.buildName,
+                ordinal: assignment?.ordinal,
               })
             }}
           </RouterLink>
@@ -480,8 +483,15 @@ async function confirmRemove() {
             <Hammer class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
-              <span class="block truncate text-sm tabular-nums">
-                {{ n(agent.build.blocksPlaced) }}
+              <!--
+                Its own segment, not a fleet total and not an invented one. An agent building
+                nothing says so rather than showing a zero, which reads as a stalled builder.
+              -->
+              <span v-if="assignment" class="block truncate text-sm tabular-nums">
+                {{ n(assignment.blocksPlaced) }} / {{ n(assignment.blocks) }}
+              </span>
+              <span v-else class="block truncate text-sm italic opacity-50">
+                {{ t('agents.notBuilding') }}
               </span>
             </span>
           </div>

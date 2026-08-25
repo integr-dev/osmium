@@ -15,15 +15,15 @@ import {
 } from '../api/jobs'
 import { useAuthStore } from './auth'
 import { t } from '../i18n'
-import { buildFigures } from '../lib/build'
+import { jobFigures } from '../lib/jobs'
 import { isOnline } from '../lib/agentState'
 
 /**
  * Fleet state.
  *
- * Hosts, agents, their lifecycle states, chat, activity and **telemetry** are real and come from the
- * backend — though nothing fills them until a host connects. Only **build progress** is still mock:
- * blocks placed, sectors and the schematic. Those parts are marked.
+ * Hosts, agents, their lifecycle states, chat, activity, **telemetry** and **build progress** all
+ * come from the backend. Nothing here is invented any more: the last mock was blocks placed, and it
+ * went when a host could be asked how far it had got.
  *
  * Chat and activity are not held here. They are cursor-paged feeds owned by whichever view shows
  * one; the store only hands on the live lines as they arrive. See `src/lib/feed.ts`.
@@ -38,23 +38,26 @@ export type AgentTelemetry = NonNullable<AgentResponse['telemetry']>
 export type NearbyPlayer = AgentTelemetry['nearby'][number]
 
 /**
- * MOCK, pending the schematic pipeline. Kept off `telemetry` so the real and the invented are not
- * mixed in one object — the host reports vitals, and nothing reports build progress yet.
+ * An agent as the fleet holds it.
+ *
+ * **Was `AgentResponse & { build }`**, where `build` carried an invented block count and a task
+ * string nothing ever rendered. Both are gone: what an agent is building is a fact about a job,
+ * read through `assignmentOf`, and how far along it is comes from the host that is building it.
  */
-export interface BuildProgress {
-  blocksPlaced: number
-  task: string
-}
+export type FleetAgent = AgentResponse
 
-export type FleetAgent = AgentResponse & { build: BuildProgress }
-
-export interface Sector {
-  id: string
-  name: string
+/**
+ * What an agent is building, when it is building something.
+ *
+ * Carries the counts as well as the names, because the agent page shows how far along its own
+ * segment is — which used to be an invented number on the agent itself.
+ */
+export interface Assignment {
+  jobId: number
+  buildName: string
+  ordinal: number
   blocksPlaced: number
-  totalBlocks: number
-  assigned: string[]
-  status: 'done' | 'active' | 'queued' | 'blocked'
+  blocks: number
 }
 
 export interface Attention {
@@ -82,23 +85,6 @@ export const useAgentStore = defineStore('agents', () => {
   const loading = ref(false)
   const loaded = ref(false)
   const error = ref<string | null>(null)
-
-  // ---- mock, pending a connected agent -------------------------------------------------------
-
-  const schematic = ref({
-    name: 'Cathedral of Osmium',
-    totalBlocks: 184_000,
-    layers: 62,
-    currentLayer: 14,
-  })
-
-  const sectors = ref<Sector[]>([
-    { id: 'sector-c', name: 'Crypt · sector C', blocksPlaced: 21_400, totalBlocks: 21_400, assigned: [], status: 'done' },
-    { id: 'sector-a', name: 'Nave · sector A', blocksPlaced: 12_480, totalBlocks: 48_200, assigned: ['Mason_01'], status: 'active' },
-    { id: 'sector-b', name: 'Transept · sector B', blocksPlaced: 11_902, totalBlocks: 39_600, assigned: ['Mason_02'], status: 'active' },
-    { id: 'sector-e', name: 'North wing · sector E', blocksPlaced: 9_140, totalBlocks: 34_800, assigned: ['Mason_03'], status: 'blocked' },
-    { id: 'sector-d', name: 'Spire · sector D', blocksPlaced: 0, totalBlocks: 40_000, assigned: [], status: 'queued' },
-  ])
 
   // ---- loading -------------------------------------------------------------------------------
 
@@ -136,12 +122,7 @@ export const useAgentStore = defineStore('agents', () => {
       error.value = errorMessage(failure, t('errors.loadAgents'))
       return
     }
-    // Build progress is mock, so it is kept across refreshes rather than reshuffling on every poll.
-    const previous = new Map(agents.value.map((agent) => [agent.id, agent.build]))
-    agents.value = ((data ?? []) as AgentResponse[]).map((agent) => ({
-      ...agent,
-      build: previous.get(agent.id) ?? mockBuild(agent),
-    }))
+    agents.value = (data ?? []) as AgentResponse[]
   }
 
   /**
@@ -167,7 +148,7 @@ export const useAgentStore = defineStore('agents', () => {
    * a badge that outlived the work would be worse than none.
    */
   const assignments = computed(() => {
-    const held = new Map<number, { jobId: number; buildName: string; ordinal: number }>()
+    const held = new Map<number, Assignment>()
     for (const job of jobs.value) {
       if (job.state !== 'ACTIVE') continue
       for (const segment of job.segments) {
@@ -177,6 +158,8 @@ export const useAgentStore = defineStore('agents', () => {
           jobId: job.id,
           buildName: job.buildName,
           ordinal: segment.ordinal,
+          blocksPlaced: segment.blocksPlaced,
+          blocks: segment.blocks,
         })
       }
     }
@@ -304,14 +287,10 @@ export const useAgentStore = defineStore('agents', () => {
     else jobs.value[index] = incoming
   }
 
-  /** Mock build progress is kept across the update, exactly as `loadAgents` does. */
   function upsertAgent(incoming: AgentResponse): void {
     const index = agents.value.findIndex((agent) => agent.id === incoming.id)
-    if (index === -1) {
-      agents.value = [...agents.value, { ...incoming, build: mockBuild(incoming) }]
-      return
-    }
-    agents.value[index] = { ...incoming, build: agents.value[index]!.build }
+    if (index === -1) agents.value = [...agents.value, incoming]
+    else agents.value[index] = incoming
   }
 
   /**
@@ -336,11 +315,22 @@ export const useAgentStore = defineStore('agents', () => {
   const online = computed(() => agents.value.filter(isOnline))
 
   /**
-   * The fleet-wide build figures. The arithmetic lives in `src/lib/build.ts` so the dashboard can
-   * ask the same question of one server's agents — a schematic is built on a server, and summing
-   * two of them adds up two unrelated builds.
+   * Jobs that still describe work.
+   *
+   * A finished job keeps its blocks for as long as its record exists, and counting those into a
+   * dashboard reading *now* would show a fleet that has just started as most of the way through
+   * something it finished last week.
    */
-  const fleetBuild = computed(() => buildFigures(agents.value, schematic.value.totalBlocks))
+  const unfinished = computed(() => jobs.value.filter((job) => job.state !== 'DONE'))
+
+  /**
+   * What the fleet is building, from what hosts have actually reported.
+   *
+   * The arithmetic lives in `src/lib/jobs.ts` so the dashboard can ask the same question of one
+   * server's jobs. That scoping is no longer a nicety: a job *is* per-server, so a fleet-wide
+   * figure is a sum across separate builds and only means anything as a total.
+   */
+  const fleetBuild = computed(() => jobFigures(unfinished.value))
 
   const blocksPlaced = computed(() => fleetBuild.value.placed)
 
@@ -350,6 +340,12 @@ export const useAgentStore = defineStore('agents', () => {
 
   const etaMinutes = computed(() => fleetBuild.value.etaMinutes)
 
+  /** The unfinished jobs on one server, or all of them when nothing is picked. */
+  function jobsOn(server: string | null): BuildJob[] {
+    return server === null
+      ? unfinished.value
+      : unfinished.value.filter((job) => job.serverAddress === server)
+  }
   /**
    * Distinct servers in the fleet. A server is a scope: listener, chat feed and build hang off it.
    *
@@ -592,6 +588,8 @@ export const useAgentStore = defineStore('agents', () => {
     hosts,
     agents,
     jobs,
+    unfinished,
+    jobsOn,
     assignments,
     assignmentOf,
     isBuilding,
@@ -610,8 +608,6 @@ export const useAgentStore = defineStore('agents', () => {
     applyEvent,
     onFeedEvent,
     disconnectLiveUpdates,
-    schematic,
-    sectors,
     online,
     servers,
     serverSummaries,
@@ -639,37 +635,6 @@ export const useAgentStore = defineStore('agents', () => {
     say,
   }
 })
-
-/**
- * MOCK, pending the schematic pipeline. Stable per agent id so the UI does not shuffle on refresh,
- * and only populated for agents the backend reports as online.
- */
-function mockBuild(agent: AgentResponse): BuildProgress {
-  const live = isOnline(agent)
-  return {
-    blocksPlaced: live ? agent.id * 1_240 : 0,
-    task: live ? t('agentTask.awaitingAssignment') : describe(agent.state),
-  }
-}
-
-function describe(state: AgentResponse['state']): string {
-  switch (state) {
-    case 'UNLINKED':
-      return t('agentTask.notSetUp')
-    case 'SETUP_PENDING':
-      return t('agentTask.awaitingSetup')
-    case 'LINKED':
-      return t('agentTask.readyToConnect')
-    case 'NEEDS_RELINK':
-      return t('agentTask.credentialsRejected')
-    case 'CONNECT_FAILED':
-      return t('agentTask.serverRefused')
-    case 'STALE':
-      return t('agentTask.hostUnreachable')
-    default:
-      return t('agentTask.idle')
-  }
-}
 
 /**
  * How long the agent has been in game, from `onlineSince`. Derived rather than reported: the backend

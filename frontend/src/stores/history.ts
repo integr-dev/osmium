@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { buildFigures } from '../lib/build'
+import { jobFigures } from '../lib/jobs'
 import { isOnline } from '../lib/agentState'
 import { useAgentStore } from './agents'
 
@@ -40,14 +40,15 @@ export const useHistoryStore = defineStore('history', () => {
     // flatline that never happened.
     if (!agents.loaded) return
 
-    const total = agents.schematic.totalBlocks
     const byServer: Record<string, Reading> = {}
 
     for (const address of agents.servers) {
       const here = agents.agents.filter((agent) => agent.serverAddress === address)
       byServer[address] = {
         online: here.filter(isOnline).length,
-        perMinute: buildFigures(here, total).perMinute,
+        // Measured from the jobs on that server rather than from a rate per builder. A server
+        // with nothing running reads zero, which is the truth rather than an idle guess.
+        perMinute: jobFigures(agents.jobsOn(address)).perMinute,
       }
     }
 

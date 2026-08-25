@@ -21,9 +21,9 @@ import RollingNumber from '../components/RollingNumber.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
-import { buildFigures } from '../lib/build'
+import { jobFigures } from '../lib/jobs'
 import { summariseVitals } from '../lib/vitals'
-import type { Sector } from '../stores/agents'
+import type { SegmentState } from '../api/jobs'
 import { bucketByHour } from '../lib/series'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { nodeLabel } from '../lib/nodeLabel'
@@ -72,24 +72,27 @@ function formatTime(at: string): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-const SECTOR_BADGE: Record<Sector['status'], string> = {
-  done: 'badge-success badge-soft',
-  active: 'badge-primary badge-soft',
-  blocked: 'badge-error badge-soft',
-  queued: 'badge-ghost',
-}
-
 const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
   INFO: 'bg-base-content/30',
   WARNING: 'bg-warning',
   ERROR: 'bg-error',
 }
 
-const SECTOR_PROGRESS: Record<Sector['status'], string> = {
-  done: 'progress-success',
-  active: 'progress-primary',
-  blocked: 'progress-error',
-  queued: '',
+/** The same colours the Jobs panel uses, so one segment reads the same on both screens. */
+const SEGMENT_PROGRESS: Record<SegmentState, string> = {
+  DONE: 'progress-success',
+  BUILDING: 'progress-info',
+  ASSIGNED: 'progress-info',
+  FAILED: 'progress-error',
+  PENDING: '',
+}
+
+const SEGMENT_BADGE: Record<SegmentState, string> = {
+  DONE: 'badge-success',
+  BUILDING: 'badge-info',
+  ASSIGNED: 'badge-info',
+  FAILED: 'badge-error',
+  PENDING: 'badge-ghost',
 }
 
 const eta = computed(() => {
@@ -113,8 +116,7 @@ function dismissDenied() {
   void router.replace({ query: { ...route.query, denied: undefined } })
 }
 
-/** Still mock — see the store. */
-const blocksRemaining = computed(() => Math.max(0, build.value.target - build.value.placed))
+const blocksRemaining = computed(() => Math.max(0, build.value.total - build.value.placed))
 
 /**
  * Incidents per hour, from the page of activity already on screen.
@@ -139,10 +141,9 @@ const trendCaption = computed(() =>
 /**
  * Which server the page is about, or null for the whole fleet.
  *
- * **Only the panels that are real are scoped.** Agents, their vitals, what needs attention and what
- * happened are all per-agent facts, and an agent is on exactly one server. Build progress, sectors,
- * throughput and the ETA are mock and fleet-wide, so they are left alone and labelled — scoping
- * invented numbers would mean inventing a per-server shape for them ahead of the real pipeline.
+ * **Everything is scoped now.** Agents, their vitals, what needs attention and what happened are
+ * per-agent facts and an agent is on exactly one server; a job *is* per-server. What used to be
+ * left fleet-wide and labelled as mock is neither any more.
  */
 const server = ref<string | null>(null)
 
@@ -155,10 +156,32 @@ const scoped = computed(() =>
 const scopedOnline = computed(() => scoped.value.filter(isOnline).length)
 
 /**
- * Build progress for whatever is selected. Still mock, but scoped like everything else now: a
- * schematic is built on a server, so a fleet-wide total adds up unrelated builds.
+ * What is being built here, from what hosts have reported.
+ *
+ * A fleet-wide figure is a sum across separate builds, which is meaningful as a total and not as
+ * a percentage of anything — so the picker matters more than it did when this was invented.
  */
-const build = computed(() => buildFigures(scoped.value, agentStore.schematic.totalBlocks))
+const jobs = computed(() => agentStore.jobsOn(server.value))
+
+const build = computed(() => jobFigures(jobs.value))
+
+/** The builds under way here, named. Empty when the fleet is idle, which it usually is. */
+const buildingNames = computed(() =>
+  [...new Set(jobs.value.map((job) => job.buildName))].join(", "),
+)
+
+/**
+ * Every segment being worked here, newest job first.
+ *
+ * Replaces five hardcoded sectors named after parts of a cathedral. A segment has no name — it is
+ * a box and an ordinal — so the job it belongs to is what identifies it, which is also the fact an
+ * operator needs when two builds are running on one server.
+ */
+const segments = computed(() =>
+  jobs.value.flatMap((job) =>
+    job.segments.map((segment) => ({ job, segment })),
+  ),
+)
 
 /** The sparklines follow the picker too, which is what the per-server sampling is for. */
 const onlineSeries = computed(() => history.seriesFor(server.value, 'online'))
@@ -248,11 +271,22 @@ function percent(part: number, whole: number): number {
           Component interpolation rather than a bare key plus a span: the name sits mid-sentence,
           and word order around it is not the same in every language.
         -->
-        <i18n-t keypath="dashboard.buildingName" tag="p" class="text-sm opacity-60" scope="global">
+        <!--
+          What is actually being built here, which can be nothing. A dashboard that names a
+          schematic whatever the fleet is doing was the most confident part of the mock.
+        -->
+        <i18n-t
+          v-if="buildingNames"
+          keypath="dashboard.buildingName"
+          tag="p"
+          class="text-sm opacity-60"
+          scope="global"
+        >
           <template #name>
-            <span class="font-medium opacity-100">{{ agentStore.schematic.name }}</span>
+            <span class="font-medium opacity-100">{{ buildingNames }}</span>
           </template>
         </i18n-t>
+        <p v-else class="text-sm opacity-60">{{ t('dashboard.buildingNothing') }}</p>
       </div>
       <div class="flex items-center gap-3">
         <!--
@@ -280,24 +314,6 @@ function percent(part: number, whole: number): number {
       </div>
     </header>
 
-    <!--
-      Which numbers on this page are invented.
-
-      Configuration has carried a banner like this since it was built, and this page — the landing
-      page, and the most numerically confident screen in the application — had nothing. Blocks
-      placed, throughput, the estimate, the progress bar, the layer count and every sector are all
-      `mockBuild()`, and they roll and animate and carry sparklines exactly like the real ones do.
-
-      The banner names them and each of those panels carries a marker of its own, because a banner
-      at the top of a scrolling page cannot be relied on to still be in view beside the sector table.
-    -->
-    <div role="alert" class="alert alert-warning alert-soft items-start">
-      <TriangleAlert class="mt-0.5 size-4 shrink-0" />
-      <span class="min-w-0 flex-1">
-        <span class="block font-medium">{{ t('dashboard.mockTitle') }}</span>
-        <span class="block text-sm opacity-80">{{ t('dashboard.mockBody') }}</span>
-      </span>
-    </div>
 
     <!--
       These four move on their own, from the live stream, with nobody having asked for it — so the
@@ -332,14 +348,14 @@ function percent(part: number, whole: number): number {
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.blocksPlaced') }}<span class="badge badge-warning badge-soft badge-xs ml-1.5 align-middle">{{ t('dashboard.mockTag') }}</span></div>
+        <div class="stat-title">{{ t('dashboard.blocksPlaced') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-28"></div>
         <div v-else class="stat-value text-3xl"><RollingNumber :value="build.placed" /></div>
-        <div class="stat-desc">{{ t('dashboard.ofTarget', { total: n(build.target) }) }}</div>
+        <div class="stat-desc">{{ t('dashboard.ofTarget', { total: n(build.total) }) }}</div>
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Gauge class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.throughput') }}<span class="badge badge-warning badge-soft badge-xs ml-1.5 align-middle">{{ t('dashboard.mockTag') }}</span></div>
+        <div class="stat-title">{{ t('dashboard.throughput') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-16"></div>
         <div v-else class="stat-value text-3xl"><RollingNumber :value="build.perMinute" /></div>
         <div class="stat-desc mt-1 flex flex-col gap-0.5">
@@ -349,7 +365,7 @@ function percent(part: number, whole: number): number {
       </div>
       <div class="stat">
         <div class="stat-figure text-primary"><Clock class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.remaining') }}<span class="badge badge-warning badge-soft badge-xs ml-1.5 align-middle">{{ t('dashboard.mockTag') }}</span></div>
+        <div class="stat-title">{{ t('dashboard.remaining') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-24"></div>
         <div v-else class="stat-value text-3xl">{{ eta }}</div>
         <div class="stat-desc">{{ t('dashboard.atCurrentRate') }}</div>
@@ -362,13 +378,17 @@ function percent(part: number, whole: number): number {
           <h2 class="card-title flex items-center gap-2 text-base">
             <Layers class="text-primary size-4" />
             {{ t('dashboard.progress') }}
-          <span class="badge badge-warning badge-soft badge-xs">{{ t('dashboard.mockTag') }}</span>
           </h2>
+          <!--
+            Segments finished, where a layer count used to be. Layers were invented and have no real
+            analogue: a build is divided into boxes, and only one of the three split modes cuts
+            anything that could be called a layer.
+          -->
           <span class="text-sm opacity-60">
             {{
-              t('dashboard.layerOf', {
-                current: agentStore.schematic.currentLayer,
-                total: agentStore.schematic.layers,
+              t('dashboard.segmentsDone', {
+                done: segments.filter(({ segment }) => segment.state === 'DONE').length,
+                total: segments.length,
               })
             }}
           </span>
@@ -570,36 +590,51 @@ function percent(part: number, whole: number): number {
       <div class="card-body gap-3">
         <h2 class="card-title flex items-center gap-2 text-base">
           <Map class="text-primary size-4" />
-          {{ t('dashboard.sectors') }}
-          <span class="badge badge-warning badge-soft badge-xs">{{ t('dashboard.mockTag') }}</span>
-          <span class="badge badge-ghost badge-sm">
-            {{ agentStore.sectors.filter((sector) => sector.status === 'done').length }}/{{
-              agentStore.sectors.length
+          {{ t('dashboard.segments') }}
+          <span v-if="segments.length" class="badge badge-ghost badge-sm">
+            {{ segments.filter(({ segment }) => segment.state === 'DONE').length }}/{{
+              segments.length
             }}
           </span>
         </h2>
 
-        <ul class="flex flex-col gap-3">
-          <li v-for="sector in agentStore.sectors" :key="sector.id">
+        <!--
+          Nothing here until something is being built, which is the ordinary state of a fleet. The
+          five sectors that used to fill this panel were invented, and named after parts of a
+          cathedral nobody had uploaded.
+        -->
+        <p v-if="!segments.length" class="py-4 text-center text-sm opacity-50">
+          {{ t('dashboard.noSegments') }}
+        </p>
+
+        <ul v-else class="flex flex-col gap-3">
+          <li v-for="{ job, segment } in segments" :key="segment.id">
             <div class="flex items-center justify-between gap-2">
-              <span class="truncate text-sm">{{ sector.name }}</span>
-              <span class="badge badge-xs shrink-0" :class="SECTOR_BADGE[sector.status]">
-                {{ sector.status }}
+              <!--
+                A segment has no name, only an ordinal and a box, so the build it belongs to is
+                what identifies it — and that is the fact an operator needs when two jobs are
+                running on one server.
+              -->
+              <span class="truncate text-sm">
+                {{ t('dashboard.segmentOf', { ordinal: segment.ordinal, build: job.buildName }) }}
+              </span>
+              <span class="badge badge-xs shrink-0" :class="SEGMENT_BADGE[segment.state]">
+                {{ t(`jobs.segmentState.${segment.state}`) }}
               </span>
             </div>
             <progress
               class="progress mt-1 w-full"
-              :class="SECTOR_PROGRESS[sector.status]"
-              :value="percent(sector.blocksPlaced, sector.totalBlocks)"
+              :class="SEGMENT_PROGRESS[segment.state]"
+              :value="percent(segment.blocksPlaced, segment.blocks)"
               max="100"
             ></progress>
             <div class="mt-1 flex items-center justify-between gap-2 text-xs opacity-60">
               <span class="truncate">
-                {{ sector.assigned.length ? sector.assigned.join(', ') : t('dashboard.unassigned') }}
+                {{ segment.agentLabel ?? t('dashboard.unassigned') }}
               </span>
               <span class="shrink-0 tabular-nums">
-                {{ n(sector.blocksPlaced) }} /
-                {{ n(sector.totalBlocks) }}
+                {{ n(segment.blocksPlaced) }} /
+                {{ n(segment.blocks) }}
               </span>
             </div>
           </li>

@@ -12,8 +12,8 @@ what needs attention, and what is being said in game.
 > the result as a **job** — what is being built, where, by whom, and how far along — and serving a
 > segment’s blocks to a host that asks for them. What is missing is the crossing: telling a host to
 > build a segment, and having blocks reported back, which waits on the host program. That lives outside this repository, Rust on azalea, see
-> [`host/`](host/); the feeds stay empty until one connects and starts reporting. Build progress
-> and remote configuration are the two parts of the UI still running on mock data.
+> [`host/`](host/); the feeds stay empty until one connects and starts reporting. Remote
+> configuration is the only part of the UI still running on mock data.
 
 ## Modules
 
