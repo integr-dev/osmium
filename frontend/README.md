@@ -80,7 +80,8 @@ block of markup. The field list itself is a placeholder, not a specification.
 **Schematics are real**: uploaded, read through, measured, divided, and started. A job records what
 is being built, where, by whom and how far along. What no schematic has yet is an agent actually
 placing a block — carrying a segment to a host needs the host side, which does not exist — so the
-pipeline now stops one step later, with segments assigned and nothing sent. Both the last wizard
+pipeline now stops one step later, with segments assigned and nothing sent — though the blocks
+behind them are servable, so what is missing is the message that carries one. Both the last wizard
 step and the Jobs panel say so rather than leaving it to be inferred.
 
 **Operations** holds everything done to the fleet as a group. See below.

@@ -90,4 +90,20 @@ interface BuildJobRepository : JpaRepository<BuildJob, Long> {
         """,
     )
     fun findAllWantingBuilders(server: String): List<BuildJob>
+
+    /**
+     * The job holding the segment a fetch ticket was minted for.
+     *
+     * By the ticket alone: it names exactly one segment, and a request carrying it is asking for
+     * that one. The ids in the path are checked against what comes back rather than used to find
+     * it, so a ticket cannot be pointed at a segment it was not issued for.
+     */
+    @Query(
+        """
+        SELECT j FROM BuildJob j
+        JOIN j.segments s
+        WHERE s.fetchTicket = :ticket
+        """,
+    )
+    fun findByFetchTicket(ticket: String): BuildJob?
 }

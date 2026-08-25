@@ -221,6 +221,7 @@ changes automatically.
 | `POST` | `/api/jobs/{id}/pause`, `/resume` | `agent.run` (stops it keeping its crew, and picks it up again) |
 | `DELETE` | `/api/jobs/{id}` | `agent.delete` (clears the record and frees the crew; **409** while it is still building) |
 | `POST`/`DELETE` | `/api/jobs/{jobId}/segments/{segmentId}/assignment` | `agent.run` (give a piece to an agent, or take it back) |
+| `GET` | `/api/hostlink/jobs/{jobId}/segments/{segmentId}` | **a fetch ticket**, not a node — see below |
 
 There is no self-registration — administrators create accounts, choosing the username and password.
 An account cannot delete itself, change its own role, or edit itself through the administrative
@@ -895,6 +896,7 @@ src/main/resources/db/migration/
   V13__setup_cancel_audit.sql      AGENT_SETUP_CANCEL added to the audit action constraint
   V14__build_jobs.sql              jobs and their segments: a plan frozen and being carried out
   V15__build_job_paused_holds_its_place.sql  a paused job keeps its claim on its server
+  V16__build_segment_ticket.sql    the capability a host presents to fetch a segment
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -1207,9 +1209,67 @@ Starting one takes **agents, not a part count**: how many pieces a build divides
 agents are carrying them, and the server is derived from the agents rather than asked for. Both
 would otherwise be a second place to say something the request already says.
 
-**Nothing is dispatched yet.** There is no `build_segment` command and no way to serve a segment's
-blocks, so a segment is assigned and stays assigned. Everything up to that point is real, which is
-why the missing piece is a wire message rather than a model.
+**Nothing is dispatched yet.** There is no `build_segment` command, so a segment is assigned and
+stays assigned. The blocks behind it *are* servable — see below — so what is missing is a wire
+message rather than a model.
+
+## Serving a segment
+
+`GET /api/hostlink/jobs/{jobId}/segments/{segmentId}` hands a host the blocks in one segment, with
+the job's frozen substitutions already applied. The host places what it is given and decodes
+nothing — the alternative, serving the file, means two decoders agreeing forever on palette quirks,
+negative Litematica extents and what counts as air.
+
+**Over HTTP rather than the socket.** `HostConnections.send` is blocking and serialised per host, so
+a payload of any size there stalls heartbeats, vitals, chat and every command for every agent on
+that machine — and vitals go stale after 30 seconds, which would render healthy agents unreachable
+while a transfer drained. The socket is the control plane; bulk gets its own request, where a
+failure is a retry rather than a dropped connection.
+
+**Nothing per-block is stored.** A pass leaves a count per cell and a material list, so a segment is
+produced by reading the file again and keeping what falls in one box. That is affordable because
+the decoder streams and drops air as it goes, and a segment is a fraction of a file. Materialising
+a blob per segment at dispatch would turn each fetch into a file read, at the cost of roughly the
+build's size in disk and a lifecycle to keep in step with jobs that are reassigned, paused and
+deleted — worth doing when something measures it, and not before.
+
+### The format
+
+A fixed six-byte record per block: a `u32` linear index into the box, and a `u16` palette entry.
+Full layout in [`host/README.md`](../host/README.md), which is the wire reference.
+
+**Fixed width rather than varints**, which look three times better on paper. Positions are
+monotonic, so their high bytes barely change and gzip on the wire recovers most of the difference;
+what is left is a format a host reads with a fixed stride, with no varint state machine and no
+framing ambiguity. The magic carries a version, which is the escape hatch if measurement ever says
+otherwise.
+
+**Not the dense grid the file formats use.** The split balances *blocks*, not volume, so a sparse
+region is handed a large box — and a grid costs its volume whether anything is in it or not,
+punishing exactly the segments the splitter makes big.
+
+Positions are a linear index in the decoders’ own order, y then z then x, so a host walking the
+stream is already in build order. The backend sorts before sending rather than relying on it: one
+region is naturally ascending, but a Litematica file holds several and they are read one after
+another, so a later region can describe positions earlier in the box.
+
+### The ticket
+
+Authenticated by a capability for **one segment**, not by the host’s enrolment token — that is the
+credential for a whole machine and every agent on it, and this is a `GET` whose headers reach logs
+and proxies.
+
+The ticket is minted when a segment is assigned and cleared when the assignment ends, so **its life
+is the assignment rather than a clock**. There is nothing to expire and nothing to revoke: release
+the segment and the ticket it was fetched with stops working.
+
+The ids in the path are **checked, not used to look anything up**. Resolving by ticket and then
+confirming the path agrees is what stops one leaked capability from becoming a key to the table;
+finding by id and then comparing the ticket is the same code with that property removed.
+
+Like `/ws/host`, it sits outside the Bearer chain entirely — a ticket is not a JWT, and the resource
+server would reject it before the controller could read it. `permitAll` on the main chain would not
+help: that governs authorization while the Bearer filter still authenticates.
 
 ## What a pass leaves behind
 

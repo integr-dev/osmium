@@ -55,8 +55,28 @@ class SecurityConfig(
         .authorizeHttpRequests { it.anyRequest().permitAll() }
         .build()
 
+    /**
+     * The segment fetch, for the same reason and by the same means as the socket above.
+     *
+     * A host asks for the blocks of a segment it holds, presenting a ticket minted when that segment
+     * was handed to it. A ticket is not a JWT, so the resource server on the main chain would reject
+     * it before [net.integr.osmium.hostlink.SegmentController] could read it — and `permitAll` there
+     * would not help, because that governs authorization while the Bearer filter still authenticates.
+     *
+     * Nothing here is open: the controller resolves the ticket itself and answers 401 without one.
+     * What this chain does is decline to have an opinion about a credential it does not understand.
+     */
     @Bean
     @Order(2)
+    fun hostFetchFilterChain(http: HttpSecurity): SecurityFilterChain = http
+        .securityMatcher("/api/hostlink/**")
+        .csrf { it.disable() }
+        .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+        .authorizeHttpRequests { it.anyRequest().permitAll() }
+        .build()
+
+    @Bean
+    @Order(3)
     fun securityFilterChain(
         http: HttpSecurity,
         jwtAuthenticationConverter: DatabaseJwtAuthenticationConverter,

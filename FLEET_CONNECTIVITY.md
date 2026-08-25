@@ -15,6 +15,7 @@
 | Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
 | Placement and block substitution, as a build plan | **Built** in `backend/`, set on the Operations page |
 | Recording a job: a plan frozen, divided, assigned and resumable | **Built** in `backend/`, started from the Operations page |
+| Serving a segment's blocks to a host | **Built** in `backend/`, specified in `host/README.md` |
 | Carrying a segment to a host and building it | **Not built**: needs the host side, and two wire messages that are not designed |
 
 Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
@@ -879,9 +880,9 @@ The backend half of that now exists as a **job** (see `backend/README.md`): the 
 rows, in world coordinates, each assigned to one agent, with the plan’s anchor and substitutions
 copied in so editing the plan cannot move a build that is under way. An agent that drops out has its
 segment freed and gets one back when it returns, so the fleet self-heals across a blip. What is missing is only the
-crossing: a command carrying a segment, an event reporting blocks against it, and a way for the
-host to fetch the blocks in that box. None of the three is designed, and nothing should be
-implemented against them yet.
+crossing: a command carrying a segment and an event reporting blocks against it. Fetching the blocks
+themselves is built and specified — a host can be written against that today — but the two messages
+are not designed, and nothing should be implemented against them yet.
 
 ### Placement and substitution belong to a plan, not to the file
 

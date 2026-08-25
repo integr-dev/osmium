@@ -313,16 +313,13 @@ current. Nothing needs to be sent to clear them.
 `STALE` is derived from the heartbeat, because a host that can talk to the backend is by definition
 not stale.
 
-> **Blocks placed and the current task are still not consumed** — but the half of work assignment
-> that lives on the backend now exists, so this is closer than it was.
+> **Blocks placed and the current task are still not consumed.** They belong with the two messages
+> that carry work — a `build_segment` command and a `build_progress` event — which are **not yet
+> designed, so do not implement against them.**
 >
-> A **job** is a build plan frozen: its own copy of the anchor and the substitutions, divided into
-> segments that are stored rows in world coordinates, each assigned to one agent. What is missing is
-> the two messages that would carry one to you — a `build_segment` command, and a `build_progress`
-> event coming back — plus a way for you to fetch the blocks in a segment's box. **None of that is
-> settled yet, so do not implement against it.** It is written here so the shape is not a surprise:
-> a segment is a half-open box in world coordinates, and the backend intends to serve its blocks
-> with the substitutions already applied, so a host places what it is given and decodes nothing.
+> What *is* built and stable is everything underneath: a **job** (§7), the segments it divides a
+> build into, and the endpoint that serves a segment’s blocks. That endpoint is specified below and
+> can be written against today.
 >
 > Extra payload keys are still accepted and ignored, so sending them early is harmless but does
 > nothing.
@@ -496,7 +493,138 @@ failure.
 
 ---
 
-## 7. A minimally compliant host
+
+---
+
+## 7. Building: jobs, segments, and fetching blocks
+
+This is the half of work assignment that exists. The two messages that would hand you a segment and
+take progress back do not, so nothing here is reachable from the socket yet — but the endpoint is
+built, tested and stable, and a host can be written against it now.
+
+### 7.1 What a job is
+
+An operator picks a schematic, says where it stands and what it is built out of — that is a **build**
+— then picks the agents to work it. Starting it freezes a **job**: the anchor, the substitutions and
+the schematic are copied into it, and the division into **segments** is written down rather than
+recomputed.
+
+Frozen matters to you. Editing the plan afterwards changes the *next* job, so a segment fetched an
+hour after it was handed out describes the same blocks it did then.
+
+A segment is **one agent’s share, as a half-open box in world coordinates**: `max` is the first
+block *not* in it. One job is one Minecraft server; one agent holds at most one segment at a time,
+across every job.
+
+### 7.2 Fetching a segment’s blocks
+
+```http
+GET /api/hostlink/jobs/{jobId}/segments/{segmentId}
+X-Osmium-Ticket: 9f2c…
+Accept-Encoding: gzip
+```
+
+**Over HTTP, not the socket.** The socket is the control plane: sends on it are serialised per host,
+so a payload of any size there would stall heartbeats, vitals, chat and every command for every
+agent on your machine — and vitals go stale after 30 seconds, so a long transfer would render
+healthy agents unreachable. Bulk gets its own request, where a failure is a retry rather than a
+dropped connection.
+
+**The ticket is a capability for one segment**, not a second credential to store. It is minted when
+that segment is assigned to one of your agents, and it dies when the assignment does — released,
+finished, or handed to somebody else. Reassignment mints a new one. Treat it as opaque and do not
+persist it: if you have lost it, you have lost the assignment too.
+
+**Never send your enrolment token here.** That one is the credential for the whole machine and every
+agent on it; this is a `GET` whose URL and headers end up in logs and proxies.
+
+| Status | Meaning |
+|---|---|
+| `200` | The blocks, in the format below. |
+| `401` | No ticket, an unknown one, or one that does not name this segment. Do not retry with the same ticket. |
+| `409` | The job is finished, or this segment is no longer yours to build. Stop and wait to be told again. |
+
+Ask for `gzip`. The body is highly compressible and the backend serves it as sent otherwise.
+
+### 7.3 The segment format
+
+Content type `application/vnd.osmium.segment`. **Big-endian throughout.**
+
+```
+"OSM1"                     4 bytes, magic and version
+u16                        palette entries
+  u16 length, UTF-8 bytes  each block name, repeated
+i32 x3                     box minimum: x, y, z (world coordinates)
+u32 x3                     box size: dx, dy, dz
+u32                        block count
+  u32 linear, u16 palette  each block, repeated, ascending
+```
+
+A record is six bytes, so the block section is `count * 6` and can be walked with a fixed stride.
+
+**Positions are a linear index into the box**, not coordinates:
+
+```
+linear = ((y * dz) + z) * dx + x        // x, y, z measured from the box minimum
+
+y = linear / (dx * dz)
+z = (linear / dx) % dz
+x = linear % dx
+```
+
+That is y outermost, then z, then x — the order Litematica and Sponge both store blocks in, and
+therefore **build order**: bottom layer first. Records arrive ascending, so walking the stream in
+order is walking the build in order, and you never need to sort or seek.
+
+Six things worth knowing, each of which is a decision rather than an accident:
+
+- **Only blocks that get placed are sent.** Air never appears — not in the records and not in the
+  palette. A segment’s box is mostly empty and you are not charged for it.
+- **The substitutions are already applied.** The palette holds what to place, not what the file
+  said. A block the operator substituted for *nothing* is simply absent, which is the honest answer
+  to not having the material: a hole rather than a wrong block standing in.
+- **The palette describes this segment**, not the schematic. It holds only materials actually
+  present here, in first-appearance order.
+- **Names are as the file wrote them**, usually `minecraft:stone` but not always — Osmium never
+  resolves a block name against a registry, which is what lets it accept a schematic from an older
+  Minecraft. A name you do not recognise is not necessarily wrong; report it and move on rather than
+  failing the segment.
+- **Block states are not carried yet.** The palette is names only, so stairs arrive without their
+  facing. That is a known gap, not a subtlety of the encoding.
+- **An empty segment is a valid answer**, with `count = 0` and an empty palette. A box whose every
+  block was substituted away still gets handed out; finish it and report it built.
+
+### 7.4 Reading one, roughly
+
+```rust
+let n = read_u32()?;
+for _ in 0..n {
+    let linear = read_u32()? as u64;
+    let material = &palette[read_u16()? as usize];
+
+    let y = (linear / (dx as u64 * dz as u64)) as i32;
+    let z = ((linear / dx as u64) % dz as u64) as i32;
+    let x = (linear % dx as u64) as i32;
+
+    place(min_x + x, min_y + y, min_z + z, material);
+}
+```
+
+`linear` is unsigned and a large box can exceed `i32`, so widen before dividing. The backend refuses
+to serve a box of more than 2³²−1 positions rather than letting an index wrap, so the value always
+fits a `u32`.
+
+### 7.5 What is deliberately not here
+
+**How you are told to build a segment**, and **how you report progress**. Both need wire messages
+that are not designed. When they are, the shape they will assume is the one above: a segment already
+has an id and a box, and its blocks are already fetchable and countable, so a progress report has
+something to count against.
+
+**Do not invent them.** A host that starts sending an event this backend does not know gets it
+logged and dropped, which looks exactly like it working.
+
+## 8. A minimally compliant host
 
 1. Dial `wss://<backend>/ws/host` with the bearer token; reconnect with backoff, loudly on 4xx.
 2. Send `heartbeat` every 10s with `hostVersion`.

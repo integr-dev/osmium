@@ -28,6 +28,7 @@ import net.integr.osmium.schematic.service.SchematicService
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.security.SecureRandom
 import java.time.Instant
 
 /**
@@ -138,8 +139,7 @@ class BuildJobService(
         // crew being indexed by ordinal. Whoever is left over is assigned nothing, and the response
         // says so by having fewer segments than agents.
         split.segments.forEachIndexed { index, segment ->
-            val agent = crew.getOrNull(index)
-            job.segments += BuildSegment(
+            val piece = BuildSegment(
                 job = job,
                 ordinal = segment.ordinal,
                 minX = segment.minX + offsetX,
@@ -149,10 +149,12 @@ class BuildJobService(
                 maxY = segment.maxY + offsetY,
                 maxZ = segment.maxZ + offsetZ,
                 blocks = segment.blocks,
-                state = if (agent == null) BuildSegmentState.PENDING else BuildSegmentState.ASSIGNED,
-                agent = agent,
-                agentLabel = agent?.label,
             )
+            // Through the same door a reassignment uses, rather than setting the fields here as
+            // well: the first assignment needs its fetch ticket exactly as much as the fifth, and
+            // two places that write an assignment is one place to forget something.
+            crew.getOrNull(index)?.let { agent -> take(piece, agent) }
+            job.segments += piece
         }
 
         val saved = jobs.save(job)
@@ -442,11 +444,16 @@ class BuildJobService(
         segment.agentLabel = agent.label
         // Cleared, because it is the reason the *previous* attempt failed and this is a new one.
         segment.failureReason = null
+        // A fresh capability every time, so the one the last holder was given stops working the
+        // moment the work moves rather than whenever somebody remembers to expire it.
+        segment.fetchTicket = newTicket()
     }
 
     private fun free(segment: BuildSegment) {
         segment.state = BuildSegmentState.PENDING
         segment.agent = null
+        // The capability goes with the assignment it was minted for.
+        segment.fetchTicket = null
         // Cleared with the assignment. The label survives a *deleted* agent so a finished segment
         // still says who built it; on a free segment it would read as one that is still held.
         segment.agentLabel = null
@@ -461,7 +468,15 @@ class BuildJobService(
     private fun currentUsername(): String =
         SecurityContextHolder.getContext().authentication?.name ?: "unknown"
 
+    /** The same shape and strength as a host enrolment secret, and read the same way. */
+    private fun newTicket(): String {
+        val bytes = ByteArray(TICKET_BYTES).also { SecureRandom().nextBytes(it) }
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
     private companion object {
+        const val TICKET_BYTES = 16
+
         /**
          * A job that still has a claim on its build, its server and its crew.
          *

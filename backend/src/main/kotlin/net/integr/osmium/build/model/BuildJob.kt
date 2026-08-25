@@ -270,6 +270,17 @@ class BuildSegment(
 
     @Column(name = "failure_reason", length = 256)
     var failureReason: String? = null,
+
+    /**
+     * What a host presents to fetch this segment’s blocks over HTTP.
+     *
+     * A capability for one segment rather than the host’s own token, which is the credential for
+     * the whole machine and every agent on it. **Its life is the assignment**: cleared when the
+     * segment is released, finished or handed to somebody else, so it dies with the reason it
+     * existed instead of outliving it until a timer notices.
+     */
+    @Column(name = "fetch_ticket", length = 64)
+    var fetchTicket: String? = null,
 ) {
     /** Held by an agent right now, and therefore not free to hand to another one. */
     val live: Boolean
