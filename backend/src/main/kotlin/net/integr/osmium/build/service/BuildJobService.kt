@@ -20,15 +20,24 @@ import net.integr.osmium.build.model.BuildSegment
 import net.integr.osmium.build.model.BuildSegmentState
 import net.integr.osmium.build.repository.BuildRepository
 import net.integr.osmium.build.repository.BuildJobRepository
+import net.integr.osmium.hostlink.CommandType
+import net.integr.osmium.hostlink.HostConnections
+import net.integr.osmium.hostlink.HostEnvelope
+import net.integr.osmium.hostlink.MessageKind
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.schematic.model.SchematicStatus
 import net.integr.osmium.schematic.service.SchematicService
+import org.slf4j.LoggerFactory
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
+import tools.jackson.databind.ObjectMapper
 import java.security.SecureRandom
+import java.util.UUID
 import java.time.Instant
 
 /**
@@ -57,7 +66,10 @@ class BuildJobService(
     private val activityService: ActivityService,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
+    private val registry: HostConnections,
+    private val objectMapper: ObjectMapper,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
     fun findAll(): List<BuildJobResponse> =
         jobs.findAllByOrderByStartedAtDesc().map { it.toResponse() }
 
@@ -153,7 +165,7 @@ class BuildJobService(
             // Through the same door a reassignment uses, rather than setting the fields here as
             // well: the first assignment needs its fetch ticket exactly as much as the fifth, and
             // two places that write an assignment is one place to forget something.
-            crew.getOrNull(index)?.let { agent -> take(piece, agent) }
+            crew.getOrNull(index)?.let { agent -> take(job, piece, agent) }
             job.segments += piece
         }
 
@@ -195,6 +207,9 @@ class BuildJobService(
         check(job.state == BuildJobState.ACTIVE) { "This job is not building" }
 
         job.state = BuildJobState.PAUSED
+        // The crew stays on it; the building stops. Without this a pause is a label on a job whose
+        // agents are still placing blocks, which is the one thing it exists to prevent.
+        callOff(job)
 
         auditService.record(
             action = AuditAction.BUILD_JOB_PAUSE,
@@ -247,6 +262,9 @@ class BuildJobService(
 
         val name = job.build.name
         val placed = job.blocksPlaced
+        // A deleted job is one nobody is coming back to, so anything still holding a segment is
+        // told to stop before the rows saying who go away.
+        callOff(job)
         jobs.delete(job)
 
         auditService.record(
@@ -276,7 +294,7 @@ class BuildJobService(
         checkEligible(agent, job.serverAddress)
         checkFree(agent)
 
-        take(segment, agent)
+        take(job, segment, agent)
 
         activityService.record(
             agent = agent,
@@ -300,7 +318,7 @@ class BuildJobService(
             ?: throw NoSuchElementException("No segment $segmentId on job $jobId")
         check(segment.live) { "Segment ${segment.ordinal} is not assigned to anyone" }
 
-        free(segment)
+        free(job, segment)
         publish(job)
         return job.toResponse()
     }
@@ -323,7 +341,7 @@ class BuildJobService(
             val released = job.segments.filter { it.live && it.agent?.id == agentId }
             if (released.isEmpty()) continue
 
-            released.forEach(::free)
+            released.forEach { segment -> free(job, segment) }
             activityService.record(
                 agent = agent,
                 scope = ActivityScope.LIFECYCLE,
@@ -361,7 +379,7 @@ class BuildJobService(
                 .minByOrNull { it.ordinal }
                 ?: continue
 
-            take(segment, agent)
+            take(job, segment, agent)
             activityService.record(
                 agent = agent,
                 scope = ActivityScope.LIFECYCLE,
@@ -371,6 +389,84 @@ class BuildJobService(
             publish(job)
             return
         }
+    }
+
+    /**
+     * What a host says about a segment it is building.
+     *
+     * **Last reported, never accumulated**, the same rule the vitals follow: a host that restarts
+     * mid-segment resumes from what it can see, and adding up deltas would count those blocks
+     * twice. So this writes the number rather than adding it.
+     *
+     * Found by segment rather than by agent. One agent holds one segment, so either would identify
+     * it — but a report that arrives just after the segment was released then lands on whatever
+     * that agent picked up next, which is a count from one box applied to another.
+     */
+    @Transactional
+    fun recordProgress(
+        agent: Agent,
+        segmentId: Long,
+        blocksPlaced: Long?,
+        state: String?,
+        reason: String?,
+    ) {
+        val job = jobs.findBySegmentId(segmentId) ?: return
+        val segment = job.segments.firstOrNull { it.id == segmentId } ?: return
+
+        // Only from whoever is holding it. A host reporting on somebody else’s segment is either
+        // confused or lying, and neither is a reason to write down a number.
+        if (segment.agent?.id != agent.id) {
+            log.warn("{} reported on segment {}, which it does not hold", agent.label, segment.ordinal)
+            return
+        }
+        if (!segment.live) return
+
+        blocksPlaced?.takeIf { it >= 0 }?.let { placed ->
+            // Clamped to what the split said is there. A host that recounts generously must not be
+            // able to drive a job past finished, which is a number an operator would act on.
+            segment.blocksPlaced = minOf(placed, segment.blocks)
+            segment.lastReportAt = Instant.now()
+        }
+
+        when (state?.lowercase()) {
+            // Reported having started, which is the only thing that separates it from assigned.
+            "building" -> segment.state = BuildSegmentState.BUILDING
+
+            "done" -> {
+                segment.state = BuildSegmentState.DONE
+                // The count follows the verdict rather than the other way round: a host that says
+                // it is finished has finished, and a segment reading 19,998 of 20,000 for ever
+                // afterwards is a job that never completes.
+                segment.blocksPlaced = segment.blocks
+                segment.lastReportAt = Instant.now()
+                segment.fetchTicket = null
+            }
+
+            "failed" -> {
+                segment.state = BuildSegmentState.FAILED
+                segment.failureReason = reason?.take(FAILURE_REASON_MAX)
+                segment.fetchTicket = null
+                activityService.record(
+                    agent = agent,
+                    scope = ActivityScope.SYSTEM,
+                    severity = ActivitySeverity.ERROR,
+                    text = "Could not build segment ${segment.ordinal} of '${job.build.name}'" +
+                        (reason?.let { ": $it" } ?: ""),
+                )
+            }
+
+            else -> Unit
+        }
+
+        // The only thing that closes a job, and it can only happen here: nothing else can know a
+        // segment finished.
+        if (job.state == BuildJobState.ACTIVE && job.complete) {
+            job.state = BuildJobState.DONE
+            job.finishedAt = Instant.now()
+            job.segments.forEach { it.fetchTicket = null }
+        }
+
+        publish(job)
     }
 
     /** Whether a plan is being executed right now, which is what makes it undeletable. */
@@ -438,7 +534,7 @@ class BuildJobService(
     }
 
     /** Hands a free segment to an agent. The one place an assignment is written. */
-    private fun take(segment: BuildSegment, agent: Agent) {
+    private fun take(job: BuildJob, segment: BuildSegment, agent: Agent) {
         segment.state = BuildSegmentState.ASSIGNED
         segment.agent = agent
         segment.agentLabel = agent.label
@@ -447,9 +543,18 @@ class BuildJobService(
         // A fresh capability every time, so the one the last holder was given stops working the
         // moment the work moves rather than whenever somebody remembers to expire it.
         segment.fetchTicket = newTicket()
+
+        send(agent, CommandType.BUILD_SEGMENT) { segment.dispatchPayload(job) }
     }
 
-    private fun free(segment: BuildSegment) {
+    private fun free(job: BuildJob, segment: BuildSegment) {
+        // Told to stop *before* the assignment is forgotten, because the agent holding it is what
+        // says where to send that. A host left building a segment nobody has is the one outcome
+        // releasing exists to prevent.
+        segment.agent?.let { holder ->
+            send(holder, CommandType.CANCEL_SEGMENT) { cancelPayload(job, segment) }
+        }
+
         segment.state = BuildSegmentState.PENDING
         segment.agent = null
         // The capability goes with the assignment it was minted for.
@@ -468,6 +573,117 @@ class BuildJobService(
     private fun currentUsername(): String =
         SecurityContextHolder.getContext().authentication?.name ?: "unknown"
 
+    /**
+     * Tells whoever is still building anything on this job to stop.
+     *
+     * Assignments are left exactly as they are: pausing keeps its crew, and a deleted job takes its
+     * rows with it either way. This is only the half that reaches out to the world.
+     */
+    private fun callOff(job: BuildJob) {
+        job.segments.filter { it.live }.forEach { segment ->
+            segment.agent?.let { holder ->
+                send(holder, CommandType.CANCEL_SEGMENT) { cancelPayload(job, segment) }
+            }
+        }
+    }
+
+    /**
+     * Writes a command to the host that owns this agent, and does not care whether it lands.
+     *
+     * **Unlike every other command in Osmium, an unreachable host is not an error here.** Connect
+     * and chat are an operator pressing a button and waiting for the answer, so a host that cannot
+     * be reached is a 503 they should see. This is dispatch: a segment goes to an agent that is
+     * already in game, and the interesting failure is not the write but the silence afterwards.
+     *
+     * A segment whose command was lost stays `ASSIGNED` with nothing building it, which the panel
+     * shows and an operator resolves by releasing it — the same act that recovers a host that took
+     * the command and then died. Failing the assignment instead would roll back a whole job start
+     * because one of twelve hosts blinked.
+     */
+    private fun send(agent: Agent, type: String, payload: () -> Map<String, Any?>) {
+        val hostId = agent.host.id ?: return
+        val hostName = agent.host.name
+        val label = agent.label
+        val agentId = agent.id
+
+        afterCommit {
+            // **Built here, not when this was called.** A segment created in this transaction has
+            // no id until it is flushed, so a payload assembled eagerly names segment 0 of job 0 —
+            // which a host duly asks for and is refused. The ticket has the same shape.
+            val envelope = HostEnvelope(
+                id = "cmd-${UUID.randomUUID()}",
+                kind = MessageKind.COMMAND,
+                type = type,
+                agentId = agentId,
+                payload = objectMapper.valueToTree(payload()),
+            )
+
+            if (!registry.send(hostId, envelope)) {
+                log.warn(
+                    "Host {} took no '{}' for agent {}; the segment stays assigned with nothing on it",
+                    hostName,
+                    type,
+                    label,
+                )
+            }
+        }
+    }
+
+    /**
+     * Runs once the transaction that decided this has actually committed.
+     *
+     * **A command must not describe a row the host cannot read yet.** `build_segment` carries a
+     * fetch ticket that was minted in the same transaction, and a host that is quick about it asks
+     * for the blocks before that transaction commits — the endpoint runs in its own transaction,
+     * sees no such ticket, and answers 401. Which is exactly what happened the first time this ran
+     * against a real schematic: three segments won the race and the fourth failed on a ticket that
+     * was moments from existing.
+
+     * The same reasoning covers the cancellations. Telling a host to stop is a decision that can be
+     * rolled back with everything else in the transaction, and a host that has already acted on it
+     * has no way to learn that it should not have.
+     *
+     * Outside a transaction it simply sends, which is what the scheduled reassignment does.
+     */
+    private fun afterCommit(action: () -> Unit) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action()
+            return
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(
+            object : TransactionSynchronization {
+                override fun afterCommit() = action()
+            },
+        )
+    }
+
+    /**
+     * What a host needs to start, beyond what it can fetch.
+     *
+     * The box and the count travel as well as being derivable from the body, so a host can size the
+     * work and log something legible before it makes an HTTP call — and so a progress report has a
+     * total to be read against. The ticket rides along because this command is the act that minted
+     * it; asking for it separately would be a round trip for something already known.
+     */
+    private fun BuildSegment.dispatchPayload(job: BuildJob): Map<String, Any?> = mapOf(
+        "jobId" to job.id,
+        "segmentId" to id,
+        "ticket" to fetchTicket,
+        "min" to mapOf("x" to minX, "y" to minY, "z" to minZ),
+        "max" to mapOf("x" to maxX, "y" to maxY, "z" to maxZ),
+        "blocks" to blocks,
+    )
+
+    /**
+     * Takes the job rather than reading `segment.job`, which is a lazy reference: this runs after
+     * the transaction has closed, where following one throws.
+     */
+    private fun cancelPayload(job: BuildJob, segment: BuildSegment): Map<String, Any?> = mapOf(
+        "jobId" to job.id,
+        "segmentId" to segment.id,
+    )
+
     /** The same shape and strength as a host enrolment secret, and read the same way. */
     private fun newTicket(): String {
         val bytes = ByteArray(TICKET_BYTES).also { SecureRandom().nextBytes(it) }
@@ -476,6 +692,9 @@ class BuildJobService(
 
     private companion object {
         const val TICKET_BYTES = 16
+
+        /** Written for whoever reads host logs, and truncated to what the column holds. */
+        const val FAILURE_REASON_MAX = 256
 
         /**
          * A job that still has a claim on its build, its server and its crew.

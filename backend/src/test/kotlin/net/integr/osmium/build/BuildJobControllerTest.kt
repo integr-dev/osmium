@@ -131,6 +131,33 @@ class BuildJobControllerTest : AbstractRestTest() {
      * The reassignment being tested hangs off that report, so writing the state straight into the
      * repository would test nothing but the repository.
      */
+    /** A build_progress event as a host sends one. */
+    private fun progresses(
+        agent: Agent,
+        segmentId: Long,
+        placed: Long? = null,
+        state: String? = null,
+        reason: String? = null,
+    ) {
+        val payload = buildString {
+            append("""{"segmentId":$segmentId""")
+            placed?.let { append(""","blocksPlaced":$it""") }
+            state?.let { append(""","state":"$it"""") }
+            reason?.let { append(""","reason":"$it"""") }
+            append("}")
+        }
+
+        hostReports.onMessage(
+            checkNotNull(agent.host.id),
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.BUILD_PROGRESS,
+                agentId = agent.id,
+                payload = objectMapper.readTree(payload),
+            ),
+        )
+    }
+
     private fun reports(agent: Agent, state: AgentState) = hostReports.onMessage(
         checkNotNull(agent.host.id),
         HostEnvelope(
@@ -668,6 +695,140 @@ class BuildJobControllerTest : AbstractRestTest() {
         mockMvc.get("/api/jobs/$jobId") {
             header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
         }.andExpect { jsonPath("$.segments[0].state") { value("PENDING") } }
+    }
+
+    /**
+     * Blocks placed are **written down, not added up** — the same rule the vitals follow. A host
+     * that restarts mid-segment resumes from what it can see, and accumulating deltas would count
+     * those blocks a second time.
+     */
+    @Test
+    fun `progress is the number reported, not a running total`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(agent, segmentId.toLong(), placed = 12, state = "building")
+        progresses(agent, segmentId.toLong(), placed = 20, state = "building")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.segments[0].state") { value("BUILDING") }
+            jsonPath("$.segments[0].blocksPlaced") { value(20) }
+            jsonPath("$.segments[0].lastReportAt") { exists() }
+            jsonPath("$.blocksPlaced") { value(20) }
+        }
+    }
+
+    /** A host that recounts generously must not be able to drive a job past finished. */
+    @Test
+    fun `a count is clamped to what the split said is there`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+        val blocks: Int = JsonPath.read(body, "$.segments[0].blocks")
+
+        progresses(agent, segmentId.toLong(), placed = blocks * 10L, state = "building")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect { jsonPath("$.segments[0].blocksPlaced") { value(blocks) } }
+    }
+
+    /**
+     * The one thing that closes a job, and the only place it can happen: nothing but a host can
+     * know a segment is finished.
+     */
+    @Test
+    fun `a job finishes when its last segment does`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val one = onlineAgent("Mason_01", host)
+        val two = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(one.id!!, two.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val first: Int = JsonPath.read(body, "$.segments[0].id")
+        val second: Int = JsonPath.read(body, "$.segments[1].id")
+
+        progresses(one, first.toLong(), state = "done")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.state") { value("ACTIVE") }
+            jsonPath("$.segments[0].state") { value("DONE") }
+            // The verdict carries the count with it: a finished segment reading two blocks short
+            // for ever is a job that never completes.
+            jsonPath("$.segments[0].blocksPlaced") { value(JsonPath.read<Int>(body, "$.segments[0].blocks")) }
+        }
+
+        progresses(two, second.toLong(), state = "done")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.state") { value("DONE") }
+            jsonPath("$.finishedAt") { exists() }
+        }
+    }
+
+    @Test
+    fun `a segment a host could not build says why`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(agent, segmentId.toLong(), state = "failed", reason = "no blocks in inventory")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.segments[0].state") { value("FAILED") }
+            jsonPath("$.segments[0].failureReason") { value("no blocks in inventory") }
+            // Still ACTIVE: deciding a job is over means picking how many failures are too many,
+            // and there is no honest number.
+            jsonPath("$.state") { value("ACTIVE") }
+        }
+    }
+
+    /**
+     * A host reporting on a segment it does not hold is either confused or lying, and neither is a
+     * reason to write down a number.
+     */
+    @Test
+    fun `progress is only taken from the agent holding the segment`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val holder = onlineAgent("Mason_01", host)
+        val other = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(holder.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(other, segmentId.toLong(), placed = 99, state = "building")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.segments[0].blocksPlaced") { value(0) }
+            jsonPath("$.segments[0].state") { value("ASSIGNED") }
+        }
     }
 
     @Test

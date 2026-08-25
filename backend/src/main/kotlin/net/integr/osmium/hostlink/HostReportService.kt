@@ -77,6 +77,8 @@ class HostReportService(
 
             EventType.ACTIVITY -> recordActivity(hostId, envelope)
 
+            EventType.BUILD_PROGRESS -> recordProgress(hostId, envelope)
+
             // Forward compatible by design: a newer host reporting something this backend has not
             // learned about yet is normal, so it is logged and dropped rather than fatal.
             else -> log.debug("Ignoring unknown event '{}' from host {}", envelope.type, hostId)
@@ -344,6 +346,29 @@ class HostReportService(
      * chat into the wrong feed is worse than losing it, since the whole point of the split is that
      * an incident is not buried in conversation.
      */
+    /**
+     * How far through a segment an agent is.
+     *
+     * Read here and applied by the job service, which owns what a count means. The agent is
+     * resolved the way every other report is — through the host that owns it — so a host cannot
+     * report on an agent that is not its own, and the service then checks the segment is one that
+     * agent actually holds.
+     */
+    private fun recordProgress(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val payload = envelope.payload ?: return
+
+        val segmentId = payload.get("segmentId")?.asLong() ?: return
+
+        buildJobs.recordProgress(
+            agent = agent,
+            segmentId = segmentId,
+            blocksPlaced = payload.get("blocksPlaced")?.asLong(),
+            state = payload.get("state")?.asString(),
+            reason = payload.get("reason")?.asString(),
+        )
+    }
+
     private fun recordChat(hostId: Long, envelope: HostEnvelope) {
         val agent = resolve(hostId, envelope) ?: return
         val payload = envelope.payload ?: return

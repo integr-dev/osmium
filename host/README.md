@@ -313,16 +313,11 @@ current. Nothing needs to be sent to clear them.
 `STALE` is derived from the heartbeat, because a host that can talk to the backend is by definition
 not stale.
 
-> **Blocks placed and the current task are still not consumed.** They belong with the two messages
-> that carry work — a `build_segment` command and a `build_progress` event — which are **not yet
-> designed, so do not implement against them.**
+> **Blocks placed do not belong here.** Progress against a segment is its own event —
+> `build_progress`, §7.5 — keyed by the segment rather than the agent. Sending a block count in
+> `agent_status` does nothing.
 >
-> What *is* built and stable is everything underneath: a **job** (§7), the segments it divides a
-> build into, and the endpoint that serves a segment’s blocks. That endpoint is specified below and
-> can be written against today.
->
-> Extra payload keys are still accepted and ignored, so sending them early is harmless but does
-> nothing.
+> Extra payload keys are accepted and ignored, so sending them is harmless but has no effect.
 
 ### 4.3 `chat`
 
@@ -614,15 +609,87 @@ for _ in 0..n {
 to serve a box of more than 2³²−1 positions rather than letting an index wrap, so the value always
 fits a `u32`.
 
-### 7.5 What is deliberately not here
+### 7.5 Being told to build, and reporting back
 
-**How you are told to build a segment**, and **how you report progress**. Both need wire messages
-that are not designed. When they are, the shape they will assume is the one above: a segment already
-has an id and a box, and its blocks are already fetchable and countable, so a progress report has
-something to count against.
+Two messages, and they close the loop. Both are **implemented and exercised** — the mock host in
+this repository fetches a real segment, parses it and reports against it, which is how the
+specification below got its bugs shaken out before you inherited it.
 
-**Do not invent them.** A host that starts sending an event this backend does not know gets it
-logged and dropped, which looks exactly like it working.
+#### `build_segment` — backend to host
+
+```jsonc
+{ "id": "cmd-7f3a", "kind": "command", "type": "build_segment", "agentId": 42,
+  "payload": {
+    "jobId": 7,
+    "segmentId": 31,
+    "ticket": "9f2c…",
+    "min": { "x": 128, "y": 64, "z": -340 },
+    "max": { "x": 160, "y": 96, "z": -308 },
+    "blocks": 20431
+  } }
+```
+
+Fire and forget: **do not answer with a result.** Report what came of it as `build_progress`,
+exactly as `connect` reports through `agent_status`.
+
+The box and the count travel as well as being derivable from the body you are about to fetch, so
+you can size the work, refuse one you cannot do, and log something legible before making an HTTP
+call. The ticket rides along because this command is the act that minted it.
+
+**The ticket is valid from the moment you receive this.** The backend deliberately sends the
+command only after the transaction that minted the ticket has committed — an earlier version sent
+it inside that transaction, and a host quick enough to fetch got a 401 for a ticket that was
+milliseconds from existing. If you ever see a 401 on a ticket you have only just been given, that
+is a backend bug and worth saying so loudly.
+
+#### `cancel_segment` — backend to host
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "cancel_segment", "agentId": 42,
+  "payload": { "jobId": 7, "segmentId": 31 } }
+```
+
+Stop building that segment. Sent when it is taken back from you, and when its job is paused or
+deleted. Fire and forget, and **not an error** for a segment you have already finished or never
+started: it asks you to stop, which having stopped satisfies.
+
+Take it seriously. A host that keeps placing blocks after a job is paused defeats the only thing
+pausing exists to do.
+
+#### `build_progress` — host to backend
+
+```jsonc
+{ "kind": "event", "type": "build_progress", "agentId": 42,
+  "payload": { "segmentId": 31, "blocksPlaced": 12480, "state": "building" } }
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `segmentId` | yes | Which segment. Not the agent — see below. |
+| `blocksPlaced` | no | **Total placed in this segment**, not since the last report. |
+| `state` | no | `building`, `done` or `failed`. Omit to report only a count. |
+| `reason` | no | Why it failed. Written for whoever reads host logs; truncated at 256. |
+
+Send it roughly **every five seconds** while building, alongside the vitals in `agent_status`.
+
+**Last reported, never accumulated** — the same rule the vitals follow. The backend writes the
+number down rather than adding it, so a host that restarts mid-segment and recounts what it can see
+is correct rather than double-counted. It is also clamped to the segment’s own size, so a generous
+recount cannot drive a job past finished.
+
+**Keyed by the segment, not the agent.** An agent holds one segment at a time, so either would
+identify it — but a report that arrives just after a segment was taken back would then land on
+whatever that agent picked up next, which is one box’s count applied to another. The backend
+ignores a report about a segment you do not hold.
+
+`done` is what closes a segment, and the last `done` in a job closes the job — nothing else can
+know. It carries the count with it, so you need not send a final total that exactly equals the
+size; say `done` and the backend fills it in.
+
+`failed` is for **you tried and could not**. It is not for losing the connection: an agent that
+drops out has its segment returned to the pool automatically and handed back when it returns, so
+there is nothing to report and nothing to retry. Reporting `failed` on a disconnect turns a blip
+into something an operator has to come and look at.
 
 ## 8. A minimally compliant host
 
@@ -635,8 +702,12 @@ logged and dropped, which looks exactly like it working.
 6. Handle `chat` → say it, then echo it as a `chat` event with scope `outbound`.
 7. Handle `set_chat_listener` → toggle `global` forwarding for that agent; default off.
 8. Classify inbound chat into the six scopes and emit `chat` / `activity`.
-9. Reply `ok: false` to any command you do not recognise.
-10. Send `handshake` immediately on **every** connect, both halves:
+9. Handle `build_segment` → fetch the blocks with the ticket, place them, and report
+   `build_progress` every ~5s with the running total; `done` when finished, `failed` only if you
+   genuinely could not. Handle `cancel_segment` → stop, and treat an unknown segment as already
+   satisfied.
+10. Reply `ok: false` to any command you do not recognise.
+11. Send `handshake` immediately on **every** connect, both halves:
     - `agents` — re-enumerate what is actually live. Not optional: it is the only thing that clears
       sessions the backend is still asserting from a previous process. An empty array is a real
       answer.

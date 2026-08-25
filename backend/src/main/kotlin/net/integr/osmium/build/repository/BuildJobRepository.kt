@@ -106,4 +106,14 @@ interface BuildJobRepository : JpaRepository<BuildJob, Long> {
         """,
     )
     fun findByFetchTicket(ticket: String): BuildJob?
+
+    /** The job a segment belongs to, for a progress report that names only the segment. */
+    @Query(
+        """
+        SELECT j FROM BuildJob j
+        JOIN j.segments s
+        WHERE s.id = :segmentId
+        """,
+    )
+    fun findBySegmentId(segmentId: Long): BuildJob?
 }

@@ -46,6 +46,41 @@ object CommandType {
     const val DISCONNECT = "disconnect"
     const val CHAT = "chat"
     const val SET_CHAT_LISTENER = "set_chat_listener"
+
+    /**
+     * Build this box.
+     *
+     * ```jsonc
+     * { "jobId": 7, "segmentId": 31, "ticket": "9f2c…",
+     *   "min": { "x": 128, "y": 64, "z": -340 },
+     *   "max": { "x": 160, "y": 96, "z": -308 },
+     *   "blocks": 20431 }
+     * ```
+     *
+     * The box and the block count travel **as well as** being fetchable, so a host can size the
+     * work, refuse one it cannot do and log something legible before it makes an HTTP call - and
+     * so a progress report has a total to be measured against.
+     *
+     * The ticket rides along because it is minted by the very act this command announces. Making
+     * a host ask for it separately would be a second round trip to learn something the backend
+     * already knew when it decided to send this.
+     *
+     * Fire and forget, like [CONNECT]: the outcome arrives as a `build_progress` event, because
+     * state advances when the host says so rather than when the backend asks.
+     */
+    const val BUILD_SEGMENT = "build_segment"
+
+    /**
+     * Stop building that box: `{ "segmentId": 31 }`.
+     *
+     * Sent when a segment is taken back and when its job is paused or deleted. Without it a host
+     * goes on placing blocks nobody wants - a paused job that keeps building is the one outcome
+     * pausing exists to prevent.
+     *
+     * Fire and forget, and **not** an error to receive for a segment already finished or never
+     * started: it says stop, which is satisfied by having stopped.
+     */
+    const val CANCEL_SEGMENT = "cancel_segment"
 }
 
 /** Events the backend understands. Anything else is logged and ignored, never fatal. */
@@ -99,4 +134,22 @@ object EventType {
      * sees. See the Chat section of FLEET_CONNECTIVITY.md.
      */
     const val ACTIVITY = "activity"
+
+    /**
+     * How far through a segment an agent is:
+     * `{ "segmentId": 31, "blocksPlaced": 12480, "state": "building" }`.
+     *
+     * `state` is `building`, `done` or `failed`, the last carrying a `reason` for the log. Sent
+     * every few seconds while building, alongside the vitals in [AGENT_STATUS].
+     *
+     * **Last reported, never accumulated**, the same rule the vitals follow. A host that restarts
+     * mid-segment resumes from what it can see, and adding up deltas would count those blocks
+     * twice.
+     *
+     * Keyed by the segment rather than the agent. One agent holds one segment, so either would
+     * identify it today - but the segment is the thing being built, and a late report about one
+     * that has since been released is then ignorable rather than applied to whatever its agent
+     * picked up next.
+     */
+    const val BUILD_PROGRESS = "build_progress"
 }

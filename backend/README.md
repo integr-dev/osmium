@@ -1253,6 +1253,26 @@ stream is already in build order. The backend sorts before sending rather than r
 region is naturally ascending, but a Litematica file holds several and they are read one after
 another, so a later region can describe positions earlier in the box.
 
+### Dispatch happens after the commit
+
+A command must not describe a row the host cannot read yet. `build_segment` carries a fetch
+ticket minted in the same transaction, and a host that is quick about it asks for the blocks
+before that transaction commits — the endpoint runs in its own transaction, sees no such ticket,
+and answers **401**.
+
+That is not hypothetical: it is what happened the first time this ran against a real schematic.
+Three of four segments won the race and the fourth was marked failed over a ticket that was
+milliseconds from existing. Dispatch now registers an after-commit synchronisation, which also
+covers the cancellations — telling a host to stop is a decision that can roll back, and a host
+that has already acted on it has no way to learn it should not have.
+
+**The suite cannot catch this class of bug.** Every REST test runs in a transaction that is
+rolled back, so an after-commit callback never fires and dispatch is exercised by nothing but
+running the thing. It belongs with the other two failures of that shape: `ddl-auto` emitting an
+`alter table` no test sees because Testcontainers builds the schema fresh, and a migration that
+reorders rows before dropping the constraint forbidding them, which is invisible when there are
+no rows to migrate.
+
 ### The ticket
 
 Authenticated by a capability for **one segment**, not by the host’s enrolment token — that is the

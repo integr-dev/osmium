@@ -13,6 +13,10 @@ import org.springframework.web.socket.handler.TextWebSocketHandler
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -57,6 +61,29 @@ private const val HEARTBEAT_SECONDS = 10L
 private const val TELEMETRY_SECONDS = 3L
 private const val CHATTER_SECONDS = 12L
 
+/**
+ * How often a segment being built reports, and how much it claims to have placed.
+ *
+ * Slow enough to watch a bar move and fast enough not to wait out a coffee, which is the only
+ * requirement: nothing here is a claim about how fast a real agent builds. A host that reported a
+ * segment finished in one tick would leave every partial state — the percentage, the throughput,
+ * the ordering of a job closing — untested in development, which is the same reason setup and
+ * connect answer late.
+ */
+private const val BUILD_SECONDS = 2L
+
+/**
+ * How many ticks a segment takes, whatever its size.
+ *
+ * A fixed number of blocks per tick made the rate an accident of how the build was divided: 25 a
+ * tick against a real cathedral is ninety minutes a segment, which proves the pipeline and shows
+ * nobody anything. A share of the segment instead means a job of any size finishes in about two
+ * minutes, which is long enough to watch a bar move and short enough to watch it finish.
+ *
+ * Still a mock. Nothing here is a claim about how fast an agent places blocks.
+ */
+private const val TICKS_PER_SEGMENT = 60
+
 /** Backs off from a second to half a minute, like every other reconnecting client here. */
 private const val FIRST_RETRY_MILLIS = 1_000L
 private const val MAX_RETRY_MILLIS = 30_000L
@@ -97,6 +124,22 @@ class MockHost(private val url: String, private val token: String) {
      */
     private val agents = ConcurrentHashMap<Long, MockAgent>()
 
+    /** Segments being built, by segment id. What `cancel_segment` removes from. */
+    private val building = ConcurrentHashMap<Long, MockSegment>()
+
+    /**
+     * For fetching a segment’s blocks, which is the one thing a host pulls rather than is sent.
+     *
+     * Derived from the socket URL so a mock pointed at another backend fetches from that one too:
+     * `ws://host/ws/host` is `http://host`, which is the only place these two agree.
+     */
+    private val http: HttpClient = HttpClient.newHttpClient()
+
+    private val apiRoot: String = url
+        .removeSuffix("/ws/host")
+        .replaceFirst("wss://", "https://")
+        .replaceFirst("ws://", "http://")
+
     private lateinit var session: WebSocketSession
 
     @Volatile private var stopped = false
@@ -112,6 +155,7 @@ class MockHost(private val url: String, private val token: String) {
         clock.scheduleAtFixedRate(::heartbeat, 0, HEARTBEAT_SECONDS, TimeUnit.SECONDS)
         clock.scheduleAtFixedRate(::telemetry, TELEMETRY_SECONDS, TELEMETRY_SECONDS, TimeUnit.SECONDS)
         clock.scheduleAtFixedRate(::chatter, CHATTER_SECONDS, CHATTER_SECONDS, TimeUnit.SECONDS)
+        clock.scheduleAtFixedRate(::buildTick, BUILD_SECONDS, BUILD_SECONDS, TimeUnit.SECONDS)
 
         // Reconnecting rather than exiting, because the backend it talks to is a development server
         // that restarts on every save. A tool that has to be started again after each one is a tool
@@ -220,6 +264,18 @@ class MockHost(private val url: String, private val token: String) {
             }
 
             CommandType.SET_CHAT_LISTENER -> result(command, ok = true)
+
+            // Fire and forget, like connect: the outcome is a build_progress event.
+            CommandType.BUILD_SEGMENT -> {
+                if (agentId == null) return
+                startBuilding(agentId, command)
+            }
+
+            CommandType.CANCEL_SEGMENT -> {
+                val segmentId = command.payload?.get("segmentId")?.asLong() ?: return
+                // Satisfied by having stopped, so a segment nobody is building is not an error.
+                building.remove(segmentId)?.let { println("   stopped segment $segmentId") }
+            }
 
             else -> println("ignoring unknown command '${command.type}'")
         }
@@ -347,6 +403,120 @@ class MockHost(private val url: String, private val token: String) {
         ),
     )
 
+    /**
+     * Fetches a segment and starts placing it, slowly enough to watch.
+     *
+     * A real host would walk the blocks in the order they arrive — that order *is* build order,
+     * bottom layer first — and place each one. This one counts them, which exercises everything
+     * around the placing: the ticket, the format, the progress reports and the arithmetic that
+     * turns those into a percentage.
+     */
+    private fun startBuilding(agentId: Long, command: HostEnvelope) {
+        val payload = command.payload ?: return
+        val jobId = payload.get("jobId")?.asLong() ?: return
+        val segmentId = payload.get("segmentId")?.asLong() ?: return
+        val ticket = payload.get("ticket")?.asString() ?: return
+
+        clock.execute {
+            val blocks = runCatching { fetchSegment(jobId, segmentId, ticket) }.getOrElse { failure ->
+                println("   segment $segmentId could not be fetched: ${failure.message}")
+                progress(agentId, segmentId, placed = 0, state = "failed", reason = failure.message)
+                return@execute
+            }
+
+            println("   segment $segmentId: ${blocks} block(s) to place")
+            building[segmentId] = MockSegment(agentId, blocks)
+            progress(agentId, segmentId, placed = 0, state = "building")
+        }
+    }
+
+    /**
+     * Reads the packed segment format and returns how many blocks are in it.
+     *
+     * Deliberately parses the header rather than trusting the count in the command: a mock that
+     * only reads a number out of a JSON payload proves nothing about the format the real host has
+     * to implement, which is the half of this most likely to be wrong.
+     */
+    private fun fetchSegment(jobId: Long, segmentId: Long, ticket: String): Int {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("$apiRoot/api/hostlink/jobs/$jobId/segments/$segmentId"))
+            .header("X-Osmium-Ticket", ticket)
+            .GET()
+            .build()
+
+        val response = http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+        require(response.statusCode() == 200) { "the backend answered ${response.statusCode()}" }
+
+        val body = ByteBuffer.wrap(response.body())
+
+        val magic = ByteArray(4).also { body.get(it) }.toString(Charsets.UTF_8)
+        require(magic == "OSM1") { "not a segment body: magic was '$magic'" }
+
+        // The palette, walked rather than skipped: its entries are what a real host would place.
+        val palette = (0 until body.short.toInt()).map {
+            ByteArray(body.short.toInt()).also { name -> body.get(name) }.toString(Charsets.UTF_8)
+        }
+
+        val min = Triple(body.int, body.int, body.int)
+        val size = Triple(body.int, body.int, body.int)
+        val count = body.int
+
+        println("   at $min, ${size}, ${palette.size} material(s): ${palette.take(3).joinToString()}")
+
+        // Six bytes a block: a u32 position and a u16 palette entry. Read with a fixed stride,
+        // which is the whole reason the format is not varint-encoded.
+        require(body.remaining() == count * 6) {
+            "expected ${count * 6} bytes of blocks, found ${body.remaining()}"
+        }
+        return count
+    }
+
+    /**
+     * One tick of building: place a few, say so, and finish when there is nothing left.
+     *
+     * The count sent is the total placed rather than what this tick added, which is what the
+     * backend expects — it writes the number down rather than adding it, so a host that restarts
+     * and recounts cannot drive a segment past its own size.
+     */
+    private fun buildTick() {
+        building.forEach { (segmentId, segment) ->
+            if (!agents[segment.agentId]?.online.let { it == true }) return@forEach
+
+            val step = maxOf(1, segment.blocks / TICKS_PER_SEGMENT)
+            segment.placed = minOf(segment.placed + step, segment.blocks)
+
+            if (segment.placed >= segment.blocks) {
+                building.remove(segmentId)
+                progress(segment.agentId, segmentId, segment.placed, state = "done")
+                println("   segment $segmentId done")
+            } else {
+                progress(segment.agentId, segmentId, segment.placed, state = "building")
+            }
+        }
+    }
+
+    private fun progress(
+        agentId: Long,
+        segmentId: Long,
+        placed: Int,
+        state: String,
+        reason: String? = null,
+    ) = send(
+        HostEnvelope(
+            kind = MessageKind.EVENT,
+            type = EventType.BUILD_PROGRESS,
+            agentId = agentId,
+            payload = mapper.valueToTree(
+                buildMap<String, Any> {
+                    put("segmentId", segmentId)
+                    put("blocksPlaced", placed)
+                    put("state", state)
+                    reason?.let { put("reason", it) }
+                },
+            ),
+        ),
+    )
+
     private fun activity(agentId: Long, scope: String, severity: String, text: String) = send(
         HostEnvelope(
             kind = MessageKind.EVENT,
@@ -377,6 +547,11 @@ class MockHost(private val url: String, private val token: String) {
         runCatching { session.sendMessage(TextMessage(mapper.writeValueAsString(envelope))) }
             .onFailure { println("send failed: ${it.message}") }
     }
+}
+
+/** A segment this host was told to build, and how far through it is. */
+private class MockSegment(val agentId: Long, val blocks: Int) {
+    @Volatile var placed: Int = 0
 }
 
 /** One simulated agent. Deterministic identity, drifting vitals. */
