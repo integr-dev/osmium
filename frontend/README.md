@@ -81,12 +81,11 @@ What is meant to survive that mock is the **shape**: fields are declared as a sc
 generically by type, so adding a setting later is an entry in that file plus a copy key, not another
 block of markup. The field list itself is a placeholder, not a specification.
 
-**Schematics are real**: uploaded, read through, measured, divided, and started. A job records what
-is being built, where, by whom and how far along. What no schematic has yet is an agent actually
-placing a block — carrying a segment to a host needs the host side, which does not exist — so the
-pipeline now stops one step later, with segments assigned and nothing sent — though the blocks
-behind them are servable, so what is missing is the message that carries one. Both the last wizard
-step and the Jobs panel say so rather than leaving it to be inferred.
+**Schematics are real, all the way through**: uploaded, read, measured, divided, started, dispatched
+and built. A job records what is being built, where, by whom and how far along, and the figure moves
+because a host reported blocks against it. What is still missing is a *real* host — the mock host in
+the backend repository speaks the same protocol, so every screen here is driven by the same messages
+a real one will send.
 
 **Operations** holds everything done to the fleet as a group. See below.
 
@@ -1077,7 +1076,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-302 unit tests on Vitest with jsdom, in two groups.
+294 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
@@ -1087,9 +1086,9 @@ translation parity, where a missing placeholder swallows a value without errorin
 **Where a bug renders as a plausible wrong answer** rather than an error. Everything in `src/lib`
 that computes something is a plain function with its own spec, because the failures are arithmetic
 and they all look fine on screen: a sparkline with one sample or a flat series (`series.ts`),
-distance measured across a dimension or a server (`vitals.ts`), a fleet reported finished because
-two servers' progress was added against one schematic (`build.ts`), how far along a job is
-(`jobs.ts`), where rounding up would call a build finished one block short of it, which chat scope a live line
+distance measured across a dimension or a server (`vitals.ts`), how far along a job is and what the
+fleet places per minute (`jobs.ts`), where rounding up would call a build finished one block short
+of it and a rate measured over too short a window reads as an ETA of minutes, which chat scope a live line
 belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), what the tab says
 (`browserStatus.ts`), the isometric projection behind the sign-in screen (`schematic.ts`), which is
 chosen in projected space rather than on a grid that is projected afterwards — the obvious way

@@ -7,20 +7,21 @@ hands each agent its own slice. The dashboard shows what the fleet is doing: pro
 what needs attention, and what is being said in game.
 
 > **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
-> telemetry, live updates and the host transport are built and tested. So is the schematic pipeline
-> up to the point of dispatch: uploading a file, reading it, dividing it between agents, recording
-> the result as a **job** — what is being built, where, by whom, and how far along — and serving a
-> segment’s blocks to a host that asks for them. What is missing is the crossing: telling a host to
-> build a segment, and having blocks reported back, which waits on the host program. That lives outside this repository, Rust on azalea, see
-> [`host/`](host/); the feeds stay empty until one connects and starts reporting. Remote
-> configuration is the only part of the UI still running on mock data.
+> telemetry, live updates and the host transport are built and tested, and so is the build pipeline
+> end to end: uploading a schematic, reading it, dividing it between agents, recording the result as
+> a **job** — what is being built, where, by whom, and how far along — handing each segment to the
+> host that holds the agent, serving its blocks as block *states*, and taking progress back as they
+> are placed. What is missing is a real host. That one lives outside this repository, Rust on azalea,
+> see [`host/`](host/); a mock host in this repository speaks the same protocol, and the feeds stay
+> empty until something connects and starts reporting. Remote configuration is the only part of the
+> UI still running on mock data.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 445 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 302 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 471 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 294 tests |
 | [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
 
 ## The one idea worth knowing
@@ -51,7 +52,14 @@ cd backend && ./gradlew bootRun          # gradlew.bat on Windows
 
 # 3. Frontend on :5173, proxying /api to the backend
 cd frontend && npm install && npm run dev
+
+# 4. Optional: a mock host, once you have registered one and copied its token
+cd backend && OSMIUM_HOST_TOKEN=osm_host_1_… ./gradlew mockHost
 ```
+
+The mock host speaks the real protocol over the real socket — it connects, reports agents,
+telemetry and chat, fetches segments and places blocks — so the whole pipeline can be exercised
+without a Minecraft account. It is a development convenience, not a stand-in for the host program.
 
 Sign in with `admin` / `admin`. Those are development defaults and are seeded only while the `users`
 table is empty — override `OSMIUM_BOOTSTRAP_USERNAME` / `OSMIUM_BOOTSTRAP_PASSWORD`, and
@@ -74,8 +82,8 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 372 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 225 tests
+cd backend && ./gradlew test     # 471 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 294 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real

@@ -1209,9 +1209,12 @@ Starting one takes **agents, not a part count**: how many pieces a build divides
 agents are carrying them, and the server is derived from the agents rather than asked for. Both
 would otherwise be a second place to say something the request already says.
 
-**Nothing is dispatched yet.** There is no `build_segment` command, so a segment is assigned and
-stays assigned. The blocks behind it *are* servable — see below — so what is missing is a wire
-message rather than a model.
+**Assigning a segment dispatches it.** The agent’s host is sent a `build_segment` command naming
+the segment and a fetch ticket; it collects the blocks over HTTP, places them, and reports back
+with `build_progress` events, which is what moves a job’s counter. Releasing a segment sends
+`cancel_segment`, so a host is told to stop rather than left building something nobody is
+counting. All three are in `hostlink/HostEnvelope.kt`, and [`host/README.md`](../host/README.md)
+is the wire reference.
 
 ## Serving a segment
 
@@ -1441,7 +1444,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-445 tests across 34 classes. Most run against a real Postgres 18 through Testcontainers with
+471 tests across 37 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

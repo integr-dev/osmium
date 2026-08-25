@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "net.integr"
-version = "0.10.0"
+version = "0.11.0"
 description = "backend"
 
 // Emits META-INF/build-info.properties, which is what lets the OpenAPI document report the real
@@ -108,7 +108,7 @@ configurations["mockhostRuntimeOnly"].extendsFrom(configurations["runtimeOnly"])
 
 tasks.register<JavaExec>("mockHost") {
     group = "application"
-    description = "Runs a fake host reporting invented agents, telemetry, chat and incidents."
+    description = "Runs a fake host reporting agents, telemetry, chat and incidents, and building segments."
     mainClass = "net.integr.osmium.mockhost.MockHostKt"
     classpath = sourceSets["mockhost"].runtimeClasspath
     // Its whole job is saying what it sent and received.

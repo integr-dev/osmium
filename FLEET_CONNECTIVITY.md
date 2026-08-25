@@ -16,13 +16,12 @@
 | Placement and block substitution, as a build plan | **Built** in `backend/`, set on the Operations page |
 | Recording a job: a plan frozen, divided, assigned and resumable | **Built** in `backend/`, started from the Operations page |
 | Serving a segment's blocks to a host | **Built** in `backend/`, specified in `host/README.md` |
-| Carrying a segment to a host and building it | **Not built**: needs the host side, and two wire messages that are not designed |
+| Carrying a segment to a host and building it | **Built** in `backend/`, exercised end to end by the mock host |
 
-Only build progress in the frontend is still mock (`frontend/src/stores/agents.ts`) — blocks placed,
-sectors and throughput. The schematics themselves are real: uploaded, read, divided, and now
-started — a **job** records what is being built, where, by whom and how far along, and its
-segments are real rows. What no schematic has yet is an agent actually placing a block, because
-nothing can carry a segment to a host. Everything else is real but empty until a host connects.
+Nothing in the frontend is mock any more except remote configuration. The build pipeline is real
+end to end: a schematic is uploaded, read, divided and started as a **job**, its segments are
+dispatched to the hosts holding the agents, and the figures on screen move because those hosts
+reported blocks against them. Everything is real but empty until a host connects.
 Sections not marked built are design, not description.
 
 **Scope:** where Minecraft agents authenticate, who holds their credentials, and how an operator
@@ -879,10 +878,12 @@ than the one being solved.
 The backend half of that now exists as a **job** (see `backend/README.md`): the split is frozen into
 rows, in world coordinates, each assigned to one agent, with the plan’s anchor and substitutions
 copied in so editing the plan cannot move a build that is under way. An agent that drops out has its
-segment freed and gets one back when it returns, so the fleet self-heals across a blip. What is missing is only the
-crossing: a command carrying a segment and an event reporting blocks against it. Fetching the blocks
-themselves is built and specified — a host can be written against that today — but the two messages
-are not designed, and nothing should be implemented against them yet.
+segment freed and gets one back when it returns, so the fleet self-heals across a blip.
+
+The crossing is built too. `build_segment` names a segment and a fetch ticket, the host collects the
+blocks over HTTP and places them, and `build_progress` reports them back; `cancel_segment` takes one
+away again. All of it is specified in `host/README.md` and exercised end to end by the mock host, so
+a host can be written against it today.
 
 ### Placement and substitution belong to a plan, not to the file
 
