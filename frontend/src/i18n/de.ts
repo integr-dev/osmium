@@ -325,7 +325,6 @@ export const de: Copy = {
   },
 
   jobs: {
-    awaitingHost: 'Segmente sind zugeteilt, aber noch nicht gesendet: Der Host kann noch keine Arbeit empfangen. Alles davor ist echt.',
     empty: 'Noch nichts gebaut. Starte einen Auftrag im Tab Baupläne.',
     subtitle: '{schematic} auf {server}',
     startedBy: 'Gestartet von {who}, {at}',

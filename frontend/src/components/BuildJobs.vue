@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Hammer, Pause, Play, Trash2, Undo2 } from 'lucide-vue-next'
+import { Pause, Play, Trash2, Undo2 } from 'lucide-vue-next'
 import type { BuildJob, JobSegment, JobState, SegmentState } from '../api/jobs'
 import { summarise, type JobSummary } from '../lib/jobs'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
@@ -158,15 +158,6 @@ function take(job: BuildJob, segment: JobSegment) {
 
 <template>
   <div class="flex flex-col gap-6">
-    <!--
-      Said once, at the top, rather than as a caption under every stalled progress bar. A panel
-      whose numbers cannot move yet should say so before an operator waits on them.
-    -->
-    <div role="status" class="alert alert-info alert-soft">
-      <Hammer class="size-4" />
-      <span>{{ t('jobs.awaitingHost') }}</span>
-    </div>
-
     <p v-if="!agentStore.loaded" class="text-sm opacity-60">{{ t('common.loading') }}</p>
 
     <p v-else-if="!cards.length" class="text-sm opacity-60">{{ t('jobs.empty') }}</p>

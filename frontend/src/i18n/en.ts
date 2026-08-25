@@ -382,8 +382,6 @@ export const en = {
    * away. Deleting one is a separate act, and the only one that is final.
    */
   jobs: {
-    /** Said once at the top of the panel, not as a caption under every stalled progress bar. */
-    awaitingHost: 'Segments are assigned but not yet sent: the host cannot receive work yet. Everything up to that point is real.',
     empty: 'Nothing has been built yet. Start a job from the Schematics tab.',
     subtitle: '{schematic} on {server}',
     startedBy: 'Started by {who}, {at}',
