@@ -306,7 +306,15 @@ class BuildJobService(
         return job.toResponse()
     }
 
-    /** Takes a segment back without blaming the agent for it. */
+    /**
+     * Takes a segment back without blaming the agent for it.
+     *
+     * **Also the retry for a failed one**, which is the only route back from `FAILED`. Nothing
+     * reassigns one on its own, and deliberately: the three things that genuinely fail a segment —
+     * the box is in bedrock, the material does not exist on that server, something is denying the
+     * placement — all fail again the same way for the next agent. Someone reads the reason, changes
+     * whatever caused it, and releases it; the retry is that act rather than a loop.
+     */
     @Transactional
     fun release(jobId: Long, segmentId: Long): BuildJobResponse {
         val job = load(jobId)
@@ -316,7 +324,13 @@ class BuildJobService(
 
         val segment = job.segments.firstOrNull { it.id == segmentId }
             ?: throw NoSuchElementException("No segment $segmentId on job $jobId")
-        check(segment.live) { "Segment ${segment.ordinal} is not assigned to anyone" }
+        // **Failed counts as still held.** The agent that could not build it has no further use
+        // for the segment, but it is spoken for all the same: nothing hands it out again, and a
+        // job cannot reach `DONE` while one sits there. Refusing to release it stranded the whole
+        // job on one bad segment, with deleting and rebuilding as the only way out.
+        check(segment.live || segment.state == BuildSegmentState.FAILED) {
+            "Segment ${segment.ordinal} is not assigned to anyone"
+        }
 
         free(job, segment)
         publish(job)
@@ -551,8 +565,14 @@ class BuildJobService(
         // Told to stop *before* the assignment is forgotten, because the agent holding it is what
         // says where to send that. A host left building a segment nobody has is the one outcome
         // releasing exists to prevent.
-        segment.agent?.let { holder ->
-            send(holder, CommandType.CANCEL_SEGMENT) { cancelPayload(job, segment) }
+        //
+        // Only somebody who might still be building it: a host that reported `failed` stopped when
+        // it said so, and telling it to cancel work it has already given up on is a command with
+        // nothing to answer. Both other callers filter on `live` before they get here.
+        if (segment.live) {
+            segment.agent?.let { holder ->
+                send(holder, CommandType.CANCEL_SEGMENT) { cancelPayload(job, segment) }
+            }
         }
 
         segment.state = BuildSegmentState.PENDING

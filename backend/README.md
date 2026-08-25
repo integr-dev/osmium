@@ -1194,6 +1194,21 @@ named in the refusal: release the segment, or delete the job.
 **There is no failed job.** One with failed segments is still `ACTIVE` and needs an operator, because
 deciding it is over means picking how many failures are too many and there is no honest number.
 
+**Releasing a failed segment is the retry**, and the only way out of `FAILED`. Nothing reassigns one
+by itself: a segment genuinely fails because the box is in bedrock, the material does not exist on
+that server, or something is denying the placement — all of which fail the same way for the next
+agent, so an automatic retry is a loop rather than a recovery. Somebody reads the reason, fixes what
+caused it, and hands the segment back.
+
+That reason **survives the release** and is cleared when the segment is taken, not when it is freed.
+A segment sitting in the pool with nothing said about it is one nobody remembers why they freed, and
+the operator who freed it is away doing the thing it is asking for.
+
+Without this, `FAILED` was a state nothing could leave: reassignment picks up only `PENDING`,
+releasing refused anything not currently assigned, and a job needs every segment `DONE` — so one
+failed segment stranded a whole build, with deleting and rebuilding as the only way out. The mock
+host never reports `failed`, which is why the live runs never showed it.
+
 ### Losing a builder is not losing the work
 
 An agent that leaves the game has its segments returned to `PENDING`, never `FAILED`, and its last
@@ -1444,7 +1459,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-471 tests across 37 classes. Most run against a real Postgres 18 through Testcontainers with
+472 tests across 37 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

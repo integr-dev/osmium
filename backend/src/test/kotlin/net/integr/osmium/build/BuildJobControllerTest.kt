@@ -807,6 +807,55 @@ class BuildJobControllerTest : AbstractRestTest() {
     }
 
     /**
+     * The gap this closes: `FAILED` was a state nothing could leave. Reassignment only ever picks up
+     * `PENDING`, releasing refused anything not assigned, and a job needs every segment `DONE` — so
+     * one failure stranded the whole build, with deleting and rebuilding as the only way out.
+     */
+    @Test
+    fun `a failed segment can be handed back and built by somebody else`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val one = onlineAgent("Mason_01", host)
+        val two = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(one.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(one, segmentId.toLong(), state = "failed", reason = "no blocks in inventory")
+
+        // Releasing is the retry. The reason **stays** while the segment waits: whoever released it
+        // did so because of that reason and is off fixing it, and a free segment saying nothing is a
+        // segment nobody remembers why they freed. It goes when somebody takes it, which is the
+        // moment there is a new attempt for it to be wrong about.
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("PENDING") }
+            jsonPath("$.segments[0].agentId") { value(null) }
+            jsonPath("$.segments[0].failureReason") { value("no blocks in inventory") }
+        }
+
+        mockMvc.post("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"agentId":${two.id}}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("ASSIGNED") }
+            jsonPath("$.segments[0].agentLabel") { value("Mason_02") }
+            jsonPath("$.segments[0].failureReason") { value(null) }
+        }
+
+        // And the job can reach the end, which is what a stranded segment made impossible.
+        progresses(two, segmentId.toLong(), state = "done")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect { jsonPath("$.state") { value("DONE") } }
+    }
+    /**
      * A host reporting on a segment it does not hold is either confused or lying, and neither is a
      * reason to write down a number.
      */
