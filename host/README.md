@@ -548,7 +548,7 @@ Content type `application/vnd.osmium.segment`. **Big-endian throughout.**
 ```
 "OSM1"                     4 bytes, magic and version
 u16                        palette entries
-  u16 length, UTF-8 bytes  each block name, repeated
+  u16 length, UTF-8 bytes  each block state, repeated
 i32 x3                     box minimum: x, y, z (world coordinates)
 u32 x3                     box size: dx, dy, dz
 u32                        block count
@@ -571,7 +571,7 @@ That is y outermost, then z, then x — the order Litematica and Sponge both sto
 therefore **build order**: bottom layer first. Records arrive ascending, so walking the stream in
 order is walking the build in order, and you never need to sort or seek.
 
-Six things worth knowing, each of which is a decision rather than an accident:
+Seven things worth knowing, each of which is a decision rather than an accident:
 
 - **Only blocks that get placed are sent.** Air never appears — not in the records and not in the
   palette. A segment’s box is mostly empty and you are not charged for it.
@@ -580,12 +580,21 @@ Six things worth knowing, each of which is a decision rather than an accident:
   to not having the material: a hole rather than a wrong block standing in.
 - **The palette describes this segment**, not the schematic. It holds only materials actually
   present here, in first-appearance order.
-- **Names are as the file wrote them**, usually `minecraft:stone` but not always — Osmium never
-  resolves a block name against a registry, which is what lets it accept a schematic from an older
-  Minecraft. A name you do not recognise is not necessarily wrong; report it and move on rather than
-  failing the segment.
-- **Block states are not carried yet.** The palette is names only, so stairs arrive without their
-  facing. That is a known gap, not a subtlety of the encoding.
+- **Palette entries are block *states*, not block names.** `minecraft:oak_stairs[facing=east,
+  half=bottom]`, in the single-string form Sponge palettes already use. Place the state, not the
+  block: stairs without their facing are stairs pointing whichever way your server defaults to,
+  which is a building that looks almost right and is wrong everywhere it matters. Two facings of
+  one block are two palette entries, because they are two different things to place.
+- **Properties are sorted by name**, so one state always spells one way. Neither format promises
+  an order, and an unsorted spelling would put the same state in a palette twice.
+- **Names are as the file wrote them**, usually `minecraft:` but not always — Osmium never resolves
+  a block name against a registry, which is what lets it accept a schematic from an older
+  Minecraft. A bare name means the vanilla namespace, as it does everywhere in Minecraft. A name
+  you do not recognise is not necessarily wrong; report it and move on rather than failing the
+  segment.
+- **A substitution can flatten states.** A rule names a block, so one rule catches every state of
+  it, and what comes back is what the operator wrote — often a plain name with no properties at
+  all. Do not assume an entry has any.
 - **An empty segment is a valid answer**, with `count = 0` and an empty palette. A box whose every
   block was substituted away still gets handed out; finish it and report it built.
 
@@ -595,13 +604,13 @@ Six things worth knowing, each of which is a decision rather than an accident:
 let n = read_u32()?;
 for _ in 0..n {
     let linear = read_u32()? as u64;
-    let material = &palette[read_u16()? as usize];
+    let state = &palette[read_u16()? as usize];   // "minecraft:oak_stairs[facing=east]"
 
     let y = (linear / (dx as u64 * dz as u64)) as i32;
     let z = ((linear / dx as u64) % dz as u64) as i32;
     let x = (linear % dx as u64) as i32;
 
-    place(min_x + x, min_y + y, min_z + z, material);
+    place(min_x + x, min_y + y, min_z + z, state);
 }
 ```
 

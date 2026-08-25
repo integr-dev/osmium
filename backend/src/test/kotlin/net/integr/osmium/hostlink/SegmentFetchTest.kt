@@ -51,13 +51,15 @@ class SegmentFetchTest : AbstractRestTest() {
      * the arithmetic between a file's coordinates and a world's, and a hand-built palette would
      * skip the half of it that comes out of the format.
      */
-    private fun readySchematic(): Schematic {
+    private fun readySchematic(
+        palette: List<String> = listOf("minecraft:air", "minecraft:stone", "minecraft:diamond_block"),
+    ): Schematic {
         val bytes = SchematicFixtures.litematic(
             listOf(
                 SchematicFixtures.region(
                     position = Vec3i(0, 0, 0),
                     size = Vec3i(4, 1, 1),
-                    palette = listOf("minecraft:air", "minecraft:stone", "minecraft:diamond_block"),
+                    palette = palette,
                     states = intArrayOf(1, 2, 1, 0),
                 ),
             ),
@@ -92,8 +94,10 @@ class SegmentFetchTest : AbstractRestTest() {
      * Starts a job over that schematic, anchored away from the origin so a coordinate that was
      * merely copied through rather than offset shows up as a wrong number.
      */
-    private fun startedJob(substitutions: List<Pair<String, String?>> = emptyList()): Pair<Int, String> {
-        val schematic = readySchematic()
+    private fun startedJob(
+        substitutions: List<Pair<String, String?>> = emptyList(),
+        schematic: Schematic = readySchematic(),
+    ): Pair<Int, String> {
         val build = Build(
             schematic = schematic,
             name = "row plan",
@@ -195,6 +199,71 @@ class SegmentFetchTest : AbstractRestTest() {
             String(ByteArray(body.short.toInt()).also { name -> body.get(name) }, Charsets.UTF_8)
         }
         assertEquals(listOf("minecraft:stone", "cobblestone"), palette)
+    }
+
+    /**
+     * A stair placed without its facing is a stair pointing whichever way the server defaults to,
+     * which is a building that looks almost right and is wrong everywhere it matters.
+     */
+    @Test
+    fun `a block keeps its state through the whole pipeline`() {
+        val schematic = readySchematic(
+            palette = listOf(
+                "minecraft:air",
+                "minecraft:oak_stairs[facing=east,half=bottom]",
+                "minecraft:oak_stairs[facing=west,half=bottom]",
+            ),
+        )
+        val (jobId, ticket) = startedJob(schematic = schematic)
+
+        val body = ByteBuffer.wrap(
+            fetch(jobId, segmentIdOf(jobId), ticket).andReturn().response.contentAsByteArray,
+        )
+        body.get(ByteArray(4))
+
+        val palette = (0 until body.short.toInt()).map {
+            String(ByteArray(body.short.toInt()).also { name -> body.get(name) }, Charsets.UTF_8)
+        }
+
+        // Two facings of one block are two things to place, and the palette says so.
+        assertEquals(
+            listOf(
+                "minecraft:oak_stairs[facing=east,half=bottom]",
+                "minecraft:oak_stairs[facing=west,half=bottom]",
+            ),
+            palette,
+        )
+    }
+
+    /**
+     * A rule names a *block*: "I have no diamond" says nothing about which way it faces. So one rule
+     * catches every state of that block, and what goes back is what the operator wrote.
+     */
+    @Test
+    fun `a substitution catches every state of the block it names`() {
+        val schematic = readySchematic(
+            palette = listOf(
+                "minecraft:air",
+                "minecraft:oak_stairs[facing=east]",
+                "minecraft:oak_stairs[facing=west]",
+            ),
+        )
+        val (jobId, ticket) = startedJob(
+            schematic = schematic,
+            substitutions = listOf("oak_stairs" to "cobblestone"),
+        )
+
+        val body = ByteBuffer.wrap(
+            fetch(jobId, segmentIdOf(jobId), ticket).andReturn().response.contentAsByteArray,
+        )
+        body.get(ByteArray(4))
+
+        val palette = (0 until body.short.toInt()).map {
+            String(ByteArray(body.short.toInt()).also { name -> body.get(name) }, Charsets.UTF_8)
+        }
+
+        // One entry, not two: both facings became the same thing.
+        assertEquals(listOf("cobblestone"), palette)
     }
 
     @Test

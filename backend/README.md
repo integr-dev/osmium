@@ -1238,6 +1238,11 @@ deleted — worth doing when something measures it, and not before.
 A fixed six-byte record per block: a `u32` linear index into the box, and a `u16` palette entry.
 Full layout in [`host/README.md`](../host/README.md), which is the wire reference.
 
+The palette holds block **states** — `oak_stairs[facing=east]` — with properties sorted so one
+state spells one way. Neither file format promises an order, and an unsorted spelling would intern
+as two palette entries for one block. The *materials* list is still by name, and deliberately so:
+stairs facing two ways are one thing to collect and two things to place.
+
 **Fixed width rather than varints**, which look three times better on paper. Positions are
 monotonic, so their high bytes barely change and gzip on the wire recovers most of the difference;
 what is left is a format a host reads with a fixed stride, with no varint state machine and no

@@ -37,6 +37,10 @@ class SegmentBlockService(
      * Three things happen in the one pass: the box is applied, the job's **frozen** substitutions
      * are applied, and anything substituted to nothing is dropped rather than sent as a hole for the
      * host to interpret.
+     *
+     * What comes out is **block states**, not block names — `oak_stairs[facing=east]` rather than
+     * `oak_stairs`. The materials list is still by name, and deliberately: stairs facing two ways
+     * are one thing to collect and two things to place.
      */
     fun encode(job: BuildJob, segment: BuildSegment): ByteArray {
         val schematic = job.schematic
@@ -73,8 +77,12 @@ class SegmentBlockService(
         // substitutes away, which is left out rather than sent as a hole for the host to interpret.
         val resolved = info.regions.map { region ->
             region.palette.map { state ->
+                // **Matched on the name, replaced with the whole rule.** A plan substitutes a
+                // *block* — "I have no diamond" is not a statement about which way it faces — so a
+                // rule for `oak_stairs` catches every facing of them. What goes back is whatever
+                // the operator wrote, properties and all if they wrote any.
                 val id = blockId(state.name)
-                if (id in rules) rules[id] else state.name
+                if (id in rules) rules[id] else state.spec
             }
         }
 

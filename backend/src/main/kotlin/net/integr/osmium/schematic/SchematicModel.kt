@@ -13,6 +13,26 @@ data class BlockState(val name: String, val properties: Map<String, String> = em
     /** True for the three block names that mean nothing is there. */
     val isAir: Boolean get() = name in AIR_NAMES
 
+    /**
+     * The state as one string, `minecraft:oak_stairs[facing=east,half=bottom]`.
+     *
+     * The inverse of [parse], and what a segment carries: a host is told to place a *state*, not a
+     * block, because stairs without their facing are stairs pointing whichever way the server
+     * happens to default to.
+     *
+     * **Properties are sorted.** Litematica stores them as an NBT compound and Sponge writes them
+     * into a string, and neither promises an order — so the same state can arrive spelled two ways
+     * from two files, or from two regions of one file. Unsorted, those are two palette entries for
+     * one block, which defeats the interning that keeps a palette the size of the materials in it
+     * and hands a host a list with the same state in it twice.
+     */
+    val spec: String
+        get() =
+            if (properties.isEmpty()) name
+            else name + properties.entries
+                .sortedBy { it.key }
+                .joinToString(",", prefix = "[", postfix = "]") { "${it.key}=${it.value}" }
+
     companion object {
         /**
          * All three, and all three are needed: a schematic captured above ground is full of
