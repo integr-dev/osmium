@@ -232,6 +232,24 @@ button, and be told there about one of them. Agents that fail any of the three s
 with the reason — a busy one carries the blue dot and *Building* label, so "why not that one, it is
 right there" answers itself.
 
+**"On a job" is not "holding a piece"**, and reading the wrong one was the bug that outlasted the
+rest. Agents are a pool now: one can be on a build while building nothing, waiting for the floor
+under its next piece to be finished. Asking what an agent *holds* called that agent free — so the
+picker offered it and the backend refused it, which is the exact failure the paragraph above exists
+to prevent, back again through a door nobody had thought to close. Both pickers read membership.
+
+**Pieces are counted separately from agents.** The split step has its own field, blank by default,
+and blank means one piece each — what it used to be fixed at, and what somebody who does not want
+to think about it should get. A bigger number is the useful setting: agents queue for work instead
+of owning a share of it, so a slow bot takes fewer and anything cut on height pipelines rather than
+standing still.
+
+**A blocked piece says what it is waiting on.** A piece nobody holds while three agents stand idle
+reads as broken, and for any build cut on height it is the ordinary case — a bot is two blocks tall
+and builds from the floor up, so a piece with unbuilt work beneath it has nowhere for anybody to
+stand. The backend sends the ordinals it is waiting on and the row prints them, because the
+alternative is an operator counting boxes to work out whether the fleet is stuck.
+
 **It searches past five agents**, on the same threshold and in the same markup as the schematic
 library, over the label, the Minecraft account and the server — "which of these is on the build
 server" is as ordinary a question as "where is Mason_14". Two rules make it safe on a fleet this

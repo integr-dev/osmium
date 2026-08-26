@@ -5,7 +5,7 @@ import { Bot as Agent, Plus, Server } from 'lucide-vue-next'
 import AddAgentModal from './AddAgentModal.vue'
 import PlayerHead from './PlayerHead.vue'
 import TableSkeleton from './TableSkeleton.vue'
-import { agentBadge, agentStateLabel } from '../lib/agentState'
+import { agentBadge, agentDot, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -29,7 +29,7 @@ const addOpen = ref(false)
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="flex h-full min-h-0 flex-col gap-4">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm opacity-60">
         {{ t('agents.onlineCount', { online: agentStore.online.length, total: agentStore.agents.length }) }}
@@ -40,9 +40,15 @@ const addOpen = ref(false)
       </button>
     </div>
 
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="overflow-x-auto">
-        <table class="table">
+    <!--
+      Not `flex-1`. A card given the whole column drew a table of two hosts with an empty half
+      screen under it — the frame reporting its own size rather than the fleet's. It shrinks
+      instead: as tall as its rows, and no taller than what is left, which is the point at which
+      the rows start scrolling inside it.
+    -->
+    <div class="card border-base-300 bg-base-200 min-h-0 overflow-hidden border">
+      <div class="h-full overflow-auto">
+        <table class="table-pin-rows table">
           <thead>
             <tr>
               <th>{{ t('agents.label') }}</th>
@@ -54,7 +60,7 @@ const addOpen = ref(false)
           </thead>
           <TableSkeleton v-if="!agentStore.loaded" :columns="5" />
 
-          <tbody v-else>
+          <TransitionGroup v-else name="rows" tag="tbody">
             <!--
               The state is what flashes, not the row. A relink or a disconnect that happened while
               the operator was on another page is exactly what they would otherwise miss.
@@ -63,14 +69,21 @@ const addOpen = ref(false)
               v-for="agent in agentStore.agents"
               :key="agent.id"
               v-flash="agent.state"
-              class="hover:bg-base-300/40"
+              class="hover:bg-base-300/40 transition-colors"
             >
               <td>
                 <RouterLink
                   :to="{ name: 'agent', params: { id: agent.id } }"
                   class="flex items-center gap-3"
                 >
-                  <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
+                  <!-- The same chip as the sidebar and the picker: an avatar with its state on it. -->
+                  <span class="relative shrink-0">
+                    <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
+                    <span
+                      class="ring-base-100 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
+                      :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+                    ></span>
+                  </span>
                   <span class="link-hover font-medium">{{ agent.label }}</span>
                 </RouterLink>
               </td>
@@ -119,7 +132,7 @@ const addOpen = ref(false)
                 <span v-else class="italic opacity-50">{{ t('agents.noServer') }}</span>
               </td>
             </tr>
-            <tr v-if="agentStore.agents.length === 0">
+            <tr v-if="agentStore.agents.length === 0" key="no-agents">
               <td colspan="5">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Agent class="size-6" />
@@ -127,7 +140,7 @@ const addOpen = ref(false)
                 </div>
               </td>
             </tr>
-          </tbody>
+          </TransitionGroup>
         </table>
       </div>
     </div>

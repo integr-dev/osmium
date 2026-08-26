@@ -30,6 +30,7 @@ import TableSkeleton from '../components/TableSkeleton.vue'
 import { useAuthStore } from '../stores/auth'
 import { useAgentStore } from '../stores/agents'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
+import { atShort } from '../lib/time'
 
 const auth = useAuthStore()
 const agentStore = useAgentStore()
@@ -139,10 +140,13 @@ const SEARCH_DEBOUNCE_MS = 250
 
 const query = ref('')
 const sentinel = ref<HTMLElement | null>(null)
+
+/** What scrolls now that the page does not, which is what the sentinel has to be measured in. */
+const scroller = ref<HTMLElement | null>(null)
 let debounce: ReturnType<typeof setTimeout> | null = null
 
 const feed = useFeed((cursor) => fetchAuditPage(cursor, query.value.trim()))
-const scroll = useInfiniteScroll(sentinel, () => void loadMore())
+const scroll = useInfiniteScroll(sentinel, () => void loadMore(), scroller)
 
 let stopListening: (() => void) | null = null
 
@@ -217,20 +221,10 @@ function asDay(date: Date): string {
   ].join('-')
 }
 
-/** Local time: an operator reading this is reasoning about their own working day. */
-function formatAt(at: string): string {
-  return new Date(at).toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('audit.title') }}</h1>
@@ -307,9 +301,14 @@ function formatAt(at: string): string {
       <span>{{ error }}</span>
     </div>
 
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="overflow-x-auto">
-        <table class="table">
+    <!--
+      The scroller, and the element the sentinel below is measured against. The page cannot
+      scroll, so an observer left watching the viewport would see a sentinel that never arrives
+      and stop paging entirely.
+    -->
+    <div class="card border-base-300 bg-base-200 min-h-0 overflow-hidden border">
+      <div ref="scroller" class="h-full overflow-auto">
+        <table class="table-pin-rows table">
           <thead>
             <tr>
               <th>{{ t('audit.when') }}</th>
@@ -323,9 +322,9 @@ function formatAt(at: string): string {
           <!-- Only the first page. Once there are rows, more arriving is an append, not a redraw. -->
           <TableSkeleton v-if="loading && !entries.length" :rows="6" :columns="5" />
 
-          <tbody v-else>
+          <TransitionGroup v-else name="rows" tag="tbody">
             <tr v-for="entry in entries" :key="entry.id" class="hover:bg-base-300/40">
-              <td class="whitespace-nowrap text-sm opacity-70">{{ formatAt(entry.at) }}</td>
+              <td class="whitespace-nowrap text-sm opacity-70">{{ atShort(entry.at) }}</td>
               <td>
                 <div class="flex items-center gap-2">
                   <User class="size-4 opacity-50" />
@@ -342,33 +341,34 @@ function formatAt(at: string): string {
               <td class="text-sm">{{ entry.target }}</td>
               <td class="text-sm opacity-70">{{ entry.detail ?? '—' }}</td>
             </tr>
-          </tbody>
+          </TransitionGroup>
         </table>
-      </div>
 
-      <!--
-        An indicator rather than more skeleton rows: this is the tail of an infinite scroll, and a
-        skeleton row here would be read as a real entry arriving rather than as a wait.
-      -->
-      <div v-if="loading && entries.length" class="flex justify-center py-6">
-        <span class="loading loading-dots loading-sm opacity-50"></span>
-      </div>
-      <p v-else-if="loading" class="sr-only">{{ t('common.loading') }}</p>
-      <p v-else-if="!entries.length && query.trim()" class="py-10 text-center text-sm opacity-50">
-        {{ t('audit.noMatches') }}
-      </p>
-      <p v-else-if="!entries.length" class="py-10 text-center text-sm opacity-50">
-        {{ t('audit.none') }}
-      </p>
-      <p v-else-if="exhausted && !error" class="py-6 text-center text-xs opacity-40">
-        {{ t('audit.end') }}
-      </p>
+        <!--
+          An indicator rather than more skeleton rows: this is the tail of an infinite scroll, and
+          a skeleton row here would be read as a real entry arriving rather than as a wait.
+        -->
+        <p v-if="loading && entries.length" class="py-10 text-center text-sm opacity-50">
+          {{ t('common.loading') }}
+        </p>
+        <p v-else-if="loading" class="sr-only">{{ t('common.loading') }}</p>
+        <p v-else-if="!entries.length && query.trim()" class="py-10 text-center text-sm opacity-50">
+          {{ t('audit.noMatches') }}
+        </p>
+        <p v-else-if="!entries.length" class="py-10 text-center text-sm opacity-50">
+          {{ t('audit.none') }}
+        </p>
+        <p v-else-if="exhausted && !error" class="py-10 text-center text-sm opacity-50">
+          {{ t('audit.end') }}
+        </p>
 
-      <!--
-        Watched by an IntersectionObserver: reaching it fetches the next page. Always rendered, so
-        the element the observer holds never goes away underneath it.
-      -->
-      <div ref="sentinel" aria-hidden="true" class="h-px"></div>
+        <!--
+          Watched by an IntersectionObserver: reaching it fetches the next page. Always rendered,
+          so the element the observer holds never goes away underneath it. Inside the scroller,
+          because that is what it is now measured against.
+        -->
+        <div ref="sentinel" aria-hidden="true" class="h-px"></div>
+      </div>
     </div>
 
     <p class="text-xs opacity-50">

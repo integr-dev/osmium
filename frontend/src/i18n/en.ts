@@ -168,11 +168,8 @@ export const en = {
     ofTarget: 'of {total}',
     /** Segments finished, where an invented layer count used to be. */
     segmentsDone: '{done} of {total} segments built',
-    segmentOf: 'Segment {ordinal} · {build}',
     /** A fleet with nothing running, which is its ordinary state. */
     buildingNothing: 'Nothing is being built.',
-    noSegments: 'Nothing is being built here. Start a job from Operations.',
-    unassigned: 'unassigned',
     /** No rate means no arithmetic to do, rather than an estimate of zero. */
     noEta: 'stalled',
     needsAttention: 'Needs attention',
@@ -193,7 +190,6 @@ export const en = {
     progress: 'Schematic progress',
     percentComplete: '{percent}% complete',
     blocksRemaining: '{count} block remaining | {count} blocks remaining',
-    segments: 'Segments',
     activityHint: 'Alerts and status changes.',
     incidentsPerHour: 'Per hour, over the last {hours} hours.',
     incidentsPartial: 'Per hour. Faint hours are older than anything loaded, not quiet.',
@@ -268,6 +264,8 @@ export const en = {
     down: 'Not connected',
     empty: 'No hosts have connected yet, so there is nothing to draw.',
     reducedMotion: 'Motion is off, so the packets are not shown.',
+    hintMove: 'Scroll to zoom, drag to move.',
+    reset: 'Fit',
   },
 
   agents: {
@@ -394,18 +392,60 @@ export const en = {
     paused: "Paused '{name}'. Its builders stay on it.",
     resumed: "Resumed '{name}'.",
     /** Said on the card, because this is where somebody looks when a bot will not take other work. */
-    pausedNote: 'Stopped, and still holding its builders. Resume it, or delete it to free them.',
+    pausedNote: 'Stopped, and still holding its builders. Resume it, or take them off one at a time.',
     remove: 'Delete',
     removed: "Deleted '{name}'. What it did is still in the audit trail.",
+    removeTitle: "Delete '{name}'?",
+    /** Said plainly: the counts are the part nothing else keeps. */
+    removeWarning: 'The job and every one of its pieces go, along with what each of them reported placing. What the fleet did stays in the audit trail; how far it got does not.',
     segment: 'Segment',
     box: 'From → to',
     blocks: 'Blocks',
     assignee: 'Builder',
     assignTo: 'Assign to…',
     nobodyAvailable: 'Nobody free on this server',
+    /** Not the fleet's fault: the piece has nothing under it to stand on yet. */
+    assignBlocked: 'Not ready — assign anyway…',
     unassigned: 'Unassigned',
     release: 'Release',
-    released: 'Segment {ordinal} is free again.',
+    released: 'Segment {ordinal} goes back to the pool.',
+
+    /**
+     * The crew, which is not the same list as the assignees. An agent can be on a build holding
+     * nothing, waiting for the floor under its next piece.
+     */
+    tabPieces: 'Pieces',
+    pool: 'Builders',
+    poolEmpty: 'Nobody on it yet.',
+    poolAgent: 'Agent',
+    poolHolding: 'Holding',
+    poolBuilt: 'Built',
+    poolSince: 'On it since',
+    poolSegment: 'Segment {ordinal}',
+    /** Idle is ordinary on a job cut on height, so it is worded as waiting rather than as nothing. */
+    poolIdle: 'Waiting for a piece',
+    /** An agent deleted mid-job keeps its label on what it built. */
+    poolGone: 'Deleted',
+    poolRemove: 'Take off',
+    addAgent: 'Add builders',
+    addHint: 'They are given pieces of {name} as those come free. Only agents in game on {server} can be put on it.',
+    addSelected: 'Add builders | Add {count} builder | Add {count} builders',
+    /** Said of the agents the picker greys out, so "why not that one" is answered in the dialog. */
+    pickerUnavailable: 'Not in game, or already on another job.',
+    takeOff: 'Take off this job',
+    joined: '{count} builder is on the job. | {count} builders are on the job.',
+
+    /** Narrowing a long pieces table. Every question asked of it is a state. */
+    filterAll: 'All',
+    filterWorking: 'Working',
+    filterFree: 'Free',
+    filterFailed: 'Failed',
+    filterBuilt: 'Built',
+    left: '{label} is off the job, and what it held is free again.',
+    /** Why a piece nobody holds is not a piece anybody can take. */
+    blockedBy: 'Waiting on {ordinals}',
+    /** And why one that is ready is still not going to {label}. */
+    releasedFrom: 'Taken off {label}, waiting for somebody else',
     assigned: 'Segment {ordinal} assigned.',
     /** What is still missing before a plan can be handed to anybody. */
     needNode: 'You may design a build but not dispatch the fleet.',
@@ -438,13 +478,19 @@ export const en = {
     /** The three things this screen does, as tabs. Nouns: they are places, not commands. */
     tabSchematics: 'Schematics',
     tabJobs: 'Jobs',
-    tabServers: 'Servers',
-    tabConnections: 'Connections',
+    tabFleet: 'Servers & connections',
 
-    assignTitle: 'Assign a server',
-    assignHint: 'Points every selected agent at one Minecraft server. Credentials are untouched — an account is the same account wherever it joins.',
+    /** One panel now, because setting a fleet up is all three of these in a row. */
+    fleetTitle: 'Act on the selected agents',
+    serverMode: 'Server',
+    hint_connect: 'Brings the selected agents into the game, one at a time. A refusal stops the run rather than leaving an unpredictable half of it done.',
+    hint_disconnect: 'Ends the session of every selected agent. What they were building is released and can be picked up again.',
+    hint_server: 'Points every selected agent at one Minecraft server. Credentials are untouched — an account is the same account wherever it joins.',
+    /** The button says what it will do and to how many: the number worth checking before pressing. */
+    connectCount: 'Connect {count} agent | Connect {count} agents',
+    disconnectCount: 'Disconnect {count} agent | Disconnect {count} agents',
+    assignCount: 'Assign {count} agent | Assign {count} agents',
     pickAgents: 'Select the agents to change.',
-    assign: 'Assign',
     applying: 'Applying…',
     /** These run one at a time and reach real servers, so which one matters more than that it is busy. */
     applyingOne: 'Applying {done} of {total}…',
@@ -458,8 +504,6 @@ export const en = {
     cleared: 'Took {count} agents off their server.',
     onlineExcluded: 'Online agents cannot be moved. Disconnect them first.',
 
-    powerTitle: 'Connect and disconnect',
-    powerHint: 'Brings a group in or out of game at once. Each agent is asked in turn, so a failure stops rather than leaving an unpredictable half done.',
     connect: 'Connect',
     disconnect: 'Disconnect',
     connected: 'Connected {count} agents.',
@@ -562,16 +606,18 @@ export const en = {
     pickBuilders: 'Select the agents that will build it.',
     /** Every reason at once: a per-agent one is the dot and the tooltip beside each row. */
     cannotBuild: 'These cannot build it: not in game, already on a job, or on another server.',
-    splitBetween: 'Split between {count}',
+    splitBetween: 'Split into {count}',
+    /** Pieces, which stopped being the same number as agents when agents became a pool. */
+    parts: 'Pieces',
+    partsDefault: 'One each ({count})',
+    partsQueue: '{parts} pieces for {agents} agents — they take the next one as they finish.',
     splitTitle: 'Divide between agents',
     splitting: 'Dividing…',
     mode: 'How to cut it',
     modeCOLUMNS: 'Columns',
-    modeLAYERS: 'Layers',
     modeGRID: 'Grid',
     modeHintCOLUMNS: 'Full-height pieces of the footprint. Every agent has its own ground and builds bottom-up without waiting for anyone.',
-    modeHintLAYERS: 'Horizontal slabs. The agent above has nothing to stand on until the one below is finished, so this only suits something flat.',
-    modeHintGRID: 'Cut on whichever axis is longest. Balances best, and can hand an agent a piece with no floor under it.',
+    modeHintGRID: 'Cuts on any axis, wherever the blocks balance. Pieces at one height go out together; the ones above them wait for a floor.',
     segment: 'Segment {ordinal}',
     segmentShare: '{blocks} blocks · {percent}%',
     splitShort: 'This divides into {parts} of the {requested} asked for. There is not enough of it to go further.',
@@ -765,7 +811,6 @@ export const en = {
     exportRecorded: 'The export is itself recorded, under your account.',
     exportOrder: 'Choose a start day on or before the end day.',
   },
-
 
   /** The lifecycle of an agent, as an operator reads it. */
   agentState: {

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot as Agent, Server, Share2, TriangleAlert } from 'lucide-vue-next'
 import AgentList from '../components/AgentList.vue'
 import FleetGraph from '../components/FleetGraph.vue'
 import HostList from '../components/HostList.vue'
 import { useQueryTab } from '../lib/queryState'
+import { useSlide } from '../lib/motion'
+import TabBar, { type Tab as Strip } from '../components/TabBar.vue'
 import { useAgentStore } from '../stores/agents'
 
 /**
@@ -30,11 +32,17 @@ const TABS = ['bots', 'hosts', 'graph'] as const
 /** In the URL, like Operations beside it, so a tab can be linked to and Back returns to it. */
 const tab = useQueryTab<Tab>('tab', TABS, 'bots')
 
+const slide = useSlide(tab, TABS)
+
 const tabs: Array<{ id: Tab; label: string; icon: typeof Agent }> = [
   { id: 'bots', label: 'resources.tabBots', icon: Agent },
   { id: 'hosts', label: 'resources.tabHosts', icon: Server },
   { id: 'graph', label: 'resources.tabGraph', icon: Share2 },
 ]
+
+const strip = computed<Strip<Tab>[]>(() =>
+  tabs.map((entry) => ({ id: entry.id, label: t(entry.label), icon: entry.icon })),
+)
 
 onMounted(() => {
   if (!agentStore.loaded) void agentStore.refresh()
@@ -42,34 +50,25 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('resources.title') }}</h1>
       <p class="text-sm opacity-60">{{ t('resources.subtitle') }}</p>
     </header>
 
-    <div role="tablist" class="tabs tabs-border">
-      <button
-        v-for="entry in tabs"
-        :key="entry.id"
-        type="button"
-        role="tab"
-        class="tab gap-2"
-        :class="tab === entry.id ? 'tab-active' : ''"
-        @click="tab = entry.id"
-      >
-        <component :is="entry.icon" class="size-4" />
-        {{ t(entry.label) }}
-      </button>
-    </div>
+    <TabBar v-model="tab" :tabs="strip" />
 
     <div v-if="agentStore.error" role="alert" class="alert alert-error alert-soft">
       <TriangleAlert class="size-4" />
       <span>{{ agentStore.error }}</span>
     </div>
 
-    <AgentList v-if="tab === 'bots'" />
-    <HostList v-else-if="tab === 'hosts'" />
-    <FleetGraph v-else />
+    <div class="osmium-slide min-h-0 flex-1">
+      <Transition :name="slide">
+      <AgentList v-if="tab === 'bots'" />
+      <HostList v-else-if="tab === 'hosts'" />
+      <FleetGraph v-else />
+      </Transition>
+    </div>
   </div>
 </template>

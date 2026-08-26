@@ -13,10 +13,13 @@ type AgentState = AgentResponse['state']
  */
 export const STATE_DOT: Record<AgentState, string> = {
   ONLINE: 'bg-success',
-  LINKED: 'bg-base-content/40',
-  CONNECTING: 'bg-info',
-  UNLINKED: 'bg-base-content/25',
-  SETUP_PENDING: 'bg-info',
+  LINKED: 'osmium-dot-idle',
+  // In flight, and drawn as such: see `.osmium-dot-pending`. The info token these used to take is a
+  // light cyan, which beside a light green at eight pixels across is not a distinction anybody can
+  // make — an agent on its way in looked like one already in the game.
+  CONNECTING: 'osmium-dot-pending',
+  UNLINKED: 'osmium-dot-off',
+  SETUP_PENDING: 'osmium-dot-pending',
   NEEDS_RELINK: 'bg-error',
   CONNECT_FAILED: 'bg-error',
   STALE: 'bg-warning',
@@ -61,15 +64,20 @@ export function stateLabel(state: AgentState): string {
  * the pairing cannot outlive the session; guarding on it anyway means a stale assignment can never
  * paint a disconnected agent as busy.
  */
-const BUILDING_DOT = 'bg-info'
-const BUILDING_BADGE = 'badge-info badge-soft'
+/**
+ * Its own colour rather than the info token, which connecting also used: two blues at the size a
+ * dot is drawn are one blue, and "on its way into the game" and "placing blocks" are the two
+ * states an operator most needs to tell apart. See `style.css`.
+ */
+const BUILDING_DOT = 'osmium-dot-building'
+const BUILDING_BADGE = 'osmium-badge-building'
 
 function substituted(state: AgentState, building: boolean): boolean {
   return building && state === 'ONLINE'
 }
 
 export function agentDot(state: AgentState, building = false): string {
-  return substituted(state, building) ? BUILDING_DOT : (STATE_DOT[state] ?? 'bg-base-content/30')
+  return substituted(state, building) ? BUILDING_DOT : (STATE_DOT[state] ?? 'osmium-dot-off')
 }
 
 export function agentBadge(state: AgentState, building = false): string {

@@ -70,6 +70,14 @@
  * needing to out-specify it.
  */
 
+/*
+ * One curve for everything that moves. It leaves quickly and arrives slowly, which is how a thing
+ * with weight behaves; the symmetric easings CSS ships with read as a mechanism instead.
+ */
+:root {
+  --osmium-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 /* A row, cell or badge whose value just changed. Applied by `v-flash`. */
 .osmium-flash {
   animation: osmium-flash 1.1s ease-out;
@@ -84,16 +92,612 @@
   }
 }
 
-/* A line that has just arrived on a feed, from `<TransitionGroup name="feed">`. */
-.feed-enter-from {
-  opacity: 0;
-  transform: translateY(-0.4rem);
+/*
+ * A line that has just arrived on a feed, from `<TransitionGroup name="feed">`. Keyframes for the
+ * same reason as everything under **the interface answering** below: a line lands while the page
+ * is busy with whatever else the stream brought, and a two-state transition swapped a frame late
+ * shows the line sitting there before it begins to move.
+ */
+@keyframes osmium-feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+}
+
+/*
+ * And what the rows already there do about it. A line arrives at the top of the transcript, so
+ * everything under it is a row lower than it was — instantly, while the new line was still fading
+ * in, which is the jump this removes.
+ */
+.feed-move {
+  transition: transform 0.24s var(--osmium-ease);
 }
 
 .feed-enter-active {
+  opacity: 0;
+  transform: translateY(-0.4rem);
+  animation: osmium-feed-in 0.25s ease-out both;
+}
+
+/*
+ * The second kind of motion: **the interface answering.**
+ *
+ * The rule above is about information — something changed, and movement is how an operator who
+ * looked away finds out. Everything in this block is about the opposite: nothing changed, somebody
+ * did something, and the answer arrives over a few frames instead of between two of them. A press
+ * that lands, a page that settles, a row that appears rather than being there suddenly.
+ *
+ * The budget is the point. Nothing here runs longer than 250ms, nothing moves more than about a
+ * quarter of a line, and nothing loops. An effect an operator has time to watch is one they will
+ * be waiting on by the tenth time they see it, and this is a screen people keep open all day.
+ */
+
+/*
+ * A pressed button gives, slightly. daisyUI already transitions `transform` on `.btn` over 200ms,
+ * which is right for a hover and much too slow for a press — the finger is off the mouse before
+ * the button finishes arriving — so the duration is cut for this one state.
+ */
+.btn:not(:disabled):not(.btn-disabled):active {
+  transform: scale(0.97);
+  transition-duration: 0.06s;
+}
+
+/*
+ * A progress bar that eases to its new value. This is the one place the two kinds meet: it is a
+ * change worth noticing *and* the thing on screen most likely to be watched, and a bar that jumps
+ * every five seconds reads as a series of unrelated numbers rather than as a build filling in.
+ *
+ * Both pseudo-elements, because they are the same bar in different engines and neither is
+ * reachable from the other.
+ */
+progress::-webkit-progress-value {
+  transition: inline-size 0.5s ease-out;
+}
+
+progress::-moz-progress-bar {
+  transition: inline-size 0.5s ease-out;
+}
+
+/*
+ * A page arriving. Down rather than up: the content settles into the frame it is going to occupy,
+ * which reads as the page having loaded, where rising reads as something being dismissed.
+ *
+ * **Nothing here animates a page leaving, and the two are never sequenced.** Views are loaded on
+ * demand, so the first visit to one waits on its chunk. Fading the old page out first put that
+ * wait *after* the screen had already gone blank: the page an operator asked for read as one that
+ * had failed to load, and every navigation carried the delay whether or not anything was fetched.
+ * The outgoing view is dropped at once and the incoming one fades in when it is ready.
+ *
+ * **Keyframes rather than a transition, and the same goes for every entrance below.** A Vue
+ * transition is two states and a class swap between them: the element is inserted wearing
+ * `-enter-from`, and the class is taken off two frames later. Mounting a panel is not free — a
+ * table of sixty rows, a canvas, a view that lays out on arrival — and when that work overruns
+ * the frame, the swap lands late. What an operator sees is the content arrive, sit still, and
+ * only then begin to move. An animation with `both` cannot do that: its first frame *is* its own
+ * 0%, so it starts where it is supposed to no matter which frame the element is first painted in.
+ */
+@keyframes osmium-page-in {
+  from {
+    opacity: 0;
+    translate: 0 -0.5rem;
+  }
+}
+
+/*
+ * **No start state declared on this class, unlike the panels below**, and the difference is what
+ * a page is.
+ *
+ * A view's root element is inserted the moment the route resolves and fills in afterwards — data
+ * arriving, a table laying out, a canvas taking its size. Holding it at `opacity: 0` for the
+ * length of the animation therefore bought a blank frame rather than a start frame: the page was
+ * there, invisible, filling in, and appeared all at once when the class came off with the
+ * movement already spent. The animation runs over whatever has been painted instead, which is the
+ * honest thing to show — a page filling in is a page filling in.
+ *
+ * The panels can declare their start because their content is mounted and laid out before they
+ * are swapped in. A page is not.
+ */
+.page-enter-active {
+  animation: osmium-page-in 0.28s var(--osmium-ease) both;
+  will-change: opacity, translate;
+}
+
+/*
+ * The panel under a set of tabs.
+ *
+ * It moves the way the tab strip does: pick a tab to the right and the panel arrives from the
+ * right while the old one leaves to the left. Which makes the two panels read as neighbours on one
+ * strip rather than as a slideshow, and going back the way you came undoes it exactly.
+ *
+ * Both halves move, and that is what needs the absolute leave. The outgoing panel is taken out of
+ * the flow so the incoming one sets the height immediately - otherwise the container is briefly as
+ * tall as both and everything under it jumps. It is on its way out and fading, so being the wrong
+ * height for 200ms costs nothing; being in the flow would cost a jump every time.
+ *
+ * The leaving half is quicker than the arriving one on purpose: it wants to be gone before the
+ * panel replacing it has settled, or the two are visible through each other halfway across.
+ */
+@keyframes osmium-panel-in-next {
+  from {
+    opacity: 0;
+    translate: 1.25rem 0;
+  }
+}
+
+@keyframes osmium-panel-in-prev {
+  from {
+    opacity: 0;
+    translate: -1.25rem 0;
+  }
+}
+
+@keyframes osmium-panel-out-next {
+  to {
+    opacity: 0;
+    translate: -1.25rem 0;
+  }
+}
+
+@keyframes osmium-panel-out-prev {
+  to {
+    opacity: 0;
+    translate: 1.25rem 0;
+  }
+}
+
+.panel-next-enter-active {
+  opacity: 0;
+  translate: 1.25rem 0;
+  animation: osmium-panel-in-next 0.26s var(--osmium-ease) both;
+}
+
+.panel-prev-enter-active {
+  opacity: 0;
+  translate: -1.25rem 0;
+  animation: osmium-panel-in-prev 0.26s var(--osmium-ease) both;
+}
+
+.panel-next-leave-active {
+  animation: osmium-panel-out-next 0.18s ease-in both;
+}
+
+.panel-prev-leave-active {
+  animation: osmium-panel-out-prev 0.18s ease-in both;
+}
+
+.panel-next-enter-active,
+.panel-prev-enter-active,
+.panel-next-leave-active,
+.panel-prev-leave-active {
+  will-change: opacity, translate;
+}
+
+.panel-next-leave-active,
+.panel-prev-leave-active {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+}
+
+/*
+ * The tab itself. daisyUI eases the underline and leaves the label to snap, which reads as two
+ * controls rather than one - the line slides in under a word that has already changed colour.
+ */
+.tab {
   transition:
-    opacity 0.25s ease-out,
-    transform 0.25s ease-out;
+    color 0.2s ease-out,
+    background-color 0.2s ease-out;
+}
+
+/*
+ * A pinned table header has to be opaque, or the rows scroll through it. daisyUI paints it
+ * `base-100`, which is right for the tables that sit straight on the page - a job card's pieces -
+ * and wrong for every table inside a card, because those cards are `base-200` and the header then
+ * reads as a lighter band that was never there before the header was pinned.
+ */
+.card .table-pin-rows :is(thead, tfoot) tr {
+  background-color: var(--color-base-200);
+}
+/*
+ * The strip drawn by `TabBar.vue`: one marker that travels, rather than daisyUI's per-tab one
+ * that fades out here and in there. Both of daisyUI's are switched off inside this strip - the
+ * `::before` underline it gives every tab, and the filled background it gives the active one in a
+ * boxed strip - because the marker below is now drawing both.
+ */
+.osmium-tabs .tab::before {
+  display: none;
+}
+
+.osmium-tabs.tabs-box .tab-active {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+/*
+ * `left: 0` is the origin the travel is measured from; the offset itself is a translate, which is
+ * the half of this the compositor can carry. No `top` here: the underline pins to the bottom and the
+ * pill pins to the top, and setting both on an element with a height silently drops one of them.
+ */
+.osmium-tab-marker {
+  position: absolute;
+  left: 0;
+  pointer-events: none;
+  border-radius: var(--radius-field);
+  transition:
+    translate 0.28s var(--osmium-ease),
+    width 0.28s var(--osmium-ease);
+}
+
+.osmium-tab-marker-line {
+  bottom: 0;
+  height: 3px;
+  background-color: var(--color-base-content);
+}
+
+/* Top and height come from the tab it covers, so nothing here has to know the strip's padding. */
+.osmium-tab-marker-pill {
+  top: 0;
+  background-color: var(--color-base-100);
+}
+
+/*
+ * What a panel is swapped inside, wherever it slides sideways to get there.
+ *
+ * A panel arrives from 1.25rem outside the frame and the one it replaces leaves the same way,
+ * which for those few hundred milliseconds is content past the right-hand edge of the page — and
+ * a horizontal scrollbar appeared for exactly as long as the animation took, shifting everything
+ * it could still reach.
+ *
+ * `clip` rather than `hidden`, and only across: `hidden` would make this a scroll container in
+ * both directions, which takes the page’s own scrolling away from it, and clipping downward
+ * would cut off every select and menu a panel opens.
+ */
+.osmium-slide {
+  position: relative;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+
+/*
+ * What holds a panel while it is being swapped for another one.
+ *
+ * The panel leaving is taken out of the flow, so the one arriving sets the height on the frame it
+ * arrives in — and everything below the swap, the wizard's Back and Next among it, jumped to meet
+ * it while the panel itself was still sliding. The movement was right and the room it moved in was
+ * not.
+ *
+ * The height is set in pixels by `SwapBox.vue`, which measures the content: `auto` cannot be
+ * transitioned by content changing under it, with or without `interpolate-size`, because a
+ * transition fires on a computed value changing and `auto` stays `auto` whatever is inside.
+ */
+.osmium-swap {
+  transition: height 0.3s var(--osmium-ease);
+  overflow-x: clip;
+  overflow-y: visible;
+}
+
+/* Only while the height is moving: the panels hold pickers that open past their own edges. */
+.osmium-swap-busy {
+  overflow: clip;
+}
+
+/*
+ * A dialog has to be a thing lying on the page, not a hole in it.
+ *
+ * daisyUI paints a modal in `base-100`, which is exactly what this theme paints the page in: at
+ * depth zero there is no shadow either, so the box and what it covered were the same colour with a
+ * corner radius somewhere in the middle of them. It takes the card surface instead — the same
+ * `base-200` every panel in the application sits on — with the same hairline border, and a shadow
+ * dark enough to read on a dark ground.
+ *
+ * And the scrim behind it is deepened: daisyUI dims to 40% black, which over a near-black page is
+ * barely a dim at all.
+ */
+.modal-box {
+  background-color: var(--color-base-200);
+  border: 1px solid var(--color-base-300);
+  box-shadow: 0 1.5rem 3.5rem -0.75rem oklch(0% 0 0 / 0.7);
+}
+
+.modal[open] {
+  background-color: oklch(0% 0 0 / 0.6);
+}
+/*
+ * The two quiet states: set up but not in the game, and not set up at all.
+ *
+ * Blended rather than faded. A dot at 40% of the text colour is 60% a window, and these are drawn
+ * on top of a player head — so an agent that was not in the game had its own face showing through
+ * the thing reporting that. A mix gives the same weight without the window.
+ */
+.osmium-dot-idle {
+  background-color: color-mix(in oklab, var(--color-base-content) 40%, var(--color-base-100));
+}
+
+.osmium-dot-off {
+  background-color: color-mix(in oklab, var(--color-base-content) 22%, var(--color-base-100));
+}
+
+/*
+ * The three states the fleet is read by, and the one rule between them: **a colour says what an
+ * agent is doing, and movement says it is on its way somewhere.**
+ *
+ * Online is the success green. Building is its own violet — not the info token it used to share
+ * with connecting, because two blues eight pixels across are one blue. And connecting is a blue
+ * that *pings*: it is the only one of the three that is a state being passed through rather than
+ * a state being in, and no colour can say that on its own.
+ *
+ * Building does not pulse, deliberately. It is a steady thing an agent does for an hour at a
+ * time, and a fleet of twenty of them breathing in a sidebar is a screen nobody can read past.
+ */
+:root {
+  --osmium-building: oklch(72% 0.16 300);
+}
+
+.osmium-dot-building {
+  background-color: var(--osmium-building);
+}
+
+/* Shaped like daisyUI’s own soft badges: the hue at low strength behind the hue at full. */
+.osmium-badge-building {
+  background-color: color-mix(in oklab, var(--osmium-building) 18%, transparent);
+  border-color: transparent;
+  color: var(--osmium-building);
+}
+
+.osmium-progress-building::-webkit-progress-value {
+  background-color: var(--osmium-building);
+}
+
+.osmium-progress-building::-moz-progress-bar {
+  background-color: var(--osmium-building);
+}
+
+/*
+ * Connecting, or waiting for a host to finish setting an agent up.
+ *
+ * The ring is what moves, not the dot. Fading the dot itself made it translucent, and a
+ * translucent dot on a player head shows the face through it — the status of an agent drawn as a
+ * window onto its own avatar. A shadow spreading out of an opaque dot says the same thing and
+ * covers what it sits on.
+ */
+.osmium-dot-pending {
+  background-color: oklch(74% 0.13 248);
+  animation: osmium-ping 1.6s ease-out infinite;
+}
+
+@keyframes osmium-ping {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in oklab, oklch(74% 0.13 248) 60%, transparent);
+  }
+
+  to {
+    box-shadow: 0 0 0 5px oklch(74% 0.13 248 / 0);
+  }
+}
+/*
+ * The stepper drawn by `StepBar.vue`. The coloured line grows to the step you are on, and the
+ * circles change with it — a step being finished is a small thing and it moves like one.
+ *
+ * The line is the slower of the two on purpose: it is the part that travels, and a colour that
+ * arrives at the far circle before the line has reached it reads as two separate events.
+ */
+.osmium-step-fill {
+  transition: width 0.32s var(--osmium-ease);
+}
+
+.osmium-step-dot,
+.osmium-step-label {
+  transition:
+    color 0.22s ease-out,
+    background-color 0.22s ease-out,
+    opacity 0.22s ease-out;
+}
+
+/* Before it has been measured. It has nowhere to be yet, and no distance to have travelled. */
+.osmium-tab-marker-idle {
+  opacity: 0;
+  transition: none;
+}
+
+/*
+ * A control that comes and goes over something else — the graph's Fit button. Opacity only: it
+ * is out of the flow, so there is nothing for it to push and nothing to make room for.
+ */
+@keyframes osmium-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.fade-enter-active {
+  opacity: 0;
+  animation: osmium-fade-in 0.16s ease-out both;
+}
+
+.fade-leave-active {
+  transition: opacity 0.12s ease-in;
+}
+
+.fade-leave-to {
+  opacity: 0;
+}
+
+/*
+ * Where you are, and what is open, said the same way: a green rule down the left of the row.
+ *
+ * daisyUI marks an active menu row by tinting its background, which on this theme is a shade of
+ * the same near-black as the row beside it — legible if you look for it, invisible if you are
+ * glancing at a sidebar to find out where you are. A line at the edge is read without being
+ * looked at, and it costs no colour anywhere else in the row.
+ *
+ * The chat toggle takes the same mark because it means the same kind of thing: not a place you
+ * are, but a panel that is open, which is the closest thing the sidebar has to one.
+ */
+.menu :where(li) > .router-link-active,
+.menu :where(li) > .menu-active {
+  position: relative;
+}
+
+.menu :where(li) > .router-link-active::before,
+.menu :where(li) > .menu-active::before {
+  content: '';
+  position: absolute;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  left: 0;
+  width: 3px;
+  border-radius: var(--radius-field);
+  background-color: var(--color-primary);
+  animation: osmium-rail-in 0.22s var(--osmium-ease) both;
+}
+
+/* Grown from the middle rather than switched on: the mark moves between rows as a page is opened,
+   and a line that simply exists in its new place reads as two lines rather than one moving. */
+@keyframes osmium-rail-in {
+  from {
+    opacity: 0;
+    scale: 1 0.2;
+  }
+}
+/*
+ * A section of the sidebar opening and shutting.
+ *
+ * The track is what moves: '0fr' to '1fr' on a grid row, which is the one way a height of 'auto'
+ * can be animated at all — the content keeps its own measured height and the row it sits in grows
+ * to meet it. 'v-show' blinked, which read as the one part of the interface that was not part of
+ * the same interface as everything else that moves.
+ */
+.osmium-reveal {
+  transition: grid-template-rows 0.24s var(--osmium-ease);
+}
+
+/*
+ * The row is what has the height, and this is what keeps its contents inside it while that
+ * height is on its way to zero.
+ *
+ * Its own element rather than `.osmium-reveal > *`, which is the same rule written to hit
+ * whatever happened to be inside — and what happened to be inside was the list that scrolls.
+ * An unlayered `overflow: hidden` beats a utility class, so the sidebar stopped scrolling.
+ */
+.osmium-reveal-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+/*
+ * Rows and cards that come and go: a filter changing, a job starting, a host answering at last.
+ *
+ * Short and small — 200ms, a fade and nothing else for a row — because a list of forty that each
+ * arrived with a flourish would be a page nobody could read while it was loading.
+ *
+ * **Staggered, which is what makes an arriving list read as a list.** Twenty rows fading in on
+ * the same frame is one flash, and a filter that changes the whole table is exactly that case.
+ * A few milliseconds between the first rows turns it into a run down the page. The delay stops
+ * climbing after ten, or the last row of a long list would arrive noticeably after somebody had
+ * already started reading the first.
+ */
+@keyframes osmium-row-in {
+  from {
+    opacity: 0;
+    translate: -0.75rem 0;
+  }
+}
+
+@keyframes osmium-card-in {
+  from {
+    opacity: 0;
+    translate: 0 -0.5rem;
+  }
+}
+
+/* Arriving *from* somewhere, mirroring the way one leaves: a bare fade on a row that also shifts
+   the rows under it is a change nobody catches. */
+.rows-enter-active {
+  opacity: 0;
+  translate: -0.75rem 0;
+  animation: osmium-row-in 0.2s ease-out both;
+}
+
+.rows-enter-active:nth-child(2) {
+  animation-delay: 25ms;
+}
+
+.rows-enter-active:nth-child(3) {
+  animation-delay: 50ms;
+}
+
+.rows-enter-active:nth-child(4) {
+  animation-delay: 75ms;
+}
+
+.rows-enter-active:nth-child(5) {
+  animation-delay: 100ms;
+}
+
+.rows-enter-active:nth-child(6) {
+  animation-delay: 125ms;
+}
+
+.rows-enter-active:nth-child(7) {
+  animation-delay: 150ms;
+}
+
+.rows-enter-active:nth-child(8) {
+  animation-delay: 175ms;
+}
+
+.rows-enter-active:nth-child(n + 9) {
+  animation-delay: 200ms;
+}
+
+/*
+ * Leaving, which used to be nothing at all.
+ *
+ * A row fades where it stands and then the space closes under it. Taking it out of the flow
+ * would let the space close first, but a table row out of the flow collapses the column it was
+ * holding open — so the order here is the honest one: it goes, then the gap does.
+ */
+.rows-leave-active {
+  transition:
+    opacity 0.2s ease-in,
+    translate 0.2s ease-in;
+}
+
+/* Sideways as well as out. A row that only fades, in a list that closes the gap the moment it is
+   gone, is a change of opacity nobody catches; leaving *towards* somewhere reads as leaving. */
+.rows-leave-to {
+  opacity: 0;
+  translate: -0.75rem 0;
+}
+
+.cards-enter-active {
+  opacity: 0;
+  translate: 0 -0.5rem;
+  animation: osmium-card-in 0.28s var(--osmium-ease) both;
+  will-change: opacity, translate;
+}
+
+/*
+ * A card *is* taken out of the flow on the way out, because a card has no columns to collapse —
+ * so the ones below it close the gap while it is still fading rather than after.
+ */
+.cards-leave-active {
+  position: absolute;
+  inset-inline: 0;
+  transition:
+    opacity 0.2s ease-in,
+    translate 0.24s var(--osmium-ease);
+}
+
+.cards-leave-to {
+  opacity: 0;
+  translate: 0 -0.5rem;
+}
+
+/* What makes the rows below an insertion slide to meet it rather than teleport. */
+.rows-move,
+.cards-move {
+  transition: transform 0.28s var(--osmium-ease);
 }
 
 /*
@@ -139,12 +743,57 @@
     animation: none;
   }
 
-  .feed-enter-active {
+  /* The answering kind, off on the same terms: none of it carries anything the page does not. */
+  .btn:not(:disabled):not(.btn-disabled):active {
+    transform: none;
+  }
+
+  progress::-webkit-progress-value {
     transition: none;
   }
 
-  .feed-enter-from {
+  progress::-moz-progress-bar {
+    transition: none;
+  }
+
+  .tab,
+  .osmium-reveal,
+  .rows-leave-active,
+  .feed-move,
+  .cards-leave-active,
+  .osmium-swap,
+  .osmium-tab-marker,
+  .osmium-step-fill,
+  .osmium-step-dot,
+  .osmium-step-label,
+  .rows-move,
+  .cards-move {
+    transition: none;
+  }
+
+  .page-enter-active,
+  .fade-enter-active,
+  .fade-leave-active,
+  .panel-next-enter-active,
+  .panel-prev-enter-active,
+  .panel-next-leave-active,
+  .panel-prev-leave-active,
+  .menu :where(li) > .router-link-active::before,
+  .menu :where(li) > .menu-active::before,
+  .rows-enter-active,
+  .cards-enter-active,
+  /* The colour still says it; only the breathing stops. */
+  .osmium-dot-pending,
+  .feed-enter-active {
+    animation: none;
     opacity: 1;
+    translate: none;
     transform: none;
+  }
+
+  /* Back in the flow, since nothing is animating over it. */
+  .panel-next-leave-active,
+  .panel-prev-leave-active {
+    position: static;
   }
 }

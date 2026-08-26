@@ -24,8 +24,16 @@ const props = withDefaults(
     unavailable?: FleetAgent[]
     unavailableNote?: string
     title?: string
+    /**
+     * Drops the card around it, for where it is already inside one.
+     *
+     * In a dialog the card was a second surface inside the first, with its own border, its own
+     * padding and its own heading directly under the dialog’s — the list ended up inset from
+     * everything around it and titled twice. The dialog's own box is the card there.
+     */
+    bare?: boolean
   }>(),
-  { unavailable: () => [], unavailableNote: '', title: '' },
+  { unavailable: () => [], unavailableNote: '', title: '', bare: false },
 )
 
 const { t } = useI18n()
@@ -106,30 +114,28 @@ watch(
 </script>
 
 <template>
-  <div class="card border-base-300 bg-base-200 h-fit border">
-    <div class="card-body gap-3">
-      <div class="flex items-center justify-between">
-        <h2 class="card-title flex items-center gap-2 text-base">
+  <div :class="bare ? '' : 'card border-base-300 bg-base-200 h-fit border'">
+    <div :class="bare ? 'flex flex-col gap-3' : 'card-body gap-3'">
+      <div v-if="!bare || selected.length" class="flex items-center justify-between">
+        <h2 v-if="!bare" class="card-title flex items-center gap-2 text-base">
           <Agent class="text-primary size-4" />
           {{ title || t('configuration.agents') }}
         </h2>
-        <span v-if="selected.length" class="badge badge-sm">
+        <span v-if="selected.length" class="badge badge-sm ml-auto">
           {{ t('configuration.selected', { count: selected.length }) }}
         </span>
       </div>
 
-      <!--
-        Past a handful, on the same threshold the schematic library uses. A search box over three
-        agents is a control that costs more room than the list it searches.
-      -->
-      <label v-if="agents.length + unavailable.length > 5" class="input input-sm">
+      <!-- Always, like every other list with a search: a control that comes and goes is one an
+           operator has to look for rather than reach for. -->
+      <label class="input input-sm w-full">
         <Search class="size-4 opacity-60" />
         <input v-model="query" type="search" :placeholder="t('configuration.filterAgents')" />
       </label>
 
       <label
         v-if="visible.length"
-        class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5 text-sm"
+        class="rounded-field hover:bg-base-300/40 -mx-2 flex cursor-pointer items-center gap-3 px-2 py-1.5 text-sm"
       >
         <input type="checkbox" class="checkbox checkbox-sm" :checked="allSelected" @change="toggleAll" />
         <!--
@@ -150,11 +156,16 @@ watch(
         wanted. Both lists are inside the same scroller, since the unavailable ones grow the card
         just as well as the available ones.
       -->
-      <div class="-mr-1 flex max-h-[26rem] flex-col gap-0.5 overflow-y-auto pr-1">
+      <div class="-mx-2 flex max-h-[26rem] flex-col gap-0.5 overflow-y-auto">
+      <!--
+        No transition on either list. Nothing is ever added to these: they are re-listed, by a
+        search or by a change of what the operator intends to do, and animating a re-list means
+        forty rows playing at once every time a letter is typed.
+      -->
       <ul class="flex flex-col gap-0.5">
         <li v-for="agent in visible" :key="agent.id">
           <label
-            class="rounded-field hover:bg-base-content/5 flex cursor-pointer items-center gap-3 px-2 py-1.5"
+            class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-center gap-3 px-2 py-1.5 transition-colors"
           >
             <input v-model="selected" type="checkbox" :value="agent.id" class="checkbox checkbox-sm" />
             <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))">
@@ -198,6 +209,11 @@ watch(
             class="flex items-center gap-3 px-2 py-1.5"
             :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))"
           >
+            <!--
+              Disabled rather than absent. Without it these rows start a whole checkbox to the left
+              of the ones above them, and one list reads as two different kinds of thing.
+            -->
+            <input type="checkbox" class="checkbox checkbox-sm" disabled />
             <span class="relative shrink-0">
               <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
               <span
@@ -227,13 +243,13 @@ watch(
       </template>
       </div>
 
-      <p v-if="!agents.length && !unavailable.length" class="px-2 py-4 text-center text-sm opacity-50">
+      <p v-if="!agents.length && !unavailable.length" class="px-2 py-10 text-center text-sm opacity-50">
         {{ t('configuration.noAgents') }}
       </p>
       <!-- A search that matches nothing is not an empty fleet, and must not read as one. -->
       <p
         v-else-if="!visible.length && !visibleUnavailable.length"
-        class="px-2 py-4 text-center text-sm opacity-50"
+        class="px-2 py-10 text-center text-sm opacity-50"
       >
         {{ t('configuration.noMatches') }}
       </p>

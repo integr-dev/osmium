@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronLeft, ChevronRight, Server, UserPlus } from 'lucide-vue-next'
 import FormField from './FormField.vue'
+import StepBar, { type Step } from './StepBar.vue'
+import SwapBox from './SwapBox.vue'
+import { useSlide } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { useRouter } from 'vue-router'
 
@@ -14,6 +17,15 @@ const router = useRouter()
 
 const dialogEl = ref<HTMLDialogElement | null>(null)
 const step = ref<1 | 2>(1)
+
+/** Two steps, so the direction is which one is being asked for. */
+const slide = useSlide(() => String(step.value), ['1', '2'])
+
+/** Ids as strings, because a step is named on the line by its position rather than by a value. */
+const beads = computed<Step[]>(() => [
+  { id: '1', label: t('agents.identity') },
+  { id: '2', label: t('agents.host') },
+])
 const draft = ref({ label: '', serverAddress: '', hostId: null as number | null })
 const error = ref<string | null>(null)
 const busy = ref(false)
@@ -69,13 +81,15 @@ async function submit() {
         {{ t('agents.addTitle') }}
       </h3>
 
-      <ul class="steps mt-4 w-full">
-        <li class="step step-primary text-xs">{{ t('agents.identity') }}</li>
-        <li class="step text-xs" :class="step === 2 ? 'step-primary' : ''">{{ t('agents.host') }}</li>
-      </ul>
+      <div class="mt-4">
+        <StepBar :steps="beads" :current="String(step)" />
+      </div>
 
       <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
-        <template v-if="step === 1">
+        <!-- The same movement as the wizard: a step arrives from the side its marker is on. -->
+        <SwapBox>
+          <Transition :name="slide">
+        <div v-if="step === 1" class="flex flex-col gap-4">
           <FormField
             v-model="draft.label"
             :label="t('agents.label')"
@@ -97,13 +111,13 @@ async function submit() {
             type="text"
           />
           <p class="text-xs opacity-60">{{ t('agents.serverLaterHint') }}</p>
-        </template>
+        </div>
 
-        <template v-else>
+        <div v-else class="flex flex-col gap-4">
           <p class="text-sm opacity-60">{{ t('agents.hostStepHint') }}</p>
           <ul v-if="agentStore.hosts.length" class="flex flex-col gap-1">
             <li v-for="host in agentStore.hosts" :key="host.id">
-              <label class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-center gap-3 p-3">
+              <label class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-center gap-3 p-3">
                 <input
                   v-model="draft.hostId"
                   type="radio"
@@ -122,10 +136,12 @@ async function submit() {
               </label>
             </li>
           </ul>
-          <p v-else class="rounded-field bg-base-300/30 px-3 py-4 text-center text-sm opacity-60">
+          <p v-else class="py-10 text-center text-sm opacity-50">
             {{ t('agents.noHosts') }}
           </p>
-        </template>
+        </div>
+          </Transition>
+        </SwapBox>
 
         <div v-if="error" role="alert" class="alert alert-error alert-soft">
           <span>{{ error }}</span>

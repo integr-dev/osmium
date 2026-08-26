@@ -11,7 +11,6 @@ import {
   Hammer,
   Heart,
   Layers,
-  Map,
   ShieldAlert,
   TriangleAlert,
 } from 'lucide-vue-next'
@@ -23,11 +22,11 @@ import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { jobFigures } from '../lib/jobs'
 import { summariseVitals } from '../lib/vitals'
-import type { SegmentState } from '../api/jobs'
 import { bucketByHour } from '../lib/series'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { nodeLabel } from '../lib/nodeLabel'
 import { useHistoryStore } from '../stores/history'
+import { atTime } from '../lib/time'
 
 const { t, n } = useI18n()
 const route = useRoute()
@@ -68,32 +67,12 @@ async function moreActivity(): Promise<void> {
 }
 
 /** Time only: the feed is a working day's worth, and the date is noise inside one. */
-function formatTime(at: string): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
-
 const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
   INFO: 'bg-base-content/30',
   WARNING: 'bg-warning',
   ERROR: 'bg-error',
 }
 
-/** The same colours the Jobs panel uses, so one segment reads the same on both screens. */
-const SEGMENT_PROGRESS: Record<SegmentState, string> = {
-  DONE: 'progress-success',
-  BUILDING: 'progress-info',
-  ASSIGNED: 'progress-info',
-  FAILED: 'progress-error',
-  PENDING: '',
-}
-
-const SEGMENT_BADGE: Record<SegmentState, string> = {
-  DONE: 'badge-success',
-  BUILDING: 'badge-info',
-  ASSIGNED: 'badge-info',
-  FAILED: 'badge-error',
-  PENDING: 'badge-ghost',
-}
 
 const eta = computed(() => {
   const minutes = build.value.etaMinutes
@@ -244,13 +223,11 @@ const vitalRows = computed(() =>
     })),
 )
 
-function percent(part: number, whole: number): number {
-  return Math.min(100, (part / whole) * 100)
-}
+
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
     <!--
       Why this page rather than the one that was asked for. The guard sends anyone without a route's
       node here, and doing that silently made a bookmarked link look broken instead of restricted.
@@ -307,7 +284,7 @@ function percent(part: number, whole: number): number {
 
         <span
           class="badge badge-sm gap-1"
-          :class="build.perMinute > 0 ? 'badge-success badge-soft' : 'badge-error badge-soft'"
+          :class="build.perMinute > 0 ? 'osmium-badge-building' : 'badge-error badge-soft'"
         >
           {{ build.perMinute > 0 ? t('dashboard.building') : t('dashboard.stalled') }}
         </span>
@@ -394,7 +371,7 @@ function percent(part: number, whole: number): number {
           </span>
         </div>
         <progress
-          class="progress progress-primary w-full"
+          class="progress osmium-progress-building w-full"
           :value="build.percent"
           max="100"
         ></progress>
@@ -428,15 +405,18 @@ function percent(part: number, whole: number): number {
               against, so `flex-1` resolves to the content and the card grows instead of scrolling.
               At lg the row sets the height and a cap would put back the gap it was sized to fill.
             -->
-            <ul
-              v-if="scopedAttention.length"
+            <!-- Always mounted so the first thing to go wrong is an insertion rather than the
+                 birth of the list, which a group does not animate. -->
+            <TransitionGroup
+              name="rows"
+              tag="ul"
               class="flex max-h-64 min-h-0 flex-1 flex-col gap-1 overflow-y-auto lg:max-h-none"
             >
               <RouterLink
                 v-for="(item, index) in scopedAttention"
                 :key="`${item.agent.id}-${index}`"
                 :to="{ name: 'agent', params: { id: item.agent.id } }"
-                class="rounded-field hover:bg-base-300/50 flex items-center gap-3 px-3 py-2"
+                class="rounded-field hover:bg-base-300/40 flex items-center gap-3 px-3 py-2"
               >
                 <CircleAlert
                   class="size-4 shrink-0"
@@ -450,12 +430,14 @@ function percent(part: number, whole: number): number {
                   {{ item.reason }}
                 </span>
               </RouterLink>
-            </ul>
+            </TransitionGroup>
 
-            <div v-else-if="!agentStore.loaded" class="flex min-h-0 flex-1 flex-col gap-2">
+            <div v-if="!agentStore.loaded" class="flex min-h-0 flex-1 flex-col gap-2">
               <div v-for="row in 2" :key="row" class="skeleton h-9 w-full"></div>
             </div>
-            <p v-else class="flex-1 text-sm opacity-50">{{ t('dashboard.allHealthy') }}</p>
+            <p v-else-if="!scopedAttention.length" class="flex-1 text-sm opacity-50">
+              {{ t('dashboard.allHealthy') }}
+            </p>
           </div>
         </div>
 
@@ -563,19 +545,19 @@ function percent(part: number, whole: number): number {
                 v-for="line in scopedActivity"
                 :key="line.id"
                 :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
-                class="rounded-field hover:bg-base-300/50 flex items-center gap-2 px-2 py-1.5 text-sm"
+                class="rounded-field hover:bg-base-300/40 flex items-center gap-2 px-2 py-1.5 text-sm"
               >
-                <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
+                <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
                 <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
                 <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
                 <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
               </component>
             </TransitionGroup>
 
-            <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
+            <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
               {{ t('common.loading') }}
             </p>
-            <p v-else-if="!scopedActivity.length" class="py-8 text-center text-sm opacity-50">
+            <p v-else-if="!scopedActivity.length" class="py-10 text-center text-sm opacity-50">
               {{ t('dashboard.noActivity') }}
             </p>
 
@@ -585,61 +567,5 @@ function percent(part: number, whole: number): number {
         </div>
       </div>
     </div>
-
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-3">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <Map class="text-primary size-4" />
-          {{ t('dashboard.segments') }}
-          <span v-if="segments.length" class="badge badge-ghost badge-sm">
-            {{ segments.filter(({ segment }) => segment.state === 'DONE').length }}/{{
-              segments.length
-            }}
-          </span>
-        </h2>
-
-        <!--
-          Nothing here until something is being built, which is the ordinary state of a fleet. The
-          five sectors that used to fill this panel were invented, and named after parts of a
-          cathedral nobody had uploaded.
-        -->
-        <p v-if="!segments.length" class="py-4 text-center text-sm opacity-50">
-          {{ t('dashboard.noSegments') }}
-        </p>
-
-        <ul v-else class="flex flex-col gap-3">
-          <li v-for="{ job, segment } in segments" :key="segment.id">
-            <div class="flex items-center justify-between gap-2">
-              <!--
-                A segment has no name, only an ordinal and a box, so the build it belongs to is
-                what identifies it — and that is the fact an operator needs when two jobs are
-                running on one server.
-              -->
-              <span class="truncate text-sm">
-                {{ t('dashboard.segmentOf', { ordinal: segment.ordinal, build: job.buildName }) }}
-              </span>
-              <span class="badge badge-xs shrink-0" :class="SEGMENT_BADGE[segment.state]">
-                {{ t(`jobs.segmentState.${segment.state}`) }}
-              </span>
-            </div>
-            <progress
-              class="progress mt-1 w-full"
-              :class="SEGMENT_PROGRESS[segment.state]"
-              :value="percent(segment.blocksPlaced, segment.blocks)"
-              max="100"
-            ></progress>
-            <div class="mt-1 flex items-center justify-between gap-2 text-xs opacity-60">
-              <span class="truncate">
-                {{ segment.agentLabel ?? t('dashboard.unassigned') }}
-              </span>
-              <span class="shrink-0 tabular-nums">
-                {{ n(segment.blocksPlaced) }} /
-                {{ n(segment.blocks) }}
-              </span>
-            </div>
-          </li>
-        </ul>
-      </div>
-    </div>
-  </div>
+</div>
 </template>

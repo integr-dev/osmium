@@ -170,7 +170,7 @@ defineExpose({ open })
       no elevation at all — which is right for a dialog that fills the view, and wrong for a panel
       floating over a page the operator is still reading behind it.
     -->
-    <div class="modal-box border-base-300 mt-[12vh] max-w-xl border p-0 shadow-2xl shadow-black/50">
+    <div class="modal-box mt-[12vh] max-w-xl p-0">
       <label class="border-base-300 flex items-center gap-3 border-b px-4 py-3">
         <Search class="size-4 shrink-0 opacity-50" />
         <input

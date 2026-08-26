@@ -14,7 +14,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('map.title') }}</h1>
       <p class="text-sm opacity-60">{{ t('map.subtitle') }}</p>

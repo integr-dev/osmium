@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DirectiveBinding } from 'vue'
-import { prefersReducedMotion, vFlash } from './motion'
+import { prefersReducedMotion, slideName, vFlash } from './motion'
 
 /**
  * The directive is exercised directly rather than through a mounted component. jsdom evaluates no
@@ -64,5 +64,25 @@ describe('v-flash', () => {
     update(el, 'ONLINE', 'LINKED')
 
     expect(el.classList.contains('osmium-flash')).toBe(false)
+  })
+})
+
+describe('slideName', () => {
+  const TABS = ['schematics', 'jobs', 'servers'] as const
+
+  it('goes forward towards the end of the strip', () => {
+    expect(slideName(TABS, 'schematics', 'jobs')).toBe('panel-next')
+    expect(slideName(TABS, 'schematics', 'servers')).toBe('panel-next')
+  })
+
+  it('goes back towards its start', () => {
+    expect(slideName(TABS, 'servers', 'schematics')).toBe('panel-prev')
+  })
+
+  /** A tab named in a URL this build no longer has. Before everything, so arriving at a real one
+   *  reads as moving forward into the strip. */
+  it('treats a tab the strip does not have as sitting before it', () => {
+    expect(slideName(TABS, 'gone' as (typeof TABS)[number], 'jobs')).toBe('panel-next')
+    expect(slideName(TABS, 'jobs', 'gone' as (typeof TABS)[number])).toBe('panel-prev')
   })
 })

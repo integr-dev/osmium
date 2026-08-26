@@ -20,6 +20,9 @@ import {
 } from 'lucide-vue-next'
 import { api, errorMessage, type RoleResponse, type UserResponse } from '../api/client'
 import FormField from '../components/FormField.vue'
+import StepBar, { type Step } from '../components/StepBar.vue'
+import SwapBox from '../components/SwapBox.vue'
+import { useSlide } from '../lib/motion'
 import { nodeLabel } from '../lib/nodeLabel'
 import { roleIcon } from '../lib/roleIcon'
 import TableSkeleton from '../components/TableSkeleton.vue'
@@ -53,6 +56,13 @@ const editing = ref<{ user: UserResponse; role: string | null } | null>(null)
  */
 const submitting = ref(false)
 const createStep = ref<1 | 2>(1)
+
+const slide = useSlide(() => String(createStep.value), ['1', '2'])
+
+const beads = computed<Step[]>(() => [
+  { id: '1', label: t('accounts.account') },
+  { id: '2', label: t('accounts.role') },
+])
 const createError = ref<string | null>(null)
 const editingUser = ref<{
   user: UserResponse
@@ -114,9 +124,16 @@ function upsertUser(user: UserResponse) {
   else users.value[index] = user
 }
 
-function dialog(id: string): HTMLDialogElement | null {
-  return document.getElementById(id) as HTMLDialogElement | null
-}
+/**
+ * Held by refs, like every other dialog in the application. Reaching them through
+ * `getElementById` worked, and meant a template id and a string in a handler had to agree with
+ * nothing checking that they did — rename one and the button silently stops opening anything.
+ */
+const createDialog = ref<HTMLDialogElement | null>(null)
+const editDialog = ref<HTMLDialogElement | null>(null)
+const roleDialog = ref<HTMLDialogElement | null>(null)
+const signOutDialog = ref<HTMLDialogElement | null>(null)
+const removeDialog = ref<HTMLDialogElement | null>(null)
 
 async function loadUsers() {
   const { data, error: failure } = await api.GET('/api/users')
@@ -137,7 +154,7 @@ function openCreate() {
   draft.value = { username: '', password: '', confirmPassword: '', role: null }
   createStep.value = 1
   createError.value = null
-  dialog('create-user')?.showModal()
+  createDialog.value?.showModal()
 }
 
 /** Step 1 collects credentials, step 2 the role, so one form handles both submits. */
@@ -173,7 +190,7 @@ async function createUser() {
       createError.value = errorMessage(failure, t('errors.createAccount'))
       return
     }
-    dialog('create-user')?.close()
+    createDialog.value?.close()
     await loadUsers()
   } finally {
     submitting.value = false
@@ -191,7 +208,7 @@ const signedOut = ref<string | null>(null)
 function askSignOut(user: UserResponse) {
   signingOut.value = user
   signedOut.value = null
-  dialog('sign-out-user')?.showModal()
+  signOutDialog.value?.showModal()
 }
 
 async function confirmSignOut() {
@@ -205,7 +222,7 @@ async function confirmSignOut() {
     const { error: failure } = await api.POST('/api/users/{id}/sessions/revoke-all', {
       params: { path: { id: user.id } },
     })
-    dialog('sign-out-user')?.close()
+    signOutDialog.value?.close()
     if (failure) {
       error.value = errorMessage(failure, t('errors.generic'))
       return
@@ -232,7 +249,7 @@ async function saveRole() {
       return
     }
     editing.value = null
-    dialog('edit-role')?.close()
+    roleDialog.value?.close()
     await loadUsers()
   } finally {
     submitting.value = false
@@ -263,7 +280,7 @@ async function saveUser() {
       return
     }
     editingUser.value = null
-    dialog('edit-user')?.close()
+    editDialog.value?.close()
     await loadUsers()
   } finally {
     submitting.value = false
@@ -287,7 +304,7 @@ const removeBusy = ref(false)
 function askRemove(user: UserResponse) {
   removing.value = user
   error.value = null
-  dialog('remove-user')?.showModal()
+  removeDialog.value?.showModal()
 }
 
 async function confirmRemove() {
@@ -300,7 +317,7 @@ async function confirmRemove() {
     params: { path: { id: user.id } },
   })
   removeBusy.value = false
-  dialog('remove-user')?.close()
+  removeDialog.value?.close()
 
   if (failure) {
     error.value = errorMessage(failure, t('errors.removeAccount'))
@@ -311,17 +328,17 @@ async function confirmRemove() {
 
 function openRole(user: UserResponse) {
   editing.value = { user, role: user.role }
-  dialog('edit-role')?.showModal()
+  roleDialog.value?.showModal()
 }
 
 function openEdit(user: UserResponse) {
   editingUser.value = { user, username: user.username, password: '', confirmPassword: '' }
-  dialog('edit-user')?.showModal()
+  editDialog.value?.showModal()
 }
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('accounts.title') }}</h1>
@@ -370,9 +387,9 @@ function openEdit(user: UserResponse) {
       <span>{{ signedOut }}</span>
     </div>
 
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="overflow-x-auto">
-        <table class="table">
+    <div class="card border-base-300 bg-base-200 min-h-0 overflow-hidden border">
+      <div class="h-full overflow-auto">
+        <table class="table-pin-rows table">
           <thead>
             <tr>
               <th>{{ t('accounts.account') }}</th>
@@ -387,7 +404,7 @@ function openEdit(user: UserResponse) {
           -->
           <TableSkeleton v-if="loading" :columns="3" />
 
-          <tbody v-else>
+          <TransitionGroup v-else name="rows" tag="tbody">
             <tr v-for="user in visible" :key="user.id" class="hover:bg-base-300/40">
               <td>
                 <div class="flex items-center gap-3">
@@ -459,7 +476,7 @@ function openEdit(user: UserResponse) {
                 </div>
               </td>
             </tr>
-            <tr v-if="visible.length === 0">
+            <tr v-if="visible.length === 0" key="no-matches">
               <td colspan="3">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Users class="size-6" />
@@ -467,24 +484,25 @@ function openEdit(user: UserResponse) {
                 </div>
               </td>
             </tr>
-          </tbody>
+          </TransitionGroup>
         </table>
       </div>
     </div>
 
-    <dialog id="create-user" class="modal">
+    <dialog ref="createDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <UserPlus class="text-primary size-5" />
           {{ t('accounts.newAccount') }}
         </h3>
-        <ul class="steps mt-4 w-full">
-          <li class="step step-primary text-xs">{{ t('accounts.account') }}</li>
-          <li class="step text-xs" :class="createStep === 2 ? 'step-primary' : ''">{{ t('accounts.role') }}</li>
-        </ul>
+        <div class="mt-4">
+          <StepBar :steps="beads" :current="String(createStep)" />
+        </div>
 
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="submitCreate">
-          <template v-if="createStep === 1">
+          <SwapBox>
+            <Transition :name="slide">
+          <div v-if="createStep === 1" class="flex flex-col gap-4">
             <FormField
               v-model="draft.username"
               :label="t('accounts.username')"
@@ -514,16 +532,16 @@ function openEdit(user: UserResponse) {
               autocomplete="new-password"
               required
             />
-          </template>
+          </div>
 
-          <template v-else>
+          <div v-else class="flex flex-col gap-4">
             <p class="text-sm opacity-60">
               {{ t('accounts.roleHint') }}
             </p>
             <ul class="flex flex-col gap-1">
               <li v-for="role in roles" :key="role.id">
                 <label
-                  class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+                  class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
                 >
                   <input
                     v-model="draft.role"
@@ -543,7 +561,7 @@ function openEdit(user: UserResponse) {
               </li>
               <li>
                 <label
-                  class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+                  class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
                 >
                   <input
                     v-model="draft.role"
@@ -560,7 +578,9 @@ function openEdit(user: UserResponse) {
                 </label>
               </li>
             </ul>
-          </template>
+          </div>
+            </Transition>
+          </SwapBox>
 
           <div v-if="createError" role="alert" class="alert alert-error alert-soft">
             <CircleAlert class="size-4" />
@@ -581,7 +601,7 @@ function openEdit(user: UserResponse) {
               v-else
               class="btn btn-ghost btn-sm"
               type="button"
-              @click="dialog('create-user')?.close()"
+              @click="createDialog?.close()"
             >
               {{ t('common.cancel') }}
             </button>
@@ -595,7 +615,7 @@ function openEdit(user: UserResponse) {
       <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
-    <dialog id="edit-user" class="modal">
+    <dialog ref="editDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <SquarePen class="text-primary size-5" />
@@ -642,7 +662,7 @@ function openEdit(user: UserResponse) {
             :disabled="!editingUser.password"
           />
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-user')?.close()">
+            <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">
               {{ t('common.cancel') }}
             </button>
             <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
@@ -654,7 +674,7 @@ function openEdit(user: UserResponse) {
       <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
-    <dialog id="edit-role" class="modal">
+    <dialog ref="roleDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <UserRoundCog class="text-primary size-5" />
@@ -667,7 +687,7 @@ function openEdit(user: UserResponse) {
           <ul v-if="editing" class="flex flex-col gap-1">
             <li v-for="role in roles" :key="role.id">
               <label
-                class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+                class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
               >
                 <input
                   v-model="editing.role"
@@ -690,7 +710,7 @@ function openEdit(user: UserResponse) {
             </li>
             <li>
               <label
-                class="rounded-field hover:bg-base-300/50 flex cursor-pointer items-start gap-3 p-3"
+                class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
               >
                 <input
                   v-model="editing.role"
@@ -708,7 +728,7 @@ function openEdit(user: UserResponse) {
             </li>
           </ul>
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('edit-role')?.close()">
+            <button class="btn btn-ghost btn-sm" type="button" @click="roleDialog?.close()">
               {{ t('common.cancel') }}
             </button>
             <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
@@ -720,7 +740,7 @@ function openEdit(user: UserResponse) {
       <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
-    <dialog :id="'sign-out-user'" class="modal">
+    <dialog ref="signOutDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <ShieldAlert class="text-warning size-5" />
@@ -730,7 +750,7 @@ function openEdit(user: UserResponse) {
           {{ t('accounts.signOutWarning', { name: signingOut?.username }) }}
         </p>
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="dialog('sign-out-user')?.close()">
+          <button class="btn btn-ghost btn-sm" type="button" @click="signOutDialog?.close()">
             {{ t('common.cancel') }}
           </button>
           <button class="btn btn-warning btn-sm gap-2" type="button" :disabled="submitting" @click="confirmSignOut">
@@ -746,7 +766,7 @@ function openEdit(user: UserResponse) {
       The destructive one, and the last to get a dialog. Error styling rather than the warning the
       sign-out beside it uses: that ends a session and this ends the account.
     -->
-    <dialog id="remove-user" class="modal" @close="removing = null">
+    <dialog ref="removeDialog" class="modal" @close="removing = null">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <Trash2 class="text-error size-5" />
@@ -758,7 +778,7 @@ function openEdit(user: UserResponse) {
             class="btn btn-ghost btn-sm"
             type="button"
             :disabled="removeBusy"
-            @click="dialog('remove-user')?.close()"
+            @click="removeDialog?.close()"
           >
             {{ t('common.cancel') }}
           </button>

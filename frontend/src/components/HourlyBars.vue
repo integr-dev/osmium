@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { HourBucket } from '../lib/series'
+import { atTime } from '../lib/time'
 
 /**
  * Incidents per hour.
@@ -43,7 +44,7 @@ const bars = computed(() =>
       unknown,
       // Never rounded away to nothing: a bucket with something in it always shows above the rule.
       percent: bucket.count === 0 ? 0 : Math.max(6, (bucket.count / peak.value) * 100),
-      hour: new Date(bucket.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+      hour: atTime(bucket.at),
     }
   }),
 )
@@ -77,5 +78,5 @@ const hasUnknown = computed(() => bars.value.some((bar) => bar.unknown))
     </p>
   </div>
 
-  <p v-else class="py-4 text-center text-sm opacity-50">{{ emptyLabel }}</p>
+  <p v-else class="py-10 text-center text-sm opacity-50">{{ emptyLabel }}</p>
 </template>

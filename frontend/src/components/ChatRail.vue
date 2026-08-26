@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagesSquare, TriangleAlert, X } from 'lucide-vue-next'
 import ChatPanel from './ChatPanel.vue'
@@ -21,6 +21,32 @@ import { useChatStore } from '../stores/chat'
 const { t } = useI18n()
 const agentStore = useAgentStore()
 const chat = useChatStore()
+
+/**
+ * Whether the transcript is drawn yet.
+ *
+ * The rail opens by animating its **width**, which is a layout property: every frame of it
+ * relays out everything inside the rail, on the main thread. Mounting the panel into that —
+ * building a hundred lines, measuring the scroller, starting a fetch — stalled the animation
+ * partway and it carried on when the work finished. One jerk, always at the same point.
+ *
+ * So the shell slides open first and the transcript arrives once it has stopped moving. It costs
+ * a fifth of a second before the lines appear, and buys an opening that does not stutter.
+ */
+const drawn = ref(false)
+
+let reveal: ReturnType<typeof setTimeout> | undefined
+
+/** The slide is 280ms in `AppLayout`; a frame either side of that is not worth coordinating. */
+const SLIDE_MS = 300
+
+onMounted(() => {
+  reveal = setTimeout(() => {
+    drawn.value = true
+  }, SLIDE_MS)
+})
+
+onBeforeUnmount(() => clearTimeout(reveal))
 
 /** Chat lines are long and the addresses are monospaced, so the useful width varies a lot by fleet. */
 const { width, start, nudge } = useResizable({
@@ -170,7 +196,11 @@ function choose(key: string): void {
         </select>
       </label>
 
-      <ChatPanel :scope="scope" :speaker="speaker" />
+      <!-- Once the rail has stopped moving. See `drawn`. -->
+      <ChatPanel v-if="drawn" :scope="scope" :speaker="speaker" />
+      <div v-else class="flex flex-1 flex-col gap-2 p-3">
+        <div v-for="line in 6" :key="line" class="skeleton h-8 w-full"></div>
+      </div>
     </div>
 
     <p v-else class="flex flex-1 items-center justify-center px-6 text-center text-sm opacity-50">

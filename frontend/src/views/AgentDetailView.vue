@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -9,6 +9,7 @@ import {
   Clock,
   Hammer,
   Heart,
+  ChevronLeft,
   KeyRound,
   Layers,
   MapPin,
@@ -28,10 +29,11 @@ import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { agentBadge, agentStateLabel } from '../lib/agentState'
-import { vFlash } from '../lib/motion'
+import { prefersReducedMotion, vFlash } from '../lib/motion'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
+import { atTime } from '../lib/time'
 
 const { t, n } = useI18n()
 const route = useRoute()
@@ -70,6 +72,60 @@ const vitals = computed(() => agent.value?.telemetry ?? null)
 
 const healthPercent = computed(() => ((vitals.value?.health ?? 0) / 20) * 100)
 const foodPercent = computed(() => ((vitals.value?.food ?? 0) / 20) * 100)
+
+/**
+ * Somebody walking up to an agent, and away from it.
+ *
+ * A list one line long, updated every few seconds, so the arrival has to be long enough to read
+ * as an event rather than a redraw — and no more than that. It travels three quarters of a line
+ * on a plain ease-out: a sharper curve reads as the row being fired in, and the tint this used to
+ * arrive with read as a warning about a player who is simply standing there.
+ *
+ * The departure is taken out of the flow first — otherwise the row holds its space until the fade
+ * ends and the card jerks afterwards — and it is quicker than the arrival, so the two do not
+ * overlap in the one place a one-line list has to put them.
+ */
+function playerIn(el: Element, done: () => void) {
+  if (prefersReducedMotion()) {
+    done()
+    return
+  }
+
+  const arrival = el.animate(
+    [
+      { opacity: 0, translate: "-0.75rem 0" },
+      { opacity: 1, translate: "0 0" },
+    ],
+    { duration: 300, easing: "ease-out" },
+  )
+
+  // Either ending has to let the row go: a hook that never calls back leaves it mid-animation.
+  arrival.onfinish = done
+  arrival.oncancel = done
+}
+
+function playerOut(el: Element, done: () => void) {
+  const row = el as HTMLElement
+
+  if (prefersReducedMotion()) {
+    done()
+    return
+  }
+
+  // Out of the flow before it fades, so the rows below close the gap while it is still going.
+  const { offsetTop, offsetWidth } = row
+  row.style.position = "absolute"
+  row.style.top = `${offsetTop}px`
+  row.style.width = `${offsetWidth}px`
+
+  const departure = row.animate([{ opacity: 1 }, { opacity: 0, translate: "-1rem 0" }], {
+    duration: 160,
+    easing: "ease-in",
+  })
+
+  departure.onfinish = done
+  departure.oncancel = done
+}
 
 const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
   INFO: 'bg-base-content/30',
@@ -115,6 +171,16 @@ onMounted(async () => {
   })
 })
 
+/**
+ * Navigating from one agent to the next is the same route with a different id, so this component
+ * is kept and reused — and the feed it opened on mount goes on showing the first agent's history
+ * under the second one’s name. The page has to notice the change itself.
+ */
+watch(agentId, async () => {
+  await activityFeed.reset()
+  await activityScroll.rearm()
+})
+
 onBeforeUnmount(() => stopListening?.())
 
 async function moreActivity(): Promise<void> {
@@ -129,10 +195,6 @@ async function moreActivity(): Promise<void> {
  */
 function formatPosition(at: { x: number; y: number; z: number }): string {
   return `${Math.round(at.x)}, ${Math.round(at.y)}, ${Math.round(at.z)}`
-}
-
-function formatTime(at: string): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
 /** Every command can legitimately fail with 503 while no agent is connected to the host. */
@@ -308,7 +370,12 @@ async function confirmRemove() {
 </script>
 
 <template>
-  <div v-if="agent" class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div v-if="agent" class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
+    <!-- The same way back the host page offers, from the page it is the sibling of. -->
+    <RouterLink :to="{ name: 'resources' }" class="btn btn-ghost btn-sm w-fit gap-1 px-2">
+      <ChevronLeft class="size-4" />
+      {{ t('resources.title') }}
+    </RouterLink>
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex items-center gap-4">
         <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="lg" />
@@ -427,7 +494,7 @@ async function confirmRemove() {
           {{ t('agents.stats') }}
         </h2>
 
-        <p v-if="!vitals" class="py-6 text-center text-sm opacity-50">{{ t('agents.noTelemetry') }}</p>
+        <p v-if="!vitals" class="py-10 text-center text-sm opacity-50">{{ t('agents.noTelemetry') }}</p>
 
         <template v-else>
         <div class="grid gap-4 sm:grid-cols-2">
@@ -509,9 +576,30 @@ async function confirmRemove() {
           <span class="badge badge-ghost badge-sm">{{ vitals?.nearby.length ?? 0 }}</span>
         </h2>
 
-        <ul v-if="vitals?.nearby.length" class="flex flex-col gap-1">
+        <!--
+          Always mounted, empty or not, and **without** `appear`. A list that is drawn only once
+          it has somebody in it mounts holding its first arrival, which a group does not animate —
+          and telling it to animate what it was born with means the whole list plays every time
+          the page is opened. Kept alive instead, the first player to walk up is an insertion like
+          any other, and arriving at the page is not an event at all.
+        -->
+        <!--
+          Animated by hand rather than by class.
+
+          Three CSS attempts at this did nothing an operator could see, and the reason each time
+          was invisible from the stylesheet: a departure drawn over the arrival, a distance too
+          small to read on a one-line list, a rule that resolved to nothing at all. The Web
+          Animations call cannot half-work — it either runs and calls `done`, or it throws.
+        -->
+        <TransitionGroup
+          tag="ul"
+          class="relative flex flex-col gap-1"
+          :css="false"
+          @enter="playerIn"
+          @leave="playerOut"
+        >
           <li
-            v-for="player in vitals.nearby"
+            v-for="player in vitals?.nearby ?? []"
             :key="player.name"
             class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
           >
@@ -530,9 +618,15 @@ async function confirmRemove() {
             <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">{{ t('agents.agentTag') }}</span>
             <span class="text-xs tabular-nums opacity-50">{{ player.distance.toFixed(1) }} m</span>
           </li>
-        </ul>
+        </TransitionGroup>
 
-        <p v-else class="py-6 text-center text-sm opacity-50">{{ t('agents.noNearby') }}</p>
+        <!-- The height of one row: the first player to walk up must not also resize the card. -->
+        <p
+          v-if="!vitals?.nearby.length"
+          class="flex min-h-13 items-center justify-center text-sm opacity-50"
+        >
+          {{ t('agents.noNearby') }}
+        </p>
       </div>
     </div>
 
@@ -552,16 +646,16 @@ async function confirmRemove() {
               :key="line.id"
               class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
             >
-              <span class="shrink-0 font-mono text-xs opacity-40">{{ formatTime(line.at) }}</span>
+              <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
               <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
               <span class="min-w-0 flex-1">{{ line.text }}</span>
             </div>
           </TransitionGroup>
 
-          <p v-if="activityLoading" class="py-6 text-center text-sm opacity-50">
+          <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
             {{ t('common.loading') }}
           </p>
-          <p v-else-if="!activity.length" class="py-6 text-center text-sm opacity-50">
+          <p v-else-if="!activity.length" class="py-10 text-center text-sm opacity-50">
             {{ t('agents.noActivity') }}
           </p>
 
@@ -820,7 +914,7 @@ async function confirmRemove() {
     Loading before missing. On a reload or a deep link the fleet has not arrived yet, and "not
     found" is a claim this page is in no position to make until it has.
   -->
-  <div v-else-if="!agentStore.loaded" class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div v-else-if="!agentStore.loaded" class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
     <div class="flex flex-col gap-2">
       <div class="skeleton h-8 w-64"></div>
       <div class="skeleton h-4 w-40"></div>
@@ -832,7 +926,7 @@ async function confirmRemove() {
     </div>
   </div>
 
-  <div v-else class="mx-auto max-w-6xl">
+  <div v-else class="mx-auto w-full max-w-6xl">
     <div class="card border-base-300 bg-base-200 border">
       <div class="card-body items-center gap-2 py-20 text-center">
         <Agent class="size-8 opacity-30" />

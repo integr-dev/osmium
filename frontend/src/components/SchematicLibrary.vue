@@ -14,6 +14,10 @@ import {
 } from 'lucide-vue-next'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
+import TabBar, { type Tab } from './TabBar.vue'
+import StepBar, { type Step as Bead } from './StepBar.vue'
+import SwapBox from './SwapBox.vue'
+import { useSlide } from '../lib/motion'
 import BuildPlanner from './BuildPlanner.vue'
 import VoxelViewer from './VoxelViewer.vue'
 import SchematicUploadModal from './SchematicUploadModal.vue'
@@ -81,6 +85,14 @@ type Step = (typeof STEPS)[number]
  */
 const step = ref<Step>('schematic')
 
+/** Which way the wizard was moved through, so a step arrives from the side its marker is on. */
+const slide = useSlide(step, STEPS)
+
+/** The labels never carry their own number: the circle on the line is where the number lives. */
+const beads = computed<Bead<Step>[]>(() =>
+  STEPS.map((name) => ({ id: name, label: t(`schematics.step_${name}`) })),
+)
+
 /**
  * The plan being worked under, once one has been saved.
  *
@@ -139,6 +151,11 @@ const ready = computed(() => selected.value?.status === 'READY')
  * draw one; offering shape there was a tab that hid the thing the operator had just asked for.
  */
 const view = ref<'shape' | 'bounds'>('shape')
+
+const viewStrip = computed<Tab<'shape' | 'bounds'>[]>(() => [
+  { id: 'shape', label: t('schematics.viewShape') },
+  { id: 'bounds', label: t('schematics.viewBounds') },
+])
 
 /**
  * How fine the preview is, as voxels along the longest axis.
@@ -297,12 +314,16 @@ const buildServer = computed(() => {
  * refuse: the operator chose a crew, pressed the last button in a four-step wizard, and was told
  * about one of them there. An interface that offers what it will refuse reads as broken rather
  * than as restricted.
+ *
+ * **On a job, rather than holding a piece.** Those parted company when agents became a pool: one
+ * waiting for the floor under its next piece is on a build while building nothing, and asking
+ * what it holds would offer it here and be refused at the end of the wizard all over again.
  */
 const eligibleBuilders = computed(() =>
   agentStore.agents.filter(
     (agent) =>
       isOnline(agent) &&
-      !agentStore.isBuilding(agent.id) &&
+      agentStore.jobOf(agent.id) === null &&
       agent.serverAddress !== null &&
       (buildServer.value === null || agent.serverAddress === buildServer.value),
   ),
@@ -312,9 +333,26 @@ const blockedBuilders = computed(() =>
   agentStore.agents.filter((agent) => !eligibleBuilders.value.includes(agent)),
 )
 
-const parts = computed(() => builders.value.length)
+/**
+ * How many pieces to divide into, which is no longer the same number as the crew.
+ *
+ * A piece used to be a share handed to an agent once and held for the life of the job, so there
+ * was exactly one per agent and nothing to ask. A piece is a unit of work now: agents take one,
+ * finish it, and take the next. More pieces than agents is therefore the useful setting — it is
+ * what lets a slow bot take fewer, a returning one pick up where it can, and anything cut on
+ * height pipeline instead of standing still.
+ *
+ * Null means "as many as there are builders", which is what this used to be fixed at, and what an
+ * operator who does not want to think about it should get.
+ */
+const wantedParts = ref<number | null>(null)
 
-const MODES: SplitMode[] = ['COLUMNS', 'LAYERS', 'GRID']
+const parts = computed(() => wantedParts.value ?? builders.value.length)
+
+/** Matching `SchematicService.MAX_PARTS`, so the field refuses what the backend would. */
+const MAX_PARTS = 64
+
+const MODES: SplitMode[] = ['COLUMNS', 'GRID']
 const mode = ref<SplitMode>('COLUMNS')
 const splitting = ref(false)
 const split = ref<SplitResponse | null>(null)
@@ -518,7 +556,7 @@ async function startBuilding() {
 
   starting.value = true
   try {
-    const job = await agentStore.beginJob(build.id, mode.value, [...builders.value])
+    const job = await agentStore.beginJob(build.id, mode.value, [...builders.value], wantedParts.value)
     emit('done', t('jobs.started', { name: job.buildName, count: job.segments.length }))
     emit('started')
   } catch (failure) {
@@ -674,23 +712,15 @@ function progressOf(schematic: SchematicResponse): string | null {
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="flex h-full min-h-0 flex-col gap-6 overflow-y-auto">
     <!--
       The order is strict — nothing divides before it has been read, and nothing divides at all
       until somebody is going to build it — so it is drawn rather than left to be discovered.
     -->
-    <ul class="steps w-full">
-      <li
-        v-for="(name, index) in STEPS"
-        :key="name"
-        class="step cursor-pointer"
-        :class="STEPS.indexOf(step) >= index ? 'step-primary' : ''"
-        @click="go(name)"
-      >
-        {{ t(`schematics.step_${name}`) }}
-      </li>
-    </ul>
+    <StepBar :steps="beads" :current="step" clickable @select="go" />
 
+    <SwapBox>
+      <Transition :name="slide">
     <!-- ─── Choose what to build ─────────────────────────────────────────────── -->
     <div v-if="step === 'schematic'" class="grid gap-6 lg:grid-cols-[18rem_1fr]">
       <!--
@@ -701,7 +731,10 @@ function progressOf(schematic: SchematicResponse): string | null {
       <div class="card border-base-300 bg-base-200 h-fit border">
         <div class="card-body gap-2 p-3">
           <div class="flex items-center justify-between px-2 pt-1">
-            <h2 class="text-base font-semibold">{{ t('schematics.title') }}</h2>
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <Box class="text-primary size-4" />
+              {{ t('schematics.title') }}
+            </h2>
             <button
               v-if="auth.can('schematic.write')"
               type="button"
@@ -718,7 +751,7 @@ function progressOf(schematic: SchematicResponse): string | null {
             same build under names that have drifted apart are exactly when a search is reached for,
             and the filename is the half that did not drift.
           -->
-          <label v-if="schematics.length > 5" class="input input-sm mx-1">
+          <label class="input input-sm mx-1 w-auto">
             <Search class="size-4 opacity-60" />
             <input v-model="query" type="search" :placeholder="t('schematics.filterPlaceholder')" />
           </label>
@@ -728,7 +761,7 @@ function progressOf(schematic: SchematicResponse): string | null {
             {{ t('schematics.noMatches') }}
           </p>
 
-          <div v-else class="flex max-h-[32rem] flex-col gap-0.5 overflow-y-auto">
+          <TransitionGroup v-else name="rows" tag="div" class="flex max-h-[32rem] flex-col gap-0.5 overflow-y-auto">
           <button
             v-for="schematic in visible"
             :key="schematic.id"
@@ -753,11 +786,11 @@ function progressOf(schematic: SchematicResponse): string | null {
             -->
             <progress
               v-if="schematic.status === 'PENDING'"
-              class="progress progress-primary h-1 w-full"
+              class="progress progress-primary w-full"
             ></progress>
             <progress
               v-else-if="schematic.status === 'UPLOADING' || schematic.status === 'ANALYSING'"
-              class="progress progress-primary h-1 w-full"
+              class="progress progress-primary w-full"
               :value="schematic.progressPercent"
               max="100"
             ></progress>
@@ -772,7 +805,7 @@ function progressOf(schematic: SchematicResponse): string | null {
               </template>
             </span>
           </button>
-          </div>
+          </TransitionGroup>
         </div>
       </div>
 
@@ -838,30 +871,15 @@ function progressOf(schematic: SchematicResponse): string | null {
             -->
             <div v-if="ready" class="grid gap-4 xl:grid-cols-[1fr_15rem]">
               <div class="flex min-w-0 flex-col gap-2">
-                <VoxelViewer v-if="view === 'shape'" :shape="shape" />
-                <BoxViewer v-else :boxes="boxes" corners />
+                <SwapBox>
+                  <Transition :name="view === 'bounds' ? 'panel-next' : 'panel-prev'">
+                  <VoxelViewer v-if="view === 'shape'" :shape="shape" />
+                  <BoxViewer v-else :boxes="boxes" corners />
+                  </Transition>
+                </SwapBox>
 
                 <div class="flex flex-wrap items-center gap-3">
-                  <div role="tablist" class="tabs tabs-box tabs-xs">
-                    <button
-                      type="button"
-                      role="tab"
-                      class="tab"
-                      :class="view === 'shape' ? 'tab-active' : ''"
-                      @click="view = 'shape'"
-                    >
-                      {{ t('schematics.viewShape') }}
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      class="tab"
-                      :class="view === 'bounds' ? 'tab-active' : ''"
-                      @click="view = 'bounds'"
-                    >
-                      {{ t('schematics.viewBounds') }}
-                    </button>
-                  </div>
+                  <TabBar v-model="view" :tabs="viewStrip" variant="box" size="xs" />
 
                   <p v-if="view !== 'shape'" class="text-xs opacity-50">
                     {{ t('schematics.dragHint') }}
@@ -1031,7 +1049,7 @@ function progressOf(schematic: SchematicResponse): string | null {
               <span class="opacity-60">{{ t('schematics.builders') }}</span>
               <span class="font-medium">{{ parts }}</span>
               <span class="ml-auto tabular-nums opacity-60">
-                {{ n(Math.round(buildBlocks / parts)) }}
+                {{ n(Math.round(buildBlocks / builders.length)) }}
                 {{ t('schematics.blocksEach') }}
               </span>
             </p>
@@ -1063,6 +1081,28 @@ function progressOf(schematic: SchematicResponse): string | null {
           </label>
 
           <p class="text-xs opacity-60">{{ t(`schematics.modeHint${mode}`) }}</p>
+
+          <!--
+            Separate from the crew, and blank rather than pre-filled: an empty field means "one each",
+            which is what this was fixed at and what somebody who does not want to think about it
+            should get. Typing a bigger number is what makes agents queue for work instead of owning
+            a share of it.
+          -->
+          <label class="form-control">
+            <span class="label-text text-xs opacity-60">{{ t('schematics.parts') }}</span>
+            <input
+              v-model.number="wantedParts"
+              type="number"
+              min="1"
+              :max="MAX_PARTS"
+              class="input input-sm w-full"
+              :placeholder="t('schematics.partsDefault', { count: builders.length })"
+            />
+          </label>
+
+          <p v-if="parts > builders.length" class="text-xs opacity-60">
+            {{ t('schematics.partsQueue', { parts, agents: builders.length }) }}
+          </p>
 
           <button
             type="button"
@@ -1126,6 +1166,8 @@ function progressOf(schematic: SchematicResponse): string | null {
         </p>
       </div>
     </div>
+</Transition>
+    </SwapBox>
 
     <!-- ─── Moving between the steps ─────────────────────────────────────────── -->
     <div class="border-base-300 flex items-center gap-3 border-t pt-4">

@@ -25,7 +25,7 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="flex h-full min-h-0 flex-col gap-4">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm opacity-60">
         {{
@@ -41,9 +41,15 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
       </button>
     </div>
 
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="overflow-x-auto">
-        <table class="table">
+    <!--
+      Not `flex-1`. A card given the whole column drew a table of two hosts with an empty half
+      screen under it — the frame reporting its own size rather than the fleet's. It shrinks
+      instead: as tall as its rows, and no taller than what is left, which is the point at which
+      the rows start scrolling inside it.
+    -->
+    <div class="card border-base-300 bg-base-200 min-h-0 overflow-hidden border">
+      <div class="h-full overflow-auto">
+        <table class="table-pin-rows table">
           <thead>
             <tr>
               <th>{{ t('hosts.host') }}</th>
@@ -56,7 +62,7 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
           <!-- Rows, not an empty state: "no hosts" is not yet known to be true. -->
           <TableSkeleton v-if="!agentStore.loaded" :columns="5" />
 
-          <tbody v-else>
+          <TransitionGroup v-else name="rows" tag="tbody">
             <!--
               A host going unreachable takes its agents with it, and it happens on the stream with
               nobody having pressed anything. This is the row that says so.
@@ -65,7 +71,7 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
               v-for="host in agentStore.hosts"
               :key="host.id"
               v-flash="host.reachable"
-              class="hover:bg-base-300/40"
+              class="hover:bg-base-300/40 transition-colors"
             >
               <td>
                 <RouterLink
@@ -80,10 +86,9 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
               </td>
               <td>
                 <span
-                  class="badge badge-sm gap-1"
+                  class="badge badge-sm"
                   :class="host.reachable ? 'badge-success badge-soft' : 'badge-error badge-soft'"
                 >
-                  <span class="size-1.5 rounded-full" :class="host.reachable ? 'bg-success' : 'bg-error'"></span>
                   {{ host.reachable ? t('hosts.reachable') : t('hosts.unreachable') }}
                 </span>
               </td>
@@ -123,7 +128,7 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
                 </div>
               </td>
             </tr>
-            <tr v-if="agentStore.hosts.length === 0">
+            <tr v-if="agentStore.hosts.length === 0" key="no-hosts">
               <td colspan="5">
                 <div class="flex flex-col items-center gap-2 py-10 opacity-60">
                   <Server class="size-6" />
@@ -131,7 +136,7 @@ const actions = ref<InstanceType<typeof HostActions> | null>(null)
                 </div>
               </td>
             </tr>
-          </tbody>
+          </TransitionGroup>
         </table>
       </div>
     </div>

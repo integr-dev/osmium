@@ -62,14 +62,14 @@ onMounted(async () => {
   roleDetails.value = (data ?? []) as RoleResponse[]
 })
 
-function dialog(id: string): HTMLDialogElement | null {
-  return document.getElementById(id) as HTMLDialogElement | null
-}
+/** Held by refs, like every other dialog in the application. */
+const renameDialog = ref<HTMLDialogElement | null>(null)
+const passwordDialog = ref<HTMLDialogElement | null>(null)
 
 function openRename() {
   username.value = auth.user?.username ?? ''
   renameState.value = {}
-  dialog('rename-account')?.showModal()
+  renameDialog.value?.showModal()
 }
 
 function openPassword() {
@@ -77,7 +77,7 @@ function openPassword() {
   newPassword.value = ''
   confirmPassword.value = ''
   passwordState.value = {}
-  dialog('change-password')?.showModal()
+  passwordDialog.value?.showModal()
 }
 
 async function rename() {
@@ -114,7 +114,7 @@ async function changePassword() {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-6xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('account.title') }}</h1>
       <p class="text-sm opacity-60">{{ t('account.subtitle') }}</p>
@@ -240,7 +240,7 @@ async function changePassword() {
       </div>
     </div>
 
-    <dialog id="rename-account" class="modal">
+    <dialog ref="renameDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <PencilLine class="text-primary size-5" />
@@ -269,7 +269,7 @@ async function changePassword() {
           </div>
 
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('rename-account')?.close()">
+            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">
               {{ t('common.close') }}
             </button>
             <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
@@ -279,7 +279,7 @@ async function changePassword() {
       <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
     </dialog>
 
-    <dialog id="change-password" class="modal">
+    <dialog ref="passwordDialog" class="modal">
       <div class="modal-box">
         <h3 class="flex items-center gap-2 text-lg font-semibold">
           <KeyRound class="text-primary size-5" />
@@ -326,7 +326,7 @@ async function changePassword() {
           </div>
 
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="dialog('change-password')?.close()">
+            <button class="btn btn-ghost btn-sm" type="button" @click="passwordDialog?.close()">
               {{ t('common.close') }}
             </button>
             <button class="btn btn-primary btn-sm" type="submit">{{ t('account.changePassword') }}</button>

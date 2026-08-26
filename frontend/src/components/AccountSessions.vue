@@ -114,7 +114,7 @@ function device(userAgent: string | null): string {
         <div v-for="row in 2" :key="row" class="skeleton h-14 w-full"></div>
       </div>
 
-      <ul v-else class="flex flex-col gap-1">
+      <TransitionGroup v-else name="rows" tag="ul" class="flex flex-col gap-1">
         <li
           v-for="session in sessions"
           :key="session.id"
@@ -147,10 +147,10 @@ function device(userAgent: string | null): string {
           </button>
         </li>
 
-        <p v-if="!sessions.length" class="py-6 text-center text-sm opacity-50">
+        <p v-if="!sessions.length" class="py-10 text-center text-sm opacity-50">
           {{ t('sessions.none') }}
         </p>
-      </ul>
+      </TransitionGroup>
 
       <div class="border-base-300 flex flex-wrap items-center gap-3 border-t pt-4">
         <p class="min-w-0 flex-1 text-xs opacity-50">{{ t('sessions.endAllHint') }}</p>

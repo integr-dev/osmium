@@ -16,6 +16,7 @@ import PlayerHead from '../components/PlayerHead.vue'
 import { agentBadge, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
+import { atShort } from '../lib/time'
 import { useAuthStore } from '../stores/auth'
 
 /**
@@ -43,16 +44,6 @@ onMounted(() => {
   if (!agentStore.loaded) void agentStore.refresh()
 })
 
-/** Local time, matching the chat rail. The absolute moment matters here, not "5 minutes ago". */
-function seenAt(at: string): string {
-  return new Date(at).toLocaleString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 /** Its page cannot outlive it. The list is where there is still something to look at. */
 function afterRemove() {
   void router.push({ name: 'resources' })
@@ -60,8 +51,8 @@ function afterRemove() {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-5xl flex-col gap-6">
-    <RouterLink :to="{ name: 'resources' }" class="btn btn-ghost btn-sm w-fit gap-1 -ml-2">
+  <div class="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-6 overflow-y-auto">
+    <RouterLink :to="{ name: 'resources' }" class="btn btn-ghost btn-sm w-fit gap-1 px-2">
       <ChevronLeft class="size-4" />
       {{ t('resources.title') }}
     </RouterLink>
@@ -81,10 +72,9 @@ function afterRemove() {
             <h1 class="text-2xl font-semibold tracking-tight">{{ host.name }}</h1>
             <span
               v-flash="host.reachable"
-              class="badge badge-sm mt-1 gap-1"
+              class="badge badge-sm mt-1"
               :class="host.reachable ? 'badge-success badge-soft' : 'badge-error badge-soft'"
             >
-              <span class="size-1.5 rounded-full" :class="host.reachable ? 'bg-success' : 'bg-error'"></span>
               {{ host.reachable ? t('hosts.reachable') : t('hosts.unreachable') }}
             </span>
           </div>
@@ -132,11 +122,20 @@ function afterRemove() {
               <span class="badge badge-ghost badge-sm ml-auto">{{ agents.length }}</span>
             </div>
 
-            <p v-if="!agents.length" class="px-4 py-8 text-center text-sm opacity-60">
+            <!-- The shape that is coming, like every other list in the application. -->
+            <div v-if="!agentStore.loaded" class="flex flex-col gap-2 px-4 py-3">
+              <div v-for="row in 2" :key="row" class="skeleton h-10 w-full"></div>
+            </div>
+
+            <p
+              v-else-if="!agents.length"
+              class="px-4 py-10 text-center text-sm opacity-50"
+            >
               {{ t('hosts.noAgentsHere') }}
             </p>
 
-            <ul v-else class="divide-base-300 divide-y">
+            <!-- No transition: this page reads a host, it does not add agents to one. -->
+            <ul class="divide-base-300 divide-y">
               <li v-for="agent in agents" :key="agent.id">
                 <RouterLink
                   :to="{ name: 'agent', params: { id: agent.id } }"
@@ -173,7 +172,7 @@ function afterRemove() {
             <div class="stat px-4 py-3">
               <div class="stat-title text-xs">{{ t('hosts.lastSeen') }}</div>
               <div class="stat-value text-lg">
-                {{ host.lastSeenAt ? seenAt(host.lastSeenAt) : t('hosts.neverSeen') }}
+                {{ host.lastSeenAt ? atShort(host.lastSeenAt) : t('hosts.neverSeen') }}
               </div>
             </div>
           </div>

@@ -37,7 +37,8 @@ import PlayerHead from '../components/PlayerHead.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { agentDot, agentStateLabel } from '../lib/agentState'
-import { vFlash } from '../lib/motion'
+import { prefersReducedMotion, vFlash } from '../lib/motion'
+import { atShort } from '../lib/time'
 import { useResizable } from '../lib/resizable'
 import { isShortcut, shortcutLabel } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
@@ -181,14 +182,56 @@ onMounted(() => {
 
 onUnmounted(() => agentStore.disconnectLiveUpdates())
 
-/** Date and time both: this is a security notice, and "which day" is the first thing asked of it. */
-function formatAlert(at: string): string {
-  return new Date(at).toLocaleString(undefined, {
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+/**
+ * The chat rail opening and shutting, animated in JavaScript rather than in CSS.
+ *
+ * It is a width that has to move — the rail is a column beside the page, so anything else would
+ * have the page jump to its new width while the rail slid into it — and the width it moves to is
+ * the operator's own, dragged and remembered. A keyframe cannot know that number; this reads it
+ * off the element the moment before it is animated from nothing.
+ *
+ * `:css="false"` on the transition, so Vue waits for `done()` rather than for classes it will not
+ * find.
+ */
+const RAIL_MS = 280
+
+function slideRail(el: Element, to: string, done: () => void) {
+  const rail = el as HTMLElement
+
+  if (prefersReducedMotion()) {
+    done()
+    return
+  }
+
+  const from = to === '0px' ? `${rail.offsetWidth}px` : '0px'
+
+  rail.style.overflow = 'hidden'
+  rail.style.width = from
+
+  // Read back, so the browser has the starting width as a computed value before it is changed.
+  void rail.offsetWidth
+
+  rail.style.transition = `width ${RAIL_MS}ms var(--osmium-ease)`
+  rail.style.width = to
+
+  rail.addEventListener(
+    'transitionend',
+    () => {
+      rail.style.transition = ''
+      rail.style.overflow = ''
+      done()
+    },
+    { once: true },
+  )
+}
+
+function railEnter(el: Element, done: () => void) {
+  // Its own width, which the component has already put on the element as an inline style.
+  slideRail(el, (el as HTMLElement).style.width || '0px', done)
+}
+
+function railLeave(el: Element, done: () => void) {
+  slideRail(el, '0px', done)
 }
 
 async function logout() {
@@ -248,7 +291,17 @@ async function logout() {
         overflow the frame instead of scrolling inside it.
       -->
       <div class="flex min-h-0 flex-1">
-        <main class="min-w-0 flex-1 overflow-y-auto px-6 py-8">
+        <!--
+          **The page itself does not scroll.** Every view is given the height of this frame and puts
+          its own scrollbar on the part that is long — the table, the list of jobs, the column of
+          cards — so a title, a set of tabs and a row of filters stay where they were put while the
+          rows move under them. Scrolling a whole page to reach the bottom of a list, and losing the
+          controls for that list on the way, is the thing this is instead of.
+
+          No scrollbar gutter here any more: nothing on this element scrolls, so there is none to
+          reserve room for.
+        -->
+        <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 py-8">
           <!--
             On every page rather than tucked into My account. It is the only way the person it
             happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
@@ -264,7 +317,7 @@ async function logout() {
             <span class="min-w-0 flex-1">
               <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
               <span class="block text-sm opacity-80">
-                {{ t('sessions.alertBody', { when: formatAlert(auth.sessionAlertAt) }) }}
+                {{ t('sessions.alertBody', { when: atShort(auth.sessionAlertAt) }) }}
               </span>
             </span>
             <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
@@ -293,10 +346,20 @@ async function logout() {
             </span>
           </div>
 
-          <RouterView />
+          <!--
+            No mode: the outgoing view is dropped rather than faded, so a lazily loaded page is
+            never waited for behind a blank screen. See the note in `style.css`.
+          -->
+          <RouterView v-slot="{ Component }">
+            <Transition name="page">
+              <component :is="Component" />
+            </Transition>
+          </RouterView>
         </main>
 
-        <ChatRail v-if="chat.open" />
+        <Transition :css="false" @enter="railEnter" @leave="railLeave">
+          <ChatRail v-if="chat.open" />
+        </Transition>
       </div>
     </div>
 
@@ -359,7 +422,7 @@ async function logout() {
               :data-tip="backendTip"
             >
               <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="retrying" @click="retry">
-                <ServerOff class="text-error size-4" :class="retrying ? 'animate-pulse' : ''" />
+                <ServerOff class="text-error size-3.5" :class="retrying ? 'animate-pulse' : ''" />
               </button>
             </span>
 
@@ -479,10 +542,26 @@ async function logout() {
           </ul>
         </div>
 
-        <div v-show="hostsOpen" id="sidebar-hosts" class="max-h-56 overflow-y-auto px-3">
+        <!--
+          Opened and shut on a grid row rather than with `v-show`, which is the one way a height
+          of `auto` can be animated: the track goes from `0fr` to `1fr` and the row inside keeps
+          its own measured height. `v-show` blinked, which read as the section not being part of
+          the same interface as everything else that moves.
+        -->
+        <div
+          id="sidebar-hosts"
+          class="osmium-reveal grid px-3"
+          :class="hostsOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+        >
+          <div class="osmium-reveal-clip">
+            <div class="max-h-56 overflow-y-auto">
+              <!-- The shape that is coming, like every other list in the application. -->
+              <div v-if="!agentStore.loaded" class="ms-4 flex flex-col gap-1 ps-2 py-1">
+                <div v-for="row in 2" :key="row" class="skeleton h-9 w-full"></div>
+              </div>
           <!-- The indent and hairline daisyUI would have drawn for a nested menu, by hand. -->
           <div class="border-base-content/10 ms-4 border-s ps-2">
-            <ul class="menu w-full flex-nowrap gap-0.5 p-0">
+            <TransitionGroup name="rows" tag="ul" class="menu w-full flex-nowrap gap-0.5 p-0">
               <!--
                 The same row as an agent, deliberately: a lettered tile with the status on its
                 corner, then the name over a line of detail. The two lists sit directly above one
@@ -523,16 +602,18 @@ async function logout() {
                   </span>
                 </RouterLink>
               </li>
-              <li v-if="!agentStore.hosts.length">
+              <li v-if="!agentStore.hosts.length" key="no-hosts">
                 <span class="text-xs opacity-50">{{ t('hosts.none') }}</span>
               </li>
-              <li v-if="auth.can('host.write')">
+              <li v-if="auth.can('host.write')" key="enrol-host">
                 <button type="button" class="gap-2.5 opacity-70" @click="addHostOpen = true">
                   <Plus class="size-4 shrink-0" />
                   {{ t('hosts.enrol') }}
                 </button>
               </li>
-            </ul>
+            </TransitionGroup>
+            </div>
+          </div>
           </div>
         </div>
 
@@ -567,11 +648,20 @@ async function logout() {
         </div>
 
         <!-- The fleet, and only the fleet. Everything above stays where it was put. -->
-        <div v-show="agentsOpen" id="sidebar-agents" class="min-h-0 flex-1 overflow-y-auto px-3">
+        <div
+          id="sidebar-agents"
+          class="osmium-reveal grid min-h-0 px-3"
+          :class="agentsOpen ? 'flex-1 grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+        >
+          <div class="osmium-reveal-clip">
+            <div class="h-full overflow-y-auto">
+              <div v-if="!agentStore.loaded" class="ms-4 flex flex-col gap-1 ps-2 py-1">
+                <div v-for="row in 4" :key="row" class="skeleton h-9 w-full"></div>
+              </div>
           <!-- The indent and hairline daisyUI would have drawn for a nested menu, kept by hand now
                that the list is no longer nested inside one. -->
           <div class="border-base-content/10 ms-4 border-s ps-2">
-            <ul class="menu w-full flex-nowrap gap-0.5 p-0">
+            <TransitionGroup name="rows" tag="ul" class="menu w-full flex-nowrap gap-0.5 p-0">
                   <!--
                     The fleet is a list of people as much as a list of rows, and this is the one
                     place every one of them is on screen at once. `v-flash` is on the state rather
@@ -610,13 +700,15 @@ async function logout() {
                       </span>
                     </RouterLink>
                   </li>
-                  <li v-if="auth.can('agent.write')">
+                  <li v-if="auth.can('agent.write')" key="add-agent">
                     <button type="button" class="gap-2.5 opacity-70" @click="addAgentOpen = true">
                       <Plus class="size-4 shrink-0" />
                       {{ t('nav.addAgent') }}
                     </button>
                   </li>
-            </ul>
+            </TransitionGroup>
+            </div>
+          </div>
           </div>
         </div>
 

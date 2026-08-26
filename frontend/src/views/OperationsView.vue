@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Box, Hammer, Power, Server, TriangleAlert, Workflow } from 'lucide-vue-next'
+import { Box, Hammer, Server, TriangleAlert, Workflow } from 'lucide-vue-next'
 import BuildJobs from '../components/BuildJobs.vue'
-import FleetConnections from '../components/FleetConnections.vue'
 import SchematicLibrary from '../components/SchematicLibrary.vue'
-import ServerAssignment from '../components/ServerAssignment.vue'
+import FleetControls from '../components/FleetControls.vue'
 import { useQueryTab } from '../lib/queryState'
+import { useSlide } from '../lib/motion'
+import TabBar, { type Tab as Strip } from '../components/TabBar.vue'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
@@ -24,12 +25,14 @@ const { t } = useI18n()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 
-type Tab = 'schematics' | 'jobs' | 'servers' | 'connections'
+type Tab = 'schematics' | 'jobs' | 'fleet'
 
-const TABS = ['schematics', 'jobs', 'servers', 'connections'] as const
+const TABS = ['schematics', 'jobs', 'fleet'] as const
 
 /** In the URL, so this page can be linked to and Back means the previous tab. See lib/queryState.ts. */
 const tab = useQueryTab<Tab>('tab', TABS, 'schematics')
+/** Which way the strip was moved through, so the panel arrives from the side its tab is on. */
+const slide = useSlide(tab, TABS)
 const error = ref<string | null>(null)
 const done = ref<string | null>(null)
 
@@ -38,13 +41,26 @@ const tabs: Array<{ id: Tab; label: string; icon: typeof Box; node: string }> = 
   // Beside the wizard rather than on the dashboard: this is where a job is started, so it is where
   // an operator looks for the one they just started.
   { id: 'jobs', label: 'operations.tabJobs', icon: Hammer, node: 'agent.read' },
-  { id: 'servers', label: 'operations.tabServers', icon: Server, node: 'agent.write' },
-  { id: 'connections', label: 'operations.tabConnections', icon: Power, node: 'agent.run' },
+  // One tab, because pointing agents at a server and bringing them into it is one sitting.
+  { id: 'fleet', label: 'operations.tabFleet', icon: Server, node: 'agent.write' },
 ]
 
 onMounted(() => {
   if (!agentStore.agents.length) void agentStore.refresh()
 })
+
+/**
+ * What the strip shows: the tabs this account may actually open, with their labels resolved.
+ *
+ * The gating is done here rather than inside the strip. A viewer reaches this page for the
+ * schematic library and should not be shown three tabs that answer 403 — an interface that offers
+ * what it will refuse reads as broken rather than as restricted.
+ */
+const strip = computed<Strip<Tab>[]>(() =>
+  tabs
+    .filter((entry) => auth.can(entry.node))
+    .map((entry) => ({ id: entry.id, label: t(entry.label), icon: entry.icon })),
+)
 
 /** One banner for all three tabs: the outcome belongs to the page, not to whichever panel spoke. */
 function report(message: string, failed: boolean) {
@@ -72,32 +88,13 @@ watch(tab, clearReport)
     Wider than the other pages. Every tab here is a picker beside a panel, and the Schematics one is
     a picker beside two — at 6xl the box viewer ends up narrower than the list of segments beside it.
   -->
-  <div class="mx-auto flex max-w-7xl flex-col gap-6">
+  <div class="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-6">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('operations.title') }}</h1>
       <p class="text-sm opacity-60">{{ t('operations.subtitle') }}</p>
     </header>
 
-    <!--
-      Node-gated per tab. A viewer reaches this page for the schematic library and should not be
-      shown two tabs that answer 403 — an interface that offers what it will refuse reads as broken
-      rather than as restricted.
-    -->
-    <div role="tablist" class="tabs tabs-border">
-      <template v-for="entry in tabs" :key="entry.id">
-        <button
-          v-if="auth.can(entry.node)"
-          type="button"
-          role="tab"
-          class="tab gap-2"
-          :class="tab === entry.id ? 'tab-active' : ''"
-          @click="tab = entry.id"
-        >
-          <component :is="entry.icon" class="size-4" />
-          {{ t(entry.label) }}
-        </button>
-      </template>
-    </div>
+    <TabBar v-model="tab" :tabs="strip" />
 
     <!--
       Dismissible, both of them. A tab change clears the banner on its own, but an operator who has
@@ -118,30 +115,31 @@ watch(tab, clearReport)
       </button>
     </div>
 
-    <SchematicLibrary
-      v-if="tab === 'schematics' && auth.can('schematic.read')"
-      @done="report($event, false)"
-      @failed="report($event, true)"
-      @started="tab = 'jobs'"
-    />
-    <!--
-      Moving the operator to what they just made. A run started from the wizard leaves the last step
-      looking exactly as it did, and "did that work" is not a question the banner alone answers.
-    -->
-    <BuildJobs
-      v-else-if="tab === 'jobs' && auth.can('agent.read')"
-      @done="report($event, false)"
-      @failed="report($event, true)"
-    />
-    <ServerAssignment
-      v-else-if="tab === 'servers' && auth.can('agent.write')"
-      @done="report($event, false)"
-      @failed="report($event, true)"
-    />
-    <FleetConnections
-      v-else-if="tab === 'connections' && auth.can('agent.run')"
-      @done="report($event, false)"
-      @failed="report($event, true)"
-    />
+    <!-- One transition over the whole chain: only one panel is ever mounted. -->
+    <div class="osmium-slide min-h-0 flex-1">
+      <Transition :name="slide">
+      <SchematicLibrary
+        v-if="tab === 'schematics' && auth.can('schematic.read')"
+        @done="report($event, false)"
+        @failed="report($event, true)"
+        @started="tab = 'jobs'"
+      />
+      <!--
+        Moving the operator to what they just made. A run started from the wizard leaves the last
+        step looking exactly as it did, and "did that work" is not a question the banner alone
+        answers.
+      -->
+      <BuildJobs
+        v-else-if="tab === 'jobs' && auth.can('agent.read')"
+        @done="report($event, false)"
+        @failed="report($event, true)"
+      />
+      <FleetControls
+        v-else-if="tab === 'fleet' && auth.can('agent.write')"
+        @done="report($event, false)"
+        @failed="report($event, true)"
+      />
+      </Transition>
+    </div>
   </div>
 </template>
