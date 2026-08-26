@@ -559,6 +559,8 @@ class BuildJobControllerTest : AbstractRestTest() {
             jsonPath("$.segments[0].blocksPlaced") { value(2) }
         }
 
+        // The new holder walks the piece from the beginning, so its own count starts below what
+        // is standing. The earlier figure holds until it is overtaken.
         progresses(second, segmentId.toLong(), placed = 0, state = "building")
         progresses(second, segmentId.toLong(), placed = 1)
 
@@ -566,8 +568,63 @@ class BuildJobControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.VIEWER))
         }.andExpect {
             status { isOk() }
-            // Two that were there, one this bot has placed since.
-            jsonPath("$.segments[0].blocksPlaced") { value(3) }
+            // Still two: this bot has not yet replaced as much as was already there, and adding
+            // its count to the old one would be counting the same blocks twice.
+            jsonPath("$.segments[0].blocksPlaced") { value(2) }
+        }
+
+        progresses(second, segmentId.toLong(), placed = 5)
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.VIEWER))
+        }.andExpect {
+            status { isOk() }
+            // Past it, so its own count is the better answer and takes over.
+            jsonPath("$.segments[0].blocksPlaced") { value(5) }
+        }
+    }
+
+    /**
+     * Assigning is allowed while a job is stopped, and must not start anybody building.
+     *
+     * Crewing a paused job up before resuming it is the ordinary way to fix one that lost an agent.
+     * Sending the work as part of that put a bot to building on a job an operator had stopped —
+     * and, because the piece was already most of the way there, it read as a bot building nothing.
+     */
+    @Test
+    fun `assigning on a paused job does not set anybody building`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val first = onlineAgent("Mason_01", host)
+        val second = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(first.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        pause(jobId).andExpect { status { isOk() } }
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect { status { isOk() } }
+
+        mockMvc.post("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"agentId":${second.id}}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.state") { value("PAUSED") }
+            jsonPath("$.segments[0].agentLabel") { value("Mason_02") }
+            jsonPath("$.segments[0].state") { value("ASSIGNED") }
+        }
+
+        // Nothing was sent, so nothing can report: the piece is still assigned and untouched.
+        mockMvc.post("/api/jobs/$jobId/resume") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.state") { value("ACTIVE") }
+            jsonPath("$.segments[0].agentLabel") { value("Mason_02") }
         }
     }
 

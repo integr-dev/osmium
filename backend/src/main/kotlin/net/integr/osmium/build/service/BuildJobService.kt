@@ -597,13 +597,20 @@ class BuildJobService(
         if (!segment.live) return
 
         blocksPlaced?.takeIf { it >= 0 }?.let { placed ->
-            // What this holder says it has done, on top of what was standing when it took over. A
-            // host counts from zero every time it is handed a piece — it cannot know what came
-            // before — so taking the report as the whole truth dropped the count on every resume.
+            // **The higher of the two, not the sum.** A host counts its own work from zero every
+            // time it is handed a piece, and a piece handed over is one the new holder walks from
+            // the beginning — so most of what it places is already there. Adding its count to what
+            // was standing counted those blocks twice, which drove the bar to full and froze it
+            // there while the bot was still working.
+            //
+            // Taking the maximum instead: the earlier figure stands while the newcomer is still
+            // behind it, and the newcomer’s own count takes over the moment it goes past — which
+            // is the point at which that count is the better answer. The number never goes
+            // backwards and never claims work nobody did.
             //
             // Clamped to what the split said is there. A host that recounts generously must not be
             // able to drive a job past finished, which is a number an operator would act on.
-            segment.blocksPlaced = minOf(segment.blocksPlacedBase + placed, segment.blocks)
+            segment.blocksPlaced = minOf(maxOf(segment.blocksPlacedBase, placed), segment.blocks)
             segment.lastReportAt = Instant.now()
         }
 
@@ -785,7 +792,14 @@ class BuildJobService(
         // moment the work moves rather than whenever somebody remembers to expire it.
         segment.fetchTicket = newTicket()
 
-        send(agent, CommandType.BUILD_SEGMENT) { segment.dispatchPayload(job) }
+        // **Not while the job is stopped.** Assigning is allowed on a paused job — crewing one up
+        // before resuming it is the ordinary way to fix a job that lost an agent — but sending the
+        // work would put a bot to building on a job an operator has stopped, which is the one
+        // thing pausing exists to prevent. `resume` sends every held piece out, so the assignment
+        // is honoured the moment the job is running again.
+        if (job.state == BuildJobState.ACTIVE) {
+            send(agent, CommandType.BUILD_SEGMENT) { segment.dispatchPayload(job) }
+        }
     }
 
     private fun free(job: BuildJob, segment: BuildSegment) {

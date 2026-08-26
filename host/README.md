@@ -682,9 +682,10 @@ pausing exists to do.
 Send it roughly **every five seconds** while building, alongside the vitals in `agent_status`.
 
 **Count your own work, from zero, every time you are handed the segment.** You cannot know whether
-somebody built part of it before you — the backend does, and adds what was already standing to
-whatever you report. So a segment taken off one agent and given to another does not fall back to
-nothing the moment the new one says `0`.
+somebody built part of it before you, and you are not expected to: the backend remembers what was
+standing when you took the piece and reports the higher of the two. So a segment handed from one
+agent to another does not fall back to nothing when the new one says `0`, and the blocks you place
+over work somebody else already did are not counted twice.
 
 **It is a total, not a delta.** Report where you are, not what has happened since the last message.
 The same report applied twice leaves the same number, one that never arrives costs nothing once the

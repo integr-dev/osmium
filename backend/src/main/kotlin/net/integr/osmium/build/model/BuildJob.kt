@@ -348,8 +348,8 @@ class BuildSegment(
     var releasedFrom: Agent? = null,
 
     /**
-     * How much of this piece is standing: what was there when the current holder took it, plus
-     * what that holder says it has placed since.
+     * How much of this piece is standing: the higher of what was there when the current holder took
+     * it and what that holder says it has placed.
      *
      * **A host counts from zero and cannot do otherwise.** It is told to build a box and starts
      * counting when it starts placing; it has no idea whether anybody built part of it first, and
