@@ -142,7 +142,7 @@ async function messageOf(response: Response): Promise<string> {
   }
 }
 
-export type SplitMode = 'COLUMNS' | 'LAYERS' | 'GRID'
+export type SplitMode = 'COLUMNS' | 'GRID'
 
 /**
  * How a build divides between a number of agents.

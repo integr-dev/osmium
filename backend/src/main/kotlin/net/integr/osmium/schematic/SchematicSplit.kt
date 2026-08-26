@@ -3,32 +3,49 @@ package net.integr.osmium.schematic
 /**
  * How a build is divided between agents.
  *
- * The three modes are one algorithm with different axes allowed, not three algorithms. What changes
- * between them is the shape of the pieces, and the shape is a trade between balance and agents
- * standing on each other.
+ * The two modes are one algorithm with different axes allowed, not two algorithms. What changes
+ * between them is the shape of the pieces - and, because of the shape, how much of the build can be
+ * worked at once.
+ *
+ * **Cutting on Y is an order, not a division.** A bot is two blocks tall and builds from the floor
+ * up, standing on the layer below to place the one it is on, so two agents split by height over the
+ * same ground are not slow - they are impossible, each needing to stand exactly where the other
+ * still has blocks to place. A piece with unfinished work beneath it is therefore not handed out
+ * until that work is done; see `BuildJob.blockers`. Vertical modes are safe because of that rule
+ * and would be broken without it, and horizontal ones never touch it, having nothing beneath
+ * anything.
  */
 enum class SplitMode(internal val axes: Set<Axis>) {
     /**
-     * Full-height prisms over the footprint. The safe default: each agent has its own ground to
-     * stand on and builds bottom-up without waiting for anyone, and nothing it places depends on a
-     * block another agent has not laid yet.
+     * Full-height prisms over the footprint. The safe default, and the only mode with no ordering in
+     * it at all: every piece is ready from the start, each agent has its own ground, and nothing any
+     * of them places waits on a block somebody else has not laid.
      */
     COLUMNS(setOf(Axis.X, Axis.Z)),
 
     /**
-     * Horizontal slabs. **Serialises**: the agent on the second layer has nothing to stand on until
-     * the first is done. Only sensible for something flat and wide, where there is no second layer
-     * to wait for.
-     */
-    LAYERS(setOf(Axis.Y)),
-
-    /**
-     * Cut on whichever axis is longest, including vertically. Balances best and localises worst —
-     * an agent can be handed a piece with no floor under it, and two agents can end up working
-     * within reach of each other.
+     * Every axis allowed, height included. Balances best, because [bestCut] can put each cut
+     * wherever the blocks actually divide rather than being held to the two horizontal ones.
+     *
+     * The only mode that uses the ordering: pieces at one level go out together while the ones
+     * above them wait, so a tall build fills in as a wavefront. Which also bounds it - **how much
+     * runs at once is how many pieces sit at the same level**, not how many were asked for. Sixteen
+     * pieces four wide and four high keep four agents busy and leave a fifth waiting. And a
+     * genuinely tall thin build divides on height alone and comes out serial, because that shape
+     * really can only be built by one bot from the floor up.
+     *
+     * So this is the mode for balance, and [COLUMNS] is the mode for parallelism.
      */
     GRID(setOf(Axis.X, Axis.Y, Axis.Z)),
 }
+
+// There was a LAYERS here, cutting on Y alone, and it was **dominated by GRID in every case**. A
+// layer is one piece covering the whole footprint, so the ordering rule serialises it to one agent
+// at a time: point eight at it and seven watch, for the same throughput as handing one agent the
+// whole build. Its one remaining virtue was building bottom-up, and GRID has that from the same
+// rule while also cutting horizontally - which makes LAYERS exactly GRID with the useful cuts
+// removed. It was written when a vertical cut was thought to be a balance trade rather than a
+// physical impossibility, and it did not survive learning which.
 
 internal enum class Axis { X, Y, Z }
 

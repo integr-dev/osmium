@@ -57,7 +57,7 @@ class SchematicSplitTest {
         val cells = even()
         val total = cells.sumOf { it.blocks.toLong() }
 
-        listOf(SplitMode.COLUMNS, SplitMode.GRID, SplitMode.LAYERS).forEach { mode ->
+        listOf(SplitMode.COLUMNS, SplitMode.GRID).forEach { mode ->
             (1..8).forEach { parts ->
                 assertEquals(total, split(cells, mode, parts).blocks, "$mode into $parts")
             }
@@ -133,18 +133,20 @@ class SchematicSplitTest {
         }
     }
 
+    /**
+     * The cut columns refuse to make. It is safe only because a piece with unfinished work beneath it
+     * is not handed out - see `BuildJob.blockers` - which turns a vertical cut from a division into
+     * an order.
+     */
     @Test
-    fun `cuts layers only horizontally`() {
+    fun `a grid will cut on height when height is the longest axis`() {
         val tall = buildList {
-            for (x in 0 until 4) for (y in 0 until 4) add(Cell(x, y, 0, 10))
+            for (y in 0 until 8) add(Cell(0, y, 0, 10))
         }
 
-        val segments = split(tall, SplitMode.LAYERS, 2).segments
+        val segments = split(tall, SplitMode.GRID, 2).segments
 
         assertEquals(2, segments.size)
-        // Each slab spans the whole footprint and part of the height — the opposite of columns,
-        // and the reason this mode serialises.
-        segments.forEach { assertEquals(0, it.min.x) }
         assertTrue(segments.map { it.min.y }.distinct().size == 2)
     }
 
