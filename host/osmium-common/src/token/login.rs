@@ -26,6 +26,7 @@ pub enum LoginKind {
     NoToken,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LoginState {
     Online,
     FailedConnection,

@@ -1,4 +1,4 @@
-use crate::game::{chat::ChatScope, player::Player};
+use crate::game::{chat::ChatScope, player::Player, vec3::Vec3};
 use uuid::Uuid;
 
 use crate::token::login::{LoginKind, LoginState};
@@ -13,7 +13,7 @@ pub enum WsMessage {
     Result {
         id: String,
         agent_id: u32,
-        message: CommandResultMessage,
+        message: CommandResponseMessage,
     },
 
     Event(EventMessage),
@@ -34,8 +34,22 @@ pub enum CommandMessage {
     SetChatListener(bool),
 }
 
-pub enum CommandResultMessage {
+pub enum CommandResponseMessage {
     SetupAgent(SetupAgentResponse),
+}
+
+impl CommandResponseMessage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            CommandResponseMessage::SetupAgent(_) => "setup_agent",
+        }
+    }
+
+    pub fn is_ok(&self) -> bool {
+        match self {
+            CommandResponseMessage::SetupAgent(r) => r.is_ok(),
+        }
+    }
 }
 
 pub enum EventMessage {
@@ -45,6 +59,7 @@ pub enum EventMessage {
 
     AgentStatus {
         agent_id: u32,
+
         state: Option<LoginState>,
         dimension: Option<String>,
         nearby: Option<Vec<Player>>,
@@ -52,11 +67,10 @@ pub enum EventMessage {
         health: u16,
         food: u16,
         ping: u16,
-        position: (f64, f64, f64),
+        position: Vec3,
     },
 
     Chat {
-        agent_id: u32,
         scope: ChatScope,
         from: Option<String>,
         content: String,
@@ -76,12 +90,21 @@ pub enum SetupAgentResponse {
     Fail { reason: &'static str },
 }
 
+impl SetupAgentResponse {
+    pub fn is_ok(&self) -> bool {
+        match self {
+            Self::Success { .. } => true,
+            Self::Fail { .. } => false,
+        }
+    }
+}
+
 pub struct BotResponse {
     pub bot_id: u32,
     pub parameters: BotResponseParameters,
 }
 
 pub enum BotResponseParameters {
-    Command(CommandResultMessage),
+    Command(CommandResponseMessage),
     Event(EventMessage),
 }

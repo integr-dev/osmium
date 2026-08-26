@@ -4,7 +4,7 @@ use log::{error, warn};
 use osmium_agent::bot::bot;
 use osmium_common::{
     message::{
-        BotResponse, BotResponseParameters, CommandMessage, CommandResultMessage,
+        BotResponse, BotResponseParameters, CommandMessage, CommandResponseMessage,
         SetupAgentResponse, WsMessage,
     },
     token::store::{LoginHandle, TokenStorage},
@@ -12,7 +12,6 @@ use osmium_common::{
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 struct BotState {
-    pub(super) label: String,
     pub(super) channel: Sender<CommandMessage>,
     pub(super) response_ids: VecDeque<String>,
 }
@@ -69,9 +68,7 @@ async fn handle_socket_message(
 
     match message {
         CommandMessage::SetupAgent {
-            label,
-            address,
-            method,
+            address, method, ..
         } => {
             let handle = match store.get_login(method, address) {
                 Some(handle) => handle,
@@ -79,7 +76,7 @@ async fn handle_socket_message(
                     let _ = dispatch_tx.send(WsMessage::Result {
                         id,
                         agent_id,
-                        message: CommandResultMessage::SetupAgent(SetupAgentResponse::Fail {
+                        message: CommandResponseMessage::SetupAgent(SetupAgentResponse::Fail {
                             reason: "No accounts available",
                         }),
                     });
@@ -88,7 +85,7 @@ async fn handle_socket_message(
                 }
             };
 
-            let mut bot = spawn_swarm(agent_id, label, bot_tx.clone(), handle).await;
+            let mut bot = spawn_swarm(agent_id, bot_tx.clone(), handle).await;
 
             bot.response_ids.push_back(id);
             bots.insert(agent_id, bot);
@@ -137,17 +134,11 @@ async fn handle_bot_message(
     });
 }
 
-async fn spawn_swarm(
-    id: u32,
-    label: String,
-    dispatch_tx: Sender<BotResponse>,
-    login: LoginHandle,
-) -> BotState {
+async fn spawn_swarm(id: u32, dispatch_tx: Sender<BotResponse>, login: LoginHandle) -> BotState {
     let (tx, rx) = mpsc::channel::<CommandMessage>(100);
     tokio::spawn(bot(dispatch_tx, rx, login, id));
 
     BotState {
-        label,
         channel: tx,
         response_ids: Default::default(),
     }
