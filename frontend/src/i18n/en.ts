@@ -140,6 +140,20 @@ export const en = {
     streamLostBody: 'What is on screen is real but has stopped updating — agent states, upload progress and new rows are all waiting on the connection. Nothing has been lost.',
   },
 
+  /**
+   * The corner stack. Two kinds of line only: a receipt for something whose result is on another
+   * page, and something the stream reported while the operator was looking elsewhere. Short, because
+   * a notice that expires is not the place to explain anything.
+   */
+  toast: {
+    hostRemoved: 'Removed {name}. Its agents went with it.',
+    agentRemoved: 'Removed {name}.',
+    jobDone: '{name} finished — every piece is built.',
+    /** The count of how many is on the notice, so this stays singular however often it repeats. */
+    segmentFailed: 'A piece of {name} failed. Open the job to see what the host said.',
+    hostUnreachable: '{name} stopped answering. Its agents are offline until it comes back.',
+  },
+
   login: {
     subtitle: 'Sign in to continue',
     username: 'Username',

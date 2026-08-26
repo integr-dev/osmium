@@ -534,31 +534,48 @@ progress::-moz-progress-bar {
  * The chat toggle takes the same mark because it means the same kind of thing: not a place you
  * are, but a panel that is open, which is the closest thing the sidebar has to one.
  */
-.menu :where(li) > .router-link-active,
-.menu :where(li) > .menu-active {
-  position: relative;
+/*
+ * Held down, and still lit.
+ *
+ * daisyUI takes `:active` out of its own hover and focus rules and then defines nothing to replace
+ * it, so pressing a sidebar row fades its background *out* under the cursor and fades it back in on
+ * release. A blink at the exact moment of the click, on the one gesture in the sidebar that has to
+ * feel solid — and a 200ms transition either side of it, so it is a wobble rather than a flicker.
+ */
+.menu
+  :where(li:not(.menu-title, .disabled) > :not(ul, menu, details, .menu-title, .btn):active) {
+  background-color: color-mix(in oklab, var(--color-base-content) 10%, transparent);
 }
 
-.menu :where(li) > .router-link-active::before,
-.menu :where(li) > .menu-active::before {
-  content: '';
+.osmium-nav-marker {
   position: absolute;
-  top: 0.35rem;
-  bottom: 0.35rem;
-  left: 0;
+  inset-inline-start: 0;
   width: 3px;
+  /*
+   * It is a mark, not a target. Painting under the rows is not enough on its own — an absolutely
+   * positioned element still answers the pointer, and this one lies along the left edge of whichever
+   * row is active and sweeps across the others on its way there. Without this it takes the hover off
+   * every row it crosses, for as long as it is crossing them.
+   */
+  pointer-events: none;
+  /* The inset that keeps the rule shorter than the row it marks, so it reads as a mark on the row
+     rather than as a border between it and the next one. Held here rather than in the measurement:
+     the height written from JavaScript is the row's, and this takes it in at both ends. */
+  box-sizing: border-box;
+  padding-block: 0.35rem;
+  opacity: 0;
+  transition:
+    translate 0.24s var(--osmium-ease),
+    height 0.24s var(--osmium-ease),
+    opacity 0.18s ease-out;
+}
+
+.osmium-nav-marker::before {
+  content: '';
+  display: block;
+  height: 100%;
   border-radius: var(--radius-field);
   background-color: var(--color-primary);
-  animation: osmium-rail-in 0.22s var(--osmium-ease) both;
-}
-
-/* Grown from the middle rather than switched on: the mark moves between rows as a page is opened,
-   and a line that simply exists in its new place reads as two lines rather than one moving. */
-@keyframes osmium-rail-in {
-  from {
-    opacity: 0;
-    scale: 1 0.2;
-  }
 }
 /*
  * A section of the sidebar opening and shutting.
@@ -694,6 +711,66 @@ progress::-moz-progress-bar {
   translate: 0 -0.5rem;
 }
 
+/*
+ * The corner stack. See `src/components/ToastStack.vue` for what is allowed in it.
+ *
+ * Opaque and raised, unlike every other alert in Osmium. Those sit *in* a page and belong to it; a
+ * notice floating over one has to read as being in front of the page rather than part of it, and
+ * daisyUI turns the shadow off for a soft alert because in its usual place it would be noise.
+ */
+.osmium-toast {
+  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.18);
+  /* Scaled from the edge that stays put, so a card behind the front one shows a sliver of its top
+     rather than shrinking away from the corner on both sides at once. */
+  transform-origin: bottom center;
+  scale: 1;
+  transition:
+    translate 0.3s var(--osmium-ease),
+    scale 0.3s var(--osmium-ease),
+    opacity 0.2s ease-out;
+}
+
+/*
+ * A card arriving lands at the front of the deck, which is where the corner already is — so it
+ * grows into place rather than travelling. The cards behind it are pushed back by the same numbers
+ * the layout writes, and that is a transition, not this.
+ *
+ * **No `translate` in here, and that is deliberate.** A card's position is an inline style written
+ * from `ToastStack.vue`, and a CSS animation outranks an inline style for as long as it runs — an
+ * animated translate would hold the card away from where the deck had already put it and then drop
+ * it there when the animation ended.
+ *
+ * Its start is declared as well as animated, like every other entrance here. Vue applies the enter
+ * class one frame after the element is inserted, so a two-state transition is visible in its
+ * finished position for that frame — the flash of a fully drawn card a moment before it moves.
+ */
+@keyframes osmium-toast-in {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+
+.toast-enter-active {
+  opacity: 0;
+  animation: osmium-toast-in 0.24s var(--osmium-ease) both;
+}
+
+/*
+ * Out towards the edge it came from. Every card is positioned already, so there is no gap for the
+ * others to close and nothing to take out of the flow — they simply restack behind it.
+ */
+.toast-leave-active {
+  transition:
+    opacity 0.18s ease-in,
+    translate 0.22s var(--osmium-ease);
+}
+
+.toast-leave-to {
+  opacity: 0;
+  translate: 1.5rem 0;
+}
+
 /* What makes the rows below an insertion slide to meet it rather than teleport. */
 .rows-move,
 .cards-move {
@@ -767,7 +844,12 @@ progress::-moz-progress-bar {
   .osmium-step-dot,
   .osmium-step-label,
   .rows-move,
-  .cards-move {
+  .cards-move,
+  .toast-leave-active,
+  /* The deck still opens and closes; it simply arrives in each state rather than easing into it. */
+  .osmium-toast,
+  /* Still marks the row it is on — only the travel between rows stops. */
+  .osmium-nav-marker {
     transition: none;
   }
 
@@ -778,10 +860,9 @@ progress::-moz-progress-bar {
   .panel-prev-enter-active,
   .panel-next-leave-active,
   .panel-prev-leave-active,
-  .menu :where(li) > .router-link-active::before,
-  .menu :where(li) > .menu-active::before,
   .rows-enter-active,
   .cards-enter-active,
+  .toast-enter-active,
   /* The colour still says it; only the breathing stops. */
   .osmium-dot-pending,
   .feed-enter-active {

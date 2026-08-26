@@ -32,8 +32,10 @@ import AddHostModal from '../components/AddHostModal.vue'
 import ChatRail from '../components/ChatRail.vue'
 import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
+import NavRail from '../components/NavRail.vue'
 import InitialTile from '../components/InitialTile.vue'
 import PlayerHead from '../components/PlayerHead.vue'
+import ToastStack from '../components/ToastStack.vue'
 import { backendEverReached, backendReachable } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { agentDot, agentStateLabel } from '../lib/agentState'
@@ -301,7 +303,7 @@ async function logout() {
           No scrollbar gutter here any more: nothing on this element scrolls, so there is none to
           reserve room for.
         -->
-        <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 py-8">
+        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 py-8">
           <!--
             On every page rather than tucked into My account. It is the only way the person it
             happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
@@ -355,6 +357,13 @@ async function logout() {
               <component :is="Component" />
             </Transition>
           </RouterView>
+
+          <!--
+            Inside the page rather than pinned to the window, so the stack is never over the chat
+            rail — which is a column on this same row, and whose composer is in exactly the corner
+            a fixed stack would want. It follows the rail opening and closing for free.
+          -->
+          <ToastStack />
         </main>
 
         <Transition :css="false" @enter="railEnter" @leave="railLeave">
@@ -475,38 +484,40 @@ async function logout() {
         <!-- Natural height. Given `flex-1` it splits the spare space with the scroller below and
              the fleet starts halfway down the sidebar with a gap above it. -->
         <div class="px-3">
-          <ul class="menu w-full flex-nowrap gap-0.5 p-0">
-            <li>
-              <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
-                <LayoutDashboard class="size-4 shrink-0" />
-                {{ t('nav.dashboard') }}
-              </RouterLink>
-            </li>
-            <li>
-              <RouterLink :to="{ name: 'map' }" class="gap-3">
-                <MapIcon class="size-4 shrink-0" />
-                {{ t('nav.map') }}
-              </RouterLink>
-            </li>
-            <li v-if="auth.can('agent.run')">
-              <RouterLink :to="{ name: 'operations' }" class="gap-3">
-                <Workflow class="size-4 shrink-0" />
-                {{ t('nav.operations') }}
-              </RouterLink>
-            </li>
-            <li v-if="auth.can('agent.write')">
-              <RouterLink :to="{ name: 'configuration' }" class="gap-3">
-                <SlidersHorizontal class="size-4 shrink-0" />
-                {{ t('nav.configuration') }}
-              </RouterLink>
-            </li>
-            <li>
-              <RouterLink :to="{ name: 'resources' }" class="gap-3">
-                <Network class="size-4 shrink-0" />
-                {{ t('nav.resources') }}
-              </RouterLink>
-            </li>
-          </ul>
+          <NavRail>
+            <ul class="menu w-full flex-nowrap gap-0.5 p-0">
+              <li>
+                <RouterLink :to="{ name: 'dashboard' }" class="gap-3">
+                  <LayoutDashboard class="size-4 shrink-0" />
+                  {{ t('nav.dashboard') }}
+                </RouterLink>
+              </li>
+              <li>
+                <RouterLink :to="{ name: 'map' }" class="gap-3">
+                  <MapIcon class="size-4 shrink-0" />
+                  {{ t('nav.map') }}
+                </RouterLink>
+              </li>
+              <li v-if="auth.can('agent.run')">
+                <RouterLink :to="{ name: 'operations' }" class="gap-3">
+                  <Workflow class="size-4 shrink-0" />
+                  {{ t('nav.operations') }}
+                </RouterLink>
+              </li>
+              <li v-if="auth.can('agent.write')">
+                <RouterLink :to="{ name: 'configuration' }" class="gap-3">
+                  <SlidersHorizontal class="size-4 shrink-0" />
+                  {{ t('nav.configuration') }}
+                </RouterLink>
+              </li>
+              <li>
+                <RouterLink :to="{ name: 'resources' }" class="gap-3">
+                  <Network class="size-4 shrink-0" />
+                  {{ t('nav.resources') }}
+                </RouterLink>
+              </li>
+            </ul>
+          </NavRail>
         </div>
 
         <!--
@@ -561,6 +572,7 @@ async function logout() {
               </div>
           <!-- The indent and hairline daisyUI would have drawn for a nested menu, by hand. -->
           <div class="border-base-content/10 ms-4 border-s ps-2">
+            <NavRail>
             <TransitionGroup name="rows" tag="ul" class="menu w-full flex-nowrap gap-0.5 p-0">
               <!--
                 The same row as an agent, deliberately: a lettered tile with the status on its
@@ -612,6 +624,7 @@ async function logout() {
                 </button>
               </li>
             </TransitionGroup>
+            </NavRail>
             </div>
           </div>
           </div>
@@ -661,6 +674,7 @@ async function logout() {
           <!-- The indent and hairline daisyUI would have drawn for a nested menu, kept by hand now
                that the list is no longer nested inside one. -->
           <div class="border-base-content/10 ms-4 border-s ps-2">
+            <NavRail>
             <TransitionGroup name="rows" tag="ul" class="menu w-full flex-nowrap gap-0.5 p-0">
                   <!--
                     The fleet is a list of people as much as a list of rows, and this is the one
@@ -707,6 +721,7 @@ async function logout() {
                     </button>
                   </li>
             </TransitionGroup>
+            </NavRail>
             </div>
           </div>
           </div>
@@ -718,47 +733,58 @@ async function logout() {
           badge is the only place the fleet's chatter is visible while the rail is shut, which is
           also why it takes the corner the keys otherwise occupy.
         -->
-        <ul v-if="auth.can('chat.read')" class="menu w-full gap-0.5 px-3 pb-3">
-          <li>
-            <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
-              <MessagesSquare class="size-4 shrink-0" />
-              {{ t('chat.title') }}
-              <span v-if="chat.unread" class="badge badge-primary badge-xs ml-auto">
-                {{ chat.unread > 99 ? '99+' : chat.unread }}
-              </span>
-              <kbd v-else class="kbd kbd-xs ml-auto">{{ chatKeys }}</kbd>
-            </button>
-          </li>
-        </ul>
+        <!--
+          The padding moves off the list and onto a wrapper: the rule is placed against the box it
+          is inside, so a list that holds its own padding would put the mark at the sidebar's edge
+          rather than at the row's.
+        -->
+        <div v-if="auth.can('chat.read')" class="px-3 pb-3">
+          <NavRail>
+            <ul class="menu w-full gap-0.5 p-0">
+              <li>
+                <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
+                  <MessagesSquare class="size-4 shrink-0" />
+                  {{ t('chat.title') }}
+                  <span v-if="chat.unread" class="badge badge-primary badge-xs ml-auto">
+                    {{ chat.unread > 99 ? '99+' : chat.unread }}
+                  </span>
+                  <kbd v-else class="kbd kbd-xs ml-auto">{{ chatKeys }}</kbd>
+                </button>
+              </li>
+            </ul>
+          </NavRail>
+        </div>
 
         <div class="border-base-300 border-t p-3">
-          <ul class="menu w-full gap-0.5 p-0">
-            <LanguagePicker />
-            <li>
-              <RouterLink :to="{ name: 'account' }" class="gap-3">
-                <User class="size-4 shrink-0" />
-                {{ t('nav.myAccount') }}
-              </RouterLink>
-            </li>
-            <li v-if="auth.can('user.read')">
-              <RouterLink :to="{ name: 'accounts' }" class="gap-3">
-                <Users class="size-4 shrink-0" />
-                {{ t('nav.allAccounts') }}
-              </RouterLink>
-            </li>
-            <li v-if="auth.can('audit.read')">
-              <RouterLink :to="{ name: 'audit' }" class="gap-3">
-                <ScrollText class="size-4 shrink-0" />
-                {{ t('nav.auditLog') }}
-              </RouterLink>
-            </li>
-            <li>
-              <button type="button" class="text-error hover:bg-error/10 gap-3" @click="logout">
-                <LogOut class="size-4 shrink-0" />
-                {{ t('nav.logOut') }}
-              </button>
-            </li>
-          </ul>
+          <NavRail>
+            <ul class="menu w-full gap-0.5 p-0">
+              <LanguagePicker />
+              <li>
+                <RouterLink :to="{ name: 'account' }" class="gap-3">
+                  <User class="size-4 shrink-0" />
+                  {{ t('nav.myAccount') }}
+                </RouterLink>
+              </li>
+              <li v-if="auth.can('user.read')">
+                <RouterLink :to="{ name: 'accounts' }" class="gap-3">
+                  <Users class="size-4 shrink-0" />
+                  {{ t('nav.allAccounts') }}
+                </RouterLink>
+              </li>
+              <li v-if="auth.can('audit.read')">
+                <RouterLink :to="{ name: 'audit' }" class="gap-3">
+                  <ScrollText class="size-4 shrink-0" />
+                  {{ t('nav.auditLog') }}
+                </RouterLink>
+              </li>
+              <li>
+                <button type="button" class="text-error hover:bg-error/10 gap-3" @click="logout">
+                  <LogOut class="size-4 shrink-0" />
+                  {{ t('nav.logOut') }}
+                </button>
+              </li>
+            </ul>
+          </NavRail>
         </div>
       </aside>
     </div>

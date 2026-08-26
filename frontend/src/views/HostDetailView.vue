@@ -12,12 +12,14 @@ import {
   TriangleAlert,
 } from 'lucide-vue-next'
 import HostActions from '../components/HostActions.vue'
+import type { HostResponse } from '../api/client'
 import PlayerHead from '../components/PlayerHead.vue'
 import { agentBadge, agentStateLabel } from '../lib/agentState'
 import { vFlash } from '../lib/motion'
 import { useAgentStore } from '../stores/agents'
 import { atShort } from '../lib/time'
 import { useAuthStore } from '../stores/auth'
+import { useToastStore } from '../stores/toasts'
 
 /**
  * One machine: whether it is answering, what it is running, and what it can log in with.
@@ -34,6 +36,7 @@ const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
+const toasts = useToastStore()
 
 const actions = ref<InstanceType<typeof HostActions> | null>(null)
 
@@ -44,8 +47,14 @@ onMounted(() => {
   if (!agentStore.loaded) void agentStore.refresh()
 })
 
-/** Its page cannot outlive it. The list is where there is still something to look at. */
-function afterRemove() {
+/**
+ * Its page cannot outlive it. The list is where there is still something to look at.
+ *
+ * The confirmation goes to the corner because this page is about to stop existing: the operator
+ * lands on a list of hosts with one fewer row than it had, and an absence is not a receipt.
+ */
+function afterRemove(removed: HostResponse) {
+  toasts.notify('success', 'toast.hostRemoved', { params: { name: removed.name } })
   void router.push({ name: 'resources' })
 }
 </script>

@@ -117,6 +117,14 @@ export const de: Copy = {
     streamLostBody: 'Was auf dem Bildschirm steht, ist echt, wird aber nicht mehr aktualisiert — Agentenzustände, Upload-Fortschritt und neue Zeilen warten auf die Verbindung. Es ist nichts verloren gegangen.',
   },
 
+  toast: {
+    hostRemoved: '{name} entfernt. Die zugehörigen Agenten ebenfalls.',
+    agentRemoved: '{name} entfernt.',
+    jobDone: '{name} ist fertig — alle Teile stehen.',
+    segmentFailed: 'Ein Teil von {name} ist fehlgeschlagen. Im Auftrag steht, was der Host gemeldet hat.',
+    hostUnreachable: '{name} antwortet nicht mehr. Die zugehörigen Agenten sind offline, bis er zurück ist.',
+  },
+
   login: {
     subtitle: 'Zum Fortfahren anmelden',
     username: 'Benutzername',

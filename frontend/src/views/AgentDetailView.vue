@@ -33,6 +33,7 @@ import { prefersReducedMotion, vFlash } from '../lib/motion'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
+import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
 
 const { t, n } = useI18n()
@@ -41,6 +42,7 @@ const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 const chat = useChatStore()
+const toasts = useToastStore()
 
 const error = ref<string | null>(null)
 const busy = ref(false)
@@ -357,8 +359,11 @@ async function confirmRemove() {
   if (!agent.value || removeBusy.value) return
   removeBusy.value = true
   try {
+    const removed = agent.value.label
     await agentStore.removeAgent(agent.value.id)
     removeDialog.value?.close()
+    // Same reason as a removed host: the page that would have shown this is the one being left.
+    toasts.notify('success', 'toast.agentRemoved', { params: { name: removed } })
     void router.push({ name: 'dashboard' })
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : t('errors.removeAgent')

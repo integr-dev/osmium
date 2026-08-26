@@ -16,6 +16,7 @@ import {
   type SplitMode,
 } from '../api/jobs'
 import { useAuthStore } from './auth'
+import { useToastStore } from './toasts'
 import { t } from '../i18n'
 import { jobFigures } from '../lib/jobs'
 import { isOnline } from '../lib/agentState'
@@ -248,9 +249,15 @@ export const useAgentStore = defineStore('agents', () => {
       case 'agent-removed':
         agents.value = agents.value.filter((agent) => agent.id !== (data as { id: number }).id)
         break
-      case 'host':
-        upsertHost(data as HostResponse)
+      case 'host': {
+        const host = data as HostResponse
+        announceHost(
+          hosts.value.find((existing) => existing.id === host.id),
+          host,
+        )
+        upsertHost(host)
         break
+      }
       case 'host-removed':
         hosts.value = hosts.value.filter((host) => host.id !== (data as { id: number }).id)
         break
@@ -280,9 +287,15 @@ export const useAgentStore = defineStore('agents', () => {
       // Runs are not a paged list and not owned by one view: an agent's assignment is a fact about
       // the agent, which the fleet list reads without knowing anything about jobs. A job also moves
       // with nobody watching — a segment is freed the moment its agent leaves the game.
-      case 'build-job':
-        upsertJob(data as BuildJob)
+      case 'build-job': {
+        const job = data as BuildJob
+        announceJob(
+          jobs.value.find((existing) => existing.id === job.id),
+          job,
+        )
+        upsertJob(job)
         break
+      }
       case 'build-job-removed':
         jobs.value = jobs.value.filter((job) => job.id !== (data as { id: number }).id)
         break
@@ -304,6 +317,55 @@ export const useAgentStore = defineStore('agents', () => {
   function onFeedEvent(listener: (name: string, data: unknown) => void): () => void {
     feedListeners.add(listener)
     return () => feedListeners.delete(listener)
+  }
+
+  /**
+   * The two things the stream carries that an operator is waiting on and cannot see.
+   *
+   * **Only from the stream.** Every one of these can also arrive as the answer to a button the
+   * operator just pressed, and telling somebody what they have this second done is noise — so this
+   * hangs off the ingest rather than off `upsertJob`, which the action methods share.
+   *
+   * Nothing is said about a job being seen for the first time. A page that has just loaded, or a
+   * tab that has just reconnected, would otherwise open with a column of notices about a backlog
+   * nobody was waiting on.
+   */
+  function announceJob(previous: BuildJob | undefined, incoming: BuildJob): void {
+    if (!previous) return
+    const toasts = useToastStore()
+
+    if (previous.state !== 'DONE' && incoming.state === 'DONE') {
+      toasts.notify('success', 'toast.jobDone', { params: { name: incoming.buildName } })
+    }
+
+    // Per piece that has *become* failed, so a job carrying a failure does not re-announce it every
+    // time anything else about the job moves — which, on a running job, is every few seconds.
+    const failed = incoming.segments.filter(
+      (segment) =>
+        segment.state === 'FAILED' &&
+        previous.segments.find((was) => was.id === segment.id)?.state !== 'FAILED',
+    )
+
+    // One notice per job rather than per piece, which falls out of the copy rather than being
+    // arranged here: every piece of the same job produces the same sentence, and the same sentence
+    // twice is one card counting two. A host that cannot build one box usually cannot build the
+    // next either, and twenty lines saying so is a worse account of it than one saying twenty.
+    for (let remaining = failed.length; remaining > 0; remaining -= 1) {
+      toasts.notify('warning', 'toast.segmentFailed', { params: { name: incoming.buildName } })
+    }
+  }
+
+  /**
+   * A host going quiet, which takes every agent on it offline.
+   *
+   * Only the fall. A host coming back is good news that announces itself the moment anything on the
+   * page moves again, and a flapping connection would otherwise post two notices a minute.
+   */
+  function announceHost(previous: HostResponse | undefined, incoming: HostResponse): void {
+    if (!previous?.reachable || incoming.reachable) return
+    useToastStore().notify('warning', 'toast.hostUnreachable', {
+      params: { name: incoming.name },
+    })
   }
 
   function upsertJob(incoming: BuildJob): void {

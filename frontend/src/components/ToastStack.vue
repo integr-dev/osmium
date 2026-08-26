@@ -1,0 +1,190 @@
+<script setup lang="ts">
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from 'lucide-vue-next'
+import { vFlash } from '../lib/motion'
+import { useToastStore, type ToastKind } from '../stores/toasts'
+
+/**
+ * The corner the notices live in — a deck rather than a column.
+ *
+ * **They stack like cards.** Nothing expires here, so a list would grow down the page and take over
+ * the screen it is supposed to sit beside. Collapsed, only the newest is read: the two behind it
+ * show a sliver each, which is how many are waiting without any of them costing room. Pointing at
+ * the deck spreads it into a column so every one can be read and dismissed, and moving away closes
+ * it again.
+ *
+ * **The bottom right of the page, not of the window.** The chat rail is a column on the same row
+ * and its composer sits in the corner a window-fixed stack would want, so this is positioned inside
+ * the page area instead and moves with the rail for free. Nothing here has to follow a scroll: the
+ * page itself never scrolls — every view scrolls its own list — so the corner does not move.
+ *
+ * The container takes no pointer events while the deck is shut; the cards themselves do. Otherwise
+ * an invisible box the size of the spread deck would swallow clicks on whatever is under it. Open,
+ * it does take them — see `layout`, which is also where it is given a size to take them over.
+ */
+const { t } = useI18n()
+const toasts = useToastStore()
+
+const ICONS: Record<ToastKind, typeof Info> = {
+  success: CircleCheck,
+  info: Info,
+  warning: TriangleAlert,
+  error: CircleAlert,
+}
+
+const TONES: Record<ToastKind, string> = {
+  success: 'alert-success',
+  info: 'alert-info',
+  warning: 'alert-warning',
+  error: 'alert-error',
+}
+
+/** How much of each card behind the front one shows, and how much smaller it is drawn. */
+const PEEK_PX = 9
+const PEEK_SCALE = 0.045
+
+/** Cards further back than this are not drawn at all. A third sliver already says "and more". */
+const LAYERS = 3
+
+/** Between cards once the deck is spread. */
+const GAP_PX = 8
+
+const deck = ref<HTMLElement | null>(null)
+const spread = ref(false)
+
+/**
+ * Every card is absolutely positioned against the same corner and moved from here, rather than laid
+ * out by flow.
+ *
+ * Flow cannot do the collapsed state at all — the cards overlap — and switching an element between
+ * flowed and positioned mid-animation is what makes a deck jump as it opens. Owning both states in
+ * one place means opening and closing are the same two properties easing between two sets of
+ * numbers, which is a transition the browser can run on the compositor.
+ *
+ * Heights are measured rather than assumed: a notice is one line or three depending on the copy and
+ * the width, and a spread deck has to stack the real ones.
+ */
+function layout(): void {
+  const box = deck.value
+  const cards = box?.querySelectorAll<HTMLElement>('[data-toast]')
+  if (!box || !cards) return
+
+  const total = cards.length
+  let stacked = 0
+
+  // Back to front, because a spread card's offset is the sum of the heights of the ones in front of
+  // it — which are the ones nearer the corner, and therefore later in the list.
+  for (let index = total - 1; index >= 0; index -= 1) {
+    const card = cards[index]!
+    // 0 is the newest: the one at the front of the deck, nearest the corner.
+    const depth = total - 1 - index
+
+    if (spread.value) {
+      card.style.translate = `0 ${-stacked}px`
+      card.style.scale = '1'
+      card.style.opacity = '1'
+      // Every card is readable now, so every card takes the pointer again — including the ones the
+      // collapsed deck had switched off, whose dismiss button would otherwise not answer.
+      card.style.pointerEvents = ''
+      stacked += card.offsetHeight + GAP_PX
+    } else {
+      card.style.translate = `0 ${-depth * PEEK_PX}px`
+      card.style.scale = `${1 - depth * PEEK_SCALE}`
+      // Kept in the DOM rather than dropped, so opening the deck reveals it instead of building it.
+      const drawn = depth < LAYERS
+      card.style.opacity = drawn ? '1' : '0'
+      // A card at zero opacity still answers the pointer, and this one sticks out above the deck
+      // where nothing is drawn — an invisible strip that opens the deck when brushed past.
+      card.style.pointerEvents = drawn ? '' : 'none'
+    }
+
+    // The front card is the one that can be read, so it is the one on top.
+    card.style.zIndex = `${total - depth}`
+  }
+
+  /*
+   * The spread deck is given the height it now occupies, and answers the pointer itself.
+   *
+   * Without it the container is a zero-height box and the 8px between two cards is a hole: leaving
+   * one card to cross that hole reads as leaving the deck, so it collapses under the pointer and
+   * springs open again on the next card. Covering its own gaps is what makes a spread deck stay
+   * spread while it is being read.
+   */
+  box.style.height = spread.value ? `${Math.max(0, stacked - GAP_PX)}px` : ''
+}
+
+/** After the DOM has the change: every number here comes off cards that are already laid out. */
+async function relayout(): Promise<void> {
+  await nextTick()
+  layout()
+}
+
+watch(spread, layout)
+watch(() => toasts.toasts.map((toast) => `${toast.id}:${toast.count}`).join('|'), relayout)
+
+let sizes: ResizeObserver | null = null
+
+onMounted(() => {
+  void relayout()
+
+  // A card that grows a line — the sidebar dragged, the window narrowed, a count reaching two
+  // digits — moves every card the spread deck stacks on top of it.
+  sizes = new ResizeObserver(layout)
+  if (deck.value) sizes.observe(deck.value)
+})
+
+onBeforeUnmount(() => sizes?.disconnect())
+</script>
+
+<template>
+  <!--
+    `polite`, never `assertive`: nothing here is urgent enough to cut across what a screen reader is
+    already saying, and the two things that are — a lost session, a stopped stream — are banners on
+    the page instead, precisely because they must not expire.
+
+    `pointerover`/`pointerout` rather than the enter/leave pair, because the container takes no
+    pointer events of its own: the cards are the targets, and only the bubbling pair reaches an
+    ancestor from them.
+  -->
+  <div
+    ref="deck"
+    class="absolute inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-4 sm:w-80"
+    :class="spread ? 'pointer-events-auto' : 'pointer-events-none'"
+    role="status"
+    aria-live="polite"
+    @pointerover="spread = true"
+    @pointerout="spread = false"
+    @focusin="spread = true"
+    @focusout="spread = false"
+  >
+    <TransitionGroup name="toast">
+      <div
+        v-for="toast in toasts.toasts"
+        :key="toast.id"
+        data-toast
+        class="alert alert-soft osmium-toast pointer-events-auto absolute inset-x-0 bottom-0 items-start gap-3"
+        :class="TONES[toast.kind]"
+      >
+        <component :is="ICONS[toast.kind]" class="mt-0.5 size-5 shrink-0" />
+        <span class="min-w-0 flex-1 text-sm">{{ t(toast.key, toast.params) }}</span>
+        <!--
+          The count of a notice that kept happening. Flashed on every increment, because the line
+          itself does not change when the second one arrives and a number that ticks up unremarked
+          is a number nobody sees move.
+        -->
+        <span v-if="toast.count > 1" v-flash="toast.count" class="badge badge-sm shrink-0">
+          ×{{ toast.count }}
+        </span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs btn-circle -mt-0.5 shrink-0"
+          :aria-label="t('common.dismiss')"
+          @click="toasts.dismiss(toast.id)"
+        >
+          <X class="size-3.5" />
+        </button>
+      </div>
+    </TransitionGroup>
+  </div>
+</template>
