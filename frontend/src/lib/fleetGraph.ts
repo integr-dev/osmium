@@ -59,13 +59,52 @@ export interface FleetGraph {
   height: number
 }
 
-/** Column centres. Osmium on the left because the arrows describe what it can reach. */
-const COLUMN = { osmium: 90, host: 400, agent: 760 }
+/** How far out from Osmium each tier stands, and how far apart two agent columns are. */
+const HOST_REACH = 200
+const AGENT_REACH = 400
+const COLUMN_STEP = 200
 
-/** Vertical pitch between agent slots, which is what the whole layout is measured in. */
-const ROW = 46
+/**
+ * Vertical pitch between agent slots, at its tightest and at its loosest.
+ *
+ * A range rather than a number, because the tiers are horizontal and their width is therefore
+ * fixed by the deployment rather than by the drawing: three tiers of a two-host fleet are as wide
+ * as three tiers of a twenty-host one. Left at a constant, that made every small fleet a flat
+ * band across the panel. The rows are spread to fill the height instead, up to the point where
+ * spreading them further would just be a gap.
+ */
+const ROW_MIN = 46
+const ROW_MAX = 180
 
-const PADDING = 32
+/** What the finished picture is aimed at, being roughly the shape of the panel it is drawn in. */
+const ASPECT = 1.8
+
+/**
+ * Rows one host may use before its agents wrap into a second column.
+ *
+ * Fewer as the fleet grows: with one host there is nothing to stack under, so it may run twelve
+ * deep, while eight hosts sharing two sides get four each. This is the number that stops a busy
+ * fleet being a stripe — one row per agent read straight down the page, so twenty agents was a
+ * screen and a half — and the reason it is not a constant is that the same cap makes a small
+ * fleet too short to fill anything.
+ */
+function rowsPerHost(hosts: number): number {
+  const perSide = Math.max(1, Math.ceil(hosts / 2))
+  return Math.min(12, Math.max(3, Math.round(14 / perSide)))
+}
+
+const PADDING = 48
+
+/**
+ * Room for a label beside the node it names.
+ *
+ * The bounds were the nodes and nothing else, so the outermost agent on each side had its name
+ * written past the edge of the picture and clipped there — `Mason_12` arrived as `Mason`. SVG
+ * text has no width until it is measured in a browser, and this is a layout that must be the same
+ * on every machine, so the allowance is a constant: about fifteen characters at the size labels
+ * are drawn.
+ */
+const LABEL_ROOM = 150
 
 /** Live is three packets, faltering is one, dead is none. */
 const PACKETS: Record<LinkHealth, number> = { live: 3, stale: 1, down: 0 }
@@ -102,51 +141,99 @@ export function hostHealth(host: Pick<HostResponse, 'reachable' | 'lastSeenAt'>)
 }
 
 /**
- * Lays the fleet out left to right.
+ * Lays the fleet out in tiers either side of Osmium.
  *
- * Agents get one slot each, grouped under their host so no edge crosses another. **A host then
- * sits at the mean of its own agents' slots**, which is what makes the fan symmetrical and keeps a
- * host visually inside the group it owns rather than beside it. A host running nothing takes a slot
- * of its own, because it still has a socket worth drawing.
+ * Osmium in the middle, its hosts outward from it, their agents outward again — the reading order
+ * is still what can reach what, and every edge still leaves one point and arrives at another with
+ * nothing crossing it.
+ *
+ * **Two things stop it being a stripe.** Hosts alternate sides, so half the fleet is drawn to the
+ * left of Osmium and half to the right and the picture is half as tall for it. And a host's agents
+ * wrap into a second column at [ROWS_PER_HOST] rather than continuing down the page, so a host with
+ * twenty of them is a block rather than a screen and a half.
+ *
+ * Both are about the same failing: the earlier version grew downward and only downward, so a fleet
+ * of forty was three screens of scrolling and the shape said nothing except how many rows there
+ * were. What is drawn now spends its room in both directions and can be read at a glance.
+ *
+ * A host sits at the mean of its own agents, which is what makes each fan symmetrical and keeps a
+ * host visually inside the group it owns rather than beside it. A host running nothing takes a row
+ * of its own, because its socket is still worth drawing.
+ *
+ * Deterministic, and positioned from nothing but the two lists: the same fleet draws the same
+ * picture on every machine, which is what makes a layout something a test can hold.
  */
 export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): FleetGraph {
   const nodes: GraphNode[] = []
   const links: GraphLink[] = []
 
-  let slot = 0
-  const y = () => PADDING + slot * ROW + ROW / 2
-  const hostPoints: Point[] = []
+  // Osmium at the origin, its sides mirror images. Everything is shifted into frame at the end, so
+  // no coordinate below has to know how big the drawing turned out to be.
+  const osmium: Point = { x: 0, y: 0 }
 
-  for (const host of hosts) {
+  const wrap = rowsPerHost(hosts.length)
+
+  /**
+   * Planned before it is placed.
+   *
+   * How tall a row should be depends on how many rows there are and how wide the picture came out,
+   * and neither is known until every host has been dealt out. So the first pass decides who sits
+   * where in rows and columns, and the second turns that into coordinates.
+   */
+  const banks = [
+    { direction: 1, slot: 0 },
+    { direction: -1, slot: 0 },
+  ]
+
+  const planned = hosts.map((host, index) => {
+    // Alternating rather than split down the middle of the list, so adding a host does not move
+    // every host after it to the other side of the picture.
+    const bank = banks[index % banks.length]!
     const owned = agents.filter((agent) => agent.hostId === host.id)
-    const health = hostHealth(host)
-    const agentNodes: GraphNode[] = []
+    const top = bank.slot
 
-    for (const agent of owned) {
-      agentNodes.push({
+    bank.slot += Math.max(1, Math.min(owned.length, wrap))
+
+    return { host, owned, top, side: bank.direction }
+  })
+
+  const columns = Math.max(0, ...planned.map(({ owned }) => Math.ceil(owned.length / wrap) - 1))
+  const reach = AGENT_REACH + columns * COLUMN_STEP
+  const span = reach * (hosts.length > 1 ? 2 : 1)
+  const rows = Math.max(1, ...banks.map((bank) => bank.slot))
+
+  // Spread to fill, then held: past `ROW_MAX` the rows are no longer laid out, they are adrift.
+  const pitch = Math.min(ROW_MAX, Math.max(ROW_MIN, span / ASPECT / rows))
+
+  for (const { host, owned, top, side } of planned) {
+    const health = hostHealth(host)
+
+    const seats: GraphNode[] = owned.map((agent, place) => {
+      // An agent on an unreachable host cannot be better than the socket carrying it: its stored
+      // state is a claim nobody can currently confirm.
+      const state = health === 'down' ? 'down' : agentHealth(agent.state)
+
+      return {
         id: `agent-${agent.id}`,
         kind: 'agent',
         label: agent.label,
         ref: agent.id,
-        at: { x: COLUMN.agent, y: y() },
-        // An agent on an unreachable host cannot be better than the socket carrying it: its stored
-        // state is a claim nobody can currently confirm.
-        health: health === 'down' ? 'down' : agentHealth(agent.state),
+        at: {
+          x: side * (AGENT_REACH + Math.floor(place / wrap) * COLUMN_STEP),
+          y: (top + (place % wrap)) * pitch + pitch / 2,
+        },
+        health: state,
         detail: agent.serverAddress ?? undefined,
-      })
-      slot += 1
-    }
+      }
+    })
 
-    // Its own slot when it runs nothing, so an idle host is still on the picture.
     const at: Point = {
-      x: COLUMN.host,
-      y: agentNodes.length
-        ? agentNodes.reduce((total, node) => total + node.at.y, 0) / agentNodes.length
-        : y(),
+      x: side * HOST_REACH,
+      y: seats.length
+        ? seats.reduce((total, seat) => total + seat.at.y, 0) / seats.length
+        : top * pitch + pitch / 2,
     }
-    if (!agentNodes.length) slot += 1
 
-    hostPoints.push(at)
     nodes.push({
       id: `host-${host.id}`,
       kind: 'host',
@@ -157,33 +244,53 @@ export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): Flee
       detail: host.hostVersion ?? undefined,
     })
 
-    for (const node of agentNodes) {
-      nodes.push(node)
+    links.push({
+      id: `osmium-${host.id}`,
+      from: osmium,
+      to: at,
+      health,
+      packets: PACKETS[health],
+    })
+
+    for (const seat of seats) {
+      nodes.push(seat)
       links.push({
-        id: `${host.id}-${node.ref}`,
+        id: `${host.id}-${seat.ref}`,
         from: at,
-        to: node.at,
-        health: node.health,
-        packets: PACKETS[node.health],
+        to: seat.at,
+        health: seat.health,
+        packets: PACKETS[seat.health],
       })
     }
   }
 
-  const height = Math.max(PADDING * 2 + ROW, PADDING * 2 + slot * ROW)
-  const osmium: Point = { x: COLUMN.osmium, y: height / 2 }
-
-  nodes.unshift({ id: 'osmium', kind: 'osmium', label: 'Osmium', at: osmium, health: 'live' })
-
-  hosts.forEach((host, index) => {
-    const health = hostHealth(host)
-    links.unshift({
-      id: `osmium-${host.id}`,
-      from: osmium,
-      to: hostPoints[index],
-      health,
-      packets: PACKETS[health],
-    })
+  // Halfway down the taller side, so every edge leaves one point and the two sides balance on it.
+  osmium.y = (rows * pitch) / 2
+  nodes.unshift({
+    id: 'osmium',
+    kind: 'osmium',
+    label: 'Osmium',
+    at: osmium,
+    health: 'live',
   })
 
-  return { nodes, links, width: COLUMN.agent + PADDING * 4, height }
+  // Shifted into frame last, which is where the mirror stops being two signs and becomes a picture.
+  const xs = nodes.map((node) => node.at.x)
+  const ys = nodes.map((node) => node.at.y)
+
+  // Each side gets label room, because each side writes its labels outward. See [LABEL_ROOM].
+  const left = Math.min(...xs) - PADDING - LABEL_ROOM
+  const top = Math.min(...ys) - PADDING
+
+  for (const node of nodes) {
+    node.at.x -= left
+    node.at.y -= top
+  }
+
+  return {
+    nodes,
+    links,
+    width: Math.max(...xs) + PADDING + LABEL_ROOM - left,
+    height: Math.max(...ys) + PADDING - top,
+  }
 }

@@ -79,26 +79,57 @@ describe('fleetGraph', () => {
     expect(agents).toHaveLength(2)
     expect(agents[0].at.y).not.toBe(agents[1].at.y)
     // The mean, which is what makes the fan symmetrical rather than hung off the first child.
-    expect(owner.at.y).toBe((agents[0].at.y + agents[1].at.y) / 2)
+    expect(owner.at.y).toBeCloseTo((agents[0].at.y + agents[1].at.y) / 2)
+  })
+
+  /** Half the fleet each side, which is half the height. */
+  it('puts consecutive hosts on opposite sides of Osmium', () => {
+    const graph = fleetGraph([host(1), host(2), host(3)], [])
+
+    const middle = graph.nodes.find((node) => node.id === 'osmium')!.at.x
+    const side = (id: number) =>
+      Math.sign(graph.nodes.find((node) => node.id === `host-${id}`)!.at.x - middle)
+
+    expect(side(1)).toBe(-side(2))
+    // Alternating rather than split down the middle of the list: adding a host must not move every
+    // host after it across the picture.
+    expect(side(3)).toBe(side(1))
+  })
+
+  /** The other half of not being a stripe: a busy host is a block, not a screen and a half. */
+  it('wraps the agents of a host into a second column rather than one long run', () => {
+    // Twelve deep is what a lone host is allowed before it wraps; the thirteenth starts a column.
+    const many = Array.from({ length: 13 }, (_, index) => agent(index + 1, 1))
+    const graph = fleetGraph([host(1)], many)
+
+    const seats = graph.nodes.filter((node) => node.kind === 'agent')
+    const columns = new Set(seats.map((seat) => seat.at.x))
+    const rows = new Set(seats.map((seat) => seat.at.y))
+
+    expect(columns.size).toBe(2)
+    // Twelve rows for thirteen agents, not thirteen.
+    expect(rows.size).toBe(12)
   })
 
   it('keeps each host and its agents in one uncrossed band', () => {
     // Interleaved on the way in: grouping has to come from the layout, not from arrival order.
+    // Hosts 1 and 3 share a side, so their bands are what must not overlap.
     const graph = fleetGraph(
-      [host(1), host(2)],
-      [agent(10, 1), agent(20, 2), agent(11, 1), agent(21, 2)],
+      [host(1), host(2), host(3)],
+      [agent(10, 1), agent(30, 3), agent(11, 1), agent(31, 3)],
     )
 
     const rows = graph.nodes
       .filter((node) => node.kind === 'agent')
+      .filter((node) => [10, 11, 30, 31].includes(node.ref!))
       .sort((a, b) => a.at.y - b.at.y)
       .map((node) => node.ref)
 
-    // Both of host 1's agents above both of host 2's, so no edge has to cross another.
-    expect(rows).toEqual([10, 11, 20, 21])
+    // Both of host 1's agents above both of host 3's, so no edge has to cross another.
+    expect(rows).toEqual([10, 11, 30, 31])
 
     const owner = (id: number) => graph.nodes.find((node) => node.id === `host-${id}`)!.at.y
-    expect(owner(1)).toBeLessThan(owner(2))
+    expect(owner(1)).toBeLessThan(owner(3))
   })
 
   it('still draws a host that is running nothing', () => {
@@ -108,7 +139,6 @@ describe('fleetGraph', () => {
     expect(idle).toBeDefined()
     // Its socket is real even with no agents behind it, so it gets a row and a link.
     expect(graph.links.some((link) => link.id === 'osmium-2')).toBe(true)
-    expect(idle!.at.y).not.toBe(graph.nodes.find((node) => node.id === 'host-1')!.at.y)
   })
 
   it('cannot show an agent as healthier than the socket carrying it', () => {
