@@ -15,6 +15,7 @@
 | Dividing one between agents | **Built** in `backend/`, read through the frontend's Operations page |
 | Placement and block substitution, as a build plan | **Built** in `backend/`, set on the Operations page |
 | Recording a job: a plan frozen, divided, assigned and resumable | **Built** in `backend/`, started from the Operations page |
+| Scheduling: an agent pool, pieces taken as they free up, vertical cuts ordered | **Built** in `backend/`, read and driven from the Jobs panel |
 | Serving a segment's blocks to a host | **Built** in `backend/`, specified in `host/README.md` |
 | Carrying a segment to a host and building it | **Built** in `backend/`, exercised end to end by the mock host |
 

@@ -3,10 +3,12 @@ import { computed, ref } from 'vue'
 import { api, errorMessage, type AgentResponse, type HostResponse, type UserResponse } from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
 import {
+  addJobAgent,
   assignSegment,
   pauseJob,
   deleteJob,
   listJobs,
+  leaveJob,
   releaseSegment,
   resumeJob,
   startJob,
@@ -168,6 +170,29 @@ export const useAgentStore = defineStore('agents', () => {
 
   function assignmentOf(agentId: number) {
     return assignments.value.get(agentId) ?? null
+  }
+
+  /**
+   * Which job an agent is **on**, holding a piece or not.
+   *
+   * Not the same question as [assignments], and the difference is the whole point of the pool. An
+   * agent waiting for the floor beneath its next piece to be finished is on a job and building
+   * nothing; asking what it holds calls it free, and every picker that asked that offered it to a
+   * second job the backend then refused.
+   */
+  const memberships = computed(() => {
+    const on = new Map<number, { jobId: number; buildName: string }>()
+    for (const job of unfinished.value) {
+      for (const member of job.pool) {
+        if (member.agentId === null) continue
+        on.set(member.agentId, { jobId: job.id, buildName: job.buildName })
+      }
+    }
+    return on
+  })
+
+  function jobOf(agentId: number) {
+    return memberships.value.get(agentId) ?? null
   }
 
   /**
@@ -463,8 +488,13 @@ export const useAgentStore = defineStore('agents', () => {
    * panel where an operator's own click appears to do nothing until an unrelated socket catches up
    * is the failure this whole page exists to avoid.
    */
-  async function beginJob(buildId: number, mode: SplitMode, agentIds: number[]): Promise<BuildJob> {
-    const job = await startJob(buildId, { mode, agentIds })
+  async function beginJob(
+    buildId: number,
+    mode: SplitMode,
+    agentIds: number[],
+    parts: number | null = null,
+  ): Promise<BuildJob> {
+    const job = await startJob(buildId, { mode, agentIds, ...(parts ? { parts } : {}) })
     upsertJob(job)
     return job
   }
@@ -489,6 +519,18 @@ export const useAgentStore = defineStore('agents', () => {
 
   async function freeSegment(jobId: number, segmentId: number): Promise<BuildJob> {
     const job = await releaseSegment(jobId, segmentId)
+    upsertJob(job)
+    return job
+  }
+
+  async function joinJob(jobId: number, agentId: number): Promise<BuildJob> {
+    const job = await addJobAgent(jobId, agentId)
+    upsertJob(job)
+    return job
+  }
+
+  async function leavePool(jobId: number, agentId: number): Promise<BuildJob> {
+    const job = await leaveJob(jobId, agentId)
     upsertJob(job)
     return job
   }
@@ -592,6 +634,7 @@ export const useAgentStore = defineStore('agents', () => {
     jobsOn,
     assignments,
     assignmentOf,
+    jobOf,
     isBuilding,
     loadJobs,
     beginJob,
@@ -599,6 +642,8 @@ export const useAgentStore = defineStore('agents', () => {
     restartJob,
     giveSegment,
     freeSegment,
+    joinJob,
+    leavePool,
     removeJob,
     loading,
     loaded,

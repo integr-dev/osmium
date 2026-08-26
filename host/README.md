@@ -675,16 +675,22 @@ pausing exists to do.
 | Field | Required | Notes |
 |---|---|---|
 | `segmentId` | yes | Which segment. Not the agent — see below. |
-| `blocksPlaced` | no | **Total placed in this segment**, not since the last report. |
+| `blocksPlaced` | no | **How many *you* have placed** since you were given this segment. Not a delta, and not the total standing in the box. |
 | `state` | no | `building`, `done` or `failed`. Omit to report only a count. |
 | `reason` | no | Why it failed. Written for whoever reads host logs; truncated at 256. |
 
 Send it roughly **every five seconds** while building, alongside the vitals in `agent_status`.
 
-**Last reported, never accumulated** — the same rule the vitals follow. The backend writes the
-number down rather than adding it, so a host that restarts mid-segment and recounts what it can see
-is correct rather than double-counted. It is also clamped to the segment’s own size, so a generous
-recount cannot drive a job past finished.
+**Count your own work, from zero, every time you are handed the segment.** You cannot know whether
+somebody built part of it before you — the backend does, and adds what was already standing to
+whatever you report. So a segment taken off one agent and given to another does not fall back to
+nothing the moment the new one says `0`.
+
+**It is a total, not a delta.** Report where you are, not what has happened since the last message.
+The same report applied twice leaves the same number, one that never arrives costs nothing once the
+next lands, and a host that restarts mid-segment simply starts counting again — all of which a
+delta gets wrong. It is also clamped to the segment’s own size, so a generous count cannot drive a
+job past finished.
 
 **Keyed by the segment, not the agent.** An agent holds one segment at a time, so either would
 identify it — but a report that arrives just after a segment was taken back would then land on

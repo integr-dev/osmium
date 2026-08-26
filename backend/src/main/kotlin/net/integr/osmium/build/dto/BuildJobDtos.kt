@@ -1,6 +1,7 @@
 package net.integr.osmium.build.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotEmpty
 import net.integr.osmium.build.model.BuildJob
 import net.integr.osmium.build.model.BuildSegment
@@ -10,23 +11,42 @@ import java.time.Instant
 /**
  * Starts a job.
  *
- * **Agents, not a part count.** The number of pieces a build is divided into *is* the number of
- * agents carrying them, and asking for both is asking for two answers that have to agree. The
- * server is derived from the agents for the same reason: one job is one server, and a field for it
- * would be a second place to say something the agents already say.
+ * **Agents are a pool, and the pieces are counted separately.** They used to be the same number,
+ * because a piece was a share handed to an agent once and held for the life of the job. A piece is
+ * a unit of work now: agents take one, finish it and take the next, so there can be more pieces
+ * than agents, and dividing a build finer than the crew is what lets a slow agent take fewer.
+ *
+ * The server is still derived from the agents rather than asked for: one job is one server, and a
+ * field for it would be a second place to say something the pool already says.
  */
-@Schema(description = "Starts building a plan with a set of agents. One job, one server.")
+@Schema(description = "Starts building a plan with a pool of agents. One job, one server.")
 data class StartJobRequest(
     @field:Schema(description = "How to divide the build. COLUMNS is the safe default.")
     val mode: SplitMode,
 
-    /**
-     * Every agent must be online and on the same server. The split is asked for this many parts and
-     * may return fewer, in which case the agents left over are told so rather than assigned a piece
-     * of nothing.
-     */
+    /** Every agent must be online, on the same server, and not on another job. */
     @field:NotEmpty
     val agentIds: List<Long>,
+
+    /**
+     * How many pieces to divide it into. Defaults to the size of the pool, which is what this used
+     * to be fixed at. The split may return fewer - a build three cells wide does not divide into
+     * eight - and the extra agents simply wait for something to finish.
+     */
+    @field:Schema(description = "Pieces to divide into. Defaults to the size of the pool.")
+    @field:Min(1)
+    val parts: Int? = null,
+)
+
+@Schema(description = "Puts one agent on a job. Which piece it gets is the scheduler's business.")
+data class AddJobAgentRequest(val agentId: Long)
+
+@Schema(description = "One agent working a job, whether or not it is holding a piece right now.")
+data class JobAgentResponse(
+    @field:Schema(description = "Null once the agent has been deleted.")
+    val agentId: Long?,
+    val agentLabel: String,
+    val joinedAt: Instant,
 )
 
 @Schema(description = "Hands one segment to one agent.")
@@ -64,6 +84,26 @@ data class JobSegmentResponse(
 
     @field:Schema(description = "Why the host could not build it. Null unless FAILED.")
     val failureReason: String?,
+
+    /**
+     * Ordinals of the unfinished pieces underneath this one. Empty means it can go out now.
+     *
+     * Said rather than left to be inferred, because "PENDING with nobody on it while three agents
+     * stand idle" reads as something stuck. It is not: a bot is two blocks tall and builds from the
+     * floor up, so a piece with unbuilt work beneath it has nowhere for anybody to stand.
+     */
+    @field:Schema(description = "Unfinished pieces beneath this one. Empty means it is ready.")
+    val blockedBy: List<Int>,
+
+    /**
+     * Who this was taken from, while it is still being kept from them.
+     *
+     * Said for the same reason as [blockedBy]: a free piece that the idle agent beside it does not
+     * pick up looks like a scheduler that has stopped working. It is an operator’s decision, and
+     * the interface should be able to name it rather than leave somebody watching a row.
+     */
+    @field:Schema(description = "Agent this was released from, and will not be given back to.")
+    val releasedFrom: String?,
 )
 
 @Schema(description = "One block swapped for another, as it stood when the job started.")
@@ -100,6 +140,9 @@ data class BuildJobResponse(
     @field:Schema(description = "The sum of the segments' last reported counts.")
     val blocksPlaced: Long,
 
+    @field:Schema(description = "Who is working this job. Empty once it is finished.")
+    val pool: List<JobAgentResponse>,
+
     val substitutions: List<JobSubstitutionResponse>,
     val segments: List<JobSegmentResponse>,
 
@@ -110,7 +153,7 @@ data class BuildJobResponse(
     val finishedAt: Instant?,
 )
 
-fun BuildSegment.toResponse(runTotal: Long): JobSegmentResponse = JobSegmentResponse(
+fun BuildSegment.toResponse(runTotal: Long, blockedBy: List<Int> = emptyList()): JobSegmentResponse = JobSegmentResponse(
     id = checkNotNull(id) { "Segment has not been persisted yet" },
     ordinal = ordinal,
     minX = minX,
@@ -127,6 +170,8 @@ fun BuildSegment.toResponse(runTotal: Long): JobSegmentResponse = JobSegmentResp
     blocksPlaced = blocksPlaced,
     lastReportAt = lastReportAt,
     failureReason = failureReason,
+    blockedBy = blockedBy,
+    releasedFrom = releasedFrom?.label,
 )
 
 fun BuildJob.toResponse(): BuildJobResponse = BuildJobResponse(
@@ -144,12 +189,15 @@ fun BuildJob.toResponse(): BuildJobResponse = BuildJobResponse(
     blocksPlaced = blocksPlaced,
     // Sorted so the list read back is the list that will be read back next time; the database has
     // no opinion on the order rows come out in.
+    pool = pool
+        .sortedBy { it.agentLabel }
+        .map { JobAgentResponse(it.agent.id, it.agentLabel, it.joinedAt) },
     substitutions = substitutions
         .sortedBy { it.from }
         .map { JobSubstitutionResponse(it.from, it.to) },
     segments = segments
         .sortedBy { it.ordinal }
-        .map { it.toResponse(totalBlocks) },
+        .map { piece -> piece.toResponse(totalBlocks, blockers(piece).map { it.ordinal }.sorted()) },
     createdBy = createdBy,
     startedAt = startedAt,
     finishedAt = finishedAt,

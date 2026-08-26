@@ -160,8 +160,8 @@ class AgentService(
 
         // Before the delete, so the segments go back to the pool rather than being left assigned to
         // a null the foreign key put there. The alternative is a live segment nobody owns and no
-        // interface can offer to reassign.
-        buildJobs.releaseSegmentsOf(agent)
+        // interface can offer to reassign. Job membership goes with them.
+        buildJobs.forget(agent)
 
         agentRepository.delete(agent)
         // Otherwise the limiter's map keeps a bucket per agent that has ever existed in this process.

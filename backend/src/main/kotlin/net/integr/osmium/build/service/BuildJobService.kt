@@ -14,6 +14,7 @@ import net.integr.osmium.build.dto.StartJobRequest
 import net.integr.osmium.build.dto.toResponse
 import net.integr.osmium.build.model.Build
 import net.integr.osmium.build.model.BuildJob
+import net.integr.osmium.build.model.BuildJobAgent
 import net.integr.osmium.build.model.BuildJobState
 import net.integr.osmium.build.model.BuildJobSubstitution
 import net.integr.osmium.build.model.BuildSegment
@@ -52,9 +53,11 @@ import java.time.Instant
  * are placing blocks from it is editing the *next* job, which is the only reading that does not
  * leave half a building under one rule set and half under another.
  *
- * **Nothing is dispatched yet.** Segments are assigned and stay assigned: carrying one to a host
- * needs a `build_segment` command and a way to serve the blocks, neither of which exists. What is
- * here is everything up to that point, so the missing piece is a wire message rather than a model.
+ * **Agents are a pool, not a division.** A job holds a set of agents and a set of pieces, and
+ * [schedule] is the only thing that puts one on the other. The two used to be the same act: as
+ * many pieces as agents, each handed one at the start and holding it for the life of the job.
+ * That shape cannot express a piece waiting for another piece, and cannot express an agent that is
+ * on a job while building nothing - which is what an agent waiting for a floor under it *is*.
  */
 @Service
 @Transactional(readOnly = true)
@@ -115,7 +118,13 @@ class BuildJobService(
             )
         }
 
-        val split = schematics.split(checkNotNull(schematic.id), request.mode, crew.size)
+        // **How many pieces is its own question now.** It used to be the size of the crew, because
+        // a piece was a share handed to an agent once. Now a piece is a unit of work that agents
+        // take and finish, so there can be more of them than there are agents - which is what lets
+        // a slow agent take fewer, a returning one take the next, and a build be divided finer than
+        // the number of bots pointed at it.
+        val parts = request.parts ?: crew.size
+        val split = schematics.split(checkNotNull(schematic.id), request.mode, parts)
         check(split.segments.isNotEmpty()) {
             "'${schematic.name}' has no blocks to divide"
         }
@@ -146,11 +155,18 @@ class BuildJobService(
             job.substitutions += BuildJobSubstitution(job = job, from = rule.from, to = rule.to)
         }
 
-        // The split can return fewer parts than were asked for - a build three cells wide does not
-        // divide between eight agents - so the pieces are zipped against the crew rather than the
-        // crew being indexed by ordinal. Whoever is left over is assigned nothing, and the response
-        // says so by having fewer segments than agents.
-        split.segments.forEachIndexed { index, segment ->
+        crew.forEach { agent ->
+            job.pool += BuildJobAgent(
+                job = job,
+                agent = agent,
+                agentLabel = agent.label,
+                joinedAt = Instant.now(),
+            )
+        }
+
+        // Made, not handed out. Every piece starts PENDING and the scheduler below does the giving,
+        // so the first assignment goes through exactly the same door as the fiftieth.
+        split.segments.forEach { segment ->
             val piece = BuildSegment(
                 job = job,
                 ordinal = segment.ordinal,
@@ -162,12 +178,10 @@ class BuildJobService(
                 maxZ = segment.maxZ + offsetZ,
                 blocks = segment.blocks,
             )
-            // Through the same door a reassignment uses, rather than setting the fields here as
-            // well: the first assignment needs its fetch ticket exactly as much as the fifth, and
-            // two places that write an assignment is one place to forget something.
-            crew.getOrNull(index)?.let { agent -> take(job, piece, agent) }
             job.segments += piece
         }
+
+        schedule(job)
 
         val saved = jobs.save(job)
 
@@ -176,14 +190,14 @@ class BuildJobService(
             target = build.name,
             detail = "${split.segments.size} segment(s) on $server, " +
                 "${split.blocks} blocks, ${split.mode.lowercase()}, " +
-                "assigned to ${crew.joinToString(", ") { it.label }}",
+                "pool of ${crew.joinToString(", ") { it.label }}",
         )
         crew.forEach { agent ->
             activityService.record(
                 agent = agent,
                 scope = ActivityScope.LIFECYCLE,
                 severity = ActivitySeverity.INFO,
-                text = "Assigned to '${build.name}'",
+                text = "Working on '${build.name}'",
             )
         }
         publish(saved)
@@ -223,9 +237,20 @@ class BuildJobService(
     /**
      * Picks it up where it stopped.
      *
-     * Nothing is reassigned and nothing is recomputed: the segments and their assignees never went
-     * anywhere. An agent that left the game while the job was paused had its segment released like
-     * any other, and gets one back the moment it reconnects - see [reassignIdle].
+     * Nothing is recomputed: the pieces, the pool and the assignments never went anywhere.
+     *
+     * **Every held piece is sent out again**, which is the half this was missing. Pausing tells
+     * each host to stop while the assignment stays on the row, so after a resume the rows said
+     * `ASSIGNED` and `BUILDING` with nothing behind them: the bots had been called off and never
+     * told to start again. The job sat at whatever percentage it had reached and never moved.
+     *
+     * Re-dispatching is exactly what handing the piece over is, so it goes through the same path -
+     * a fresh ticket, the state back to `ASSIGNED`, and the command on its way. A piece reads as
+     * assigned rather than building until its host says otherwise, which is the truth: it has just
+     * been asked, and has not answered yet.
+     *
+     * Then a scheduling pass, because anything that came free while the job was stopped - an agent
+     * that left and came back, a piece handed in - has been waiting for one.
      */
     @Transactional
     fun resume(id: Long): BuildJobResponse {
@@ -233,6 +258,12 @@ class BuildJobService(
         check(job.state == BuildJobState.PAUSED) { "This job is not paused" }
 
         job.state = BuildJobState.ACTIVE
+
+        for (segment in job.segments.filter { it.live }) {
+            segment.agent?.let { holder -> take(job, segment, holder) }
+        }
+
+        schedule(job)
 
         auditService.record(
             action = AuditAction.BUILD_JOB_RESUME,
@@ -292,8 +323,14 @@ class BuildJobService(
             NoSuchElementException("No agent ${request.agentId}")
         }
         checkEligible(agent, job.serverAddress)
-        checkFree(agent)
+        // Two questions that used to be one. Being on another job is asked only of an agent not
+        // already on this one - pinning a piece onto a bot already working the build is ordinary, and
+        // checkFree would refuse it for being exactly where it belongs. Holding a live piece is asked
+        // always: one bot cannot place two segments, whichever jobs they belong to.
+        if (job.pool.none { it.agent.id == agent.id }) checkFree(agent)
+        checkNotHolding(agent)
 
+        join(job, agent)
         take(job, segment, agent)
 
         activityService.record(
@@ -314,6 +351,10 @@ class BuildJobService(
      * the box is in bedrock, the material does not exist on that server, something is denying the
      * placement — all fail again the same way for the next agent. Someone reads the reason, changes
      * whatever caused it, and releases it; the retry is that act rather than a loop.
+     *
+     * **The agent stays in the pool.** This hands back a *piece*. The agent is still on the job and
+     * eligible for the next one, including this one - which is exactly what a retry wants. Taking an
+     * agent off the job is [leave], and the two are separate acts now that they can be.
      */
     @Transactional
     fun release(jobId: Long, segmentId: Long): BuildJobResponse {
@@ -332,9 +373,128 @@ class BuildJobService(
             "Segment ${segment.ordinal} is not assigned to anyone"
         }
 
+        // Read before `free` forgets it, and only for a piece somebody was actually working.
+        //
+        // **Releasing a failed piece is a retry**, and the agent that could not build it is usually
+        // the one to try it again once whatever stopped it has been dealt with — so that case marks
+        // nothing and the scheduler hands it straight back. Taking a *live* piece off an agent is
+        // the opposite request: not this bot, give it to somebody else.
+        val taken = if (segment.live) segment.agent else null
+
         free(job, segment)
+        segment.releasedFrom = taken
+
+        schedule(job)
         publish(job)
         return job.toResponse()
+    }
+
+    /**
+     * Puts an agent on a job.
+     *
+     * Its own act, where crewing up used to be a side effect of handing somebody a piece. An operator
+     * adding a third bot to a running build is saying "help with this", not "take segment 7" - which
+     * one it gets is the scheduler's business and depends on what is free by the time it arrives.
+     */
+    @Transactional
+    fun add(jobId: Long, agentId: Long): BuildJobResponse {
+        val job = load(jobId)
+        check(job.state != BuildJobState.DONE) { "This job is finished" }
+
+        val agent = agents.findById(agentId).orElseThrow { NoSuchElementException("No agent $agentId") }
+        checkEligible(agent, job.serverAddress)
+        checkFree(agent)
+
+        join(job, agent)
+        schedule(job)
+
+        activityService.record(
+            agent = agent,
+            scope = ActivityScope.LIFECYCLE,
+            severity = ActivitySeverity.INFO,
+            text = "Working on '${job.build.name}'",
+        )
+        publish(job)
+        return job.toResponse()
+    }
+
+    /**
+     * Takes an agent off a job, and whatever it was holding with it.
+     *
+     * The other half of [release], which hands back a piece and leaves the agent on the job. Both used
+     * to be one act because there was nowhere for the distinction to live: an agent's only connection
+     * to a job was the piece in its hands, so giving that up *was* leaving.
+     *
+     * Allowed while paused, which is how a stopped job's crew is freed one at a time short of deleting
+     * it. What it was carrying goes back into the pool and is scheduled to whoever is left.
+     */
+    @Transactional
+    fun leave(jobId: Long, agentId: Long): BuildJobResponse {
+        val job = load(jobId)
+
+        val member = job.pool.firstOrNull { it.agent.id == agentId }
+            ?: throw NoSuchElementException("No agent $agentId on job $jobId")
+        val agent = member.agent
+
+        job.segments.filter { it.live && it.agent?.id == agentId }.forEach { free(job, it) }
+        job.pool.remove(member)
+        schedule(job)
+
+        activityService.record(
+            agent = agent,
+            scope = ActivityScope.LIFECYCLE,
+            severity = ActivitySeverity.INFO,
+            text = "Taken off '${job.build.name}'",
+        )
+        publish(job)
+        return job.toResponse()
+    }
+
+    /**
+     * Everything this agent is part of, forgotten. For an agent being deleted, not one going quiet.
+     *
+     * A disconnect keeps the membership - the bot is coming back, and the job is still its job. A
+     * deletion does not, and the rows have to go through Hibernate rather than under it: the foreign
+     * key would cascade them away behind the session's back, which surfaces as a flush failure.
+     */
+    @Transactional
+    fun forget(agent: Agent) {
+        val agentId = agent.id ?: return
+
+        // **Membership goes first.** Releasing a piece schedules it, and an agent still in the pool is
+        // a candidate for the very piece it is being deleted off - which lands it back on a row that
+        // is about to stop existing, and surfaces as a flush failure two layers away from the cause.
+        for (job in jobs.findAllWithAgentInPool(agentId)) {
+            job.pool.removeIf { it.agent.id == agentId }
+            publish(job)
+        }
+        releaseSegmentsOf(agent)
+    }
+
+    /**
+     * One agent, one piece, at any moment.
+     *
+     * Separate from [checkFree] since the pool arrived. That one asks whether the agent is on another
+     * *job*; this asks whether its hands are full, which is a different question the moment an agent
+     * can be on a job while holding nothing. `uq_build_segments_one_per_agent` is underneath both.
+     */
+    private fun checkNotHolding(agent: Agent) {
+        val agentId = checkNotNull(agent.id)
+        val holding = jobs.findAllHoldingAgent(agentId).firstOrNull() ?: return
+        val piece = holding.segments.first { it.live && it.agent?.id == agentId }
+
+        error("'${agent.label}' is already building segment ${piece.ordinal} of '${holding.build.name}'")
+    }
+
+    /** Idempotent, so the callers that cannot easily know need not ask. */
+    private fun join(job: BuildJob, agent: Agent) {
+        if (job.pool.any { it.agent.id == agent.id }) return
+        job.pool += BuildJobAgent(
+            job = job,
+            agent = agent,
+            agentLabel = agent.label,
+            joinedAt = Instant.now(),
+        )
     }
 
     /**
@@ -356,6 +516,9 @@ class BuildJobService(
             if (released.isEmpty()) continue
 
             released.forEach { segment -> free(job, segment) }
+            // The agent keeps its place in the pool - it is coming back, and this is a blip rather
+            // than a resignation - but the work does not wait for it. Anyone else idle takes it now.
+            schedule(job)
             activityService.record(
                 agent = agent,
                 scope = ActivityScope.LIFECYCLE,
@@ -376,29 +539,27 @@ class BuildJobService(
      * nothing ever handed one back, so an operator had to notice and reassign by hand - for every
      * agent, after every blip.
      *
-     * **Only what is genuinely waiting.** One segment, from an active job on this agent's own
-     * server, lowest ordinal first so the build fills in the order it is meant to happen. A paused
-     * job is skipped: somebody stopped it deliberately, and quietly re-crewing it would undo that.
+     * **Only jobs this agent is actually on.** It used to take a piece of anything waiting on the
+     * agent's server, which was the best available when membership was invisible: an idle agent
+     * belonged to no job, so any job would do. Against a pool that would be conscription - an agent
+     * nobody put on that build quietly turning up on it - so membership is the filter.
      */
     @Transactional
     fun reassignIdle(agent: Agent) {
         val agentId = agent.id ?: return
-        val server = agent.serverAddress ?: return
         if (agent.effectiveState() != AgentState.ONLINE) return
-        if (jobs.findAllHoldingAgent(agentId).isNotEmpty()) return
 
-        for (job in jobs.findAllWantingBuilders(server)) {
-            val segment = job.segments
-                .filter { it.state == BuildSegmentState.PENDING }
-                .minByOrNull { it.ordinal }
-                ?: continue
+        for (job in jobs.findAllWithAgentInPool(agentId)) {
+            val before = job.segments.count { it.live }
+            schedule(job)
+            if (job.segments.count { it.live } == before) continue
 
-            take(job, segment, agent)
+            val picked = job.segments.first { it.live && it.agent?.id == agentId }
             activityService.record(
                 agent = agent,
                 scope = ActivityScope.LIFECYCLE,
                 severity = ActivitySeverity.INFO,
-                text = "Back in game; picked up segment ${segment.ordinal} of '${job.build.name}'",
+                text = "Back in game; picked up segment ${picked.ordinal} of '${job.build.name}'",
             )
             publish(job)
             return
@@ -436,9 +597,13 @@ class BuildJobService(
         if (!segment.live) return
 
         blocksPlaced?.takeIf { it >= 0 }?.let { placed ->
+            // What this holder says it has done, on top of what was standing when it took over. A
+            // host counts from zero every time it is handed a piece — it cannot know what came
+            // before — so taking the report as the whole truth dropped the count on every resume.
+            //
             // Clamped to what the split said is there. A host that recounts generously must not be
             // able to drive a job past finished, which is a number an operator would act on.
-            segment.blocksPlaced = minOf(placed, segment.blocks)
+            segment.blocksPlaced = minOf(segment.blocksPlacedBase + placed, segment.blocks)
             segment.lastReportAt = Instant.now()
         }
 
@@ -478,6 +643,13 @@ class BuildJobService(
             job.state = BuildJobState.DONE
             job.finishedAt = Instant.now()
             job.segments.forEach { it.fetchTicket = null }
+            // The pool is live membership, so a finished job has none. Who built which piece is on
+            // the segment and does not need this list to survive in order to say it.
+            job.pool.clear()
+        } else {
+            // An agent that just finished a piece is an idle agent, and there may be a piece that was
+            // waiting on the one it finished. This is the wavefront turning over.
+            schedule(job)
         }
 
         publish(job)
@@ -528,23 +700,72 @@ class BuildJobService(
     }
 
     /**
-     * One agent, one segment, across every job and every build.
+     * One agent, one job, across every build.
      *
-     * A bot cannot be in two places, so two segments means one bot walking between two sites placing
-     * half of each - and the same is true of two segments of the *same* build, which is the version
-     * that looks reasonable in an interface. The refusal names the job in the way, because "already
+     * A bot cannot be in two places, so two jobs means one bot walking between two sites placing half
+     * of each - and the same is true of two pieces of the *same* build, which is the version that
+     * looks reasonable in an interface. The refusal names the job in the way, because "already
      * building something" left an operator hunting for which.
      *
-     * `uq_build_segments_one_per_agent` enforces it underneath. This exists to say which.
+     * **Asked of the pool, not of what the agent is holding.** Those were the same question while a
+     * crew was a division; they stopped being the same the moment an agent could be on a job between
+     * pieces. Reading the segments would have called such an agent free and let a second job take it.
+     *
+     * `uq_build_job_agents_one_job_per_agent` enforces it underneath. This exists to say which.
      */
     private fun checkFree(agent: Agent) {
-        val holding = jobs.findAllHoldingAgent(checkNotNull(agent.id)).firstOrNull() ?: return
+        val holding = jobs.findAllWithAgentInPool(checkNotNull(agent.id)).firstOrNull() ?: return
         val where = if (holding.state == BuildJobState.PAUSED) {
             "a paused job of '${holding.build.name}'"
         } else {
             "'${holding.build.name}'"
         }
-        error("'${agent.label}' is on $where; release its segment or delete that job first")
+        error("'${agent.label}' is on $where; take it off that job first, or delete the job")
+    }
+
+    /**
+     * Puts idle members of the pool onto pieces that are waiting. The only thing that gives work.
+     *
+     * Called after anything that can change either side of that match: a job starting or resuming, a
+     * piece finishing, a piece being handed back, an agent joining the pool or coming back into the
+     * game. It is deliberately dumb - lowest ordinal first, one piece per agent - because the
+     * interesting decisions are which pieces exist and which are ready, and those belong to the
+     * split and the segment state rather than to this.
+     *
+     * **`FAILED` is not waiting.** Only `PENDING` is picked up, so a piece a host could not build
+     * stays where an operator can see it instead of being handed straight to the next agent to fail
+     * the same way. Releasing it is what makes it waiting again, and that is somebody's decision.
+     *
+     * **Nor is a piece with unfinished work beneath it** - see [BuildJob.blockers]. That is what
+     * makes a vertical division safe rather than impossible, and it is why idle agents on an active
+     * job are an ordinary state rather than a sign something is stuck.
+     */
+    private fun schedule(job: BuildJob) {
+        if (job.state != BuildJobState.ACTIVE) return
+
+        val busy = job.segments.filter { it.live }.mapNotNullTo(mutableSetOf()) { it.agent?.id }
+        val idle = job.pool
+            .map { it.agent }
+            .filter { it.id !in busy && it.effectiveState() == AgentState.ONLINE }
+        if (idle.isEmpty()) return
+
+        val waiting = job.segments
+            .filter { it.state == BuildSegmentState.PENDING && job.ready(it) }
+            .sortedBy { it.ordinal }
+
+        // Matched rather than zipped, because not every agent may have every piece: one taken from
+        // an agent by an operator is not offered back to them. Lowest ordinal first, and the first
+        // agent allowed to have it takes it - so a piece nobody else can reach simply waits, which
+        // is what an operator asked for by releasing it.
+        val free = idle.toMutableList()
+
+        for (segment in waiting) {
+            if (free.isEmpty()) break
+            val agent = free.firstOrNull { it.id != segment.releasedFrom?.id } ?: continue
+
+            free.remove(agent)
+            take(job, segment, agent)
+        }
     }
 
     /** Hands a free segment to an agent. The one place an assignment is written. */
@@ -552,6 +773,12 @@ class BuildJobService(
         segment.state = BuildSegmentState.ASSIGNED
         segment.agent = agent
         segment.agentLabel = agent.label
+        // Where this holder starts counting from. Everything it reports is added to what is
+        // already standing, because that is all a host can see: its own work.
+        segment.blocksPlacedBase = segment.blocksPlaced
+        // Handed out again, so the decision that kept one agent off it is spent - including when
+        // that agent is the one being handed it, which only happens deliberately.
+        segment.releasedFrom = null
         // Cleared, because it is the reason the *previous* attempt failed and this is a new one.
         segment.failureReason = null
         // A fresh capability every time, so the one the last holder was given stops working the

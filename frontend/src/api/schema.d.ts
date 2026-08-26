@@ -178,6 +178,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{id}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts": {
         parameters: {
             query?: never;
@@ -734,6 +750,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hostlink/jobs/{jobId}/segments/{segmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["blocks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -896,6 +928,22 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{id}/agents/{agentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["leave"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1125,6 +1173,8 @@ export interface components {
              * @description The sum of the segments' last reported counts.
              */
             blocksPlaced?: number;
+            /** @description Who is working this job. Empty once it is finished. */
+            pool?: components["schemas"]["JobAgentResponse"][];
             substitutions?: components["schemas"]["JobSubstitutionResponse"][];
             segments?: components["schemas"]["JobSegmentResponse"][];
             createdBy?: string;
@@ -1135,6 +1185,17 @@ export interface components {
              * @description Null while the job is active.
              */
             finishedAt?: string | null;
+        };
+        /** @description One agent working a job, whether or not it is holding a piece right now. */
+        JobAgentResponse: {
+            /**
+             * Format: int64
+             * @description Null once the agent has been deleted.
+             */
+            agentId?: number | null;
+            agentLabel?: string;
+            /** Format: date-time */
+            joinedAt?: string;
         };
         /** @description One agent's share of a job, in world coordinates. `max` is exclusive. */
         JobSegmentResponse: {
@@ -1179,6 +1240,10 @@ export interface components {
             lastReportAt?: string | null;
             /** @description Why the host could not build it. Null unless FAILED. */
             failureReason?: string | null;
+            /** @description Unfinished pieces beneath this one. Empty means it is ready. */
+            blockedBy?: number[];
+            /** @description Agent this was released from, and will not be given back to. */
+            releasedFrom?: string | null;
         };
         /** @description One block swapped for another, as it stood when the job started. */
         JobSubstitutionResponse: {
@@ -1193,6 +1258,11 @@ export interface components {
             y?: number;
             /** Format: int32 */
             z?: number;
+        };
+        /** @description Puts one agent on a job. Which piece it gets is the scheduler's business. */
+        AddJobAgentRequest: {
+            /** Format: int64 */
+            agentId?: number;
         };
         /** @description Enrols a host. No address: the host dials in, so its location is observed. */
         CreateHostRequest: {
@@ -1264,14 +1334,19 @@ export interface components {
             from?: string;
             to?: string | null;
         };
-        /** @description Starts building a plan with a set of agents. One job, one server. */
+        /** @description Starts building a plan with a pool of agents. One job, one server. */
         StartJobRequest: {
             /**
              * @description How to divide the build. COLUMNS is the safe default.
              * @enum {string}
              */
-            mode?: "COLUMNS" | "LAYERS" | "GRID";
+            mode?: "COLUMNS" | "GRID";
             agentIds: number[];
+            /**
+             * Format: int32
+             * @description Pieces to divide into. Defaults to the size of the pool.
+             */
+            parts?: number | null;
         };
         /** @description A freshly issued access token. */
         LoginResponse: {
@@ -1923,6 +1998,41 @@ export interface operations {
         responses: {
             /** @description OK */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
+    add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddJobAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description On the job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+            /** @description The job is finished, or the agent is offline, on another server, or already on a job. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3268,7 +3378,7 @@ export interface operations {
     split: {
         parameters: {
             query: {
-                mode: "COLUMNS" | "LAYERS" | "GRID";
+                mode: "COLUMNS" | "GRID";
                 parts: number;
             };
             header?: never;
@@ -3440,6 +3550,49 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    blocks: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Osmium-Ticket"?: string;
+            };
+            path: {
+                jobId: number;
+                segmentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The blocks, in the packed segment format. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description No ticket, or one that names nothing. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description The job is finished, or the segment is no longer being built. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
             };
         };
     };
@@ -3731,6 +3884,29 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ActivityPageResponse"];
+                };
+            };
+        };
+    };
+    leave: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                agentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
                 };
             };
         };

@@ -145,6 +145,25 @@ class BuildJob(
     @Column(name = "finished_at")
     var finishedAt: Instant? = null,
 
+    /**
+     * Who is working this job, apart from what they are holding.
+     *
+     * The crew used to be a *consequence* of the division - as many agents as pieces, each
+     * holding one for the life of the job - which left an agent between pieces linked to nothing.
+     * A job where a piece waits for the piece below it is full of agents in exactly that position,
+     * so membership had to become a thing in its own right.
+     *
+     * Emptied when the job finishes. This is live membership; who built which piece is recorded on
+     * the segment and does not need this list to say it.
+     */
+    @OneToMany(
+        mappedBy = "job",
+        cascade = [CascadeType.ALL],
+        orphanRemoval = true,
+        fetch = FetchType.EAGER,
+    )
+    var pool: MutableList<BuildJobAgent> = mutableListOf(),
+
     /** A copy of the plan's rules, frozen. See [BuildJobSubstitution]. */
     @OneToMany(
         mappedBy = "job",
@@ -169,10 +188,66 @@ class BuildJob(
 ) {
     val blocksPlaced: Long get() = segments.sumOf(BuildSegment::blocksPlaced)
 
+    /**
+     * The pieces under [segment] that are not finished. Empty means it can be handed out.
+     *
+     * **A bot is two blocks tall and builds bottom-up**, standing on the layer below to place the
+     * one it is on - so its body fills its own cell at the height it is working and the height above
+     * that. Two agents split by Y over the same ground are therefore not merely inefficient: the
+     * upper one has to stand exactly where the lower one still has blocks to place, and no amount of
+     * separation fixes it, because what the upper one is waiting for *is* the lower one's work.
+     *
+     * So Y is never a cut between agents working at the same time. It is an order. This is that
+     * order, and it is derived from the boxes rather than stored: the split is frozen the moment the
+     * job starts, so the answer cannot drift, and a dependency table could.
+     *
+     * Costs nothing where it is not needed. A full-height split has nothing beneath anything, so
+     * every piece is ready from the start and this returns empty for all of them.
+     */
+    fun blockers(segment: BuildSegment): List<BuildSegment> =
+        segments.filter { it.state != BuildSegmentState.DONE && it.isUnder(segment) }
+
+    fun ready(segment: BuildSegment): Boolean = blockers(segment).isEmpty()
+
     /** Whether every piece is finished, which is the only thing that closes a job. */
     val complete: Boolean
         get() = segments.isNotEmpty() && segments.all { it.state == BuildSegmentState.DONE }
 }
+
+/**
+ * One agent in a job's pool.
+ *
+ * Membership, not assignment. An agent is on this job because this row exists; whether it is
+ * holding a segment right now is [BuildSegment.agent], and the two move independently - which is
+ * the whole point. An agent waiting for a floor to be finished under it is on the job and holding
+ * nothing, and before this row there was no way to say that.
+ */
+@Entity
+@Table(name = "build_job_agents")
+class BuildJobAgent(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id", nullable = false)
+    var id: Long? = null,
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "job_id", nullable = false)
+    var job: BuildJob? = null,
+
+    /**
+     * Cascades on delete rather than nulling, unlike [BuildSegment.agent]: an agent that is gone is
+     * not on the job, while a segment it finished is still the record of who built it.
+     */
+    @ManyToOne(fetch = FetchType.EAGER, optional = false)
+    @JoinColumn(name = "agent_id", nullable = false)
+    var agent: Agent = Agent(),
+
+    @Column(name = "agent_label", nullable = false, length = 64)
+    var agentLabel: String = "",
+
+    @Column(name = "joined_at", nullable = false)
+    var joinedAt: Instant = Instant.now(),
+)
 
 /**
  * One substitution, as it stood when the job started.
@@ -255,15 +330,51 @@ class BuildSegment(
     var agentLabel: String? = null,
 
     /**
-     * Last reported, never accumulated. A host that restarts mid-segment recounts what it can see,
-     * and summing deltas would double it.
+     * Who an operator took this segment away from.
      *
-     * Deliberately **not** reset when a segment is released: the blocks are still standing in the
-     * world, so the count stays the last thing anybody actually observed until the next agent
-     * surveys and reports its own.
+     * **This is what makes releasing mean something.** Freed, a segment goes back to `PENDING` and
+     * the scheduler fills the gap - which handed it straight back to the agent it had just been
+     * taken from, that agent being the only idle one and this the only free piece. The button
+     * redrew the row exactly as it had been.
+     *
+     * So the scheduler will not pair the two again. Anyone else may have it, and that agent may be
+     * given it deliberately by an operator - which is what clears this.
+     *
+     * Set only by [BuildJobService.release]. An agent that dropped out of the game did not have
+     * its work taken away, so a reconnect finds it eligible for exactly what it was holding.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "released_from_agent_id")
+    var releasedFrom: Agent? = null,
+
+    /**
+     * How much of this piece is standing: what was there when the current holder took it, plus
+     * what that holder says it has placed since.
+     *
+     * **A host counts from zero and cannot do otherwise.** It is told to build a box and starts
+     * counting when it starts placing; it has no idea whether anybody built part of it first, and
+     * nothing it remembers survives a reconnect. So every hand-over and every resume used to drop
+     * the segment back to nothing the moment the new holder said "0 placed, building".
+     *
+     * The reports stay absolute rather than becoming deltas, which is what makes this safe: the
+     * same report applied twice leaves the same number, one that never arrives costs nothing once
+     * the next one lands, and a host that restarts mid-piece simply reports its own count again.
+     * Deltas are none of those things.
+     *
+     * Never reset by a release: the blocks are still standing in the world.
      */
     @Column(name = "blocks_placed", nullable = false)
     var blocksPlaced: Long = 0,
+
+    /**
+     * What was already standing when the current holder was given this piece.
+     *
+     * Written on every dispatch and added to on every report. It is the difference between "this
+     * agent has placed nothing yet" and "this piece is empty", which is the whole of the bug it
+     * exists for.
+     */
+    @Column(name = "blocks_placed_base", nullable = false)
+    var blocksPlacedBase: Long = 0,
 
     @Column(name = "last_report_at")
     var lastReportAt: Instant? = null,
@@ -285,4 +396,17 @@ class BuildSegment(
     /** Held by an agent right now, and therefore not free to hand to another one. */
     val live: Boolean
         get() = state == BuildSegmentState.ASSIGNED || state == BuildSegmentState.BUILDING
+
+    /**
+     * Whether [other] stands on this piece: entirely above it, over ground this one covers.
+     *
+     * Boxes are half-open, so `maxY <= other.minY` is "no shared layer" rather than "one below the
+     * other", and the two horizontal tests are overlaps rather than containments - a piece resting
+     * on the corner of another still needs it finished. Never true of a piece against itself, since
+     * a box with no height is refused by the database.
+     */
+    fun isUnder(other: BuildSegment): Boolean =
+        maxY <= other.minY &&
+            minX < other.maxX && other.minX < maxX &&
+            minZ < other.maxZ && other.minZ < maxZ
 }

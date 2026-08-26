@@ -124,7 +124,7 @@ class SchematicService(
      * can yet carry out. It becomes a row when there is a host that can be sent one.
      */
     fun split(id: Long, mode: SplitMode, parts: Int): SplitResponse {
-        require(parts in 1..MAX_PARTS) { "A build cannot be divided between $parts agents" }
+        require(parts in 1..MAX_PARTS) { "A build cannot be divided into $parts pieces" }
 
         val schematic = load(id)
         check(schematic.status == SchematicStatus.READY) {

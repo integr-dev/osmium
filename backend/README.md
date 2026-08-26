@@ -1187,9 +1187,51 @@ left nothing to do with it but delete it, so an operator performed two acts to e
 work that had been divided and crewed could not be picked up again. Pause keeps the segments, the
 assignees and the counts, and resuming is one call.
 
+### Agents are a pool, and pieces are scheduled onto them
+
+`build_job_agents` says who is on a job. `build_segments.agent_id` says what they are holding. Those
+were one fact until the crew became a pool, and separating them is what the rest of this section is
+downstream of.
+
+The old shape made the crew a *consequence* of the division: as many agents as pieces, each handed
+one at the start and holding it for the life of the job. It cannot express a piece that waits for
+another piece, and it cannot express **an agent that is on a job while building nothing** — which is
+exactly what an agent waiting for a floor beneath its next piece is. Such an agent was linked to
+nothing at all: `checkFree` read the segments, found none, and let a second job take a bot that was
+already spoken for.
+
+`schedule(job)` is now the only thing that hands work out, and runs after anything that can change
+either side of the match — a job starting or resuming, a piece finishing or being handed back, an
+agent joining or coming back into the game. It is deliberately dumb: lowest ordinal first, one piece
+per idle agent. The interesting question is which pieces are *ready*, and that belongs to the
+geometry rather than to a scheduler.
+
+So there are two acts where there was one. **Releasing** hands back a piece and leaves the agent on
+the job, which is what makes releasing a failed piece a retry. **Leaving** takes the agent off and
+frees what it held for the rest of the pool. And how many pieces a build divides into is asked
+separately from who is building it, so a build can be divided finer than its crew.
+
+### Cutting on Y is an order, not a division
+
+A bot is a player: two blocks tall, standing on the layer below to place the one it is on. Its body
+therefore fills its own cell at the height it is working **and the height above that**.
+
+Two agents split by height over the same ground are not merely slow, then. The upper one has to
+stand exactly where the lower one still has blocks to place, and no separation distance fixes it,
+because what the upper one is waiting for *is* the lower one's work. The vertical cuts
+in `GRID` were producing plans that could not be built.
+
+`BuildJob.blockers` is the rule: a piece is not handed out while any piece beneath its footprint is
+unfinished. Derived from the boxes rather than stored — the split is frozen when the job starts, so
+the answer cannot drift, where a dependency table could. It costs nothing where it is not needed:
+`COLUMNS` cuts full-height prisms, nothing is beneath anything, and every piece is ready at once.
+
+The upshot is that idle agents on an `ACTIVE` job are an **ordinary state**, not a stuck one, and the
+response says which pieces each piece is waiting on so an interface need not guess.
+
 **A paused job keeps holding its crew.** That is the honest reading — those agents are on this job —
 and it is what makes resuming a single act rather than a reassignment of everybody. The way out is
-named in the refusal: release the segment, or delete the job.
+named in the refusal: take the agent off that job, or delete the job.
 
 **There is no failed job.** One with failed segments is still `ACTIVE` and needs an operator, because
 deciding it is over means picking how many failures are too many and there is no honest number.
@@ -1393,16 +1435,27 @@ Cuts land on cell boundaries, never inside a cell. A cell is the finest thing th
 cut through one would produce two segments of unknown size — and known sizes are the entire point of
 the segments.
 
-The three modes are **one algorithm with different axes allowed**, not three algorithms:
+The two modes are **one algorithm with different axes allowed**, not two algorithms:
 
 | Mode | Cuts on | What it costs |
 |---|---|---|
-| `COLUMNS` | X and Z | Full-height pieces. Every agent has its own ground and builds bottom-up without waiting. The safe default. |
-| `LAYERS` | Y | Horizontal slabs, which **serialise** — the agent above has nothing to stand on. Only for something flat. |
-| `GRID` | any | Balances best, localises worst: an agent can be handed a piece with no floor under it. |
+| `COLUMNS` | X and Z | Full-height pieces. Every agent has its own ground and nothing ever waits. The safe default. |
+| `GRID` | any | Balances best, having every axis to cut on. Pieces at one level go out together; the ones above them wait. |
 
-It halves recursively rather than cutting one axis `parts` times, so each cut picks the axis that is
-currently longest and the pieces come out closer to compact than to long thin slices.
+There was a `LAYERS` cutting on Y alone, and it was **dominated by `GRID` in every case**: a layer is
+one piece over the whole footprint, so the ordering rule leaves one agent building and the rest
+watching. Its only remaining virtue was bottom-up order, which `GRID` has from the same rule while
+still cutting horizontally.
+
+It halves recursively rather than cutting one axis `parts` times, and each cut tries **every axis the
+mode allows and keeps whichever balances closest** — not the axis that happens to be longest. That
+was the first implementation and it produced splits like 43% / 54% / 1%: the axis with the most
+places to cut is not the axis with a good place to cut, and a tall thin build offers plenty of
+boundaries up its height that are all useless when the mass is at the bottom.
+
+Which means how much of a `GRID` runs at once is **how many pieces sit at the same level**, not how
+many were asked for. Sixteen pieces four wide and four high keep four agents busy; a fifth waits.
+`COLUMNS` is the mode to reach for when parallelism matters more than balance.
 
 **Fewer segments than asked for is a real answer.** A schematic three cells wide does not divide
 between eight agents however the cuts are placed, and padding the count with empty segments would
@@ -1459,7 +1512,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-472 tests across 37 classes. Most run against a real Postgres 18 through Testcontainers with
+479 tests across 37 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

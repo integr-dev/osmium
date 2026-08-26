@@ -26,7 +26,7 @@ export type SegmentState = 'PENDING' | 'ASSIGNED' | 'BUILDING' | 'DONE' | 'FAILE
  */
 export type JobSegment = Omit<
   Required<components['schemas']['JobSegmentResponse']>,
-  'state' | 'agentId' | 'agentLabel' | 'lastReportAt' | 'failureReason'
+  'state' | 'agentId' | 'agentLabel' | 'lastReportAt' | 'failureReason' | 'releasedFrom'
 > & {
   state: SegmentState
   /** Null while nobody holds it, and after the agent that did has been removed. */
@@ -34,15 +34,28 @@ export type JobSegment = Omit<
   agentLabel: string | null
   lastReportAt: string | null
   failureReason: string | null
+  /** Who a live piece was taken from. Null unless it is being kept away from somebody. */
+  releasedFrom: string | null
+}
+
+/** One agent working a job, whether or not it is holding a piece right now. */
+export type JobAgent = Omit<Required<components['schemas']['JobAgentResponse']>, 'agentId'> & {
+  /** Null once the agent has been deleted. */
+  agentId: number | null
 }
 
 export type BuildJob = Omit<
   Required<components['schemas']['BuildJobResponse']>,
-  'state' | 'placement' | 'segments' | 'finishedAt'
+  'state' | 'placement' | 'segments' | 'pool' | 'finishedAt'
 > & {
   state: JobState
   placement: Placement
   segments: JobSegment[]
+  /**
+   * Who is working it. Empty once it is finished — this is live membership, and who built which
+   * piece is on the piece.
+   */
+  pool: JobAgent[]
   /** Null while the job is active. */
   finishedAt: string | null
 }
@@ -58,13 +71,16 @@ export async function listJobs(buildId?: number): Promise<BuildJob[]> {
 /**
  * Starts building a plan.
  *
- * The agents are the request: how many pieces the build is divided into is how many agents are
- * carrying them, and the server is derived from the agents themselves. Sending either separately
- * would be a second place to say something this list already says.
+ * The agents are a **pool**, and `parts` is separate from it. They used to be the same number,
+ * because a piece was a share handed to an agent once; a piece is a unit of work now, so a build
+ * can be divided finer than the crew and agents take the next one as they finish. Left out, it
+ * still defaults to the size of the pool.
+ *
+ * The server is still not sent: one job is one server, and the pool already says which.
  */
 export async function startJob(
   buildId: number,
-  body: { mode: SplitMode; agentIds: number[] },
+  body: { mode: SplitMode; agentIds: number[]; parts?: number },
 ): Promise<BuildJob> {
   const { data, error } = await api.POST('/api/builds/{buildId}/jobs', {
     params: { path: { buildId } },
@@ -117,10 +133,40 @@ export async function assignSegment(
   return data as BuildJob
 }
 
-/** Takes a segment back. It returns to the pool rather than being marked failed. */
+/**
+ * Hands a piece back. The agent stays on the job.
+ *
+ * Which means it can come straight back to the same agent, and for a failed piece that is the
+ * point: releasing one is the retry, done deliberately by whoever read the reason. Taking the
+ * agent off the job is [leaveJob].
+ */
 export async function releaseSegment(jobId: number, segmentId: number): Promise<BuildJob> {
   const { data, error } = await api.DELETE('/api/jobs/{jobId}/segments/{segmentId}/assignment', {
     params: { path: { jobId, segmentId } },
+  })
+  if (error) throw new Error(errorMessage(error))
+  return data as BuildJob
+}
+
+/**
+ * Puts another agent on a running job.
+ *
+ * No segment: which piece it gets depends on what is free when it arrives, and that is the
+ * scheduler's answer rather than the operator's.
+ */
+export async function addJobAgent(id: number, agentId: number): Promise<BuildJob> {
+  const { data, error } = await api.POST('/api/jobs/{id}/agents', {
+    params: { path: { id } },
+    body: { agentId },
+  })
+  if (error) throw new Error(errorMessage(error))
+  return data as BuildJob
+}
+
+/** Takes an agent off a job, and whatever it was holding with it. */
+export async function leaveJob(id: number, agentId: number): Promise<BuildJob> {
+  const { data, error } = await api.DELETE('/api/jobs/{id}/agents/{agentId}', {
+    params: { path: { id, agentId } },
   })
   if (error) throw new Error(errorMessage(error))
   return data as BuildJob

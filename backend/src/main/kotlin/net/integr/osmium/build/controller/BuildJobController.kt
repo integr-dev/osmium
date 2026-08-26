@@ -3,6 +3,7 @@ package net.integr.osmium.build.controller
 import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import jakarta.validation.Valid
+import net.integr.osmium.build.dto.AddJobAgentRequest
 import net.integr.osmium.build.dto.AssignSegmentRequest
 import net.integr.osmium.build.dto.BuildJobResponse
 import net.integr.osmium.build.dto.StartJobRequest
@@ -117,11 +118,39 @@ class BuildJobController(private val service: BuildJobService) {
     ): BuildJobResponse = service.assign(jobId, segmentId, request)
 
     /**
-     * Takes a segment back. It returns to the pool rather than being marked failed - an operator
-     * moving work is not the same event as a host that could not do it.
+     * Hands a piece back. It goes to whoever is free next, which can be the same agent - an operator
+     * moving work is not the same event as a host that could not do it, and the agent stays on the
+     * job either way. Taking the agent *off* is the route below.
      */
     @DeleteMapping("/jobs/{jobId}/segments/{segmentId}/assignment")
     @PreAuthorize("hasAuthority('agent.run')")
     fun release(@PathVariable jobId: Long, @PathVariable segmentId: Long): BuildJobResponse =
         service.release(jobId, segmentId)
+
+    /**
+     * Puts another agent on a running job.
+     *
+     * No segment in the path, deliberately: adding a bot to a build is saying "help with this", and
+     * which piece it gets depends on what is free by the time it is asked.
+     */
+    @PostMapping("/jobs/{id}/agents")
+    @PreAuthorize("hasAuthority('agent.run')")
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "On the job."),
+        ApiResponse(
+            responseCode = "409",
+            description = "The job is finished, or the agent is offline, on another server, or " +
+                "already on a job.",
+        ),
+    )
+    fun add(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: AddJobAgentRequest,
+    ): BuildJobResponse = service.add(id, request.agentId)
+
+    /** Takes an agent off a job, and whatever it was holding with it. */
+    @DeleteMapping("/jobs/{id}/agents/{agentId}")
+    @PreAuthorize("hasAuthority('agent.run')")
+    fun leave(@PathVariable id: Long, @PathVariable agentId: Long): BuildJobResponse =
+        service.leave(id, agentId)
 }

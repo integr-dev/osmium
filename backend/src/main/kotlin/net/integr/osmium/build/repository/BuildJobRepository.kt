@@ -72,24 +72,25 @@ interface BuildJobRepository : JpaRepository<BuildJob, Long> {
     fun findAllHoldingAgent(agentId: Long): List<BuildJob>
 
     /**
-     * Jobs that could use another pair of hands on this server, oldest first.
+     * Jobs this agent is **on**, oldest first, whether or not it is holding anything right now.
      *
-     * Read when an agent comes back into the game: a reconnect used to leave it idle beside the
-     * build it had been on, because releasing its segment was the last thing anybody did about it.
-     * Oldest first so a fleet returning after an outage refills the job that has been waiting
+     * The question [findAllHoldingAgent] used to answer badly. Membership and assignment were the
+     * same fact while a crew was a division of the work, so "which job is this agent on" could only
+     * be asked as "which job holds a segment assigned to it" - and an agent between pieces answered
+     * *none*, which is how a second job could take an agent that was already busy.
+     *
+     * Oldest first so a fleet coming back after an outage refills the job that has been waiting
      * longest rather than whichever one happens to sort first.
      */
     @Query(
         """
         SELECT DISTINCT r FROM BuildJob r
-        JOIN r.segments s
-        WHERE r.state = 'ACTIVE'
-          AND r.serverAddress = :server
-          AND s.state = 'PENDING'
+        JOIN r.pool p
+        WHERE p.agent.id = :agentId
         ORDER BY r.startedAt ASC
         """,
     )
-    fun findAllWantingBuilders(server: String): List<BuildJob>
+    fun findAllWithAgentInPool(agentId: Long): List<BuildJob>
 
     /**
      * The job holding the segment a fetch ticket was minted for.

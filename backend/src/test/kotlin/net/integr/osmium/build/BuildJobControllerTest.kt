@@ -88,6 +88,36 @@ class BuildJobControllerTest : AbstractRestTest() {
         return schematic
     }
 
+    /**
+     * Four cells stacked one on top of another. The flat fixture cannot be cut on height, which is
+     * the only axis where the order between pieces means anything.
+     */
+    private fun stackedSchematic(name: String = "chimney"): Schematic {
+        val schematic = schematics.saveAndFlush(
+            Schematic(
+                name = name,
+                originalFilename = "$name.litematic",
+                sizeBytes = 1,
+                receivedBytes = 1,
+                status = SchematicStatus.READY,
+                uploadedBy = "root",
+                originX = 0,
+                originY = 0,
+                originZ = 0,
+                cellSize = 1,
+                sizeX = 1,
+                sizeY = 4,
+                sizeZ = 1,
+                blockCount = 40,
+            ),
+        )
+        index.replaceCells(
+            schematic.id!!,
+            (0..3).map { y -> Cell(0, y, 0, 10, "stone") },
+        )
+        return schematic
+    }
+
     private fun placedBuild(
         schematic: Schematic = readySchematic(),
         name: String = "north tower",
@@ -115,10 +145,12 @@ class BuildJobControllerTest : AbstractRestTest() {
         agentIds: List<Long>,
         mode: String = "COLUMNS",
         user: String = RoleNames.ORCHESTRATOR,
+        parts: Int? = null,
     ): ResultActionsDsl = mockMvc.post("/api/builds/$buildId/jobs") {
         header(HttpHeaders.AUTHORIZATION, asRole(user))
         contentType = MediaType.APPLICATION_JSON
-        content = """{"mode":"$mode","agentIds":[${agentIds.joinToString(",")}]}"""
+        content = """{"mode":"$mode","agentIds":[${agentIds.joinToString(",")}]""" +
+            (parts?.let { ""","parts":$it""" } ?: "") + "}"
     }
 
     private fun pause(jobId: Int): ResultActionsDsl = mockMvc.post("/api/jobs/$jobId/pause") {
@@ -409,6 +441,42 @@ class BuildJobControllerTest : AbstractRestTest() {
         assertTrue(trail.contains(AuditAction.BUILD_JOB_RESUME))
     }
 
+    /**
+     * Pausing calls every host off the work while the assignment stays on the row, so resuming has
+     * to send it out again. It did not, and the rows came back saying `BUILDING` with nothing
+     * behind them: the bots had been told to stop and never told to start.
+     *
+     * The state going back to `ASSIGNED` is what says so. It has been asked again and has not
+     * answered yet, which is exactly what assigned means.
+     */
+    @Test
+    fun `resuming sends the held pieces out again`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        // The host says it started, so the row is BUILDING when the job is stopped.
+        progresses(agent, segmentId.toLong(), placed = 10, state = "building")
+        pause(jobId).andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("BUILDING") }
+        }
+
+        mockMvc.post("/api/jobs/$jobId/resume") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("ASSIGNED") }
+            jsonPath("$.segments[0].agentLabel") { value("Mason_01") }
+            // Kept: the blocks are still standing in the world, whatever the job was doing.
+            jsonPath("$.segments[0].blocksPlaced") { value(10) }
+        }
+    }
+
     @Test
     fun `an active job cannot be resumed`() {
         val host = reachableHost()
@@ -456,8 +524,62 @@ class BuildJobControllerTest : AbstractRestTest() {
         start(build.id!!, listOf(agent.id!!, agent.id!!)).andExpect { status { isBadRequest() } }
     }
 
+    /**
+     * A host counts its own work from zero, so what it reports is added to what was already there.
+     *
+     * The bug: every hand-over and every resume dropped the piece back to nothing the moment the
+     * new holder said "0 placed, building" — which is the first thing any host says, because it has
+     * no way of knowing somebody built half of it first.
+     */
     @Test
-    fun `releasing a segment returns it to the pool rather than blaming anyone for it`() {
+    fun `a piece keeps what is standing when it changes hands`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val first = onlineAgent("Mason_01", host)
+        val second = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(first.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(first, segmentId.toLong(), placed = 2, state = "building")
+
+        // Taken off the first bot and given to the second, which starts counting at nothing.
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect { status { isOk() } }
+
+        mockMvc.post("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"agentId":${second.id}}"""
+        }.andExpect {
+            status { isOk() }
+            // Still two: the blocks are standing in the world whoever is holding the piece.
+            jsonPath("$.segments[0].blocksPlaced") { value(2) }
+        }
+
+        progresses(second, segmentId.toLong(), placed = 0, state = "building")
+        progresses(second, segmentId.toLong(), placed = 1)
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.VIEWER))
+        }.andExpect {
+            status { isOk() }
+            // Two that were there, one this bot has placed since.
+            jsonPath("$.segments[0].blocksPlaced") { value(3) }
+        }
+    }
+
+    /**
+     * Taking a live piece off an agent means *not this bot*, so it is not handed back to them.
+     *
+     * It used to be: the scheduler filled the gap the moment it appeared, and with one agent idle
+     * and one piece free that was the same pairing again. The button redrew the row exactly as it
+     * had been, which is a control that does nothing.
+     */
+    @Test
+    fun `releasing a live piece keeps it away from the agent it was taken from`() {
         val host = reachableHost()
         val build = placedBuild()
         val agent = onlineAgent("Mason_01", host)
@@ -472,19 +594,83 @@ class BuildJobControllerTest : AbstractRestTest() {
             status { isOk() }
             jsonPath("$.segments[0].state") { value("PENDING") }
             jsonPath("$.segments[0].agentId") { value(null) }
-            jsonPath("$.segments[0].agentLabel") { value(null) }
-            jsonPath("$.segments[0].failureReason") { value(null) }
+            // Named, so a free piece nobody picks up is an answer rather than a mystery.
+            jsonPath("$.segments[0].releasedFrom") { value("Mason_01") }
+            // Still on the job. Handing a piece back is not resigning from the build.
+            jsonPath("$.pool.length()") { value(1) }
         }
+    }
 
-        // ...and it can be picked up again, by the same agent or another one.
-        mockMvc.post("/api/jobs/$jobId/segments/$segmentId/assignment") {
+    /** Anybody else may have it, which is the point of taking it off the first one. */
+    @Test
+    fun `a released piece goes to another agent as soon as one is free`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val first = onlineAgent("Mason_01", host)
+        val second = onlineAgent("Mason_02", host)
+
+        // Two pieces so both agents are busy, then one is taken off its own.
+        val body = start(build.id!!, listOf(first.id!!, second.id!!), parts = 2)
+            .andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val held: String = JsonPath.read(body, "$.segments[0].agentLabel")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+        val other: Int = JsonPath.read(body, "$.segments[1].id")
+
+        // The agent holding the second piece hands it back, leaving itself idle.
+        mockMvc.delete("/api/jobs/$jobId/segments/$other/assignment") {
             header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"agentId":${agent.id}}"""
+        }.andExpect { status { isOk() } }
+
+        // Now the first piece is released: the idle agent is not the one it came from, so it takes it.
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
         }.andExpect {
             status { isOk() }
             jsonPath("$.segments[0].state") { value("ASSIGNED") }
-            jsonPath("$.segments[0].agentLabel") { value("Mason_01") }
+            jsonPath("$.segments[0].agentLabel") { value(if (held == "Mason_01") "Mason_02" else "Mason_01") }
+            // Handed out again, so the decision that kept one agent off it is spent.
+            jsonPath("$.segments[0].releasedFrom") { value(null) }
+        }
+    }
+
+    /**
+     * The scheduler only runs on an active job, which is what makes a released piece observable at
+     * rest: paused, it stays where it was put until somebody resumes.
+     */
+    @Test
+    fun `a piece released on a paused job waits there, reason and all`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(agent, segmentId.toLong(), state = "failed", reason = "no blocks in inventory")
+        mockMvc.post("/api/jobs/$jobId/pause") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect { status { isOk() } }
+
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("PENDING") }
+            jsonPath("$.segments[0].agentId") { value(null) }
+            // Kept while it waits: whoever released it did so because of that reason and is off
+            // fixing it. It goes when somebody takes the piece, not when they hand it back.
+            jsonPath("$.segments[0].failureReason") { value("no blocks in inventory") }
+        }
+
+        // Resuming is a scheduling pass, so the piece goes out again without anybody assigning it.
+        mockMvc.post("/api/jobs/$jobId/resume") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("ASSIGNED") }
+            jsonPath("$.segments[0].failureReason") { value(null) }
         }
     }
 
@@ -807,53 +993,158 @@ class BuildJobControllerTest : AbstractRestTest() {
     }
 
     /**
-     * The gap this closes: `FAILED` was a state nothing could leave. Reassignment only ever picks up
-     * `PENDING`, releasing refused anything not assigned, and a job needs every segment `DONE` — so
-     * one failure stranded the whole build, with deleting and rebuilding as the only way out.
+     * The gap this closes: `FAILED` was a state nothing could leave. The scheduler only picks up
+     * `PENDING`, releasing refused anything not assigned, and a job needs every piece `DONE` - so one
+     * failure stranded the whole build, with deleting and rebuilding as the only way out.
      */
     @Test
-    fun `a failed segment can be handed back and built by somebody else`() {
+    fun `a failed piece is retried by releasing it, and the job can then finish`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!)).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+
+        progresses(agent, segmentId.toLong(), state = "failed", reason = "no blocks in inventory")
+
+        // Releasing is the retry: the piece goes back and straight out again, carrying no memory of
+        // the attempt that failed, because this is a new one.
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.segments[0].state") { value("ASSIGNED") }
+            jsonPath("$.segments[0].failureReason") { value(null) }
+        }
+
+        // And the job can reach the end, which is what a stranded piece made impossible.
+        progresses(agent, segmentId.toLong(), state = "done")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.state") { value("DONE") }
+            // A finished job holds nobody. The pool is live membership; who built which piece is on
+            // the piece.
+            jsonPath("$.pool.length()") { value(0) }
+            jsonPath("$.segments[0].agentLabel") { value("Mason_01") }
+        }
+    }
+
+    /**
+     * The pool is what a vertical split needs and a division could not express: more pieces than
+     * agents, agents taking the next one when they finish, and a bot added halfway through being
+     * useful without anybody deciding which piece it should have.
+     */
+    @Test
+    fun `more pieces than agents, and the next one goes out when one comes in`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val agent = onlineAgent("Mason_01", host)
+
+        val body = start(build.id!!, listOf(agent.id!!), parts = 2).andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val first: Int = JsonPath.read(body, "$.segments[0].id")
+
+        // One agent, two pieces: it holds the first and the second waits its turn.
+        assertEquals("ASSIGNED", JsonPath.read<String>(body, "$.segments[0].state"))
+        assertEquals("PENDING", JsonPath.read<String>(body, "$.segments[1].state"))
+
+        progresses(agent, first.toLong(), state = "done")
+
+        // Nobody assigned the second one. Finishing the first is what handed it over.
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.segments[1].state") { value("ASSIGNED") }
+            jsonPath("$.segments[1].agentLabel") { value("Mason_01") }
+            jsonPath("$.state") { value("ACTIVE") }
+        }
+    }
+
+    @Test
+    fun `an agent added to a running job picks up what is waiting`() {
         val host = reachableHost()
         val build = placedBuild()
         val one = onlineAgent("Mason_01", host)
         val two = onlineAgent("Mason_02", host)
 
-        val body = start(build.id!!, listOf(one.id!!)).andReturn().response.contentAsString
-        val jobId: Int = JsonPath.read(body, "$.id")
-        val segmentId: Int = JsonPath.read(body, "$.segments[0].id")
+        val jobId: Int = JsonPath.read(
+            start(build.id!!, listOf(one.id!!), parts = 2).andReturn().response.contentAsString,
+            "$.id",
+        )
 
-        progresses(one, segmentId.toLong(), state = "failed", reason = "no blocks in inventory")
-
-        // Releasing is the retry. The reason **stays** while the segment waits: whoever released it
-        // did so because of that reason and is off fixing it, and a free segment saying nothing is a
-        // segment nobody remembers why they freed. It goes when somebody takes it, which is the
-        // moment there is a new attempt for it to be wrong about.
-        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
-            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.segments[0].state") { value("PENDING") }
-            jsonPath("$.segments[0].agentId") { value(null) }
-            jsonPath("$.segments[0].failureReason") { value("no blocks in inventory") }
-        }
-
-        mockMvc.post("/api/jobs/$jobId/segments/$segmentId/assignment") {
+        // No segment in the request: which piece it gets is the scheduler's business.
+        mockMvc.post("/api/jobs/$jobId/agents") {
             header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
             contentType = MediaType.APPLICATION_JSON
             content = """{"agentId":${two.id}}"""
         }.andExpect {
             status { isOk() }
+            jsonPath("$.pool.length()") { value(2) }
+            jsonPath("$.segments[1].state") { value("ASSIGNED") }
+            jsonPath("$.segments[1].agentLabel") { value("Mason_02") }
+        }
+    }
+
+    @Test
+    fun `taking an agent off a job hands its piece to the rest of the pool`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val one = onlineAgent("Mason_01", host)
+        val two = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(one.id!!, two.id!!), parts = 1)
+            .andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+
+        // One piece between two agents, so one of them is on the job holding nothing - which is the
+        // state the old model had no way to write down.
+        assertEquals("Mason_01", JsonPath.read<String>(body, "$.segments[0].agentLabel"))
+
+        mockMvc.delete("/api/jobs/$jobId/agents/${one.id}") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.pool.length()") { value(1) }
             jsonPath("$.segments[0].state") { value("ASSIGNED") }
             jsonPath("$.segments[0].agentLabel") { value("Mason_02") }
-            jsonPath("$.segments[0].failureReason") { value(null) }
         }
+    }
 
-        // And the job can reach the end, which is what a stranded segment made impossible.
-        progresses(two, segmentId.toLong(), state = "done")
+    @Test
+    fun `an agent on one job cannot be pooled into another`() {
+        val host = reachableHost()
+        val agent = onlineAgent("Mason_01", host)
+        val first = placedBuild(name = "north tower")
+        val second = placedBuild(name = "south tower")
 
-        mockMvc.get("/api/jobs/$jobId") {
+        val jobId: Int = JsonPath.read(
+            start(first.id!!, listOf(agent.id!!), parts = 2).andReturn().response.contentAsString,
+            "$.id",
+        )
+
+        start(second.id!!, listOf(agent.id!!)).andExpect { status { isConflict() } }
+
+        // Including while it is holding nothing, which is the case the old check got wrong: reading
+        // the segments called such an agent free and let a second job take it.
+        val segmentId: Int = JsonPath.read(
+            mockMvc.get("/api/jobs/$jobId") {
+                header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            }.andReturn().response.contentAsString,
+            "$.segments[0].id",
+        )
+        // Paused, so releasing leaves it waiting rather than handing it back immediately.
+        mockMvc.post("/api/jobs/$jobId/pause") {
             header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
-        }.andExpect { jsonPath("$.state") { value("DONE") } }
+        }.andExpect { status { isOk() } }
+        mockMvc.delete("/api/jobs/$jobId/segments/$segmentId/assignment") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect { status { isOk() } }
+
+        start(second.id!!, listOf(agent.id!!)).andExpect { status { isConflict() } }
     }
     /**
      * A host reporting on a segment it does not hold is either confused or lying, and neither is a
@@ -878,6 +1169,59 @@ class BuildJobControllerTest : AbstractRestTest() {
             jsonPath("$.segments[0].blocksPlaced") { value(0) }
             jsonPath("$.segments[0].state") { value("ASSIGNED") }
         }
+    }
+
+    /**
+     * The rule the whole pool model exists to make possible.
+     *
+     * A bot is two blocks tall and builds from the floor up, so two agents split by height over the
+     * same ground each need to stand exactly where the other still has blocks to place. Cutting on Y
+     * is therefore an order rather than a division, and the piece above waits - with an idle agent
+     * standing right there, which is an ordinary state rather than a stuck one.
+     */
+    @Test
+    fun `a piece with unbuilt work beneath it is not handed out`() {
+        val host = reachableHost()
+        val build = placedBuild(schematic = stackedSchematic())
+        val one = onlineAgent("Mason_01", host)
+        val two = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(one.id!!, two.id!!), mode = "GRID")
+            .andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(body, "$.id")
+        val bottom: Int = JsonPath.read(body, "$.segments[0].id")
+
+        // Two agents, two pieces, and only one of them out: the upper piece has no floor yet.
+        assertEquals("ASSIGNED", JsonPath.read<String>(body, "$.segments[0].state"))
+        assertEquals("PENDING", JsonPath.read<String>(body, "$.segments[1].state"))
+        assertEquals(listOf(1), JsonPath.read<List<Int>>(body, "$.segments[1].blockedBy"))
+        // Both are on the job all the same. One is waiting, which the old model could not say.
+        assertEquals(2, JsonPath.read<Int>(body, "$.pool.length()"))
+
+        // Finishing the floor is what releases what stands on it. Nobody assigned anything.
+        progresses(one, bottom.toLong(), state = "done")
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            jsonPath("$.segments[1].state") { value("ASSIGNED") }
+            jsonPath("$.segments[1].blockedBy.length()") { value(0) }
+        }
+    }
+
+    /** Full-height prisms have nothing beneath anything, so the rule costs them nothing. */
+    @Test
+    fun `columns all go out at once`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val one = onlineAgent("Mason_01", host)
+        val two = onlineAgent("Mason_02", host)
+
+        val body = start(build.id!!, listOf(one.id!!, two.id!!)).andReturn().response.contentAsString
+
+        assertEquals("ASSIGNED", JsonPath.read<String>(body, "$.segments[0].state"))
+        assertEquals("ASSIGNED", JsonPath.read<String>(body, "$.segments[1].state"))
+        assertEquals(0, JsonPath.read<List<Int>>(body, "$.segments[1].blockedBy").size)
     }
 
     @Test
