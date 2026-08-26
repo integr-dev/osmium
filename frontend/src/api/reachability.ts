@@ -12,6 +12,9 @@ import { apiBaseUrl } from './base'
 /**
  * Whether the last request reached the backend at all. Not in a store so every call updates it,
  * including the account lookup a viewer makes without ever touching the fleet.
+ *
+ * Starts optimistic. Every screen that reads it is drawn before anything has been asked, and
+ * "not responding" under a page that has not tried yet is a worse guess than the other one.
  */
 export const backendReachable = ref(true)
 
@@ -30,19 +33,32 @@ export const backendEverReached = ref(false)
  * down while somebody was reading the page went on being reported as fine until they tried to sign
  * in and found out the hard way.
  *
- * **Any HTTP answer counts, including the 401.** The same reasoning `session.ts` already applies:
- * a refusal is the backend refusing, which is proof it is running. Only a transport failure means
- * it is not. That is why this can point at an authenticated endpoint rather than needing a public
- * one — it is asking whether anybody is listening, not asking for anything.
+ * **The 401 is the answer it is looking for.** The endpoint requires a session and the probe
+ * deliberately sends none, so a backend that is up refuses it — and a refusal is proof of life in
+ * a way that needs no public endpoint to exist for it.
+ *
+ * **Anything else is not.** A transport failure is obvious, but the case this used to get wrong is
+ * subtler: in development the app is served by Vite and `/api` is proxied, so a backend that is
+ * down produces a proxy error — a real HTTP response, 500 or 504, from something that is not the
+ * backend. Counting "any answer" as alive meant the login screen reported a dead backend as fine
+ * until somebody tried to sign in and found out the hard way.
  *
  * `credentials: 'omit'` on purpose. This must not carry the refresh cookie: it is a probe, it runs
  * on a timer, and the one thing it must never do is spend a credential or rotate a session.
  */
 export async function probeBackend(): Promise<void> {
   try {
-    await fetch(`${apiBaseUrl}/api/users/me`, { method: 'GET', credentials: 'omit' })
-    backendReachable.value = true
-    backendEverReached.value = true
+    const response = await fetch(`${apiBaseUrl}/api/users/me`, {
+      method: 'GET',
+      credentials: 'omit',
+    })
+
+    // 401 from the endpoint itself, or 2xx if one day it stops needing a session. A gateway
+    // answering for a backend that is not there is neither.
+    const answered = response.ok || response.status === 401
+
+    backendReachable.value = answered
+    if (answered) backendEverReached.value = true
   } catch {
     backendReachable.value = false
   }
