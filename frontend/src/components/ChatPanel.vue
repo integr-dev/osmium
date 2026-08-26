@@ -9,6 +9,7 @@ import { belongsTo, scopeFilter, scopeKey, type ChatScope } from '../lib/chat'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
+import { atTime } from '../lib/time'
 
 /**
  * One conversation: the lines, and the box that adds to them.
@@ -83,6 +84,21 @@ const pending = ref<PendingLine[]>([])
 let nextKey = 0
 
 /**
+ * Echoes that arrived before the send they belong to had come back.
+ *
+ * The placeholder is added once the backend has accepted the message — deliberately, see above —
+ * and the host can beat that. It goes to the host over a socket that is already open, into the
+ * game and back onto the feed while the POST is still in flight; on a local host that round trip
+ * is a few milliseconds and the POST is not. The echo then found nothing to retire, the
+ * placeholder was added behind it, and the transcript showed the line twice — once said, once
+ * sending — until the grace ran out and the second copy accused the first of never arriving.
+ *
+ * So an unmatched echo is remembered instead, and the send it belongs to skips its placeholder.
+ * Matched on text like the other direction, because there is still no id in common at this point.
+ */
+let overtook: Array<{ text: string; at: number }> = []
+
+/**
  * How long the host gets to echo before the line is called into question.
  *
  * A message goes to the host, into Minecraft, and comes back on the chat feed. Several seconds is
@@ -101,6 +117,7 @@ const stopListening = agentStore.onFeedEvent((name, data) => {
   if (line.scope === 'OUTBOUND') {
     const at = pending.value.findIndex((entry) => entry.text === line.text)
     if (at !== -1) pending.value = pending.value.filter((_, index) => index !== at)
+    else overtook.push({ text: line.text, at: Date.now() })
   }
 
   feed.prepend(line)
@@ -110,6 +127,7 @@ const stopListening = agentStore.onFeedEvent((name, data) => {
 // would appear under somebody else's transcript as though it had been said there.
 watch(() => scopeKey(props.scope), () => {
   pending.value = []
+  overtook = []
 })
 
 onBeforeUnmount(stopListening)
@@ -144,6 +162,15 @@ async function send(): Promise<void> {
     await agentStore.say(props.speaker.id, text)
     message.value = ''
 
+    // Nothing to wait for: the echo of this very message is already on the transcript.
+    const now = Date.now()
+    overtook = overtook.filter((echo) => now - echo.at < ECHO_GRACE_MS)
+    const raced = overtook.findIndex((echo) => echo.text === text)
+    if (raced !== -1) {
+      overtook.splice(raced, 1)
+      return
+    }
+
     // Only once the backend has accepted it. Drawn before the request, a refused message would
     // have appeared in the transcript and then vanished, which is worse than never showing it.
     const entry: PendingLine = { key: nextKey++, text, at: new Date().toISOString(), stalled: false }
@@ -168,10 +195,6 @@ function involvesAgent(line: ChatMessageResponse): boolean {
   return props.scope.kind === 'server' && line.scope !== 'GLOBAL'
 }
 
-/** Time only: chat is kept three days, so the clock is what locates a line. */
-function formatAt(at: string): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
 </script>
 
 <template>
@@ -198,7 +221,7 @@ function formatAt(at: string): string {
           :key="`pending-${line.key}`"
           class="flex items-start gap-2 px-1 text-sm"
         >
-          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ formatAt(line.at) }}</span>
+          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
           <component
             :is="line.stalled ? TriangleAlert : Clock"
             class="mt-1 size-3.5 shrink-0"
@@ -214,7 +237,7 @@ function formatAt(at: string): string {
         </p>
 
         <p v-for="line in items" :key="line.id" class="flex items-start gap-2 px-1 text-sm">
-          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ formatAt(line.at) }}</span>
+          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
           <!--
             Global chat is where strangers show up, so a head is not decoration — it is how a player
             nobody recognises is told apart from an agent at a glance.
@@ -237,7 +260,7 @@ function formatAt(at: string): string {
         </p>
       </TransitionGroup>
 
-      <p v-if="loading" class="py-4 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
+      <p v-if="loading" class="py-10 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
       <p v-else-if="!items.length && !pending.length" class="py-10 text-center text-sm opacity-50">
         {{ t('dashboard.noChat') }}
       </p>
