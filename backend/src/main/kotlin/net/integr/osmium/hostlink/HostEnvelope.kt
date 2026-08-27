@@ -1,21 +1,44 @@
 package net.integr.osmium.hostlink
 
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonValue
 import tools.jackson.databind.JsonNode
 import net.integr.osmium.host.model.Host
 
 /**
  * Separates the three message lifecycles. Declared rather than inferred from [HostEnvelope.type],
  * so a new message type does not have to be classified in code to be handled correctly.
+ *
+ * **Lowercase on the wire**, which is what the host documentation has always specified and what
+ * Jackson would not have done on its own - it names enum constants as they are declared. The mock
+ * host could never catch that, because it shares this very enum and so agreed with the backend
+ * about a spelling neither of them was reading from the contract. The first real host disagreed
+ * with both on its first frame.
+ *
+ * [wire] is the spelling; the constant names stay conventional for Kotlin.
  */
-enum class MessageKind {
+enum class MessageKind(@get:JsonValue val wire: String) {
     /** Backend to host. Carries an id and expects exactly one result. */
-    COMMAND,
+    COMMAND("command"),
 
     /** Host to backend. Echoes the command id it resolves. */
-    RESULT,
+    RESULT("result"),
 
     /** Host to backend. Unsolicited, never awaited, no id. */
-    EVENT,
+    EVENT("event");
+
+    companion object {
+        /**
+         * Accepts either spelling. Lowercase is the contract, and the uppercase form is taken too
+         * because this backend emitted it for as long as the mock host was the only thing reading
+         * it - so a host written against what was observed rather than what was written down keeps
+         * working.
+         */
+        @JvmStatic
+        @JsonCreator
+        fun from(value: String): MessageKind? =
+            entries.firstOrNull { it.wire.equals(value, ignoreCase = true) }
+    }
 }
 
 /**
@@ -46,6 +69,21 @@ object CommandType {
     const val DISCONNECT = "disconnect"
     const val CHAT = "chat"
     const val SET_CHAT_LISTENER = "set_chat_listener"
+
+    /**
+     * Everything an operator has configured for this agent: `{ "values": { "chat.sender": "…" } }`.
+     *
+     * **The whole set, not a patch.** A key that is absent has been cleared, which is the only
+     * reading under which a setting can be turned back off.
+     *
+     * The keys are declared by the interface and relayed uninterpreted, exactly like `setup_agent``s
+     * `method`. A host ignores what it does not recognise, so an Osmium newer than a host is the
+     * ordinary case rather than an error.
+     *
+     * Sent when it changes and again whenever the host reconnects, since a host holds this only in
+     * memory and a restarted one would otherwise run on defaults.
+     */
+    const val SETTINGS = "settings"
 
     /**
      * Build this box.
@@ -81,6 +119,24 @@ object CommandType {
      * started: it says stop, which is satisfied by having stopped.
      */
     const val CANCEL_SEGMENT = "cancel_segment"
+
+    /**
+     * This agent is gone: `{}`, with the agent named on the envelope.
+     *
+     * A host binds each credential to the agent it was acquired for, so that a restart can rebuild
+     * its agents instead of leaving them unreachable. Nothing else in the protocol ever says an
+     * agent stopped existing - `handshake` reports what a host runs, never what the backend has
+     * since deleted - so without this the binding outlives the agent and the account stays held for
+     * something nobody can use.
+     *
+     * Fire and forget, **and best effort**: sent before the row goes, and a host that is unreachable
+     * simply keeps the stale binding. Deleting an agent must not be refused because a machine is
+     * switched off.
+     *
+     * Not an error for an agent the host has never heard of. It asks the host to hold nothing,
+     * which holding nothing already satisfies.
+     */
+    const val DELETE_AGENT = "delete_agent"
 }
 
 /** Events the backend understands. Anything else is logged and ignored, never fatal. */

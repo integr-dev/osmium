@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Send, TriangleAlert } from 'lucide-vue-next'
+import { Clock, Send, Server, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
+import McText from './McText.vue'
+
 import type { ChatMessageResponse } from '../api/client'
 import { fetchChatPage } from '../api/feeds'
 import { belongsTo, scopeFilter, scopeKey, type ChatScope } from '../lib/chat'
@@ -106,6 +108,9 @@ let overtook: Array<{ text: string; at: number }> = []
  */
 const ECHO_GRACE_MS = 10_000
 
+/** What the host calls a line it could not attribute to a player. */
+const SERVER_SENDER = 'server'
+
 const stopListening = agentStore.onFeedEvent((name, data) => {
   if (name !== 'chat') return
   const line = data as ChatMessageResponse
@@ -115,7 +120,9 @@ const stopListening = agentStore.onFeedEvent((name, data) => {
   // oldest unconfirmed line rather than on an id, because the two have no id in common: the
   // backend mints one when the host reports the line, long after this was drawn.
   if (line.scope === 'OUTBOUND') {
-    const at = pending.value.findIndex((entry) => entry.text === line.text)
+    // Contained rather than equal. What comes back is the server's rendering of the line — a rank,
+    // a colour, `<Name>` in front — and only the words that were typed survive inside it.
+    const at = pending.value.findIndex((entry) => line.text.includes(entry.text))
     if (at !== -1) pending.value = pending.value.filter((_, index) => index !== at)
     else overtook.push({ text: line.text, at: Date.now() })
   }
@@ -152,6 +159,9 @@ const blocked = computed(() => {
 })
 
 async function send(): Promise<void> {
+  // The field stays enabled while a message is in flight, so this is what stops a fast second Enter
+  // from sending the same line twice - the box is not cleared until the first one comes back.
+  if (sending.value) return
   if (!props.speaker || !message.value.trim()) return
 
   const text = message.value.trim()
@@ -165,7 +175,7 @@ async function send(): Promise<void> {
     // Nothing to wait for: the echo of this very message is already on the transcript.
     const now = Date.now()
     overtook = overtook.filter((echo) => now - echo.at < ECHO_GRACE_MS)
-    const raced = overtook.findIndex((echo) => echo.text === text)
+    const raced = overtook.findIndex((echo) => echo.text.includes(text))
     if (raced !== -1) {
       overtook.splice(raced, 1)
       return
@@ -191,8 +201,71 @@ async function send(): Promise<void> {
  * Whether to name the agent beside a line. See the template: only on a server feed, and only for
  * lines that are not the public channel.
  */
+/**
+ * Whether a line is the server talking rather than a player.
+ *
+ * The host says so by naming the sender , which it uses for anything it could not read a
+ * player out of - join notices, command output, a formatter it does not have a pattern for. It is a
+ * reserved name: Mojang does not allow one that short to be taken in mixed case, and a line really
+ * from a player called that would only be mislabelled, never misattributed.
+ */
+function fromServer(line: ChatMessageResponse): boolean {
+  return line.from === SERVER_SENDER
+}
+
+/**
+ * Every Minecraft account the fleet plays, by name, pointing at the agent that plays it.
+ *
+ * Chat names an account; an operator thinks in agents. The two are the same thing seen from either
+ * end of the setup, and this is the only place that can join them — a host reports who spoke, and
+ * has no idea which of Osmium's agents that is.
+ *
+ * Lower-cased, because Minecraft compares names that way and a formatter may not preserve the case
+ * the account was registered with.
+ */
+const fleetNames = computed(() => {
+  const named = new Map<string, string>()
+
+  for (const agent of agentStore.agents) {
+    if (agent.mcUsername) named.set(agent.mcUsername.toLowerCase(), agent.label)
+  }
+
+  return named
+})
+
+/** The agent behind a line, when the account that said it is one of ours. */
+function agentBehind(line: ChatMessageResponse): string | undefined {
+  return fleetNames.value.get(line.from.toLowerCase())
+}
+
+/**
+ * How many of the fleet's agents are on the server this panel is showing.
+ *
+ * Decides whether naming one adds anything: a server running a single agent has only one thing
+ * "me" can refer to.
+ */
+const agentsHere = computed(() => {
+  // Taken into a local so the narrowing survives into the callback.
+  const scope = props.scope
+  if (scope.kind !== 'server') return 0
+
+  return agentStore.agents.filter((agent) => agent.serverAddress === scope.address).length
+})
+
 function involvesAgent(line: ChatMessageResponse): boolean {
-  return props.scope.kind === 'server' && line.scope !== 'GLOBAL'
+  // Not on our own lines. The question this answers is "who was this to", which a whisper or a
+  // proximity line raises and an outbound one does not — there the speaker is already the head and
+  // the server's own rendering of the line, so the label only repeats it.
+  //
+  // And only where it distinguishes something. A whisper renders as "… -> me", which needs a name
+  // put to it exactly when more than one agent could be "me"; on a server running one, the label is
+  // the same word on every private line.
+  return (
+    props.scope.kind === 'server' &&
+    agentsHere.value > 1 &&
+    line.scope !== 'GLOBAL' &&
+    line.scope !== 'OUTBOUND'
+  )
 }
 
 </script>
@@ -240,12 +313,31 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
           <!--
             Global chat is where strangers show up, so a head is not decoration — it is how a player
-            nobody recognises is told apart from an agent at a glance.
+            nobody recognises is told apart from an agent at a glance. A line the host could not
+            attribute to anybody gets a server mark instead of a face nobody owns.
           -->
-          <PlayerHead :id="line.from" :name="line.from" size="xs" class="mt-0.5 shrink-0" />
-          <!-- What we said, rather than what was said to us. The one line in the feed we caused. -->
-          <span class="shrink-0 font-medium" :class="line.scope === 'OUTBOUND' ? 'text-primary' : ''">
-            {{ line.from }}
+          <Server v-if="fromServer(line)" class="mt-1 size-3.5 shrink-0 opacity-40" />
+          <PlayerHead v-else :id="line.from" :name="line.from" size="xs" class="mt-0.5 shrink-0" />
+          <!--
+            The agent behind the account, when the account is one of ours. Chat names a Minecraft
+            account and an operator thinks in agents, so a line from the fleet says which one — and
+            it comes first, because that is the name the operator gave it and the one they are
+            looking for.
+          -->
+          <span v-if="agentBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
+            {{ agentBehind(line) }}
+          </span>
+          <!--
+            The account name, but only when the line does not already carry one. A server-rendered
+            line comes with its own prefix — rank, colours, the speaker — so printing `from` beside it
+            would say the name twice, once ours and once theirs.
+          -->
+          <span
+            v-if="!line.components"
+            class="shrink-0 font-medium"
+            :class="[line.scope === 'OUTBOUND' ? 'text-primary' : '', fromServer(line) ? 'italic opacity-60' : '']"
+          >
+            {{ fromServer(line) ? t('chat.fromServer') : line.from }}
           </span>
           <!--
             Which agent a line involves, on a server feed only. Everything said on the server is
@@ -256,7 +348,11 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
             {{ line.agentLabel }}
           </span>
-          <span class="min-w-0 flex-1 break-words opacity-80">{{ line.text }}</span>
+          <!--
+            Styled as the server sent it, falling back to the plain line. A host may send no tree at
+            all - anything an agent said itself has none - so the plain text is what is always there.
+          -->
+          <McText :components="line.components" :text="line.text" class="min-w-0 flex-1 break-words opacity-80" />
         </p>
       </TransitionGroup>
 
@@ -276,12 +372,18 @@ function involvesAgent(line: ChatMessageResponse): boolean {
       </div>
 
       <form class="flex gap-2" @submit.prevent="send">
+        <!--
+          Disabled only when the box is shut, never merely while a message is in flight. Disabling
+          an input blurs it, and re-enabling does not give the focus back — so every send dropped
+          the operator out of the field they were typing in, mid-conversation. The button still
+          goes dead while sending; the field stays live and ready for the next line.
+        -->
         <input
           v-model="message"
           class="input input-sm w-full"
           type="text"
           :placeholder="t('agents.chatPlaceholder')"
-          :disabled="sending || blocked !== null"
+          :disabled="blocked !== null"
         />
         <button
           class="btn btn-primary btn-sm btn-square"

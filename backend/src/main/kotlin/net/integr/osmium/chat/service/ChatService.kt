@@ -41,7 +41,13 @@ class ChatService(
      * agent being deleted - which for a server feed matters, since the listener role moves.
      */
     @Transactional
-    fun record(agent: Agent, scope: ChatScope, from: String, text: String): ChatMessage {
+    fun record(
+        agent: Agent,
+        scope: ChatScope,
+        from: String,
+        text: String,
+        components: String? = null,
+    ): ChatMessage {
         val saved = chatMessageRepository.save(
             ChatMessage(
                 at = Instant.now(),
@@ -54,6 +60,9 @@ class ChatService(
                 scope = scope,
                 sender = from.take(ChatMessage.SENDER_MAX),
                 text = text.take(ChatMessage.TEXT_MAX),
+                // Dropped rather than cut when it is too big: JSON with its end removed is not JSON,
+                // and `text` already carries the line.
+                components = components?.takeIf { it.length <= ChatMessage.COMPONENTS_MAX },
             ),
         )
         broker.publish(
@@ -126,7 +135,7 @@ class ChatService(
          */
         const val UNASSIGNED_SERVER = "(unassigned)"
 
-        val PER_AGENT_SCOPES = listOf(ChatScope.OUTBOUND, ChatScope.DIRECT, ChatScope.LOCAL)
+        val PER_AGENT_SCOPES = listOf(ChatScope.OUTBOUND, ChatScope.DIRECT)
 
         /**
          * **Every scope.** A server's feed is everything the fleet heard and said there - the global

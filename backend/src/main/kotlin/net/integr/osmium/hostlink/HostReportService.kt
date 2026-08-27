@@ -1,6 +1,7 @@
 package net.integr.osmium.hostlink
 
 import tools.jackson.databind.JsonNode
+import tools.jackson.databind.ObjectMapper
 import net.integr.osmium.agent.dto.AgentTelemetryResponse
 import net.integr.osmium.agent.dto.NearbyPlayerResponse
 import net.integr.osmium.agent.dto.PositionResponse
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
+import java.util.UUID
 import net.integr.osmium.host.model.Host
 import net.integr.osmium.host.service.HostService
 
@@ -43,6 +45,8 @@ class HostReportService(
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val broker: LiveUpdateBroker,
+    private val registry: HostConnections,
+    private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -137,6 +141,37 @@ class HostReportService(
         }
 
         envelope.payload?.get("agents")?.takeIf { it.isArray }?.let { reconcile(hostId, it) }
+
+        reconfigure(hostId)
+    }
+
+    /**
+     * Re-sends every configured agent's settings to a host that has just connected.
+     *
+     * A host holds configuration in memory only — it is the backend that stores what an operator
+     * chose — so a restarted one runs on defaults until told otherwise, silently and with nothing
+     * saying so. This is the same reasoning as the handshake itself: the connection is new, so
+     * everything that was only ever true of the last one has to be said again.
+     *
+     * Unconfigured agents are skipped rather than sent an empty map. There is nothing to say about
+     * an agent nobody has configured, and a host that has just started is already on defaults.
+     */
+    private fun reconfigure(hostId: Long) {
+        for (agent in agentRepository.findAllByHostId(hostId)) {
+            val stored = agent.settings?.takeIf { it.isNotBlank() && it != "{}" } ?: continue
+            val values = runCatching { objectMapper.readTree(stored) }.getOrNull() ?: continue
+
+            registry.send(
+                hostId,
+                HostEnvelope(
+                    id = "cmd-${UUID.randomUUID()}",
+                    kind = MessageKind.COMMAND,
+                    type = CommandType.SETTINGS,
+                    agentId = agent.id,
+                    payload = objectMapper.createObjectNode().apply { set("values", values) },
+                ),
+            )
+        }
     }
 
     /**
@@ -163,7 +198,13 @@ class HostReportService(
 
         for (node in reported) {
             val agentId = node.get("agentId")?.asLong() ?: continue
-            val agent = ownedAgent(hostId, agentId) ?: continue
+            val agent = ownedAgent(hostId, agentId)
+
+            if (agent == null) {
+                forget(hostId, agentId)
+                continue
+            }
+
             applyReportedState(hostId, agent, node.get("state")?.asString())
         }
 
@@ -386,6 +427,11 @@ class HostReportService(
             // Falls back to the agent's own name, which is who said it when the scope is outbound.
             from = payload.get("from")?.asString() ?: agent.label,
             text = text,
+            // Re-serialised, never interpreted. This backend holds no opinion about what a chat
+            // component is - the host resolved the server's translation keys and dropped everything
+            // interactive before sending it - and going back through the node that already parsed is
+            // what guarantees the stored string is valid JSON.
+            components = payload.get("components")?.takeIf { it.isObject }?.toString(),
         )
     }
 
@@ -434,6 +480,38 @@ class HostReportService(
             }
 
     /** A host may only speak about the agents it owns, however the id reached us. */
+    /**
+     * Tells a host to release an agent it announced but this backend does not own.
+     *
+     * The other half of the reconciliation. [reconcile] corrects what the backend believed from
+     * what the host says it runs; this corrects what the host still holds from what the backend
+     * knows exists.
+     *
+     * A host binds each credential to the agent it was acquired for, so it can rebuild its agents
+     * after a restart. Deleting an agent sends `delete_agent` there and then - but only best
+     * effort, so a host that was switched off at that moment never heard, and goes on holding an
+     * account for something nobody can use. Saying so on every connect makes that self-correcting
+     * without any new message or any bookkeeping to get wrong.
+     *
+     * Deliberately scoped to ids the host itself announced, and only where the id resolves to
+     * nothing **this** host owns. An agent that has been reassigned elsewhere has equally stopped
+     * being this one's, and one that simply belongs to another host was never in its list to begin
+     * with.
+     */
+    private fun forget(hostId: Long, agentId: Long) {
+        log.info("Host {} announced agent {}, which it does not own; asking it to release", hostId, agentId)
+
+        registry.send(
+            hostId,
+            HostEnvelope(
+                id = "cmd-${UUID.randomUUID()}",
+                kind = MessageKind.COMMAND,
+                type = CommandType.DELETE_AGENT,
+                agentId = agentId,
+            ),
+        )
+    }
+
     private fun ownedAgent(hostId: Long, agentId: Long): Agent? =
         agentRepository.findById(agentId).orElse(null)?.takeIf { it.host.id == hostId }
 }

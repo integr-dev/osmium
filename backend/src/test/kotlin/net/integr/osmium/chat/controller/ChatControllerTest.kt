@@ -82,16 +82,15 @@ class ChatControllerTest : AbstractRestTest() {
     @Test
     fun `a server's feed is everything said there, whichever agent heard it`() {
         val host = reachableHost()
-        val listener = createAgent("Mason_01", host, server = "mc.example.com:25565")
-        val second = createAgent("Mason_02", host, server = "mc.example.com:25565")
-        val elsewhere = createAgent("Mason_03", host, server = "other.example.com:25565")
+        val listener = createAgent("Mason_01", host, server = "mc.example.com")
+        val second = createAgent("Mason_02", host, server = "mc.example.com")
+        val elsewhere = createAgent("Mason_03", host, server = "other.example.com")
         line(listener, ChatScope.GLOBAL, "seen on mc")
         line(listener, ChatScope.DIRECT, "whispered to the listener")
         line(second, ChatScope.OUTBOUND, "said by the second agent")
-        line(second, ChatScope.LOCAL, "muttered nearby")
         line(elsewhere, ChatScope.GLOBAL, "seen on other")
 
-        mockMvc.get("/api/chat?server=mc.example.com:25565") {
+        mockMvc.get("/api/chat?server=mc.example.com") {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "viewer"))
         }.andExpect {
             status { isOk() }
@@ -101,7 +100,6 @@ class ChatControllerTest : AbstractRestTest() {
                         "seen on mc",
                         "whispered to the listener",
                         "said by the second agent",
-                        "muttered nearby",
                     ),
                 )
             }
@@ -116,7 +114,7 @@ class ChatControllerTest : AbstractRestTest() {
         agentRepository.deleteById(checkNotNull(agent.id))
         agentRepository.flush()
 
-        mockMvc.get("/api/chat?server=mc.example.com:25565") {
+        mockMvc.get("/api/chat?server=mc.example.com") {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "viewer"))
         }.andExpect {
             status { isOk() }
@@ -131,7 +129,7 @@ class ChatControllerTest : AbstractRestTest() {
             header(HttpHeaders.AUTHORIZATION, authAs("neither", "viewer"))
         }.andExpect { status { isBadRequest() } }
 
-        mockMvc.get("/api/chat?agentId=1&server=mc.example.com:25565") {
+        mockMvc.get("/api/chat?agentId=1&server=mc.example.com") {
             header(HttpHeaders.AUTHORIZATION, authAs("both", "viewer"))
         }.andExpect { status { isBadRequest() } }
     }
@@ -152,7 +150,7 @@ class ChatControllerTest : AbstractRestTest() {
 
         while (cursor != null) {
             val suffix = if (cursor.isEmpty()) "" else "&cursor=$cursor"
-            val body = mockMvc.get("/api/chat?server=mc.example.com:25565&limit=2$suffix") {
+            val body = mockMvc.get("/api/chat?server=mc.example.com&limit=2$suffix") {
                 header(HttpHeaders.AUTHORIZATION, authAs("walker$pages", "viewer"))
             }.andExpect { status { isOk() } }.andReturn().response.contentAsString
 
@@ -201,7 +199,7 @@ class ChatControllerTest : AbstractRestTest() {
         val stored = chatMessageRepository.findAll().single()
         assertEquals(ChatScope.GLOBAL, stored.scope)
         assertEquals("Notch", stored.sender)
-        assertEquals("mc.example.com:25565", stored.serverAddress)
+        assertEquals("mc.example.com", stored.serverAddress)
         assertEquals("Mason_01", stored.agentLabel)
     }
 
@@ -302,7 +300,7 @@ class ChatControllerTest : AbstractRestTest() {
         val agent = createAgent("Mason_01", reachableHost())
         line(agent, ChatScope.GLOBAL, "only one")
 
-        val body = mockMvc.get("/api/chat?server=mc.example.com:25565&limit=50") {
+        val body = mockMvc.get("/api/chat?server=mc.example.com&limit=50") {
             header(HttpHeaders.AUTHORIZATION, authAs("reader", "viewer"))
         }.andExpect {
             status { isOk() }

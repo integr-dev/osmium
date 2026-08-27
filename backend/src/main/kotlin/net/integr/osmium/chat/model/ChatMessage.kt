@@ -26,9 +26,6 @@ enum class ChatScope {
     /** A player whispered the agent. */
     DIRECT,
 
-    /** Proximity chat, where the server has it. */
-    LOCAL,
-
     /**
      * Ordinary player chat everyone on the server sees. Forwarded by exactly one elected agent per
      * server, so it belongs to the *server* feed and is deliberately absent from the per-agent one -
@@ -98,9 +95,32 @@ class ChatMessage(
     /** `body`, because `text` is a type name in Postgres and a reserved word elsewhere. */
     @Column(name = "body", nullable = false, length = TEXT_MAX)
     var text: String = "",
+
+    /**
+     * The same line as a Minecraft chat component, as JSON, or null when the host sent none.
+     *
+     * **Stored as text and never parsed here.** This backend holds no opinion about what a chat
+     * component is: the host resolved the server's translation keys and dropped everything
+     * interactive before sending it, and whatever draws chat reads the tree. Keeping it opaque is
+     * the rule the host envelope's payload already follows, and it means a Minecraft that adds a
+     * field needs no release here.
+     *
+     * [text] remains the whole line in plain form, so nothing depends on this being present.
+     */
+    @Column(name = "components", length = COMPONENTS_MAX)
+    var components: String? = null,
 ) {
     companion object {
         const val SENDER_MAX = 64
         const val TEXT_MAX = 512
+
+        /**
+         * Generous, because styling costs far more characters than the words it decorates: a line
+         * near [TEXT_MAX] can carry a change of colour per word.
+         *
+         * A tree over this is dropped rather than cut. JSON cut in half is not JSON, and the plain
+         * text is always there to fall back to.
+         */
+        const val COMPONENTS_MAX = 8192
     }
 }

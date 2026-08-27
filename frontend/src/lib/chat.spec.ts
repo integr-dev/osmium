@@ -18,6 +18,9 @@ function line(overrides: Partial<ChatMessageResponse> = {}): ChatMessageResponse
     scope: 'DIRECT',
     from: 'Steve',
     text: 'hello',
+    // Plain: a host sends no component tree for a line it has none for, and every one of these
+    // questions is answered from the envelope rather than the words.
+    components: null,
     ...overrides,
   }
 }
@@ -48,7 +51,7 @@ describe('which panel a line belongs in', () => {
 
   /** Not the mirror of the above: a whisper to one agent still happened on that server. */
   it('puts every scope on the server, not only the global channel', () => {
-    for (const scope of ['GLOBAL', 'DIRECT', 'LOCAL', 'OUTBOUND'] as const) {
+    for (const scope of ['GLOBAL', 'DIRECT', 'OUTBOUND'] as const) {
       expect(belongsTo(line({ scope }), SERVER)).toBe(true)
     }
   })
