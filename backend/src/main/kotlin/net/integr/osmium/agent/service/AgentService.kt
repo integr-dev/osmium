@@ -1,6 +1,7 @@
 package net.integr.osmium.agent.service
 
 import net.integr.osmium.agent.dto.AgentResponse
+import net.integr.osmium.agent.dto.AgentSettingsRequest
 import net.integr.osmium.agent.dto.ChatRequest
 import net.integr.osmium.agent.dto.AssignServerRequest
 import net.integr.osmium.agent.dto.CreateAgentRequest
@@ -31,6 +32,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import tools.jackson.databind.ObjectMapper
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import net.integr.osmium.audit.service.AuditService
@@ -163,6 +165,18 @@ class AgentService(
         // interface can offer to reassign. Job membership goes with them.
         buildJobs.forget(agent)
 
+        // Before the delete, while the agent still names a host to send it to. A host binds each
+        // credential to the agent it was acquired for, so that a restart can rebuild its agents
+        // rather than leaving them unreachable - and nothing else in the protocol ever reports that
+        // an agent stopped existing, so without this it holds an account for something nobody can
+        // use.
+        //
+        // Best effort on purpose: an unreachable host keeps the stale binding, and deleting an
+        // agent must not be refused because a machine is switched off.
+        runCatching { dispatch(agent, CommandType.DELETE_AGENT) }.onFailure {
+            log.info("Could not tell {} that '{}' is gone: {}", hostName, label, it.message)
+        }
+
         agentRepository.delete(agent)
         // Otherwise the limiter's map keeps a bucket per agent that has ever existed in this process.
         chatRateLimiter.forget(id)
@@ -171,7 +185,7 @@ class AgentService(
         auditService.record(
             action = AuditAction.AGENT_DELETE,
             target = label,
-            detail = "Was on $hostName; credentials cached there are not removed by this",
+            detail = "Was on $hostName; it is told to release the agent, but the account is kept there",
         )
         broker.publish(
             LiveUpdateEvent(type = LiveUpdateType.AGENT_REMOVED, data = mapOf("id" to id), agentId = id),
@@ -297,6 +311,15 @@ class AgentService(
         dispatch(agent, CommandType.CONNECT, mapOf("serverAddress" to server))
         agent.state = AgentState.CONNECTING
         agent.connectingSince = Instant.now()
+        // Somebody has now said where this agent belongs, which is the whole of what `wanted` means.
+        // Set whether or not `connect.rejoin` is on: the setting decides whether the wish is acted
+        // on later, and an operator who turns it on mid-outage should not have to press Connect once
+        // more just to record a preference they have already expressed.
+        agent.wanted = true
+        // A fresh start, so the next drop waits the shortest delay rather than inheriting the
+        // patience of whatever went wrong last time.
+        agent.rejoinAttempts = 0
+        agent.rejoinAt = null
         auditService.record(
             action = AuditAction.AGENT_CONNECT,
             target = agent.label,
@@ -311,11 +334,55 @@ class AgentService(
         val agent = require(id)
         check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
         dispatch(agent, CommandType.DISCONNECT)
+        // An operator taking an agent out of the game means it, so it stays out. Without this the
+        // rejoin sweep would read the resulting LINKED as a drop and put it straight back in, and
+        // the Disconnect button would appear not to work.
+        agent.wanted = false
+        agent.rejoinAttempts = 0
+        agent.rejoinAt = null
         auditService.record(
             action = AuditAction.AGENT_DISCONNECT,
             target = agent.label,
             detail = agent.serverAddress,
         )
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /**
+     * Stores what an operator configured for one agent, and tells its host.
+     *
+     * **Stored whether or not the host is reachable.** Configuration is a stated preference, not an
+     * action: refusing to save it because a machine is switched off would lose the operator's work
+     * over something they cannot see and did not cause. It is relayed on the next reconnect, which
+     * is the same handshake that already re-establishes everything else.
+     *
+     * The keys are the interface's, and this reads exactly one of them - `connect.rejoin`, which
+     * asks for something a host is not allowed to decide. See [Agent.settings] and [rejoins].
+     */
+    @Transactional
+    fun configure(id: Long, request: AgentSettingsRequest): AgentResponse {
+        val agent = require(id)
+        val values = request.values.orEmpty()
+
+        val encoded = objectMapper.writeValueAsString(values)
+        check(encoded.length <= Agent.SETTINGS_MAX) {
+            "That is more configuration than '${agent.label}' can hold"
+        }
+
+        agent.settings = encoded
+
+        // Best effort, and deliberately after the store. An unreachable host gets it on reconnect;
+        // an operator who has to keep the page open until a machine comes back has been given a
+        // worse tool than one that simply remembers.
+        runCatching { dispatch(agent, CommandType.SETTINGS, mapOf("values" to values)) }
+            .onFailure { log.debug("Stored settings for '{}' but its host did not take them", agent.label) }
+
+        auditService.record(
+            action = AuditAction.AGENT_UPDATE,
+            target = agent.label,
+            detail = if (values.isEmpty()) "configuration cleared" else "configured ${values.keys.sorted().joinToString(", ")}",
+        )
+        publish(agent)
         return agent.toResponse(telemetryStore.find(agent.id))
     }
 
@@ -354,6 +421,18 @@ class AgentService(
      * when it reports back, not when the command is accepted here.
      */
     private fun dispatch(agent: Agent, type: String, payload: Map<String, Any?> = emptyMap()) {
+        if (!offer(agent, type, payload)) throw HostUnreachableException(agent.host.name)
+    }
+
+    /**
+     * [dispatch] for a caller that would rather be told than thrown at.
+     *
+     * The rejoin sweep works through the whole fleet in one transaction, so a host that dropped
+     * between the reachability check and the send must not take the other agents' bookkeeping down
+     * with it - an exception there marks the transaction rollback-only, and every attempt counted so
+     * far is undone. Everything an operator pressed still throws, which is what an operator is owed.
+     */
+    private fun offer(agent: Agent, type: String, payload: Map<String, Any?> = emptyMap()): Boolean {
         val hostId = checkNotNull(agent.host.id) { "Host has not been persisted yet" }
 
         val envelope = HostEnvelope(
@@ -363,7 +442,7 @@ class AgentService(
             agentId = agent.id,
             payload = objectMapper.valueToTree(payload),
         )
-        if (!registry.send(hostId, envelope)) throw HostUnreachableException(agent.host.name)
+        return registry.send(hostId, envelope)
     }
 
     private fun require(id: Long): Agent =
@@ -410,6 +489,134 @@ class AgentService(
     }
 
     /**
+     * Puts back into the game the agents an operator asked to be there.
+     *
+     * **The backend's job, not the host's.** The host is where a disconnect is noticed, and it is
+     * still the wrong place to answer one: the rule everything else rests on is that a host never
+     * changes its own mind about where an agent is. A host that reconnected itself would be
+     * asserting a state nobody asked for, and nothing here could tell that apart from an operator's
+     * own connect. `wanted` is where the asking is recorded, so the decision stays on this side.
+     *
+     * **Derived rather than event-driven**, which is why this is a sweep and not a hook on the state
+     * report. What needs reconnecting is a fact about the fleet right now - wanted, not online, due -
+     * and it reads the same after a backend restart, a missed report, or a host that went away for an
+     * hour and came back. A hook would have to fire exactly once on exactly the right transition, and
+     * every one it missed would be an agent stranded with nothing to notice it.
+     *
+     * The cost is latency: a drop is answered up to one sweep late. Against a fifteen-second first
+     * delay that is noise.
+     */
+    @Scheduled(fixedDelay = CONNECT_SWEEP_MS, initialDelay = CONNECT_SWEEP_MS)
+    @Transactional
+    fun rejoinTheWilling() {
+        val now = Instant.now()
+
+        for (agent in agentRepository.findAllByWantedIsTrue()) {
+            // Back where it belongs. The backoff describes one absence, so it ends with that absence
+            // rather than accumulating across a week of them.
+            if (agent.state == AgentState.ONLINE) {
+                if (agent.rejoinAttempts != 0 || agent.rejoinAt != null) {
+                    agent.rejoinAttempts = 0
+                    agent.rejoinAt = null
+                }
+                continue
+            }
+
+            // CONNECTING is already an answer in progress, and the states outside this set need a
+            // person - an agent that has lost its credentials is not going to be fixed by dialling.
+            if (agent.state !in CONNECTABLE) continue
+            if (!rejoins(agent)) continue
+
+            val server = agent.serverAddress ?: continue
+
+            // Nothing to send the command to. Skipped **without consuming an attempt**: a host that
+            // is switched off is not the agent failing to join, and counting it would spend the whole
+            // budget on an outage and give up right as the host came back.
+            if (!agent.host.isReachable()) continue
+
+            // First sight of this absence. Arm the clock rather than reconnecting on the spot - a
+            // server that just restarted is not ready, and neither is one that just kicked us.
+            if (agent.rejoinAt == null) {
+                agent.rejoinAt = now.plus(delayBefore(agent.rejoinAttempts))
+                continue
+            }
+            if (agent.rejoinAt?.isAfter(now) == true) continue
+
+            if (agent.rejoinAttempts >= properties.rejoinAttempts) {
+                log.info("Giving up on rejoining {} after {} attempts", agent.label, agent.rejoinAttempts)
+                agent.wanted = false
+                agent.rejoinAt = null
+                // Said once, and only once, which is the reason for the cap. An agent that cannot
+                // join this server will not be fixed by another thousand tries, and a warning every
+                // five minutes forever is a feed nobody reads.
+                activityService.record(
+                    agent = agent,
+                    scope = ActivityScope.LIFECYCLE,
+                    severity = ActivitySeverity.WARNING,
+                    text = "Stopped trying to rejoin $server after ${agent.rejoinAttempts} attempts",
+                )
+                publish(agent)
+                continue
+            }
+
+            agent.rejoinAttempts += 1
+            // Set before the send and regardless of how it goes, so a host that vanished in the
+            // meantime costs one delay rather than a retry on every sweep from here on.
+            agent.rejoinAt = now.plus(delayBefore(agent.rejoinAttempts))
+
+            if (!offer(agent, CommandType.CONNECT, mapOf("serverAddress" to server))) {
+                log.debug("Host {} went away before {} could be rejoined", agent.host.name, agent.label)
+                continue
+            }
+
+            log.info("Rejoining {} to {}, attempt {}", agent.label, server, agent.rejoinAttempts)
+            agent.state = AgentState.CONNECTING
+            agent.connectingSince = now
+            // Deliberately no audit line. Audit records what a person did, and nobody did this - the
+            // person's decision was the `connect` that set `wanted`, and that is already recorded.
+            activityService.record(
+                agent = agent,
+                scope = ActivityScope.LIFECYCLE,
+                severity = ActivitySeverity.INFO,
+                text = "Reconnecting to $server (attempt ${agent.rejoinAttempts})",
+            )
+            publish(agent)
+        }
+    }
+
+    /**
+     * Whether this agent is configured to be put back into the game by itself.
+     *
+     * The **one** setting this side reads. Everything else in the map is the interface's business
+     * and the host's, and is relayed without being understood - but a host cannot honour this one
+     * without breaking the rule that it never decides where an agent belongs. So the key crosses to
+     * the host like all the others, which ignores it, and is acted on here.
+     *
+     * Anything but `true` is off, unparseable settings included. This turns an agent's own machinery
+     * on; guessing at a malformed value would be inferring consent from a typo.
+     */
+    private fun rejoins(agent: Agent): Boolean {
+        val stored = agent.settings?.takeIf { it.isNotBlank() } ?: return false
+        val values = runCatching { objectMapper.readTree(stored) }.getOrNull() ?: return false
+
+        return values.get(REJOIN_KEY)?.asString() == "true"
+    }
+
+    /**
+     * How long to wait before attempt number [attempts], doubling each time up to the configured
+     * ceiling.
+     *
+     * The shift is clamped well below 64 because Kotlin's `shl` takes only the low six bits of its
+     * operand: at 64 attempts an unclamped shift wraps to `shl 0` and the backoff silently collapses
+     * back to its shortest delay.
+     */
+    private fun delayBefore(attempts: Int): Duration {
+        val grown = properties.rejoinDelay.multipliedBy(1L shl attempts.coerceIn(0, 20))
+
+        return if (grown > properties.rejoinDelayMax) properties.rejoinDelayMax else grown
+    }
+
+    /**
      * Disconnect and chat publish nothing on purpose: they are fire-and-forget commands that change
      * no stored state. The state advances when the host reports back, and that report is what the
      * browser is told about. Connect is the exception - it moves the agent to CONNECTING, which is
@@ -424,12 +631,21 @@ class AgentService(
      * `mc.example.com` and `mc.example.com:25565` must not become two servers. Grouping on the raw
      * string would split them silently, and the symptom would surface far from the cause.
      *
-     * Deliberately simple: a bracketed IPv6 literal without a port is left alone rather than
-     * mangled, since it already contains colons.
+     * **The redundant port is removed, not added.** Both spellings still collapse to one, but they
+     * collapse to the one the operator typed. The default port is exactly the case where a host
+     * should look the SRV record up - and appending it here made every address look like a deliberate
+     * choice of socket, which is how an agent ended up dialling 25565 on a server whose record points
+     * somewhere else entirely. An explicitly different port is left alone: naming one is how you say
+     * "this exact socket, no lookup".
+     *
+     * Deliberately simple: a bracketed IPv6 literal without a port already contains colons and is
+     * left alone, and a suffix with nothing in front of it is not a port to strip.
      */
     private fun normalizeServer(address: String): String {
         val trimmed = address.trim().lowercase()
-        return if (trimmed.contains(':')) trimmed else "$trimmed:$DEFAULT_PORT"
+        val bare = trimmed.removeSuffix(":$DEFAULT_PORT")
+
+        return bare.ifEmpty { trimmed }
     }
 
     private companion object {
@@ -440,5 +656,8 @@ class AgentService(
 
         /** Frequent enough that the badge falls back while the operator is still looking at it. */
         const val CONNECT_SWEEP_MS = 5_000L
+
+        /** Declared by the interface, like every other key. See [rejoins] for why this one is read. */
+        const val REJOIN_KEY = "connect.rejoin"
     }
 }

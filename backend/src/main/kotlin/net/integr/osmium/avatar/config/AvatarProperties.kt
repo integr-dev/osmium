@@ -18,6 +18,10 @@ import java.time.Duration
  *   pixel size below. **Blank disables the feature**, and the endpoint then answers 404 for
  *   everything — an air-gapped deployment has no skin service to reach, and the interface degrades
  *   to what it looked like before heads existed.
+ *
+ *   The default is minotar's `helm`, which composites the skin's second layer — the hat — over the
+ *   head. Its `avatar` endpoint returns the bare one, so anybody whose face is drawn on that overlay
+ *   comes back looking like a different player rather than like a head missing a detail.
  * @param size pixel size requested upstream. One size for the whole app: the head is rendered at a
  *   handful of small sizes and caching one image per size per player buys nothing.
  * @param timeout how long to wait on the upstream. Short on purpose — a head is decoration, and a
@@ -29,7 +33,7 @@ import java.time.Duration
  */
 @ConfigurationProperties(prefix = "osmium.avatar")
 data class AvatarProperties(
-    val upstream: String = "https://minotar.net/avatar/{id}/{size}.png",
+    val upstream: String = "https://minotar.net/helm/{id}/{size}.png",
     val size: Int = 64,
     val timeout: Duration = Duration.ofSeconds(5),
     val ttl: Duration = Duration.ofHours(12),

@@ -133,6 +133,60 @@ class Agent(
      */
     @Column(name = "chat_listener", nullable = false, columnDefinition = "boolean not null default false")
     var chatListener: Boolean = false,
+
+    /**
+     * What the operator has configured for this agent, as JSON, or null when nothing has been.
+     *
+     * **Almost never interpreted here.** The settings are declared by the interface, which is what
+     * knows a chat-format pattern from a view distance; this stores the map and relays it to the
+     * host, the same way a login [method] is relayed without being understood.
+     *
+     * The one exception is `connect.rejoin`, which asks for something only this side can do - see
+     * [wanted]. It is read by `AgentService.rejoinTheWilling` and nowhere else, and it is still
+     * relayed to the host with the rest, which ignores it.
+     *
+     * A column per setting would mean a migration and a release for every one added, to hold
+     * something nothing on this side reads.
+     */
+    @Column(name = "settings", length = SETTINGS_MAX)
+    var settings: String? = null,
+
+    /**
+     * Whether an operator has asked for this agent to be in game.
+     *
+     * **A wish, not a state.** [state] is where the agent is, as its host reported it; this is where
+     * somebody wants it to be. The gap between the two is what `connect.rejoin` acts on: an agent
+     * that is wanted and is not online has fallen out, and a kick, a server restart and a host reboot
+     * all look identical from here - which is the point, since the answer is the same for all three.
+     *
+     * Set by `connect` and cleared by `disconnect`, so an operator who takes an agent out of the game
+     * keeps it out. Nothing else touches it: a state arriving from a host says where the agent is,
+     * and has no opinion about where it belongs.
+     *
+     * Stored rather than held in memory, so a backend restart does not quietly abandon a fleet that
+     * was meant to be playing.
+     */
+    @Column(name = "wanted", nullable = false, columnDefinition = "boolean not null default false")
+    var wanted: Boolean = false,
+
+    /**
+     * When the next automatic reconnect is due, or null when none is scheduled.
+     *
+     * The backoff, made durable. Without it a backend restart would put every agent back on its
+     * first retry and hammer a server that is down, which is the failure a backoff exists to prevent.
+     */
+    @Column(name = "rejoin_at")
+    var rejoinAt: Instant? = null,
+
+    /**
+     * How many automatic reconnects have been tried since this agent was last in game.
+     *
+     * Drives the backoff and the cap on it, and is reset the moment a session succeeds - so an agent
+     * that has been playing for a week starts from the shortest delay when it finally drops, rather
+     * than inheriting the patience of whatever happened to it last month.
+     */
+    @Column(name = "rejoin_attempts", nullable = false, columnDefinition = "integer not null default 0")
+    var rejoinAttempts: Int = 0,
 ) {
     /**
      * What the operator should see. A reachable host's report is trusted; an unreachable host means
@@ -140,4 +194,12 @@ class Agent(
      */
     fun effectiveState(): AgentState =
         if (!host.isReachable() && state == AgentState.ONLINE) AgentState.STALE else state
+
+    companion object {
+        /**
+         * Room for the settings an interface declares, without room for an interface to use this as
+         * storage. A chat-format pattern is a line long; a few dozen of them still fit.
+         */
+        const val SETTINGS_MAX = 4096
+    }
 }

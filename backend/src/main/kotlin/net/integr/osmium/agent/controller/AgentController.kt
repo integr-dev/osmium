@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import net.integr.osmium.agent.dto.AgentResponse
+import net.integr.osmium.agent.dto.AgentSettingsRequest
 import net.integr.osmium.agent.dto.AssignServerRequest
 import net.integr.osmium.agent.dto.ChatRequest
 import net.integr.osmium.agent.dto.CreateAgentRequest
@@ -109,6 +110,37 @@ class AgentController(private val agentService: AgentService) {
         @PathVariable id: Long,
         @Valid @RequestBody request: AssignServerRequest,
     ): AgentResponse = agentService.assignServer(id, request)
+
+    /**
+     * `agent.write` for the same reason as the server address: this is configuration and touches no
+     * credential.
+     *
+     * One agent at a time, even though the interface sets several at once. Each is its own decision
+     * with its own audit line, and a partial failure then names the agents it did not reach rather
+     * than leaving an operator to guess which half of a bulk write landed.
+     */
+    @PutMapping("/{id}/settings")
+    @PreAuthorize("hasAuthority('agent.write')")
+    @Operation(
+        summary = "Configure the agent.",
+        description = "The whole set of settings, not a patch: a key left out has been cleared. " +
+            "The keys are the interface's own and are relayed to the host uninterpreted, which " +
+            "ignores any it does not recognise. `connect.rejoin` is the one exception and is acted " +
+            "on here, since putting an agent back into the game is a decision a host is never " +
+            "allowed to make. Saved whether or not the host is reachable — configuration is a " +
+            "preference rather than an action, and an unreachable host is sent it on its next " +
+            "connection.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Updated agent."),
+        ApiResponse(responseCode = "400", description = "More configuration than an agent can hold."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.write`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+    )
+    fun configure(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: AgentSettingsRequest,
+    ): AgentResponse = agentService.configure(id, request)
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)

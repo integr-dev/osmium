@@ -101,9 +101,17 @@ export const en = {
     noSpeaker: 'Nobody is in game here to speak through.',
     /** A line the backend accepted but the host has not echoed back into the transcript yet. */
     sending: 'sending',
+    /** A line the host could not attribute to any player: a join notice, command output, or a chat
+     * format it has no pattern for. Never the agent that happened to overhear it. */
+    fromServer: 'server',
     /**
-     * The echo never came. Not stated as a failure — the message may well have been said and the
-     * echo lost — but not left looking like an ordinary line either.
+     * The server never said the line back. Not stated as a failure — it may well have been said and
+     * the echo lost — but not left looking like an ordinary line either.
+     *
+     * A message is drawn from the server's own echo, so that an agent's words carry the same rank
+     * and colours as everybody else's. This is what shows when that echo does not arrive: muted,
+     * rate-limited, filtered, or a chat format the host has no pattern for. Commands do not wait,
+     * having nothing to wait for.
      */
     notEchoed: 'not confirmed',
     speakerOffline: '{name} is not in game.',
@@ -289,7 +297,7 @@ export const en = {
     labelPlaceholder: 'e.g. Mason_04',
     host: 'Host',
     server: 'Minecraft server',
-    serverPlaceholder: 'mc.example.com:25565',
+    serverPlaceholder: 'mc.example.com',
     add: 'Add agent',
     next: 'Next',
     back: 'Back',
@@ -660,39 +668,64 @@ export const en = {
     updated: 'Settings sent to {name}.',
     updatedMany: 'Settings sent to {count} agents.',
     unsaved: 'Unsaved changes.',
-    mock: 'Not wired to a host yet — changes are kept in the browser only.',
     reset: 'Discard changes',
+    /**
+     * Kept whether or not the host is reachable — configuration is a preference, not an action, and
+     * an unreachable host is sent it when it comes back.
+     */
+    offlineNote: 'Saved even when a host is unreachable. It is sent when the host reconnects.',
 
-    group: {
-      connection: 'Connection',
-      behaviour: 'Behaviour',
-      reporting: 'Reporting',
+    groups: {
+      chat: 'Chat',
+      mc: 'Minecraft',
+      connect: 'Connection',
     },
 
-    field: {
-      autoReconnect: 'Reconnect automatically',
-      reconnectDelay: 'Wait before reconnecting',
-      idleTimeout: 'Disconnect when idle for',
-      autoEat: 'Eat when hungry',
-      whenIdle: 'With nothing to build',
-      viewDistance: 'View distance',
-      relayChat: 'Forward server chat',
-      logLevel: 'Host log detail',
-    },
-
-    option: {
-      whenIdle: {
-        hold: 'Stay put',
-        regroup: 'Return to the build',
-        disconnect: 'Leave the server',
+    /**
+     * Keyed by setting, with the dots replaced — a key like `chat.sender` would otherwise nest
+     * itself into the message tree and stop resolving.
+     */
+    settings: {
+      chat_sender: {
+        label: 'How this server names the speaker',
+        hint: 'Servers that reformat chat send one rendered line with no marker for who spoke, so the name is read back out of it. The capture group is the player name. Leave this empty for a vanilla server.',
       },
-      logLevel: {
-        error: 'Errors only',
-        warn: 'Warnings',
-        info: 'Normal',
-        debug: 'Everything',
+      chat_whisper: {
+        label: 'How this server writes a whisper',
+        hint: 'A whisper is chat addressed to this agent rather than to the room, and it appears in the agent’s own tab instead of the server’s. Matched against messages sent to the agent; the capture group is who sent it.',
+      },
+      chat_whisperSent: {
+        label: 'How this server writes a whisper the agent sent',
+        hint: 'The other direction: a private message this agent sent, coming back from the server. Without it an operator’s own whisper returns unattributable and reads as the server talking. The capture group is who it went to.',
+      },
+      mc_version: {
+        label: 'Minecraft version',
+        hint: 'Leave empty to ask the server, which is right almost always. Set it for a server that refuses a version check or answers one dishonestly — behind a proxy, or with bot protection in front. Applies from the next connect.',
+      },
+      mc_knockback: {
+        label: 'Correct knockback',
+        hint: 'Recent versions send velocity in a unit the library still scales as if it were the old one, so agents cannot be pushed by hits, explosions or boats. Decided from the version unless the version is not the whole story — a proxy can forward a different one than it advertises.',
+        options: {
+          auto: 'When the version needs it',
+          true: 'Always',
+          false: 'Never',
+        },
+      },
+      connect_rejoin: {
+        label: 'Rejoin automatically',
+        hint: 'Puts the agent back after a kick, a server restart or a host reboot, waiting longer between each try. Only after somebody has connected it: an agent you disconnected stays out. Gives up after about half an hour and says so in its activity.',
       },
     },
+
+    /** The box itself: what is wrong with a pattern, or what it does to a real line. */
+    regex: {
+      invalid: 'That is not a valid pattern.',
+      noCapture: 'This matches, but captures nothing — so it can never name a player. Put brackets around the name.',
+      reads: 'Reads “{name}” from “{sample}”.',
+      noMatch: 'Does not match “{sample}”.',
+      useDefault: 'Use the vanilla format',
+    },
+
   },
 
   account: {

@@ -78,10 +78,10 @@ artefact, so there is nothing to audit, leak, or get subtly wrong.
 
 ```
 ┌──────────┐        ┌──────────────────┐        ┌─────────────────────┐
-│ frontend │──JWT──▶│ Spring backend   │◀──WSS──│ host  (Rust)        │
+│ frontend │──JWT──▶│ Spring backend   │◀──WSS──│ host  (TypeScript)  │
 └──────────┘  SSE   │ • orchestrates   │  host  │ • performs the login│
                     │ • no MC creds    │  token │ • encrypted tokens  │──▶ Minecraft
-                    │ • no auth path   │        │ • azalea clients    │     server
+                    │ • no auth path   │        │ • mineflayer bots   │     server
                     │ • audit log      │        │                     │
                     └──────────────────┘        └─────────────────────┘
                             ▲                            ▲
@@ -169,7 +169,7 @@ backend               Agent row: status = CONNECTING
 backend  → frontend   status CONNECTING
 backend  → host      connect(agentId, host, port, version)
 host                 loads cached tokens, refreshing MSA → XBL → XSTS → MC if expired
-host                 starts the azalea client   
+host                 starts the mineflayer bot    
 host    → backend    online(agentId, position, health, food, ping)
 backend  → frontend   status ONLINE
 ```
@@ -291,9 +291,17 @@ open anything.
 
 ### Rules that follow
 
-1. **Never auto-act on host loss.** No auto-reconnect, no marking agents dead. The cause is unknown,
-   and acting on a wrong guess can double-connect an account — two clients with the same
-   identity, which the server kicks. Recovery is operator-initiated.
+1. **Never auto-act on host loss.** No marking agents dead, and nothing dialled while the host is
+   unreachable. The cause is unknown, and acting on a wrong guess can double-connect an account —
+   two clients with the same identity, which the server kicks.
+
+   Automatic rejoining does not weaken this, because it is not triggered by host loss. It acts only
+   on a **live** host reporting an agent as no longer in game, which is the one case where the state
+   is not in doubt, and it is off unless an operator turned `connect.rejoin` on for that agent *and*
+   put it in the game in the first place. A host that is unreachable is skipped and does not even
+   count as an attempt. The double-connect it guards against needs two authorities issuing connects;
+   there is still exactly one, and it is the backend — see `settings` above for why the host is not
+   allowed to be the other.
 2. **The host is the source of truth on reconnect.** When the WebSocket returns, the host
    re-enumerates its actual live clients and reports the real set. The backend reconciles to that
    view — agents still in-game return to `ONLINE`, the rest fall to `LINKED` — and never asserts state
@@ -331,7 +339,7 @@ backend   agent.hostId → host-1 → that host's open WS session
           sends { id: "cmd-7f3a", type: "disconnect", agentId: "agent-1" }
   │
   ▼  (the single connection the host dialled in on)
-host     agentId → its local map of azalea clients
+host     agentId → its local map of mineflayer bots
           client.quit()
   │
   ▼
@@ -389,6 +397,10 @@ across the top level**.
 // host → backend, unsolicited: no id, nothing is waiting on it
 { "kind": "event", "type": "agent_status", "agentId": 42,
   "payload": { "state": "ONLINE", "health": 20, "position": { "x": 128, "y": 71, "z": -344 } } }
+
+// backend → host, fire and forget: everything an operator has configured for this agent
+{ "id": "cmd-9c21", "kind": "command", "type": "settings", "agentId": 42,
+  "payload": { "values": { "chat.sender": "^\\[[^\\]]+\\]\\s+([A-Za-z0-9_]{1,16}):\\s" } } }
 
 // host-scoped, so no agentId
 { "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
@@ -474,21 +486,29 @@ that classifies, so sending the wrong type is an obvious mistake rather than a s
 
 | Field | Required | Values |
 |---|---|---|
-| `chat.scope` | yes | `outbound`, `direct`, `local`, `global` |
+| `chat.scope` | yes | `outbound`, `direct`, `global` |
 | `chat.from` | no | who said it; defaults to the agent's own label, which is who says an `outbound` line |
 | `chat.text` | yes | truncated at 512 characters; a blank line is dropped |
+| `chat.components` | no | the same line as a component tree, styled as the server sent it; dropped whole past 8192 characters |
 | `activity.scope` | yes | `system`, `lifecycle` |
 | `activity.severity` | no | `info`, `warning`, `error`; defaults to `info` |
 | `activity.text` | yes | truncated at 512 characters |
 
-Three rules that are easy to get wrong:
+Four rules that are easy to get wrong:
 
 - **An unrecognised scope is dropped, not guessed at.** Filing a kick into chat is worse than losing
   it, since the whole reason the feeds are split is that an incident must not be buried in
   conversation.
 - **Outbound chat is echoed after it is actually said**, as a `chat` event with scope `outbound`.
   The backend does not record it when it dispatches the command — what reached the server is what
-  belongs in the feed, and a message that never made it should not appear as though it did.
+  belongs in the feed, and the echo is the agent's own words in the same form as everybody else's,
+  rank prefix and colours and all. The exception is a **command**: `/tp` produces no chat, so
+  reporting it on the way out is the only chance to report it at all, and what an operator wants to
+  see there is that it was sent.
+- **`components` is styled by the host and never interpreted by the backend.** The host resolves the
+  server's translation keys, resolves style absolutely rather than leaving it to be inherited, and
+  strips everything interactive — `clickEvent`, `hoverEvent`, `insertion`, `font` — before sending
+  it. The backend stores the tree as text and the interface draws it.
 - **There is no timestamp field.** The backend stamps the line when it receives it. Host clocks are
   not synchronised with each other, and a skewed one would file its chat into the middle of the feed
   or into the future — which in a newest-first feed means either invisible or permanently pinned to
@@ -576,6 +596,31 @@ path and answers **503** — which is the true reason it cannot proceed.
 > the backend to what a method *is*; that turned out to be a mischaracterisation of what storing an
 > opaque list requires, and it was paying for that supposed purity with a chooser that mostly
 > offered mechanisms the host could not perform.
+
+### `settings` is a map the backend does not read
+
+`settings` carries everything an operator has configured for one agent, as flat string pairs, and is
+**the whole set rather than a patch** — a key that is absent has been cleared, which is the only
+reading under which a setting can be turned back off. It is fire and forget, sent when the
+configuration changes and again on every reconnect, because a host holds it in memory only and a
+restarted one would otherwise run on defaults with nothing saying so.
+
+**The settings are declared by the interface, not advertised by the host.** A setting exists the
+moment the frontend's list and one host agree on a name, so the backend never learns what any of
+them mean — it stores the map and relays it, exactly as it relays a `method`. That keeps a new
+setting to one entry in the frontend plus the code in the host that reads it, instead of a release
+on three sides in order.
+
+**A host ignores a key it does not know**, rather than refusing the message. An Osmium newer than a
+host is the ordinary case, and refusing the lot would drop the settings that host *does* understand
+along with the one it does not.
+
+The exception is `connect.rejoin`, which is read by the **backend**. Putting an agent back into the
+game after a drop is a decision about where an agent belongs, and the rule below is that a host never
+makes one of those. A host that reconnected itself would be asserting a state nobody asked for, and
+nothing on the backend could tell that apart from an operator's own `connect`. So that key crosses
+the socket with the rest, the host ignores it like any other it does not recognise, and the backend
+sends an ordinary `connect` when it decides one is due.
 
 ### Version handshake
 
@@ -692,7 +737,6 @@ the backend cannot reliably infer scope from message text.
 |---|---|---|---|
 | `outbound` | an operator made the agent speak | **chat**, and the audit log | yes |
 | `direct` | a player whispers the agent | **chat** | yes |
-| `local` | proximity chat, where the server has it | **chat** | mostly |
 | `global` | ordinary player chat everyone sees | **chat**, one fleet-wide feed | **no** |
 | `system` | kicked, banned, died, warned | **activity** | yes |
 | `lifecycle` | connected, disconnected, setup failed, relink needed | **activity** | yes |
@@ -932,8 +976,9 @@ from the start forces the model to be format-neutral while it is still cheap to 
 ## Host process model
 
 One host process runs **all** of that host's agents, rather than a process per agent. Each agent is
-an [azalea](https://github.com/azalea-rs/azalea) client — Rust, so the natural unit is an async task
-rather than a process, and running many in one process is the shape the library is built for.
+a [mineflayer](https://github.com/PrismarineJS/mineflayer) bot — an event emitter over a socket, so
+the natural unit is an object on the one event loop rather than a process, and running many in one
+process is the shape the library is built for.
 
 The `agentId` map is then a plain in-memory lookup, and crash recovery is already cheap: a restarted
 host reconnects and reports its agents as `LINKED`, because the token cache survives on disk and no
@@ -943,8 +988,10 @@ fixable.
 Worth revisiting only if per-agent memory growth turns out to be uncontainable within one process.
 
 **The backend depends on none of this.** The protocol is a WebSocket carrying JSON envelopes; the
-client library, language and concurrency model are the host's business, and replacing azalea needs
-no backend release. This section records what is being built, not a constraint the backend enforces.
+client library, language and concurrency model are the host's business, and replacing mineflayer
+needs no backend release — this host has already been rewritten once, from Rust on azalea, without
+the backend noticing. This section records what is being built, not a constraint the backend
+enforces.
 
 ## Data ownership
 

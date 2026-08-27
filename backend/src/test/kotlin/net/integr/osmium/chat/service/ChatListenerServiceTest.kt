@@ -88,7 +88,7 @@ class ChatListenerServiceTest {
 
     private fun online(
         label: String,
-        server: String = "mc.example.com:25565",
+        server: String = "mc.example.com",
         onlineSince: Instant = Instant.now(),
         owner: Host = host,
     ) = agentRepository.saveAndFlush(
@@ -235,7 +235,7 @@ class ChatListenerServiceTest {
     @Test
     fun `a server with nothing online has no listener`() {
         val offline = agentRepository.saveAndFlush(
-            Agent(label = "Mason_off", host = host, serverAddress = "mc.example.com:25565", state = AgentState.LINKED),
+            Agent(label = "Mason_off", host = host, serverAddress = "mc.example.com", state = AgentState.LINKED),
         )
 
         val socket = connectHost()
@@ -266,7 +266,7 @@ class ChatListenerServiceTest {
     @Test
     fun `the session clock starts when the host reports the agent online and stops when it leaves`() {
         val agent = agentRepository.saveAndFlush(
-            Agent(label = "Mason_01", host = host, serverAddress = "mc.example.com:25565", state = AgentState.LINKED),
+            Agent(label = "Mason_01", host = host, serverAddress = "mc.example.com", state = AgentState.LINKED),
         )
         assertNull(agent.onlineSince)
 

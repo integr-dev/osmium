@@ -35,7 +35,7 @@ class AgentControllerTest : AbstractRestTest() {
         mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com"}"""
         }.andExpect {
             status { isCreated() }
             jsonPath("$.label") { value("Mason_01") }
@@ -56,16 +56,16 @@ class AgentControllerTest : AbstractRestTest() {
             content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"  MC.Example.com  "}"""
         }.andExpect {
             status { isCreated() }
-            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
         }
 
         mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"label":"Mason_02","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+            content = """{"label":"Mason_02","hostId":${host.id},"serverAddress":"mc.example.com"}"""
         }.andExpect {
             status { isCreated() }
-            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
         }
 
         // Both agents must land on the same grouping key, or they get separate chat listeners.
@@ -80,7 +80,7 @@ class AgentControllerTest : AbstractRestTest() {
         mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com"}"""
         }.andExpect {
             status { isForbidden() }
         }
@@ -95,7 +95,7 @@ class AgentControllerTest : AbstractRestTest() {
         mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com:25565"}"""
+            content = """{"label":"Mason_01","hostId":${host.id},"serverAddress":"mc.example.com"}"""
         }.andExpect {
             status { isConflict() }
         }
@@ -108,7 +108,7 @@ class AgentControllerTest : AbstractRestTest() {
         mockMvc.post("/api/agents") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"label":"Mason_01","hostId":999999,"serverAddress":"mc.example.com:25565"}"""
+            content = """{"label":"Mason_01","hostId":999999,"serverAddress":"mc.example.com"}"""
         }.andExpect {
             status { isBadRequest() }
         }
@@ -414,9 +414,90 @@ class AgentControllerTest : AbstractRestTest() {
             content = """{"serverAddress":"Other.Example.com"}"""
         }.andExpect {
             status { isOk() }
-            jsonPath("$.serverAddress") { value("other.example.com:25565") }
+            jsonPath("$.serverAddress") { value("other.example.com") }
             // The account is the same account wherever it joins, so credentials are untouched.
             jsonPath("$.state") { value(AgentState.LINKED.name) }
+        }
+    }
+
+    /**
+     * The default port is dropped, any other port is kept.
+     *
+     * The address is a grouping key compared as a string, so the two spellings of one server still
+     * have to collapse to one - but they collapse to the bare one now. A host cannot tell an
+     * operator who typed a bare hostname from one who chose port 25565, and the bare case is exactly
+     * where the SRV record is supposed to decide where to connect.
+     */
+    @Test
+    fun `the default port is not written onto a server address`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.put("/api/agents/${target.id}/server") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":"mc.example.com:25565"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
+        }
+
+        // Naming a different port is how an operator says "this exact socket", so it survives.
+        mockMvc.put("/api/agents/${target.id}/server") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"serverAddress":"mc.example.com:41945"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.serverAddress") { value("mc.example.com:41945") }
+        }
+    }
+
+    /**
+     * Configuration is a stated preference rather than an action, so it is stored whether or not the
+     * host is there to take it — the alternative loses an operator's work over a machine they cannot
+     * see and did not switch off. It reaches the host on its next connection.
+     */
+    @Test
+    fun `settings are kept for an agent whose host is unreachable`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_01", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.put("/api/agents/${target.id}/settings") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"values":{"chat.sender":"^<([A-Za-z0-9_]{1,16})> "}}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.settings['chat.sender']") { value("^<([A-Za-z0-9_]{1,16})> ") }
+        }
+    }
+
+    /** The whole set, not a patch: a key left out has been cleared, which is the only reading under
+     * which a setting can be turned back off. */
+    @Test
+    fun `settings replace what was there rather than merging into it`() {
+        val auth = authAs("agent", RoleNames.ORCHESTRATOR)
+        val target = createAgent(label = "Mason_02", host = reachableHost(), state = AgentState.LINKED)
+
+        fun configure(body: String) = mockMvc.put("/api/agents/${target.id}/settings") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+            contentType = MediaType.APPLICATION_JSON
+            content = body
+        }
+
+        configure("""{"values":{"chat.sender":"a","other":"b"}}""").andExpect { status { isOk() } }
+
+        configure("""{"values":{"chat.sender":"c"}}""").andExpect {
+            status { isOk() }
+            jsonPath("$.settings['chat.sender']") { value("c") }
+            jsonPath("$.settings.other") { doesNotExist() }
+        }
+
+        // And cleared entirely, which an absent map means as surely as an empty one.
+        configure("""{"values":{}}""").andExpect {
+            status { isOk() }
+            jsonPath("$.settings['chat.sender']") { doesNotExist() }
         }
     }
 
@@ -468,7 +549,7 @@ class AgentControllerTest : AbstractRestTest() {
             content = """{"serverAddress":"mc.example.com"}"""
         }.andExpect {
             status { isOk() }
-            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
         }
     }
 
@@ -480,7 +561,7 @@ class AgentControllerTest : AbstractRestTest() {
         mockMvc.put("/api/agents/${target.id}/server") {
             header(HttpHeaders.AUTHORIZATION, auth)
             contentType = MediaType.APPLICATION_JSON
-            content = """{"serverAddress":"other.example.com:25565"}"""
+            content = """{"serverAddress":"other.example.com"}"""
         }.andExpect {
             status { isConflict() }
         }

@@ -84,6 +84,7 @@ export const de: Copy = {
     noServers: 'Noch keine Server. Weise einem Agenten einen zu, um seinen Chat zu lesen.',
     noSpeaker: 'Hier ist niemand im Spiel, durch den gesprochen werden könnte.',
     sending: 'wird gesendet',
+    fromServer: 'Server',
     notEchoed: 'nicht bestätigt',
     speakerOffline: '{name} ist nicht im Spiel.',
     hostOffline: 'Host {host} ist nicht erreichbar.',
@@ -252,7 +253,7 @@ export const de: Copy = {
     labelPlaceholder: 'z. B. Mason_04',
     host: 'Host',
     server: 'Minecraft-Server',
-    serverPlaceholder: 'mc.example.com:25565',
+    serverPlaceholder: 'mc.example.com',
     add: 'Agent hinzufügen',
     next: 'Weiter',
     back: 'Zurück',
@@ -548,39 +549,55 @@ export const de: Copy = {
     updated: 'Einstellungen an {name} gesendet.',
     updatedMany: 'Einstellungen an {count} Agenten gesendet.',
     unsaved: 'Nicht gespeicherte Änderungen.',
-    mock: 'Noch nicht mit einem Host verbunden — Änderungen bleiben nur im Browser.',
     reset: 'Änderungen verwerfen',
+    offlineNote: 'Wird auch gespeichert, wenn ein Host nicht erreichbar ist, und beim nächsten Verbinden gesendet.',
 
-    group: {
-      connection: 'Verbindung',
-      behaviour: 'Verhalten',
-      reporting: 'Meldungen',
+    groups: {
+      chat: 'Chat',
+      mc: 'Minecraft',
+      connect: 'Verbindung',
     },
 
-    field: {
-      autoReconnect: 'Automatisch neu verbinden',
-      reconnectDelay: 'Wartezeit vor dem Neuverbinden',
-      idleTimeout: 'Trennen nach Untätigkeit von',
-      autoEat: 'Essen bei Hunger',
-      whenIdle: 'Wenn nichts zu bauen ist',
-      viewDistance: 'Sichtweite',
-      relayChat: 'Server-Chat weiterleiten',
-      logLevel: 'Protokolltiefe auf dem Host',
-    },
-
-    option: {
-      whenIdle: {
-        hold: 'Stehen bleiben',
-        regroup: 'Zurück zum Bau',
-        disconnect: 'Server verlassen',
+    settings: {
+      chat_sender: {
+        label: 'Wie dieser Server den Sprecher nennt',
+        hint: 'Server, die den Chat umformatieren, senden eine fertige Zeile ohne Kennzeichnung, wer gesprochen hat – der Name wird daraus gelesen. Die Fanggruppe ist der Spielername. Für einen Vanilla-Server leer lassen.',
       },
-      logLevel: {
-        error: 'Nur Fehler',
-        warn: 'Warnungen',
-        info: 'Normal',
-        debug: 'Alles',
+      chat_whisper: {
+        label: 'Wie dieser Server eine Flüsternachricht schreibt',
+        hint: 'Eine Flüsternachricht richtet sich an diesen Agenten statt an den Raum und erscheint in seinem eigenen Tab statt im Server-Tab. Wird gegen Nachrichten an den Agenten geprüft; die Fanggruppe ist der Absender.',
+      },
+      chat_whisperSent: {
+        label: 'Wie dieser Server eine gesendete Flüsternachricht schreibt',
+        hint: 'Die Gegenrichtung: eine private Nachricht, die dieser Agent gesendet hat und die vom Server zurückkommt. Ohne dieses Muster lässt sie sich nicht zuordnen und wirkt, als spräche der Server. Die Fanggruppe ist der Empfänger.',
+      },
+      mc_version: {
+        label: 'Minecraft-Version',
+        hint: 'Leer lassen, um den Server zu fragen – das ist fast immer richtig. Nur für Server setzen, die keine Versionsabfrage beantworten oder unehrlich antworten: hinter einem Proxy oder mit Bot-Schutz davor. Gilt ab dem nächsten Verbinden.',
+      },
+      mc_knockback: {
+        label: 'Rückstoß korrigieren',
+        hint: 'Neuere Versionen senden Geschwindigkeit in einer Einheit, die die Bibliothek noch wie die alte umrechnet – Agenten lassen sich dann von Schlägen, Explosionen und Booten nicht bewegen. Wird aus der Version bestimmt, sofern die Version die ganze Wahrheit ist: ein Proxy kann eine andere weiterleiten als er angibt.',
+        options: {
+          auto: 'Wenn die Version es braucht',
+          true: 'Immer',
+          false: 'Nie',
+        },
+      },
+      connect_rejoin: {
+        label: 'Automatisch neu verbinden',
+        hint: 'Bringt den Agenten nach einem Kick, einem Server-Neustart oder einem Host-Neustart zurück und wartet zwischen den Versuchen jeweils länger. Nur wenn jemand ihn verbunden hat: ein selbst getrennter Agent bleibt draußen. Gibt nach etwa einer halben Stunde auf und vermerkt das in seiner Aktivität.',
       },
     },
+
+    regex: {
+      invalid: 'Das ist kein gültiges Muster.',
+      noCapture: 'Trifft zu, fängt aber nichts – kann also nie einen Spieler benennen. Klammern um den Namen setzen.',
+      reads: 'Liest „{name}“ aus „{sample}“.',
+      noMatch: 'Trifft auf „{sample}“ nicht zu.',
+      useDefault: 'Vanilla-Format verwenden',
+    },
+
   },
 
   account: {

@@ -86,7 +86,7 @@ class HostLinkTest {
             Agent(
                 label = "Probe_01",
                 host = host,
-                serverAddress = "mc.example.com:25565",
+                serverAddress = "mc.example.com",
                 state = AgentState.UNLINKED,
             ),
         )
@@ -210,7 +210,7 @@ class HostLinkTest {
         agentRepository.saveAndFlush(agent)
 
         val second = agentRepository.saveAndFlush(
-            Agent(label = "Probe_02", host = host, serverAddress = "mc.example.com:25565", state = AgentState.ONLINE),
+            Agent(label = "Probe_02", host = host, serverAddress = "mc.example.com", state = AgentState.ONLINE),
         )
 
         val socket = connect(token())

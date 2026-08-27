@@ -1,6 +1,7 @@
 package net.integr.osmium.agent.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import tools.jackson.databind.ObjectMapper
 // Jackson 3 moved databind to tools.jackson but left the annotations where they were.
 import com.fasterxml.jackson.annotation.JsonProperty
 import jakarta.validation.constraints.NotBlank
@@ -25,7 +26,7 @@ data class CreateAgentRequest(
      * still takes one call.
      */
     @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
-    @field:Schema(description = "Where it should play, if that is already known.", example = "mc.example.com:25565")
+    @field:Schema(description = "Where it should play, if that is already known.", example = "mc.example.com")
     val serverAddress: String? = null,
 )
 
@@ -38,9 +39,18 @@ data class AssignServerRequest(
     @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
     @field:Schema(
         description = "Null unassigns it, leaving the agent set up and idle.",
-        example = "mc.example.com:25565",
+        example = "mc.example.com",
     )
     val serverAddress: String?,
+)
+
+@Schema(
+    description = "What an operator has configured for an agent. The keys are the interface's own and " +
+        "are relayed to the host uninterpreted; a host ignores any it does not recognise.",
+)
+data class AgentSettingsRequest(
+    @field:Schema(description = "Every setting, not a patch. A key left out has been cleared.")
+    val values: Map<String, String>?,
 )
 
 @Schema(description = "A player standing near an agent in game.")
@@ -104,6 +114,8 @@ data class AgentResponse(
     val state: AgentState,
     val mcUsername: String?,
     val mcUuid: String?,
+    @param:Schema(description = "What the operator has configured, as the interface declared it.")
+    val settings: Map<String, String>,
 
     @field:Schema(description = "When the agent last entered the game. Null while it is not online.")
     val onlineSince: Instant?,
@@ -167,6 +179,7 @@ fun Agent.toResponse(telemetry: AgentTelemetryResponse?): AgentResponse = AgentR
     state = effectiveState(),
     mcUsername = mcUsername,
     mcUuid = mcUuid,
+    settings = readSettings(settings),
     onlineSince = onlineSince,
     telemetry = telemetry,
     chatListener = chatListener,
@@ -178,3 +191,26 @@ const val SETUP_METHOD_MAX_LENGTH = 32
 
 /** Minecraft's own chat limit. */
 const val CHAT_MAX_LENGTH = 256
+
+/**
+ * Reads an agent's stored configuration back into a map.
+ *
+ * Its own mapper rather than the injected one, because this is a free function and the alternative
+ * is threading a mapper through every call site that turns an agent into a response. Nothing here is
+ * configuration-sensitive: it reads JSON this backend itself wrote.
+ *
+ * A row that will not parse is served as unconfigured rather than failing the page. It should be
+ * impossible — the column is only ever written from a serialised map — and an agent list that
+ * returns nothing because one row is malformed would be a worse answer than one agent shown with no
+ * settings.
+ */
+private val settingsReader = ObjectMapper()
+
+private fun readSettings(stored: String?): Map<String, String> {
+    if (stored.isNullOrBlank()) return emptyMap()
+
+    return runCatching {
+        @Suppress("UNCHECKED_CAST")
+        settingsReader.readValue(stored, Map::class.java) as Map<String, String>
+    }.getOrDefault(emptyMap())
+}

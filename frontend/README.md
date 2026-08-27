@@ -46,9 +46,12 @@ the document makes.
 
 ### What is real and what is mock
 
-Hosts, agents, their lifecycle states, all commands, the **audit log**, **chat**, **activity**,
-**telemetry** and **live updates** are real. They stay empty until a host connects and starts
-reporting, but nothing about them is faked.
+Nothing here is mock any more. Hosts, agents, their lifecycle states, all commands, the **audit
+log**, **chat**, **activity**, **telemetry**, **live updates** and **configuration** are real. They
+stay empty until a host connects and starts reporting, but nothing about them is faked.
+
+The rest of this section is kept because it records what each mock cost and how it came off, which
+is the part worth having when the next one is written.
 
 **Build progress is no longer mock.** It was the last one: an invented block count per agent, five
 hardcoded sectors named after parts of a cathedral nobody had uploaded, a layer counter, and a
@@ -64,28 +67,27 @@ the mock always had something to show. And the numbers are scoped by the server 
 job is per-server and a fleet-wide figure is a sum across separate builds — meaningful as a total,
 not as a percentage of anything.
 
-**Configuration is the only mock left.**
-
 **A mock is marked on the screen, not only in the source** — and the marking comes off with the
 mock. The dashboard carried a banner naming its invented figures, plus a `placeholder` badge on
 each panel, because a banner at the top of a scrolling page cannot be relied on to still be in view
 further down. All of it went when the numbers became real: a warning about invented data on a page
 that has none is its own kind of wrong, and it teaches an operator to ignore the next one.
 
-**Configuration** is mock end to end: `src/lib/configuration.ts` holds the field list, the values
-and a `saveSettings` that writes to a map in that module and resolves. Nothing reaches a host, and
-the screen says so in a banner rather than only in a comment. It is kept out of the fleet store for
-the same reason build progress was — a mock inside real state is one that outlives its purpose.
+**Configuration was the last one**, and it went the same way. `src/lib/configuration.ts` used to
+hold the field list, the values *and* a `saveSettings` that wrote to a map in that module and
+resolved; the values now come off the agent like everything else, and the write is a real
+`PUT /api/agents/{id}/settings`.
 
-What is meant to survive that mock is the **shape**: fields are declared as a schema and rendered
-generically by type, so adding a setting later is an entry in that file plus a copy key, not another
-block of markup. The field list itself is a placeholder, not a specification.
+What survived the mock is the **shape**, which is why it was built that way: fields are declared as
+a schema and rendered generically by type, so adding a setting is an entry in that file plus a copy
+key rather than another block of markup — and the tabs render from the same declaration, so a new
+group needs nothing in the view. That schema is now a specification rather than a placeholder: the
+keys in it are what a host reads.
 
 **Schematics are real, all the way through**: uploaded, read, measured, divided, started, dispatched
 and built. A job records what is being built, where, by whom and how far along, and the figure moves
-because a host reported blocks against it. What is still missing is a *real* host — the mock host in
-the backend repository speaks the same protocol, so every screen here is driven by the same messages
-a real one will send.
+because a host reported blocks against it. What is still missing is **building on the host** — it
+signs agents in, plays and reports, but nothing places a block yet.
 
 **Operations** holds everything done to the fleet as a group. See below.
 
@@ -526,6 +528,47 @@ The voxel viewer also strokes a **ground grid** on the `y = 0` plane before the 
 little past its footprint. Shading says which face is the top; a floor says where the bottom is,
 which shading alone cannot when the underside is not in view.
 
+## Configuration
+
+Pick agents on the left, edit on the right, and the same `AgentPicker` Operations uses — so the two
+cannot drift apart.
+
+**The settings are declared here, in `src/lib/configuration.ts`, and nowhere else.** A host does not
+advertise what it supports: it applies the keys it recognises and ignores the rest, so a setting
+exists the moment that list and one host agree on a name. The backend stores the map and relays it
+without interpreting anything, exactly as it relays a login `method`. That keeps a new setting to an
+entry in that file plus the code that reads it, rather than a release on three sides in order.
+
+`connect.rejoin` is the one exception and the exception is structural: putting an agent back into
+the game is a decision about where an agent belongs, and a host is never allowed to make one of
+those. The backend reads that key, and the host ignores it like any other it does not know.
+
+The fields render from the schema by **type** rather than from markup per setting — `regex`, `text`,
+`switch`, `choice` — and so do the tabs, one per group, so adding a group needs nothing in the view.
+The groups exist because a chat pattern and a reconnect policy are not read in the same sitting;
+underneath, it is still **one form**. Every tab edits the same map and Update sends the whole of it,
+which is why the buttons sit outside the tabs: a save inside one would look like it covered only
+what was on screen.
+
+**A switch writes `''` for off, not `'false'`.** An absent key is what both the backend and a host
+already read as "no", so writing the word would give "turned off" and "never touched" two spellings
+of one answer. A setting where off and unset genuinely differ is a `choice` with three options
+instead, which is what `mc.knockback` is — unset means "decide from the version".
+
+The form is seeded from the **first agent checked** and pushed to every agent checked. Two agents
+can hold different values for one field and there is no honest way to show both in one input, so one
+has to be the source; that is named above the fields, and unchecking it hands the role to the next.
+
+### The pattern box highlights what it is
+
+`RegexField.vue` draws a syntax-highlighted layer under a transparent `<input>`. The tokeniser lives
+in `src/lib/regexHighlight.ts`, and every function in it is total against a non-string, since it runs
+on whatever is being typed mid-keystroke. The order matters: the input paints **under** the layer, so
+selection and caret stay the browser's own rather than something re-implemented in CSS.
+
+It says what a pattern does to a real sample line rather than only whether it compiles, because a
+pattern that matches and captures nothing is the mistake worth catching — it can never name a player.
+
 ## Charts
 
 Every figure the API reports is **instantaneous** — how many agents are online, what the throughput
@@ -700,10 +743,10 @@ operator navigates is one nobody can read. `src/lib/chat.ts` holds what that mea
 belong in which scope, and who may speak into one.
 
 Two scopes, and they are **not mirror images**. A **server** scope is everything that happened
-there — the global channel forwarded once by the elected listener, plus whispers, proximity chat and
-the agents' own lines — because all of it happened on that server. An **agent** scope is the
-conversation to or about that agent, and excludes the global channel, which is identical for every
-agent standing there and would bury the lines actually about this one.
+there — the global channel forwarded once by the elected listener, plus whispers and the agents' own
+lines — because all of it happened on that server. An **agent** scope is the conversation to or
+about that agent, and excludes the global channel, which is identical for every agent standing there
+and would bury the lines actually about this one.
 
 Global lines arrive tagged with whichever agent forwarded them, which is why the agent side has to
 exclude them explicitly, or the listener's conversation quietly becomes the whole server's. On a
@@ -727,6 +770,34 @@ text rather than id, because the two have no id in common: the backend mints one
 reports the line, long after the placeholder was drawn. After ten seconds with no echo the clock
 becomes a warning and the line reads *not confirmed* — not *failed*, since the message may well have
 been said and only the echo lost, but not left looking like ordinary chat either.
+
+### Chat is drawn as the server styled it
+
+A line arrives with the **components** the server sent, not only the flattened string, and
+`McText.vue` renders them: rank prefixes, the colour that separates a whisper from the room, the
+styling on a player's name. `src/lib/mcText.ts` turns the tree into spans and has its own spec.
+
+**Style is resolved by the host, absolutely, and not inherited here.** A component tree inherits
+colour and formatting down its children in Minecraft, and doing that resolution in the browser meant
+every renderer had to agree about it. The host answers it once and sends every node fully specified,
+so this side is a `v-for`. `black` and `white` deliberately fall through to the theme rather than
+being painted: a server that says "white" means "the default colour", and honouring it literally
+makes half of chat invisible in a light theme.
+
+Everything interactive — `clickEvent`, `hoverEvent`, `insertion`, `font` — is stripped by the host
+before it ever gets here. Nothing in a chat line should be able to make the operator's browser do
+anything.
+
+Obfuscated text (`§k`) is animated in `src/lib/obfuscate.ts` on **one shared 50ms clock** rather
+than a timer per span, and the scramble preserves whitespace and character count so the line does
+not jitter its own width. Codepoint-safe, because a naive character swap turns an emoji into two
+replacement boxes.
+
+**Who said it comes from the packet where the packet says so.** `playerChat` carries a signed uuid
+that cannot be spoofed by typing `<Notch>` into a message; only when there is none does the host
+fall back to the configured `chat.sender` pattern, and a line it cannot attribute is filed as
+`server` rather than as the agent that happened to overhear it. Every agent on a server sees the
+same room, so guessing would turn that room into one bot's monologue.
 
 Live lines are not accumulated in the store — it has no way to know which page one belongs on. The
 store hands `chat`, `activity`, `audit`, `user` and `user-removed` events to whichever view is
@@ -1094,7 +1165,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-294 unit tests on Vitest with jsdom, in two groups.
+365 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in

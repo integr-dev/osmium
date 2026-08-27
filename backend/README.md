@@ -51,6 +51,9 @@ set to `osmium`.
 | `osmium.audit.retention` | `OSMIUM_AUDIT_RETENTION` | `30d` | how long audit entries are kept |
 | `osmium.activity.retention` | `OSMIUM_ACTIVITY_RETENTION` | `10d` | how long agent incidents are kept |
 | `osmium.agent.connect-window` | `OSMIUM_AGENT_CONNECT_WINDOW` | `90s` | how long a host gets to report a connect before the agent falls back to LINKED |
+| `osmium.agent.rejoin-delay` | `OSMIUM_AGENT_REJOIN_DELAY` | `15s` | first wait before an automatic reconnect, doubling with each attempt |
+| `osmium.agent.rejoin-delay-max` | `OSMIUM_AGENT_REJOIN_DELAY_MAX` | `5m` | the ceiling that backoff grows to |
+| `osmium.agent.rejoin-attempts` | `OSMIUM_AGENT_REJOIN_ATTEMPTS` | `10` | attempts before it stops trying — see **Rejoining** |
 | `osmium.chat.retention` | `OSMIUM_CHAT_RETENTION` | `3d` | how long chat is kept |
 | `osmium.chat.messages-per-minute` | `OSMIUM_CHAT_MESSAGES_PER_MINUTE` | `30` | outbound chat allowance, per agent |
 | `osmium.avatar.upstream` | `OSMIUM_AVATAR_UPSTREAM` | Minotar | skin service URL with `{id}`/`{size}`; **blank turns heads off** |
@@ -198,6 +201,7 @@ changes automatically.
 | `POST` | `/api/agents` | `agent.write` (`serverAddress` optional) |
 | `PATCH` | `/api/agents/{id}` | `agent.write` (rename) |
 | `PUT` | `/api/agents/{id}/server` | `agent.write` (assign a server, or null for none; offline only) |
+| `PUT` | `/api/agents/{id}/settings` | `agent.write` (the whole map, not a patch; saved even when the host is unreachable) |
 | `DELETE` | `/api/agents/{id}` | `agent.delete` |
 | `POST` | `/api/agents/{id}/setup` | `agent.setup` |
 | `DELETE` | `/api/agents/{id}/setup` | `agent.setup` (stop waiting on one; sends the host nothing) |
@@ -440,6 +444,48 @@ removed field.
 Reachability is **derived** from the heartbeat rather than stored, so a backend restart cannot leave
 a host stuck online. An `ONLINE` agent whose host is unreachable reports as `STALE`, not offline —
 the state is genuinely unknown at that point.
+
+### Configuration is stored here and interpreted by the host
+
+`PUT /api/agents/{id}/settings` takes a flat map of strings and stores it as JSON on the agent row.
+**The whole set, not a patch** — a key left out has been cleared, which is the only reading under
+which a setting can be turned back off.
+
+The keys are declared by the *interface*, in `frontend/src/lib/configuration.ts`, and this backend
+does not know what any of them mean. It stores the map and relays it, exactly as it relays a login
+`method` without understanding it. A column per setting would need a migration, a DTO field and a
+release on three sides for every setting added, to hold something nothing here reads. A host ignores
+keys it does not recognise, so a setting exists the moment the interface and one host agree on a
+name.
+
+Saved **whether or not the host is reachable**. Configuration is a stated preference rather than an
+action, and refusing to store it because a machine is switched off would lose an operator's work
+over something they cannot see and did not cause. The relay is best effort, and the settings are
+re-sent on every host reconnect — a host holds them in memory only, so a restarted one would
+otherwise run on defaults with nothing saying so.
+
+### Rejoining
+
+One key *is* read here: `connect.rejoin`. Reconnecting is a decision about where an agent belongs,
+and the rule the host protocol rests on is that a host never makes one of those — it reports where
+an agent got to. A host that reconnected itself would be asserting a state nobody asked for, and
+nothing here could tell that apart from an operator's own `connect`.
+
+So `agents.wanted` records the wish. `connect` sets it, `disconnect` clears it, and **nothing a host
+reports ever touches it** — which is what tells a kick apart from an operator taking an agent out of
+the game. `AgentService.rejoinTheWilling` sweeps the gap between the wish and the reported state.
+
+It is a **sweep rather than a hook** on the state report, for the same reason reachability is
+derived: what needs reconnecting is a fact about the fleet right now — wanted, not online, due — and
+it reads the same after a backend restart, a report that never arrived, or a host that went away for
+an hour. A hook would have to fire on exactly the right transition, and every one it missed would be
+an agent stranded with nothing left to notice it.
+
+Backoff doubles from `rejoin-delay` to `rejoin-delay-max` and gives up after `rejoin-attempts`, with
+one line in the activity feed saying so. Bounded on purpose: an agent that cannot join *this* server
+will not be fixed by a thousand more tries, and a warning every five minutes forever is a feed
+nobody reads. A host that is unreachable is skipped **without consuming an attempt** — somebody
+else's outage must not exhaust the budget and give up exactly as the host comes back.
 
 ### What a host says on connect
 
@@ -708,14 +754,22 @@ not recognise is dropped rather than guessed at: filing a kick into chat is wors
 `/api/chat` takes **exactly one** of `agentId` or `server`, and that is the whole design in one
 parameter.
 
-A **server** feed is everything that happened there: the global channel, whispers to an agent,
-proximity chat, and the agents' own outbound lines. An **agent** feed is what was said to or about
-that one agent, and excludes the global channel.
+A **server** feed is everything that happened there: the global channel, whispers to an agent, and
+the agents' own outbound lines. An **agent** feed is what was said to or about that one agent, and
+excludes the global channel.
 
 **The two are not mirror images, on purpose.** Global chat is identical for every agent standing on
 the server, so folding it into one agent's conversation would put the same message on every agent
 page and bury the lines that are actually about that agent. The reverse does not hold: a whisper to
 one agent is still something that happened on that server, so the server feed keeps it.
+
+A line carries both a plain `text` and, when the host sent one, the `components` the server actually
+styled it with — rank prefixes, the colour that separates a whisper from the room, the styling on a
+player's name. **Stored as text and never parsed here**, the same rule the host envelope's payload
+follows: the host resolves the server's translation keys and strips everything interactive before
+sending it, and the interface draws the result. `components` stays nullable and nothing reads it
+without falling back to `text`, so a host that sends none — anything an agent said itself, a server
+sending plain text, a host older than the column — is ordinary rather than a gap.
 
 Rows reference the agent by **id and label as plain columns, not a relation**, like audit entries.
 The listener role moves between agents, so a server's history must not disappear with whichever one
@@ -845,6 +899,11 @@ every entry into `ONLINE`, so an agent that keeps reconnecting cannot out-rank a
 
 `GET /api/avatars/{name-or-uuid}` returns a Minecraft head, fetched from a skin service and cached
 in memory. The frontend renders one for every agent, nearby player and chat line.
+
+The default upstream is Minotar's `helm` rather than its `avatar`: `helm` composites the skin's
+second layer — the hat — over the head, which is what a player wearing one looks like in game.
+Without it, anyone whose face is drawn on that overlay comes back bare-headed, which reads as the
+wrong skin rather than as a missing detail.
 
 It exists so the browser never talks to the skin service. The SPA's CSP is
 `img-src 'self' data: blob:`, and widening it to a third-party image host would punch a hole in the
@@ -1512,7 +1571,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-479 tests across 37 classes. Most run against a real Postgres 18 through Testcontainers with
+496 tests across 39 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

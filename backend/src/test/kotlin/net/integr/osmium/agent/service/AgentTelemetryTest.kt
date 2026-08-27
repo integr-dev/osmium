@@ -323,7 +323,7 @@ class AgentTelemetryTest : AbstractRestTest() {
             Host(name = "host-tick", tokenHash = "hash", lastSeenAt = Instant.now()),
         )
         val agent = agentRepository.saveAndFlush(
-            Agent(label = "Mason_tick", host = host, serverAddress = "mc.example.com:25565", state = AgentState.ONLINE),
+            Agent(label = "Mason_tick", host = host, serverAddress = "mc.example.com", state = AgentState.ONLINE),
         )
 
         val seen = CopyOnWriteArrayList<LiveUpdateEvent>()

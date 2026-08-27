@@ -137,7 +137,7 @@ class BuildJobControllerTest : AbstractRestTest() {
         return builds.saveAndFlush(build)
     }
 
-    private fun onlineAgent(label: String, host: Host, server: String = "mc.example.com:25565"): Agent =
+    private fun onlineAgent(label: String, host: Host, server: String = "mc.example.com"): Agent =
         createAgent(label = label, host = host, state = AgentState.ONLINE, server = server)
 
     private fun start(
@@ -211,7 +211,7 @@ class BuildJobControllerTest : AbstractRestTest() {
             status { isCreated() }
             jsonPath("$.state") { value("ACTIVE") }
             jsonPath("$.buildName") { value("north tower") }
-            jsonPath("$.serverAddress") { value("mc.example.com:25565") }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
             jsonPath("$.totalBlocks") { value(40) }
             jsonPath("$.blocksPlaced") { value(0) }
             jsonPath("$.requestedParts") { value(2) }
@@ -292,8 +292,8 @@ class BuildJobControllerTest : AbstractRestTest() {
     fun `agents on two servers cannot share a job`() {
         val host = reachableHost()
         val build = placedBuild()
-        val here = onlineAgent("Mason_01", host, server = "mc.example.com:25565")
-        val elsewhere = onlineAgent("Mason_02", host, server = "other.example.com:25565")
+        val here = onlineAgent("Mason_01", host, server = "mc.example.com")
+        val elsewhere = onlineAgent("Mason_02", host, server = "other.example.com")
 
         // One job is one world. Two servers is two jobs, which is what makes the per-server
         // arithmetic on the dashboard unnecessary rather than merely wrong.
@@ -324,9 +324,9 @@ class BuildJobControllerTest : AbstractRestTest() {
     fun `one build is built once per server, and not twice on one`() {
         val host = reachableHost()
         val build = placedBuild()
-        val here = onlineAgent("Mason_01", host, server = "mc.example.com:25565")
-        val alsoHere = onlineAgent("Mason_02", host, server = "mc.example.com:25565")
-        val elsewhere = onlineAgent("Mason_03", host, server = "other.example.com:25565")
+        val here = onlineAgent("Mason_01", host, server = "mc.example.com")
+        val alsoHere = onlineAgent("Mason_02", host, server = "mc.example.com")
+        val elsewhere = onlineAgent("Mason_03", host, server = "other.example.com")
 
         start(build.id!!, listOf(here.id!!)).andExpect { status { isCreated() } }
 

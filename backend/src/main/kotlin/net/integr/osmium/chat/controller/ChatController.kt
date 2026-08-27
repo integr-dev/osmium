@@ -51,7 +51,7 @@ class ChatController(private val chatService: ChatService) {
     fun list(
         @Parameter(description = "Conversation to or about this agent. Excludes the server's global chat.")
         @RequestParam(required = false) agentId: Long?,
-        @Parameter(description = "Global chat on this server address.", example = "mc.example.com:25565")
+        @Parameter(description = "Global chat on this server address.", example = "mc.example.com")
         @RequestParam(required = false) server: String?,
         @Parameter(description = "How many lines to return. Clamped to 1..500.")
         @RequestParam(defaultValue = "100") limit: Int,

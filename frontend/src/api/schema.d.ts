@@ -40,6 +40,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{id}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Configure the agent.
+         * @description The whole set of settings, not a patch: a key left out has been cleared. The keys are the interface's own and are relayed to the host uninterpreted, which ignores any it does not recognise. `connect.rejoin` is the one exception and is acted on here, since putting an agent back into the game is a decision a host is never allowed to make. Saved whether or not the host is reachable — configuration is a preference rather than an action, and an unreachable host is sent it on its next connection.
+         */
+        put: operations["configure"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agents/{id}/server": {
         parameters: {
             query?: never;
@@ -1045,13 +1065,12 @@ export interface components {
             /** Format: date-time */
             updatedAt?: string;
         };
-        /** @description Points an agent at a Minecraft server, or at none. Separate from both setup and editing: the account is the same account wherever it joins, so where it plays is its own decision and changing it touches no credential. */
-        AssignServerRequest: {
-            /**
-             * @description Null unassigns it, leaving the agent set up and idle.
-             * @example mc.example.com:25565
-             */
-            serverAddress?: string | null;
+        /** @description What an operator has configured for an agent. The keys are the interface's own and are relayed to the host uninterpreted; a host ignores any it does not recognise. */
+        AgentSettingsRequest: {
+            /** @description Every setting, not a patch. A key left out has been cleared. */
+            values?: {
+                [key: string]: string;
+            } | null;
         };
         /** @description An agent. Only its Minecraft identity is stored, never a credential. */
         AgentResponse: {
@@ -1070,6 +1089,9 @@ export interface components {
             state?: "UNLINKED" | "SETUP_PENDING" | "LINKED" | "CONNECTING" | "ONLINE" | "NEEDS_RELINK" | "CONNECT_FAILED" | "STALE";
             mcUsername?: string | null;
             mcUuid?: string | null;
+            settings?: {
+                [key: string]: string;
+            };
             /**
              * Format: date-time
              * @description When the agent last entered the game. Null while it is not online.
@@ -1126,6 +1148,14 @@ export interface components {
             y?: number;
             /** Format: double */
             z?: number;
+        };
+        /** @description Points an agent at a Minecraft server, or at none. Separate from both setup and editing: the account is the same account wherever it joins, so where it plays is its own decision and changing it touches no credential. */
+        AssignServerRequest: {
+            /**
+             * @description Null unassigns it, leaving the agent set up and idle.
+             * @example mc.example.com
+             */
+            serverAddress?: string | null;
         };
         /** @description Creates an account with an administrator-chosen username and password. */
         CreateUserRequest: {
@@ -1374,7 +1404,7 @@ export interface components {
             hostId?: number;
             /**
              * @description Where it should play, if that is already known.
-             * @example mc.example.com:25565
+             * @example mc.example.com
              */
             serverAddress?: string | null;
         };
@@ -1497,9 +1527,12 @@ export interface components {
             agentLabel?: string;
             serverAddress?: string;
             /** @enum {string} */
-            scope?: "OUTBOUND" | "DIRECT" | "LOCAL" | "GLOBAL";
+            scope?: "OUTBOUND" | "DIRECT" | "GLOBAL";
             from?: string;
             text?: string;
+            components?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** @description One page of chat, newest first. */
         ChatPageResponse: {
@@ -1658,6 +1691,59 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["SchematicResponse"];
+                };
+            };
+        };
+    };
+    configure: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated agent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description More configuration than an agent can hold. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.write`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
                 };
             };
         };
@@ -3603,7 +3689,7 @@ export interface operations {
                 agentId?: number;
                 /**
                  * @description Global chat on this server address.
-                 * @example mc.example.com:25565
+                 * @example mc.example.com
                  */
                 server?: string;
                 /** @description How many lines to return. Clamped to 1..500. */

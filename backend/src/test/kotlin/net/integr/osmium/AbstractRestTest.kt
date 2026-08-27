@@ -61,7 +61,7 @@ abstract class AbstractRestTest {
         label: String,
         host: Host,
         state: AgentState = AgentState.UNLINKED,
-        server: String = "mc.example.com:25565",
+        server: String = "mc.example.com",
     ): Agent = agentRepository.saveAndFlush(
         Agent(label = label, host = host, serverAddress = server, state = state),
     )

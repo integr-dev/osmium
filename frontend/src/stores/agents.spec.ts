@@ -61,6 +61,8 @@ function agent(
     hostName: 'eu-1',
     mcUsername: null,
     mcUuid: null,
+    // Unconfigured, which is every agent nobody has opened the configuration page for.
+    settings: {},
     chatListener: false,
     onlineSince: null,
     telemetry: null,
