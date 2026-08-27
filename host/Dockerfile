@@ -1,30 +1,36 @@
-FROM rustlang/rust:nightly-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
-COPY Cargo.toml Cargo.lock ./
-COPY osmium-agent ./osmium-agent
-COPY osmium-router ./osmium-router
-RUN cargo build --release -p osmium-router
+# Dependencies first, so a change to the source does not reinstall them.
+COPY package.json package-lock.json ./
+RUN npm ci
 
-FROM debian:bookworm-slim
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd --system --create-home --shell /usr/sbin/nologin osmium
+FROM node:24-bookworm-slim
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/osmium-router /app/osmium-router
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
-RUN mkdir -p /agent && chown -R osmium:osmium /agent /app
+COPY --from=builder /app/dist ./dist
 
-USER osmium
+# The linker ships alongside the router: this host is headless and containerized, so acquiring a
+# credential means `docker exec` into the running container. A binary left on a build machine would
+# be no use to it.
+RUN ln -s /app/dist/bin/link.js /usr/local/bin/osmium-link \
+    && chmod +x /app/dist/bin/link.js
 
-ENV OSMIUM_WS_URL="wss://<backend-url>/ws/agent"
+RUN mkdir -p /agent && chown -R node:node /agent /app
+
+USER node
+
+ENV OSMIUM_WS_URL="wss://<backend-url>/ws/host"
 
 VOLUME ["/agent"]
 
-ENTRYPOINT ["/app/osmium-router"]
+ENTRYPOINT ["node", "/app/dist/index.js"]

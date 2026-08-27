@@ -11,18 +11,19 @@ what needs attention, and what is being said in game.
 > end to end: uploading a schematic, reading it, dividing it between agents, recording the result as
 > a **job** — what is being built, where, by whom, and how far along — handing each segment to the
 > host that holds the agent, serving its blocks as block *states*, and taking progress back as they
-> are placed. What is missing is a real host. That one lives outside this repository, Rust on azalea,
-> see [`host/`](host/); a mock host in this repository speaks the same protocol, and the feeds stay
-> empty until something connects and starts reporting. Remote configuration is the only part of the
-> UI still running on mock data.
+> are placed. The host in [`host/`](host/) signs agents in, puts them on a server and reports what
+> they see; building is the part of it still to be written. A mock host in this repository speaks the
+> same protocol, and the feeds stay empty until something connects and starts reporting. Remote
+> configuration is wired end to end — what an operator sets is stored, sent to the host, and replayed
+> on every reconnect — so nothing in the interface runs on mock data any more.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 479 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 294 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. Rust, on azalea. | **Built separately** |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 496 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 365 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays and reports; does not build yet, 89 tests |
 
 ## The one idea worth knowing
 

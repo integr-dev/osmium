@@ -1,0 +1,133 @@
+import type { Component } from '../agent/chat.ts'
+import type { LoginMethod } from '../token/login.ts'
+import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
+
+/** A command the backend sent. Only commands arrive; results and events travel the other way. */
+export interface Command {
+  /** Echoed back on the result that resolves it. */
+  id: string
+  agentId: number
+  body: CommandBody
+}
+
+export type CommandBody =
+  | {
+      type: 'setup_agent'
+      /** The operator's name for the agent, not a Minecraft one. Only ever logged on this side. */
+      label: string
+      /** The mechanism the operator picked, relayed verbatim from what we advertised.
+       *
+       * A string rather than a `LoginKind` because it is *our* id coming back to us: the backend
+       * neither interprets nor stores it, so nothing guarantees it still names a kind this build
+       * knows. `kindFromId` is where that is decided. */
+      method: string
+    }
+  | { type: 'connect'; address: string }
+  | { type: 'disconnect' }
+  | { type: 'chat'; message: string }
+  | { type: 'set_chat_listener'; enabled: boolean }
+  /** Configuration for this agent, as a flat map.
+   *
+   * **Whole, not a patch.** What arrives is everything the operator has set, so a key that is no
+   * longer there has been cleared rather than left alone - which is the only reading that lets a
+   * setting be turned back off.
+   *
+   * A key this build does not know is ignored. The list is declared by the interface, so a host
+   * older than a setting is the ordinary case rather than an error. */
+  | { type: 'settings'; values: Record<string, string> }
+  /** Build this box. Fire and forget: answered with a `build_progress` event, never a result. */
+  | {
+      type: 'build_segment'
+      jobId: number
+      segmentId: number
+      /** Minted by the act of sending this, and valid from the moment it arrives. */
+      ticket: string
+      min: BlockPos
+      max: BlockPos
+      blocks: number
+    }
+  /** Stop building that box. Not an error for one already finished or never started: it asks us to
+   * stop, which having stopped satisfies. */
+  | { type: 'cancel_segment'; jobId: number; segmentId: number }
+  /** This agent is gone. Release everything held for it.
+   *
+   * Not an error for an agent this host has never heard of - it asks us to hold nothing for it,
+   * which holding nothing already satisfies. Without it a host keeps a credential bound to an
+   * agent that no longer exists, and no other message would ever say so. */
+  | { type: 'delete_agent' }
+
+/** The only command that is answered. Everything else reports its outcome as a state change. */
+export type SetupResult =
+  | { ok: true; mcUsername: string; mcUuid: string }
+  /** `reason` is written for whoever reads host logs; the operator only sees the agent return to
+   * `UNLINKED`. */
+  | { ok: false; reason: string }
+
+export interface Result {
+  id: string
+  agentId: number
+  setup: SetupResult
+}
+
+/** One agent as this host currently has it, for the arrival announcement. */
+export interface AgentSnapshot {
+  agentId: number
+  state: LoginState
+}
+
+/** The four readings the backend takes together or not at all.
+ *
+ * One value rather than four fields, because a tick carrying only some of them is dropped whole on
+ * the other side - an absent `food` defaulting to zero renders as a starving agent. */
+export interface Vitals {
+  health: number
+  food: number
+  ping: number
+  position: Vec3
+}
+
+export type Event =
+  /** What this host is, sent once as the first frame after connecting.
+   *
+   * The only message that says what *exists*. Agent state is stored on the backend and outlives the
+   * connection that reported it, so a host that restarts without this leaves Osmium asserting
+   * sessions nobody is running. An empty `agents` is a real announcement - it says "I am running
+   * none of them", which is what a freshly started host has to say. */
+  | { type: 'handshake'; agents: AgentSnapshot[]; loginMethods: LoginMethod[] }
+  | { type: 'heartbeat'; version: string }
+  | {
+      type: 'agent_status'
+      agentId: number
+      state?: LoginState
+      dimension?: string
+      nearby?: Player[]
+      vitals?: Vitals
+    }
+  | {
+      type: 'chat'
+      agentId: number
+      scope: ChatScope
+      /** Absent means the label the backend already holds for this agent. */
+      from?: string
+      text: string
+      /** The same line as a component tree, when the host could build one.
+       *
+       * Absent for anything a host said itself, and for a server that sent plain text. Whatever
+       * draws chat falls back to {@link text}, which is always present and always the whole line. */
+      components?: Component
+    }
+  | { type: 'activity'; agentId: number; scope: ActivityScope; severity: Severity; text: string }
+  /** How far through a segment we are. A total placed by *us* since being handed it, never a delta:
+   * the backend reports the higher of this and what was standing when we took the piece. */
+  | {
+      type: 'build_progress'
+      agentId: number
+      segmentId: number
+      blocksPlaced?: number
+      state?: BuildState
+      /** Why it failed. For whoever reads host logs; the operator never sees it. */
+      reason?: string
+    }
+
+/** Anything this host sends. */
+export type Outbound = { kind: 'result'; body: Result } | { kind: 'event'; body: Event }

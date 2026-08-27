@@ -1,7 +1,7 @@
 # Osmium host
 
-**Not built here.** This directory is a placeholder; the host is being written separately, in
-**Rust** on [azalea](https://github.com/azalea-rs/azalea).
+**TypeScript** on [mineflayer](https://github.com/PrismarineJS/mineflayer), with
+[prismarine-auth](https://github.com/PrismarineJS/prismarine-auth) for Microsoft sign-in.
 
 The host runs on a machine you control. It holds the Minecraft credentials, drives the agents, and
 is the only component that ever performs a login. Everything it needs to talk to already exists on
@@ -9,8 +9,29 @@ the backend side and is covered by tests — see `HostLinkTest` and `ChatListene
 
 This file is the **wire reference**: every message that crosses the socket, with its exact JSON.
 [`../FLEET_CONNECTIVITY.md`](../FLEET_CONNECTIVITY.md) is the reasoning behind it — read that once
-before starting, this one while implementing. The backend imposes no language or library; azalea is
-a choice the host makes rather than something the backend knows about.
+before starting, this one while implementing. The backend imposes no language or library; mineflayer
+is a choice the host makes rather than something the backend knows about.
+
+### Running one
+
+```
+npm install && npm run build
+
+OSMIUM_HOST_TOKEN=osm_host_…  OSMIUM_WS_URL=wss://…/ws/host  npm start
+```
+
+`OSMIUM_ACCOUNTS` (default `/agent/accounts.json`) records which credential belongs to which agent;
+`OSMIUM_TOKEN_CACHE` (default `/agent/msa`) is prismarine-auth's own token cache. Both sit under the
+same volume, so a container that keeps `/agent` keeps its accounts. `OSMIUM_LOG` takes `error`,
+`warn`, `info` or `debug`.
+
+Accounts are normally added through the interface: "Sign in with Microsoft" when setting an agent up
+puts the code in that agent's activity feed. `osmium-link` does the same from a shell, for a host
+that is not enrolled yet or for a session token nothing can obtain.
+
+```
+osmium-link microsoft     osmium-link token     osmium-link list     osmium-link remove <id>
+```
 
 ---
 
@@ -205,9 +226,9 @@ Fire and forget. Report `agent_status` with `LINKED` once the session is closed.
 
 Fire and forget. At most 256 characters — Minecraft's own limit, enforced backend-side.
 
-After it is **actually said in game**, echo it back as a `chat` event with scope `outbound` (§4.3).
-Do not echo on receipt: a message that never reached the server must not appear in the feed as
-though it did.
+Report it as a `chat` event with scope `outbound` (§4.3) — from the **server's echo**, so it carries
+the same formatting as everybody else's chat. A **command** never echoes, so report that one when it
+is sent. See §4.3.
 
 ### `set_chat_listener`
 
@@ -219,6 +240,64 @@ though it did.
 Fire and forget. Grants or revokes this agent's job of forwarding the server's **global** chat.
 
 Start every agent with the role **off**. Forward `global` only while it is on. See §5.
+
+### `settings`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "settings", "agentId": 42,
+  "payload": { "values": { "chat.sender": "^\[[^\]]+\]\s+([A-Za-z0-9_]{1,16}):\s" } } }
+```
+
+Everything an operator has configured for this agent. Fire and forget.
+
+**The whole set, not a patch.** A key that is absent has been cleared, which is the only reading
+under which a setting can be turned back off. Read each one fresh rather than merging into what was
+there.
+
+**Ignore a key you do not know**, rather than refusing the message. The settings are declared by the
+interface, not advertised by the host — a setting exists the moment that list and one host agree on
+a name — so an Osmium newer than a host is the ordinary case, and refusing would drop the settings
+the host *does* understand alongside the one it does not.
+
+Sent when it changes, and again on every reconnect. A host holds this in memory only, so a restarted
+one would otherwise run on defaults with nothing saying so.
+
+| Key | Meaning |
+|---|---|
+| `chat.sender` | How this server writes the speaker into a chat line. One capture group, the player name. Unset means vanilla `<Name> `. See §4.3. |
+| `chat.whisper` | How this server writes a whisper *to* this agent. One capture group, who sent it. A line that matches is scope `direct` rather than `global`, and is reported whether or not this agent is the chat listener. Unset means vanilla `Name whispers to you: `. |
+| `chat.whisperSent` | The other direction: a whisper this agent sent, as the server echoes it back. One capture group, the recipient. A line that matches is scope `outbound`. Unset means vanilla `You whisper to Name: `. |
+| `mc.version` | The version to speak, skipping the status ping entirely. Unset means ask the server, which is right almost always — set it for one that refuses a version check or answers dishonestly. A version this build has no protocol for is refused and the ping happens anyway. Read when a session opens. |
+| `mc.knockback` | `true`, `false`, or unset. Whether to undo the client library's velocity scaling. Unset decides it from the version; three states rather than two because a proxy can forward a version it does not advertise, and the packet's shape follows what is on the wire rather than what the handshake claimed. Read when a session opens. |
+| `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
+
+### `delete_agent`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "delete_agent", "agentId": 42, "payload": {} }
+```
+
+This agent no longer exists. Leave the game if it is in one, stop it, and release whatever is held
+for it.
+
+**Why this is a command at all.** A host that binds credentials to agents — so that a restart can
+rebuild them rather than leaving them unreachable — has no other way to learn that one is gone.
+[`handshake`](#45-handshake--once-immediately-after-connecting) reports what a host *runs*; nothing
+travels the other way to say what the backend has since deleted. Without this the binding outlives
+the agent and the account stays held for something nobody can use.
+
+Fire and forget. **Best effort on the backend's side too**: it is sent before the row is removed, and
+a host that is unreachable at that moment simply keeps the stale binding — deleting an agent is not
+refused because a machine is switched off. A host that cares can prune bindings it still holds for
+agents that are never set up again.
+
+**Not an error for an agent you have never heard of.** It asks you to hold nothing for it, which
+holding nothing already satisfies.
+
+**Keep the account.** The agent going away says nothing about whether the operator still wants to
+play that Minecraft account — release the binding, return the credential to your pool. The one
+exception worth making is a generated offline identity, which belonged to that agent and nothing
+else.
 
 ---
 
@@ -323,14 +402,66 @@ not stale.
 
 ```jsonc
 { "kind": "event", "type": "chat", "agentId": 42,
-  "payload": { "scope": "global", "from": "Notch", "text": "that cathedral is getting huge" } }
+  "payload": { "scope": "global", "from": "Notch", "text": "[VIP] Notch: huge",
+               "components": { "text": "", "extra": [
+                 { "text": "[VIP] ", "color": "gold", "bold": true },
+                 { "text": "Notch", "color": "#55ff55" },
+                 { "text": ": huge" } ] } } }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `scope` | yes | `outbound`, `direct`, `local`, `global` |
-| `from` | no | who said it; defaults to the agent's own label |
+| `scope` | yes | `outbound`, `direct`, `global` |
+| `from` | no | who said it, or `server` when the host cannot tell |
 | `text` | yes | truncated at 512 characters; blank is dropped |
+| `components` | no | the same line as a chat component; dropped whole past 8192 characters |
+
+**`from` is the speaker, never the observer.** Take it from the packet where the packet says so:
+`player_chat` carries the speaker's **uuid**, which cannot be spoofed by someone typing `<Notch>` and
+cannot be defeated by a chat formatter. Resolve it against the player list.
+
+Most servers will not give you that. A plugin that reformats chat has to cancel the player message
+and send a **system message** instead, so the uuid is gone because the formatter discarded it — the
+packet is then telling the truth, and there is nothing to recover. Fall back to reading the name out
+of the line: vanilla's `<Name> ` is the sensible default, and a server with its own format needs its
+own pattern.
+
+When neither works, attribute the line to **`server`**. Honest for a join notice or command output,
+and the one thing a host must not do instead is name the agent that happened to be listening. Every
+agent on a server sees the same room, so attributing the room to whoever overheard it turns the
+server's small talk into that agent's conversation.
+
+**An agent's own chat is reported from the server's echo**, like anybody else's — scope `outbound`,
+with the components the server rendered, so it reads with the same rank and colours as the rest of
+the room instead of standing out as the only plain line in it.
+
+Recognise it **the same way you recognise everybody else**: the uuid, or the name the pattern reads
+out, compared against the agent's own. Do not look for the text that was sent inside the line. That
+works until an agent says something short — `gg` is inside half of what anybody types — and then the
+room's chat starts arriving as that agent's own words. A host that cannot attribute its own message
+should report it as unattributed, which is the truth, rather than claim a line because it contains
+the right letters.
+
+**Commands are the exception**, and are reported when they are sent. A `/tp` produces no chat line,
+so there is never an echo to wait for.
+
+**`text` is the line; `components` is how it looked.** The plain form is always sent and is what
+everything falls back to — a host that sends no tree loses colour and nothing else. Anything an agent
+said itself has no tree at all, because there was never a component to begin with.
+
+A `components` tree must be **resolved and inert** before it is sent:
+
+- **No `translate` nodes.** Resolve them against the language file for the version the agent
+  negotiated. Only the host knows that version and has that file, and a key shipped onward would put
+  a 470KB table in every browser to say "Notch joined the game".
+- **No `clickEvent`, `hoverEvent`, `insertion` or `font`.** This is text written by whoever runs a
+  Minecraft server, shown in an operator's console. Nothing there should be one click from a URL that
+  server chose.
+- **`color` is a vanilla name or `#rrggbb`, and nothing else.** It ends up in a style attribute.
+- Bound the tree — nodes, depth and total text. A chat line is written by a stranger.
+
+The backend stores the tree without parsing it and never interprets it, exactly as it treats the
+envelope's payload.
 
 ### 4.4 `activity`
 
@@ -428,9 +559,8 @@ cannot infer scope from message text.
 
 | Scope | Event | Feed | Example |
 |---|---|---|---|
-| `outbound` | `chat` | chat + audit | an operator made the agent speak — echo **after** it is said |
+| `outbound` | `chat` | chat + audit | an operator made the agent speak — reported when it is sent |
 | `direct` | `chat` | chat | a player whispered the agent |
-| `local` | `chat` | chat | proximity chat |
 | `global` | `chat` | chat, per **server** | ordinary player chat — **listener only** |
 | `system` | `activity` | activity | kicked, banned, died, warned |
 | `lifecycle` | `activity` | activity | connected, disconnected, setup failed, relink needed |
@@ -600,23 +730,24 @@ Seven things worth knowing, each of which is a decision rather than an accident:
 
 ### 7.4 Reading one, roughly
 
-```rust
-let n = read_u32()?;
-for _ in 0..n {
-    let linear = read_u32()? as u64;
-    let state = &palette[read_u16()? as usize];   // "minecraft:oak_stairs[facing=east]"
+```ts
+const n = view.getUint32(at); at += 4
 
-    let y = (linear / (dx as u64 * dz as u64)) as i32;
-    let z = ((linear / dx as u64) % dz as u64) as i32;
-    let x = (linear % dx as u64) as i32;
+for (let i = 0; i < n; i++) {
+  const linear = view.getUint32(at); at += 4
+  const state = palette[view.getUint16(at)]; at += 2   // "minecraft:oak_stairs[facing=east]"
 
-    place(min_x + x, min_y + y, min_z + z, state);
+  const y = Math.floor(linear / (dx * dz))
+  const z = Math.floor(linear / dx) % dz
+  const x = linear % dx
+
+  place(minX + x, minY + y, minZ + z, state)
 }
 ```
 
-`linear` is unsigned and a large box can exceed `i32`, so widen before dividing. The backend refuses
-to serve a box of more than 2³²−1 positions rather than letting an index wrap, so the value always
-fits a `u32`.
+`linear` is unsigned and a large box exceeds a signed 32-bit range, so read it as unsigned and do
+the arithmetic in doubles - which hold every value up to 2⁵³ exactly. The backend refuses to serve a
+box of more than 2³²−1 positions rather than letting an index wrap, so it always fits.
 
 ### 7.5 Being told to build, and reporting back
 
@@ -715,15 +846,19 @@ into something an operator has to come and look at.
 4. Handle `setup_agent` → reply `ok` with `mcUsername` + `mcUuid`, or `ok: false` with `reason`.
 5. Handle `connect` / `disconnect` → no result; report `agent_status` when the state actually moves.
    Report vitals in `agent_status` every ~5s while an agent is `ONLINE`.
-6. Handle `chat` → say it, then echo it as a `chat` event with scope `outbound`.
+6. Handle `chat` → say it, then report the server's echo of it as a `chat` event with scope
+   `outbound`. A command never echoes, so report that one as it is sent.
 7. Handle `set_chat_listener` → toggle `global` forwarding for that agent; default off.
-8. Classify inbound chat into the six scopes and emit `chat` / `activity`.
-9. Handle `build_segment` → fetch the blocks with the ticket, place them, and report
+8. Classify inbound chat into the five scopes and emit `chat` / `activity`, naming the speaker in
+   `from` — or `server` when it cannot be read out of the line. Never the observing agent.
+9. Handle `settings` → apply the keys you know, **ignore the rest**, and read the whole set fresh
+   rather than merging it into what was there.
+10. Handle `build_segment` → fetch the blocks with the ticket, place them, and report
    `build_progress` every ~5s with the running total; `done` when finished, `failed` only if you
    genuinely could not. Handle `cancel_segment` → stop, and treat an unknown segment as already
    satisfied.
-10. Reply `ok: false` to any command you do not recognise.
-11. Send `handshake` immediately on **every** connect, both halves:
+11. Reply `ok: false` to any command you do not recognise.
+12. Send `handshake` immediately on **every** connect, both halves:
     - `agents` — re-enumerate what is actually live. Not optional: it is the only thing that clears
       sessions the backend is still asserting from a previous process. An empty array is a real
       answer.
