@@ -477,6 +477,24 @@ envelope's payload.
 | `severity` | no | `info`, `warning`, `error`; defaults to `info` |
 | `text` | yes | truncated at 512 characters; blank is dropped |
 
+**Say what happened, not what category it was in.** `text` is the whole message — nothing downstream
+adds to it, and an operator reading the feed at midnight has only this line to go on. "Died" and
+"Connected" are categories; a line that answers *where, as what, for how long, and why* is a report:
+
+```
+Joined play.example.com:41945 as Mason_04 on 26.1, at 128, 71, -344 in the overworld
+Died at 214, 12, -87 in the nether: Mason_04 was slain by Zombified Piglin
+Kicked after 4 hours: You have been idle for too long
+Dropped from play.example.com:41945 after 2 minutes: socketClosed
+Could not join play.example.com:25565 speaking 26.1: getaddrinfo ENOTFOUND
+```
+
+Two things worth copying. **Resolve the server's components against the version's language file**
+before putting them in here — a kick arrives as `multiplayer.disconnect.idling` and a death as
+`death.attack.mob`, and a feed full of translation keys is a feed nobody reads. And **name the
+version on a failed join**: it may have been guessed (§3 `connect`), and this line is the only place
+the guess is ever visible.
+
 ---
 
 ### 4.5 `handshake` — once, immediately after connecting

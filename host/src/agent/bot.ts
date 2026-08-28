@@ -34,6 +34,13 @@ const GROUNDED = 15_000
 /** How long to wait on a status ping before assuming the server will not answer one. */
 const PING = 8_000
 
+/** How long to wait for the server's account of a death before reporting it without one.
+ *
+ * mineflayer raises `death` off the health packet and the sentence explaining it is a separate one,
+ * so the two race. Long enough that they land together, short enough that nobody notices the feed
+ * was a quarter of a second behind. */
+const OBITUARY = 250
+
 /** What to assume when a server will not answer a version check. The newest this build speaks, which
  * is what a fixed-version client would have used. */
 const ASSUMED = mineflayer.latestSupportedVersion
@@ -126,6 +133,17 @@ export class Agent {
   /** Whether to undo mineflayer's velocity scaling. Undefined means decide from the version, which
    * is what an unconfigured agent does - see `absoluteVelocity`. */
   private knockback: boolean | undefined
+  /**
+   * What this session is, for the sentences written about it after it ends.
+   *
+   * `ended` is handed a cause and nothing else, so without this an operator is told a connection
+   * failed without being told which one, or to what. `joinedAt` is set on the first spawn and stays
+   * unset for an attempt that never got in - which is exactly the distinction between "kicked after
+   * six hours" and "refused on the way in".
+   */
+  private session: { address: string; version: string; joinedAt?: number } | undefined
+  /** What the server said about the last death, if it said anything. Cleared as it is reported. */
+  private obituary: string | undefined
   private vitals: NodeJS.Timeout | undefined
   private done = false
 
@@ -307,6 +325,8 @@ export class Agent {
     this.joined = false
     this.settled = false
     this.failure = undefined
+    this.obituary = undefined
+    this.session = { address, version }
     this.language = languageOf(version)
 
     // A server can accept the connection and then say nothing at all - a queue that never moves, a
@@ -359,8 +379,19 @@ export class Agent {
         // dimension change, and an agent that died has not rejoined the server.
         if (this.joined) return
         this.joined = true
+        if (this.session) this.session.joinedAt = Date.now()
 
-        this.activity(ActivityScope.Lifecycle, Severity.Info, 'Joined the server')
+        // Everything an operator would otherwise have to go and look up: which server, under which
+        // account, speaking what, and where it came out. The version is worth stating because it may
+        // have been guessed - see `negotiate` - and a wrong guess shows up as odd behaviour later
+        // rather than as a failure here.
+        const place = placeOf(bot)
+        this.activity(
+          ActivityScope.Lifecycle,
+          Severity.Info,
+          `Joined ${address} as ${this.identity?.username ?? 'this agent'} on ${bot.version}` +
+            (place ? `, at ${place}` : ''),
+        )
         this.vitals = setInterval(() => this.sample(), VITALS)
 
         // Whether the world arrived, not just the login. Mineflayer runs no physics at all while the
@@ -371,9 +402,40 @@ export class Agent {
       }),
     )
 
+    /*
+     * What killed it, from the server's own account of it.
+     *
+     * mineflayer raises `death` off `update_health`, which carries a number and nothing else. The
+     * sentence - "Mason_04 was slain by Zombie" - is a different packet, and the two arrive in no
+     * guaranteed order. So the message is stashed as it lands and the report waits a moment for it.
+     *
+     * Reading the packet rather than writing anything, so unlike the velocity correction this does
+     * not care when it was registered relative to mineflayer's own handlers.
+     */
+    bot._client.on('death_combat_event', (packet: { message?: unknown }) => {
+      if (this.bot === bot) this.obituary = this.readable(packet.message)
+    })
+
     bot.on(
       'death',
-      live(() => this.activity(ActivityScope.Lifecycle, Severity.Warning, 'Died')),
+      live(() => {
+        // Read now, synchronously: mineflayer respawns immediately after this event, and by the time
+        // the report is written the agent is standing somewhere else entirely.
+        const place = placeOf(bot)
+
+        setTimeout(() => {
+          if (this.bot !== bot) return
+
+          const cause = this.obituary
+          this.obituary = undefined
+
+          this.activity(
+            ActivityScope.Lifecycle,
+            Severity.Warning,
+            `Died${place ? ` at ${place}` : ''}${cause ? `: ${cause}` : ''}`,
+          )
+        }, OBITUARY)
+      }),
     )
 
     // Registered through a cast because mineflayer emits two arguments its published type does not
@@ -397,7 +459,18 @@ export class Agent {
       'kicked',
       live((kick: unknown) => {
         this.kicked = true
-        this.activity(ActivityScope.System, Severity.Warning, `Disconnected: ${text(kick)}`)
+
+        // How long it lasted is half the diagnosis: refused on the way in, dropped after a minute,
+        // or taken out of a session that had been running all afternoon.
+        const joinedAt = this.session?.joinedAt
+        const said = this.readable(kick)
+
+        this.activity(
+          ActivityScope.System,
+          Severity.Warning,
+          `Kicked${joinedAt ? ` after ${lasted(joinedAt)}` : ' before it got in'}` +
+            (said ? `: ${said}` : ' (the server gave no reason)'),
+        )
       }),
     )
 
@@ -448,10 +521,12 @@ export class Agent {
     // What went wrong, when anything said so. `why` is `socketClosed` for most of these, which
     // names the symptom and never the cause.
     const cause = this.failure ?? why
+    const session = this.session
 
     this.joined = false
     this.kicked = false
     this.failure = undefined
+    this.session = undefined
 
     // We asked for this, so there is nothing to announce - the operator pressed the button.
     if (this.leaving) {
@@ -463,14 +538,25 @@ export class Agent {
     if (joined) {
       // A session that existed and stopped. `kicked` has already said why when the server bothered
       // to say; this covers the rest - a dropped socket, a server that went away.
-      if (!kicked) this.activity(ActivityScope.System, Severity.Warning, `Disconnected: ${cause}`)
+      if (!kicked) {
+        const held = session?.joinedAt ? ` after ${lasted(session.joinedAt)}` : ''
+        const where = session ? ` from ${session.address}` : ''
+
+        this.activity(ActivityScope.System, Severity.Warning, `Dropped${where}${held}: ${cause}`)
+      }
       this.report({ state: LoginState.LinkedCredentials })
       return
     }
 
     // Never got in. That refuses us as surely as a kick would, and reads the same way to an
-    // operator.
-    if (!kicked) this.activity(ActivityScope.System, Severity.Error, `Connection failed: ${cause}`)
+    // operator. Naming the version matters here more than anywhere: an attempt that fails on a
+    // version this host guessed at is a different problem from one that fails on a version an
+    // operator pinned, and the message is the only place the guess is ever visible.
+    if (!kicked) {
+      const tried = session ? ` ${session.address} speaking ${session.version}` : ''
+
+      this.activity(ActivityScope.System, Severity.Error, `Could not join${tried}: ${cause}`)
+    }
     this.report({ state: LoginState.FailedConnection })
   }
 
@@ -695,7 +781,15 @@ export class Agent {
       position,
     }
 
-    this.report({ vitals, nearby: nearby(bot, position) })
+    // Alongside the vitals rather than inside them: the backend treats the four readings as one
+    // all-or-nothing value and defaults a missing dimension to the overworld, so an agent in the end
+    // read as being in the overworld on every tick until this was sent.
+    //
+    // Omitted rather than sent as undefined when the server has not said. Absent is what the wire
+    // means by "nothing to report", and the backend's own default is then the honest answer.
+    const dimension = dimensionOf(bot)
+
+    this.report({ vitals, nearby: nearby(bot, position), ...(dimension ? { dimension } : {}) })
   }
 
   /** Says whether this agent is standing in a world it can actually see.
@@ -728,12 +822,34 @@ export class Agent {
     )
   }
 
-  private report(status: { state?: LoginState; vitals?: Vitals; nearby?: Player[] }): void {
+  private report(status: {
+    state?: LoginState
+    vitals?: Vitals
+    nearby?: Player[]
+    dimension?: string
+  }): void {
     this.hooks.event({ type: 'agent_status', agentId: this.id, ...status })
   }
 
   private activity(scope: ActivityScope, severity: Severity, text: string): void {
     this.hooks.event({ type: 'activity', agentId: this.id, scope, severity, text })
+  }
+
+  /**
+   * What a server's component actually says, as one line of plain text.
+   *
+   * Resolved against this session's language table, so a kick sent as `multiplayer.disconnect.kicked`
+   * and a death sent as `death.attack.mob` become sentences rather than keys. Empty when there is
+   * nothing readable in there - the caller then says less instead of printing `[object Object]`, or
+   * a wall of JSON, which is what this replaced.
+   */
+  private readable(message: unknown): string {
+    const resolved = componentsOf(message, this.language)
+    const flat = resolved ? flatten(resolved).trim() : ''
+
+    if (flat) return flat
+
+    return typeof message === 'string' ? message.trim() : ''
   }
 
   /**
@@ -762,7 +878,11 @@ export class Agent {
       acquired = await signIn(this.cacheDirectory, show)
     } catch (err) {
       log.warn(`Agent ${this.id} was never signed in: ${reason(err)}`)
-      this.activity(ActivityScope.Lifecycle, Severity.Warning, 'The Microsoft sign-in did not complete.')
+      this.activity(
+        ActivityScope.Lifecycle,
+        Severity.Warning,
+        `The Microsoft sign-in did not complete: ${reason(err)}`,
+      )
       this.hooks.result({ ok: false, reason: 'The Microsoft sign-in was not completed' })
       return undefined
     }
@@ -1086,9 +1206,53 @@ function explain(err: unknown, address: string): string {
 }
 
 /** A kick reason, which arrives as a chat component and is only ever shown to a person. */
-function text(kick: unknown): string {
-  if (typeof kick === 'string') return kick
-  if (kick && typeof kick === 'object' && 'text' in kick && typeof kick.text === 'string' && kick.text) return kick.text
+/** Everything a component tree says, with the styling dropped.
+ *
+ * Activity is a sentence in a feed rather than a rendered chat line, so the tree is flattened to
+ * what it reads as. The tree it is given has already been resolved by `componentsOf`, so a
+ * translation key like `death.attack.mob` has become "Mason_04 was slain by Zombie" before it
+ * arrives here. */
+export function flatten(node: Component): string {
+  return node.text + (node.extra ?? []).map(flatten).join('')
+}
 
-  return JSON.stringify(kick)
+/** Where an agent is, as a sentence: `128, 71, -344 in the overworld`.
+ *
+ * Undefined when the entity is not there yet, which is a real state - `login` arrives before the
+ * world does. A caller says less rather than saying "at undefined". */
+export function placeOf(bot: Bot): string | undefined {
+  const at = bot.entity?.position
+  if (!at) return undefined
+
+  const where = `${Math.round(at.x)}, ${Math.round(at.y)}, ${Math.round(at.z)}`
+  // `the_end` would otherwise read as "in the the end".
+  const dimension = dimensionOf(bot)?.replaceAll('_', ' ').replace(/^the /, '')
+
+  return dimension ? `${where} in the ${dimension}` : where
+}
+
+/**
+ * Which dimension an agent is in, as the canonical id: `overworld`, `the_nether`, `the_end`.
+ *
+ * **Namespaced or not is the server's choice, and it must not be ours.** The interface groups agents
+ * by server *and* dimension to work out how spread out a fleet is, so `minecraft:the_end` and
+ * `the_end` arriving from two servers would split one dimension into two groups. Stripping the
+ * namespace also matches the value the backend falls back to when a host sends none.
+ */
+function dimensionOf(bot: Bot): string | undefined {
+  return bot.game?.dimension?.replace(/^minecraft:/, '') || undefined
+}
+
+/** A duration an operator reads rather than counts: `3 seconds`, `12 minutes`, `2 hours`.
+ *
+ * One unit, deliberately. "Kicked after 3 seconds" and "kicked after 6 hours" are different
+ * diagnoses and that is the whole value of the number; the remainder is noise. */
+export function lasted(since: number): string {
+  const seconds = Math.max(1, Math.round((Date.now() - since) / 1000))
+  if (seconds < 120) return `${seconds} second${seconds === 1 ? '' : 's'}`
+
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 120) return `${minutes} minutes`
+
+  return `${Math.round(minutes / 60)} hours`
 }
