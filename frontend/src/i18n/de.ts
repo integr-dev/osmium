@@ -312,6 +312,11 @@ export const de: Copy = {
     food: 'Nahrung',
     position: 'Position',
     dimension: 'Dimension',
+    dimensions: {
+      overworld: 'Oberwelt',
+      the_nether: 'Der Nether',
+      the_end: 'Das Ende',
+    },
     noTelemetry: 'Dieser Agent hat sich in letzter Zeit nicht gemeldet.',
     ping: 'Ping',
     blocksPlaced: 'Platzierte Blöcke',

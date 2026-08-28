@@ -29,6 +29,7 @@ import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { agentBadge, agentStateLabel } from '../lib/agentState'
+import { dimensionLabel } from '../lib/vitals'
 import { prefersReducedMotion, vFlash } from '../lib/motion'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -540,7 +541,7 @@ async function confirmRemove() {
             <Layers class="text-primary size-3.5 shrink-0 opacity-70" />
             <span class="min-w-0">
               <span class="block text-xs opacity-50">{{ t('agents.dimension') }}</span>
-              <span class="block truncate text-sm">{{ vitals.dimension }}</span>
+              <span class="block truncate text-sm">{{ dimensionLabel(vitals.dimension) }}</span>
             </span>
           </div>
           <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">

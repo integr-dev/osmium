@@ -21,7 +21,7 @@ import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { jobFigures } from '../lib/jobs'
-import { summariseVitals } from '../lib/vitals'
+import { dimensionLabel, summariseVitals } from '../lib/vitals'
 import { bucketByHour } from '../lib/series'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { nodeLabel } from '../lib/nodeLabel'
@@ -487,7 +487,7 @@ const vitalRows = computed(() =>
               <span
                 v-if="vitals.spread"
                 class="flex items-center gap-2 text-xs"
-                :title="[vitals.spread.server, vitals.spread.dimension].filter(Boolean).join(' · ')"
+                :title="[vitals.spread.server, dimensionLabel(vitals.spread.dimension)].filter(Boolean).join(' · ')"
               >
                 <span class="flex-1 truncate opacity-60">{{ t('dashboard.vital.spread') }}</span>
                 <span class="max-w-40 truncate font-medium">

@@ -372,6 +372,16 @@ export const en = {
     food: 'Food',
     position: 'Position',
     dimension: 'Dimension',
+    /**
+     * Keyed by the id a host reports, which is Minecraft's own name with the namespace stripped. A
+     * dimension not listed here is humanised from its id rather than dropped — servers run custom
+     * worlds, and this list is the vanilla three rather than a closed set.
+     */
+    dimensions: {
+      overworld: 'Overworld',
+      the_nether: 'The Nether',
+      the_end: 'The End',
+    },
     noTelemetry: 'This agent has not reported recently.',
     ping: 'Ping',
     blocksPlaced: 'Blocks placed',

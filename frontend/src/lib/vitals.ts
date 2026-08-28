@@ -1,5 +1,30 @@
+import { i18n } from '../i18n'
 import type { FleetAgent } from '../stores/agents'
 import { isOnline } from './agentState'
+
+/**
+ * What to call a dimension on screen.
+ *
+ * **The wire carries an id, not a label.** A host reports `the_end` — the canonical Minecraft name,
+ * with the `minecraft:` namespace stripped — because that is what the value is *for*: it is the
+ * grouping key {@link widestGap} compares positions within, and two servers spelling it differently
+ * would split one world into two groups. Naming it is this side's job, which is also the only way
+ * German gets to say "Das Ende".
+ *
+ * A dimension nobody has a name for is humanised rather than dropped. Servers run custom worlds, and
+ * "Mining World" beats both `mining_world` and an empty field.
+ */
+export function dimensionLabel(id: string): string {
+  const known = `agents.dimensions.${id}`
+  if (i18n.global.te(known)) return i18n.global.t(known)
+
+  return id
+    .replace(/^minecraft:/, '')
+    .split('_')
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(' ')
+}
 
 /**
  * The fleet's vitals, reduced to the agents worth looking at first.
