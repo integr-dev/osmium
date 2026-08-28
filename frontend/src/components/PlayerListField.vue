@@ -22,7 +22,7 @@ const { t } = useI18n()
 
 const draft = ref('')
 
-/** Ordered lowest first, so the row reads as a scale rather than as two unrelated buttons. */
+/** Ordered lowest first, so the options read as a scale rather than as two unrelated choices. */
 const TIERS: Trust[] = [TRUST.chat, TRUST.commands]
 
 const players = computed(() => playersFrom(model.value))
@@ -132,29 +132,25 @@ function paste(event: ClipboardEvent): void {
           <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ player.name }}</span>
 
           <!--
-            Two named tiers rather than a switch. A switch has an off state and neither of these is
-            off — both are trust — so the labels have to say which is which, and the higher one is
-            coloured because it is the one worth noticing in a list somebody is scanning.
+            A select rather than a pair of buttons. Two buttons meant one was always drawn dimmed
+            beside a live one, which read as disabled rather than as unselected — and a row scanned
+            down a list has to answer "what is this set to" at a glance, which is a value rather
+            than a choice between two.
+
+            Coloured only at the elevated tier, so what stands out in the column is the entry worth
+            looking at twice.
           -->
-          <div role="group" :aria-label="t('configuration.players.trust')" class="join shrink-0">
-            <button
-              v-for="tier in TIERS"
-              :key="tier"
-              type="button"
-              class="btn btn-xs join-item"
-              :class="
-                player.trust === tier
-                  ? tier === TRUST.commands
-                    ? 'btn-warning'
-                    : 'btn-active'
-                  : 'btn-ghost opacity-50'
-              "
-              :aria-pressed="player.trust === tier"
-              @click="trust(player.name, tier)"
-            >
+          <select
+            :value="player.trust"
+            class="select select-xs w-36 shrink-0"
+            :class="player.trust === TRUST.commands ? 'select-warning text-warning' : ''"
+            :aria-label="t('configuration.players.trust')"
+            @change="trust(player.name, ($event.target as HTMLSelectElement).value as Trust)"
+          >
+            <option v-for="tier in TIERS" :key="tier" :value="tier">
               {{ t(`configuration.players.${tier}`) }}
-            </button>
-          </div>
+            </option>
+          </select>
 
           <button
             type="button"

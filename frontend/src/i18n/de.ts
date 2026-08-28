@@ -570,10 +570,10 @@ export const de: Copy = {
       empty: 'Noch niemand, dieser Agent nimmt also überhaupt keine Chat-Befehle an.',
       notAName: 'Minecraft-Namen bestehen aus Buchstaben, Ziffern und Unterstrichen, höchstens sechzehn Zeichen.',
       alreadyThere: 'Steht bereits auf der Liste.',
-      disclaimer: 'Osmium liest diese Namen aus dem Chat, beweisen kann es sie nicht. Ein Server, der Nicknames erlaubt, oder einer im Offline-Modus kann jeden hinter einen vertrauten Namen setzen — ein falsches Chat-Format ebenso. Vergeben Sie Befehle nur dort, wo Sie auch das Konto aushändigen würden.',
+      disclaimer: 'WARNUNG: Osmium liest diese Namen aus dem Chat, beweisen kann es sie nicht. Ein Server, der Nicknames erlaubt, oder einer im Offline-Modus kann jeden hinter einen vertrauten Namen setzen — ein falsches Chat-Format ebenso. Vergeben Sie Befehle nur dort, wo Sie auch das Konto aushändigen würden.',
       trust: 'Was dieser Spieler darf',
       chat: 'Chat',
-      commands: 'Befehle',
+      commands: 'Chat & Befehle',
       count: '{count} Spieler | {count} Spieler',
     },
 

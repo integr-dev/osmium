@@ -699,10 +699,11 @@ export const en = {
        * format it was given, because a server that reformats chat sends no sender at all — so the
        * name is reconstructed, never verified.
        */
-      disclaimer: 'Osmium reads these names out of chat, it cannot prove them. A server that allows nicknames, or one in offline mode, can put anybody behind a trusted name — and a wrong chat format can too. Only grant Commands where you would hand over the account.',
+      disclaimer: 'WARNING: Osmium reads these names out of chat, it cannot prove them. A server that allows nicknames, or one in offline mode, can put anybody behind a trusted name — and a wrong chat format can too. Only grant Commands where you would hand over the account.',
       trust: 'What this player may do',
+      /** Cumulative, and said so: the higher tier is the lower one plus the ability to act. */
       chat: 'Chat',
-      commands: 'Commands',
+      commands: 'Chat & Commands',
       count: '{count} player | {count} players',
     },
 
