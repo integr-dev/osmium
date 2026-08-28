@@ -229,9 +229,16 @@ async function update() {
               The groups hold different numbers of fields, so the card would jump between two heights
               as the panels crossed. SwapBox measures what is arriving and eases the frame to it.
             -->
-            <SwapBox>
+            <!--
+              The padding is for the focus ring, not for looks. Both SwapBox and the slide frame
+              inside it clip horizontally, so that a panel arriving from the side is not visible past
+              the edge of the card - and a focused field's outline sits 4px outside its own box, so
+              it was being cut off against those same edges. The panel carries the room for it and
+              the frame gives back the width, which leaves every field aligned with the tabs above.
+            -->
+            <SwapBox class="-mx-1.5">
               <Transition :name="slide">
-                <div :key="tab" class="flex flex-col gap-3">
+                <div :key="tab" class="flex flex-col gap-3 px-1.5">
                   <!--
                     Stacked rather than in a row: a pattern is a line of code, and it needs the width of
                     the panel plus room underneath for what it reads out of a sample line.

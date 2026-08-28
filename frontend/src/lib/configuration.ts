@@ -62,30 +62,14 @@ export const VANILLA_WHISPER = '^([A-Za-z0-9_]{1,16}) whispers to you: '
  * the speaker is the agent itself. */
 export const VANILLA_WHISPER_SENT = '^You whisper to ([A-Za-z0-9_]{1,16}): '
 
+/**
+ * The order is the order of the tabs, and the first group is what an operator lands on.
+ *
+ * Roughly how early a setting matters to an agent: what it speaks, then whether it stays in the
+ * game, then how it reads the room once it is there. Chat last because it is the one an operator
+ * comes back to and tunes, rather than the one they set on the way in.
+ */
 export const SETTING_GROUPS: SettingGroup[] = [
-  {
-    key: 'chat',
-    fields: [
-      {
-        key: 'chat.sender',
-        type: 'regex',
-        default: VANILLA_SENDER,
-        sample: '<Notch> hello there',
-      },
-      {
-        key: 'chat.whisper',
-        type: 'regex',
-        default: VANILLA_WHISPER,
-        sample: 'Notch whispers to you: are you there',
-      },
-      {
-        key: 'chat.whisperSent',
-        type: 'regex',
-        default: VANILLA_WHISPER_SENT,
-        sample: 'You whisper to Notch: on my way',
-      },
-    ],
-  },
   {
     key: 'mc',
     fields: [
@@ -107,6 +91,29 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         key: 'connect.rejoin',
         type: 'switch',
+      },
+    ],
+  },
+  {
+    key: 'chat',
+    fields: [
+      {
+        key: 'chat.sender',
+        type: 'regex',
+        default: VANILLA_SENDER,
+        sample: '<Notch> hello there',
+      },
+      {
+        key: 'chat.whisper',
+        type: 'regex',
+        default: VANILLA_WHISPER,
+        sample: 'Notch whispers to you: are you there',
+      },
+      {
+        key: 'chat.whisperSent',
+        type: 'regex',
+        default: VANILLA_WHISPER_SENT,
+        sample: 'You whisper to Notch: on my way',
       },
     ],
   },
