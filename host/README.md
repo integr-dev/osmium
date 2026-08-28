@@ -33,6 +33,28 @@ that is not enrolled yet or for a session token nothing can obtain.
 osmium-link microsoft     osmium-link token     osmium-link list     osmium-link remove <id>
 ```
 
+### Tests, CI and the image
+
+```
+npm test          # 156 tests
+npm run build     # tsc, which type-checks as it emits
+```
+
+The suite covers the protocol codec, the NBT decoding, the chat formats — against lines captured
+from real servers rather than invented ones — and the chat command system, including an adversarial
+pass over the one input this program takes from strangers. See `test/injection.test.ts`, which is
+written as an audit rather than as coverage.
+
+`host-tests.yml` runs both on a pull request; `host-image.yml` runs them again on `main` and only
+then publishes `ghcr.io/integr-dev/osmium/host`, tagged with the version in `package.json` plus
+`sha-<short>` and `latest`. Nothing reaches the registry without a green suite — the image workflow
+calls the test workflow and gates on it, which is why the test workflow has no `push` trigger of its
+own.
+
+The image runs as `node`, keeps its credentials on the `/agent` volume, and ships `osmium-link` on
+the path: this program is headless, so acquiring a credential means `docker exec` into the running
+container.
+
 ---
 
 ## 1. Connecting

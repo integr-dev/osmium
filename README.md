@@ -22,8 +22,8 @@ what needs attention, and what is being said in game.
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 496 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 376 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays and reports; does not build yet, 89 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 389 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays and reports; does not build yet, 156 tests |
 
 ## The one idea worth knowing
 
@@ -84,25 +84,30 @@ So the split is "runs the agents" versus "runs the people". Details in
 
 ```bash
 cd backend && ./gradlew test     # 496 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 376 tests
+cd frontend && npm test          # 389 tests
+cd host && npm test              # 156 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
 clients over real host sockets, and unit tests on an injected clock for anything about the passage of
 time. The frontend covers the route guard, the auth store, the API client middleware, the fleet
 store's derived state, cursor paging, the geometry behind the charts and the box viewer, and that
-the English and German copy stay in step.
+the English and German copy stay in step. The host covers the protocol codec, the chat formats
+against lines captured from real servers, and the chat command system — including an adversarial
+pass on the one input it takes from strangers.
 
 ## CI
 
-Four workflows, all path-filtered so a change to one module does not run the other's jobs.
+Six workflows, all path-filtered so a change to one module does not run the others' jobs.
 
 | Workflow | Runs on | Does |
 |---|---|---|
 | `backend-tests.yml` | pull request, or called | `./gradlew test`, annotates failures, uploads reports |
 | `frontend-tests.yml` | pull request, or called | Vitest, ESLint and the `vue-tsc` build, all three under `if: always()` |
+| `host-tests.yml` | pull request, or called | Vitest and the `tsc` build, both under `if: always()` |
 | `backend-image.yml` | push to `main` | runs the tests, then publishes `ghcr.io/integr-dev/osmium/backend` |
 | `frontend-image.yml` | push to `main` | runs the tests, then publishes `ghcr.io/integr-dev/osmium/frontend` |
+| `host-image.yml` | push to `main` | runs the tests, then publishes `ghcr.io/integr-dev/osmium/host` |
 
 **Nothing is published without a green suite.** Each image workflow calls the matching test workflow
 as a reusable workflow and gates its publishing job on it with `needs`. The test workflows therefore
@@ -110,7 +115,7 @@ have no `push` trigger of their own — on `main` the image workflow drives them
 suite once rather than twice, and the suite cannot drift between the pull-request run and the
 publishing run.
 
-Image tags come from the version in `build.gradle.kts` and `package.json` respectively, plus
+Image tags come from the version in `build.gradle.kts` and each module's `package.json`, plus
 `sha-<short>` and `latest`. Failing tests become inline annotations and a job summary table, built
 from JUnit XML by [`.github/scripts/junit-summary.mjs`](.github/scripts/junit-summary.mjs).
 

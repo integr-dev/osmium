@@ -1,0 +1,10 @@
+# Module-specific ignores. Anything that can appear anywhere lives in the repository-wide
+# .gitignore, which already covers node_modules, dist and logs.
+
+# Vitest's JUnit report, written for CI to annotate failures from.
+test-results
+
+# The account store and prismarine-auth's token cache, if anybody points them here rather than at
+# the volume. These hold Minecraft credentials and must never reach a commit.
+accounts.json
+msa/
