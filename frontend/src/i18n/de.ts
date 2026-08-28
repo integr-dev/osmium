@@ -84,6 +84,7 @@ export const de: Copy = {
     noServers: 'Noch keine Server. Weise einem Agenten einen zu, um seinen Chat zu lesen.',
     noSpeaker: 'Hier ist niemand im Spiel, durch den gesprochen werden könnte.',
     fromServer: 'Server',
+    catchingUp: 'wird nachgeholt …',
     speakerOffline: '{name} ist nicht im Spiel.',
     hostOffline: 'Host {host} ist nicht erreichbar.',
   },
@@ -547,11 +548,12 @@ export const de: Copy = {
     selected: '{count} ausgewählt',
     valuesFrom: 'Angezeigt werden die Einstellungen von {name}.',
     appliesTo: 'Gilt für {count} Agenten | Gilt für {count} Agenten',
-    update: 'Einstellungen übernehmen',
+    update: 'Diesen Tab übernehmen',
     updating: 'Wird gesendet…',
     updated: 'Einstellungen an {name} gesendet.',
     updatedMany: 'Einstellungen an {count} Agenten gesendet.',
     unsaved: 'Nicht gespeicherte Änderungen.',
+    unsentElsewhere: 'Ebenfalls bearbeitet und nicht gesendet: {tabs}.',
     reset: 'Änderungen verwerfen',
     offlineNote: 'Wird auch gespeichert, wenn ein Host nicht erreichbar ist, und beim nächsten Verbinden gesendet.',
 
@@ -559,6 +561,20 @@ export const de: Copy = {
       chat: 'Chat',
       mc: 'Minecraft',
       connect: 'Verbindung',
+      players: 'Spieler',
+    },
+
+    players: {
+      add: 'Spieler hinzufügen',
+      remove: '{name} entfernen',
+      empty: 'Noch niemand, dieser Agent nimmt also überhaupt keine Chat-Befehle an.',
+      notAName: 'Minecraft-Namen bestehen aus Buchstaben, Ziffern und Unterstrichen, höchstens sechzehn Zeichen.',
+      alreadyThere: 'Steht bereits auf der Liste.',
+      disclaimer: 'Osmium liest diese Namen aus dem Chat, beweisen kann es sie nicht. Ein Server, der Nicknames erlaubt, oder einer im Offline-Modus kann jeden hinter einen vertrauten Namen setzen — ein falsches Chat-Format ebenso. Vergeben Sie Befehle nur dort, wo Sie auch das Konto aushändigen würden.',
+      trust: 'Was dieser Spieler darf',
+      chat: 'Chat',
+      commands: 'Befehle',
+      count: '{count} Spieler | {count} Spieler',
     },
 
     settings: {
@@ -574,9 +590,21 @@ export const de: Copy = {
         label: 'Wie dieser Server eine gesendete Flüsternachricht schreibt',
         hint: 'Die Gegenrichtung: eine private Nachricht, die dieser Agent gesendet hat und die vom Server zurückkommt. Ohne dieses Muster lässt sie sich nicht zuordnen und wirkt, als spräche der Server. Die Fanggruppe ist der Empfänger.',
       },
+      chat_whisperCommand: {
+        label: 'Wie eine private Nachricht gesendet wird',
+        hint: 'Der Befehl, mit dem der Agent jemandem privat antwortet — was privat gefragt wurde, wird privat beantwortet. {name} und {message} werden eingesetzt. Leer lassen für /msg, das die meisten Server akzeptieren.',
+      },
       mc_version: {
         label: 'Minecraft-Version',
         hint: 'Leer lassen, um den Server zu fragen – das ist fast immer richtig. Nur für Server setzen, die keine Versionsabfrage beantworten oder unehrlich antworten: hinter einem Proxy oder mit Bot-Schutz davor. Gilt ab dem nächsten Verbinden.',
+      },
+      mc_takeKnockback: {
+        label: 'Rückstoß',
+        hint: 'Ob der Agent von Schlägen, Explosionen und allem anderen bewegt wird. Aus bedeutet, er bleibt stehen — nützlich für einen Bauer, der nicht vom Gerüst gestoßen werden darf, und auf einem Server, der darauf achtet, auffällig.',
+        options: {
+          auto: 'Wie ein Spieler',
+          false: 'Ignorieren',
+        },
       },
       mc_knockback: {
         label: 'Rückstoß korrigieren',
@@ -586,6 +614,10 @@ export const de: Copy = {
           true: 'Immer',
           false: 'Nie',
         },
+      },
+      players_whitelist: {
+        label: 'Vertraute Spieler',
+        hint: 'Wer diesen Agenten im Spiel mit !osm steuern darf. Leer bedeutet niemand. Chat erlaubt, den Agenten sprechen zu lassen; Befehle erlaubt zusätzlich, Server-Befehle über ihn auszuführen — mit den Rechten seines Minecraft-Kontos, was bei einem Operator-Konto fast einer Übergabe gleichkommt.',
       },
       connect_rejoin: {
         label: 'Automatisch neu verbinden',

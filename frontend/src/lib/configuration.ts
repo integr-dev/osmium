@@ -22,7 +22,7 @@ import type { FleetAgent } from '../stores/agents'
 export interface SettingField {
   key: string
   /** Chosen by what the value *is*, so the view never switches on the key itself. */
-  type: 'regex' | 'text' | 'switch' | 'choice'
+  type: 'regex' | 'text' | 'switch' | 'choice' | 'players'
   /** Filled into the box when an operator asks for a starting point, and what the host falls back
    * to when nothing is set. Shown rather than silently applied. */
   default?: string
@@ -37,6 +37,17 @@ export interface SettingField {
    * "off". The labels come from i18n, keyed by the field and the value.
    */
   options?: string[]
+  /**
+   * Whether this field is worth showing at all, given the rest.
+   *
+   * For a setting that only means something when another is set a particular way. A predicate rather
+   * than a little language of dependencies: there is one of these, it lives beside the field it is
+   * about, and a rule somebody can read is worth more than a rule somebody can parameterise.
+   *
+   * Hidden, not disabled, and the value is left alone either way — a field nobody can act on is
+   * clutter, and clearing it would lose a choice the operator made before turning the other one off.
+   */
+  showWhen?: (settings: AgentSettings) => boolean
 }
 
 export interface SettingGroup {
@@ -62,6 +73,12 @@ export const VANILLA_WHISPER = '^([A-Za-z0-9_]{1,16}) whispers to you: '
  * the speaker is the agent itself. */
 export const VANILLA_WHISPER_SENT = '^You whisper to ([A-Za-z0-9_]{1,16}): '
 
+/** How an agent sends a private message back. `{name}` and `{message}` are filled in.
+ *
+ * `/msg` is what vanilla, Essentials and most plugin suites answer to, so it is the guess most likely
+ * to work on a server nobody has configured. */
+export const VANILLA_WHISPER_COMMAND = '/msg {name} {message}'
+
 /**
  * The order is the order of the tabs, and the first group is what an operator lands on.
  *
@@ -79,9 +96,17 @@ export const SETTING_GROUPS: SettingGroup[] = [
         placeholder: '1.21.4',
       },
       {
+        key: 'mc.takeKnockback',
+        type: 'choice',
+        options: ['', 'false'],
+      },
+      {
+        // Only means anything while knockback is being taken. With it off nothing is applied, so
+        // there is no arithmetic to correct and the question does not arise.
         key: 'mc.knockback',
         type: 'choice',
         options: ['', 'true', 'false'],
+        showWhen: (settings) => settings['mc.takeKnockback'] !== 'false',
       },
     ],
   },
@@ -91,6 +116,15 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         key: 'connect.rejoin',
         type: 'switch',
+      },
+    ],
+  },
+  {
+    key: 'players',
+    fields: [
+      {
+        key: 'players.whitelist',
+        type: 'players',
       },
     ],
   },
@@ -115,9 +149,76 @@ export const SETTING_GROUPS: SettingGroup[] = [
         default: VANILLA_WHISPER_SENT,
         sample: 'You whisper to Notch: on my way',
       },
+      {
+        key: 'chat.whisperCommand',
+        type: 'text',
+        placeholder: VANILLA_WHISPER_COMMAND,
+      },
     ],
   },
 ]
+
+/**
+ * Mojang's rules for a username: letters, digits and underscore, up to sixteen.
+ *
+ * The same test the host applies to a name it reads out of a chat line. A list is only useful if
+ * what goes in it could actually be a player, and a typo caught at the keyboard is one that never
+ * becomes an entry that silently matches nobody.
+ */
+export const USERNAME = /^[A-Za-z0-9_]{1,16}$/
+
+/**
+ * How far a player on the list is trusted.
+ *
+ * **Two powers, not one.** `chat` lets somebody make an agent talk and report; `commands` also lets
+ * them run server commands through it, under whatever permissions the agent's Minecraft account
+ * holds. That second one is close to handing over the account — on an operator bot it is `/op` — so
+ * it is a deliberate second step rather than something being on the list already grants.
+ */
+export const TRUST = { chat: 'chat', commands: 'commands' } as const
+
+export type Trust = (typeof TRUST)[keyof typeof TRUST]
+
+export interface TrustedPlayer {
+  name: string
+  trust: Trust
+}
+
+/**
+ * A player list, from the one string a setting can hold.
+ *
+ * Comma-separated, because a setting is a string and this has to survive a round trip through a map
+ * the backend stores whole and never reads. Tolerant on the way in — commas, spaces or newlines, in
+ * any combination — since the obvious thing to do with a box of names is paste some.
+ */
+export function playersFrom(value: string | undefined): TrustedPlayer[] {
+  const seen = new Set<string>()
+  const players: TrustedPlayer[] = []
+
+  for (const entry of (value ?? '').split(/[\s,]+/)) {
+    // `name` or `name:commands`. A username cannot contain a colon, so the split is unambiguous —
+    // and a tier this build does not recognise falls back to `chat` rather than to the powerful one.
+    const [name, tier] = entry.split(':')
+    if (!name || !USERNAME.test(name)) continue
+
+    // Minecraft compares names case-insensitively, so two spellings are one entry — and the first
+    // spelling wins, because that is the one somebody actually typed.
+    if (seen.has(name.toLowerCase())) continue
+
+    seen.add(name.toLowerCase())
+    players.push({ name, trust: tier === TRUST.commands ? TRUST.commands : TRUST.chat })
+  }
+
+  return players
+}
+
+/** The inverse. Empty stays empty, which is what {@link saveSettings} strips as "never set".
+ *
+ * The tier is written only when it is the elevated one, so the ordinary case stays a plain list of
+ * names — readable in the database, and unchanged from before the tiers existed. */
+export function playersTo(players: TrustedPlayer[]): string {
+  return players.map(({ name, trust }) => (trust === TRUST.commands ? `${name}:${trust}` : name)).join(',')
+}
 
 /** Every key this build knows, for telling a stored setting from one left by an older Osmium. */
 export const KNOWN_KEYS = new Set(SETTING_GROUPS.flatMap((group) => group.fields.map((field) => field.key)))

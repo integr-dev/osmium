@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, type Component, type WritableComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Blocks, Check, MessageSquare, Plug, RotateCcw, SlidersHorizontal } from 'lucide-vue-next'
+import { Blocks, Check, MessageSquare, Plug, RotateCcw, SlidersHorizontal, Users } from 'lucide-vue-next'
 import {
   groupLabel,
   optionLabel,
@@ -11,8 +11,10 @@ import {
   settingsOf,
   SETTING_GROUPS,
   type AgentSettings,
+  type SettingField,
 } from '../lib/configuration'
 import AgentPicker from '../components/AgentPicker.vue'
+import PlayerListField from '../components/PlayerListField.vue'
 import RegexField from '../components/RegexField.vue'
 import SwapBox from '../components/SwapBox.vue'
 import TabBar, { type Tab as Strip } from '../components/TabBar.vue'
@@ -37,9 +39,10 @@ const agentStore = useAgentStore()
 /**
  * One tab per group, because a chat pattern and a reconnect policy are not read in the same sitting.
  *
- * **The form is still one form.** Every tab edits the same map and Update sends the whole of it, so
- * moving between them loses nothing and there is no per-tab save to get out of step. The tabs are
- * about how much is on screen at once, and nothing else.
+ * **Update sends the tab on screen, and only that tab.** Each agent keeps everything it already had
+ * and gets the fields in front of the operator — which is also what stops a bulk apply from carrying
+ * one server's chat patterns onto agents playing somewhere else. Edits left behind another tab are
+ * named under the button rather than saved silently or thrown away.
  *
  * The icons live here rather than in the schema: which glyph reads as "chat" is a question about
  * this view, and the settings file has no business importing components. A group without one simply
@@ -49,6 +52,7 @@ const ICONS: Record<string, Component> = {
   chat: MessageSquare,
   mc: Blocks,
   connect: Plug,
+  players: Users,
 }
 
 const TABS: readonly string[] = SETTING_GROUPS.map((group) => group.key)
@@ -116,11 +120,40 @@ const switches: Record<string, WritableComputedRef<boolean>> = Object.fromEntrie
     ]),
 )
 
-const dirty = computed(
-  () =>
-    settings.value !== null &&
-    original.value !== null &&
-    JSON.stringify(settings.value) !== JSON.stringify(original.value),
+/** Whether [fields] hold anything other than what was loaded. */
+function changed(fields: readonly SettingField[]): boolean {
+  const now = settings.value
+  const was = original.value
+  if (!now || !was) return false
+
+  return fields.some((field) => now[field.key] !== was[field.key])
+}
+
+/**
+ * The fields of this tab that are worth showing, given the rest of the form.
+ *
+ * Only what is drawn — `update` still sends the whole tab, hidden fields included. A field is hidden
+ * because the question does not arise, not because the answer stopped counting, and dropping it from
+ * the payload would clear a choice the operator made before they turned the other setting off.
+ */
+const showing = computed(() =>
+  (active.value?.fields ?? []).filter((field) => !field.showWhen || field.showWhen(settings.value ?? {})),
+)
+
+/** The tab on screen, which is the only thing Update sends. */
+const dirty = computed(() => changed(active.value?.fields ?? []))
+
+/**
+ * Tabs that hold edits Update will not send.
+ *
+ * Named rather than merely counted. Update applies one tab, so an operator who edited chat, moved to
+ * Minecraft and pressed the button has unsaved work behind them — and the one thing worse than
+ * finding that out is not finding out.
+ */
+const unsentElsewhere = computed(() =>
+  SETTING_GROUPS.filter((group) => group.key !== tab.value && changed(group.fields)).map((group) =>
+    t(groupLabel(group.key)),
+  ),
 )
 
 onMounted(() => {
@@ -148,19 +181,42 @@ watch(
   { immediate: true },
 )
 
+/** Puts back what this tab was loaded with, leaving the other tabs' edits where they are. */
 function reset() {
-  if (original.value) settings.value = { ...original.value }
+  const was = original.value
+  if (!was || !settings.value) return
+
+  for (const field of active.value?.fields ?? []) settings.value[field.key] = was[field.key] ?? ''
   saved.value = null
 }
 
+/**
+ * Sends **this tab**, and only this tab.
+ *
+ * **Merged onto each agent's own stored settings, not onto the form's.** The endpoint takes the
+ * whole set and treats an absent key as cleared, so sending the tab's keys alone would wipe every
+ * other tab. Merging onto the *form* would be almost as wrong in the other direction: the form was
+ * seeded from the first agent checked, so pushing it to four more would carry that agent's chat
+ * patterns onto servers they were never written for — which is how two agents on two servers ended
+ * up with one server's format.
+ *
+ * So each agent keeps everything it already had, and gets exactly the fields on screen.
+ */
 async function update() {
   const applyTo = targets.value
-  if (!applyTo.length || !settings.value) return
+  const editing = settings.value
+  const fields = active.value?.fields
+  if (!applyTo.length || !editing || !fields) return
+
+  const page = Object.fromEntries(fields.map((field) => [field.key, editing[field.key] ?? '']))
 
   busy.value = true
   try {
-    await Promise.all(applyTo.map((agent) => saveSettings(agent.id, settings.value as AgentSettings)))
-    original.value = { ...settings.value }
+    await Promise.all(applyTo.map((agent) => saveSettings(agent.id, { ...settingsOf(agent), ...page })))
+
+    // Only what was sent is now saved. The other tabs stay dirty, because they are.
+    if (original.value) Object.assign(original.value, page)
+
     saved.value =
       applyTo.length === 1
         ? t('configuration.updated', { name: applyTo[0].label })
@@ -216,7 +272,7 @@ async function update() {
           -->
           <div v-else-if="!settings" class="flex flex-col gap-4">
             <div class="skeleton h-8 w-64"></div>
-            <div v-for="field in active?.fields ?? []" :key="field.key" class="flex flex-col gap-1.5">
+            <div v-for="field in showing" :key="field.key" class="flex flex-col gap-1.5">
               <div class="skeleton h-4 w-44"></div>
               <div class="skeleton h-8 w-full max-w-xs"></div>
             </div>
@@ -243,7 +299,7 @@ async function update() {
                     Stacked rather than in a row: a pattern is a line of code, and it needs the width of
                     the panel plus room underneath for what it reads out of a sample line.
                   -->
-                  <div v-for="field in active?.fields ?? []" :key="field.key" class="flex flex-col gap-1.5">
+                  <div v-for="field in showing" :key="field.key" class="flex flex-col gap-1.5">
                     <!--
                       A switch sits beside its label rather than under it: the control is the width of a
                       thumb, and a whole row of empty space between the two reads as a missing field.
@@ -275,6 +331,11 @@ async function update() {
                         :placeholder="field.default"
                       />
 
+                      <PlayerListField
+                        v-else-if="field.type === 'players'"
+                        v-model="settings[field.key] as string"
+                      />
+
                       <select
                         v-else-if="field.type === 'choice'"
                         v-model="settings[field.key]"
@@ -301,15 +362,19 @@ async function update() {
             </SwapBox>
 
             <!--
-              Outside the tabs on purpose. Update sends the whole map, so an operator who edited two
-              groups presses one button — and a save that lived inside a tab would look like it only
-              covered what was on screen.
+              Update sends the tab on screen and nothing else, so what it will and will not send has
+              to be legible from here: this tab's state on the left, and any tab left behind named
+              rather than counted.
             -->
-            <div class="border-base-300 flex items-center gap-3 border-t pt-4">
+            <div class="border-base-300 flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-4">
               <span v-if="dirty" class="text-warning text-xs">{{ t('configuration.unsaved') }}</span>
               <span v-else-if="saved" class="text-success flex items-center gap-1 text-xs">
                 <Check class="size-3.5" />
                 {{ saved }}
+              </span>
+
+              <span v-if="unsentElsewhere.length" class="text-xs opacity-60">
+                {{ t('configuration.unsentElsewhere', { tabs: unsentElsewhere.join(', ') }) }}
               </span>
 
               <button

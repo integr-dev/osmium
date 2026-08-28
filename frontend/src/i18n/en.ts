@@ -102,6 +102,11 @@ export const en = {
     /** A line the host could not attribute to any player: a join notice, command output, or a chat
      * format it has no pattern for. Never the agent that happened to overhear it. */
     fromServer: 'server',
+    /**
+     * A burst of live lines arriving at once — a backgrounded tab whose stream was buffered, looked
+     * at again. Says that the transcript jumping is the backlog landing rather than a glitch.
+     */
+    catchingUp: 'catching up…',
     speakerOffline: '{name} is not in game.',
     hostOffline: 'Host {host} is unreachable.',
   },
@@ -661,11 +666,13 @@ export const en = {
     selected: '{count} selected',
     valuesFrom: 'Showing {name}’s settings.',
     appliesTo: 'Applies to {count} agent | Applies to {count} agents',
-    update: 'Update settings',
+    update: 'Update this tab',
     updating: 'Sending…',
     updated: 'Settings sent to {name}.',
     updatedMany: 'Settings sent to {count} agents.',
     unsaved: 'Unsaved changes.',
+    /** Update sends the tab on screen, so anything edited behind it has to say so. */
+    unsentElsewhere: 'Also edited, and not sent: {tabs}.',
     reset: 'Discard changes',
     /**
      * Kept whether or not the host is reachable — configuration is a preference, not an action, and
@@ -677,6 +684,26 @@ export const en = {
       chat: 'Chat',
       mc: 'Minecraft',
       connect: 'Connection',
+      players: 'Players',
+    },
+
+    /** The list editor itself, shared by every `players` field. */
+    players: {
+      add: 'Add a player',
+      remove: 'Remove {name}',
+      empty: 'Nobody yet, so this agent takes no chat commands at all.',
+      notAName: 'Minecraft names are letters, digits and underscores, up to sixteen.',
+      alreadyThere: 'Already on the list.',
+      /**
+       * Named situations rather than a general warning. Osmium identifies a speaker from the chat
+       * format it was given, because a server that reformats chat sends no sender at all — so the
+       * name is reconstructed, never verified.
+       */
+      disclaimer: 'Osmium reads these names out of chat, it cannot prove them. A server that allows nicknames, or one in offline mode, can put anybody behind a trusted name — and a wrong chat format can too. Only grant Commands where you would hand over the account.',
+      trust: 'What this player may do',
+      chat: 'Chat',
+      commands: 'Commands',
+      count: '{count} player | {count} players',
     },
 
     /**
@@ -696,9 +723,21 @@ export const en = {
         label: 'How this server writes a whisper the agent sent',
         hint: 'The other direction: a private message this agent sent, coming back from the server. Without it an operator’s own whisper returns unattributable and reads as the server talking. The capture group is who it went to.',
       },
+      chat_whisperCommand: {
+        label: 'How to send a private message',
+        hint: 'The command the agent uses to whisper somebody back — a command asked privately is answered privately. {name} and {message} are filled in. Leave empty for /msg, which most servers accept.',
+      },
       mc_version: {
         label: 'Minecraft version',
         hint: 'Leave empty to ask the server, which is right almost always. Set it for a server that refuses a version check or answers one dishonestly — behind a proxy, or with bot protection in front. Applies from the next connect.',
+      },
+      mc_takeKnockback: {
+        label: 'Knockback',
+        hint: 'Whether the agent is pushed by hits, explosions and anything else that shoves. Off means it stands where it is — useful for a builder that must not be nudged off a scaffold, and conspicuous on a server that watches for it.',
+        options: {
+          auto: 'Take it, like a player',
+          false: 'Ignore it',
+        },
       },
       mc_knockback: {
         label: 'Correct knockback',
@@ -708,6 +747,10 @@ export const en = {
           true: 'Always',
           false: 'Never',
         },
+      },
+      players_whitelist: {
+        label: 'Trusted players',
+        hint: 'Who may command this agent from in game, with !osm. Empty means nobody. Chat lets somebody make the agent talk and identify itself; Commands also lets them run server commands through it, under whatever permissions its Minecraft account holds — on an operator account that is close to handing it over.',
       },
       connect_rejoin: {
         label: 'Rejoin automatically',
