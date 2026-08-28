@@ -196,8 +196,15 @@ function choose(key: string): void {
         </select>
       </label>
 
-      <!-- Once the rail has stopped moving. See `drawn`. -->
-      <ChatPanel v-if="drawn" :scope="scope" :speaker="speaker" />
+      <!--
+        Once the rail has stopped moving. See `drawn`.
+
+        **Keyed on the scope**, so switching servers builds a new panel rather than re-pointing the
+        one on screen. Re-pointing meant every piece of state inside it had to be reset in the right
+        order — the items, the cursor, the scroll observer — and anything missed showed the previous
+        server's conversation under the new server's name. A remount cannot get that wrong.
+      -->
+      <ChatPanel v-if="drawn" :key="scopeKey(scope)" :scope="scope" :speaker="speaker" />
       <div v-else class="flex flex-1 flex-col gap-2 p-3">
         <div v-for="line in 6" :key="line" class="skeleton h-8 w-full"></div>
       </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Send, Server, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
@@ -7,7 +7,7 @@ import McText from './McText.vue'
 
 import type { ChatMessageResponse } from '../api/client'
 import { fetchChatPage } from '../api/feeds'
-import { agentBehind, agentsByAccount, belongsTo, scopeFilter, scopeKey, type ChatScope } from '../lib/chat'
+import { agentBehind, agentsByAccount, belongsTo, scopeFilter, type ChatScope } from '../lib/chat'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -51,19 +51,26 @@ onMounted(async () => {
   scroll.start()
 })
 
-// Keyed on the scope's identity rather than the object, so a parent rebuilding an equivalent scope
-// does not throw away the page it is already showing. Re-arms rather than starting again: the
-// sentinel is the same element, and a second observer on it would never be disconnected.
-watch(
-  () => scopeKey(props.scope),
-  async () => {
-    await feed.reset()
-    await scroll.rearm()
-  },
-)
-
 /** What the host calls a line it could not attribute to a player. */
 const SERVER_SENDER = 'server'
+
+/**
+ * Lines arriving faster than anybody is reading them.
+ *
+ * A backgrounded tab keeps its stream open and the browser holds the events; looking at it again
+ * flushes the lot in one go, and a transcript that grows by thirty lines in a frame reads as a
+ * glitch rather than as a conversation. This says which it was. It is about the **live** stream and
+ * so is not `loading`, which is a fetch nobody triggered here.
+ */
+const catchingUp = ref(false)
+
+/** Enough lines at once to be a flush rather than a conversation. */
+const BURST = 3
+/** How long the stream has to go quiet before the burst is over. */
+const BURST_QUIET_MS = 600
+
+let arrived = 0
+let settle: number | undefined
 
 /**
  * Sending is fire and forget.
@@ -83,9 +90,21 @@ const stopListening = agentStore.onFeedEvent((name, data) => {
   if (!belongsTo(line, props.scope)) return
 
   feed.prepend(line)
+
+  arrived += 1
+  if (arrived >= BURST) catchingUp.value = true
+
+  window.clearTimeout(settle)
+  settle = window.setTimeout(() => {
+    arrived = 0
+    catchingUp.value = false
+  }, BURST_QUIET_MS)
 })
 
-onBeforeUnmount(stopListening)
+onBeforeUnmount(() => {
+  stopListening()
+  window.clearTimeout(settle)
+})
 
 async function loadMore(): Promise<void> {
   await feed.more()
@@ -183,11 +202,28 @@ function involvesAgent(line: ChatMessageResponse): boolean {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col gap-2">
+  <div class="relative flex min-h-0 flex-1 flex-col gap-2">
     <div v-if="error" role="alert" class="alert alert-error alert-soft">
       <TriangleAlert class="size-4" />
       <span>{{ error }}</span>
     </div>
+
+    <!--
+      Over the transcript rather than in it, so a flush of thirty lines does not also move the
+      conversation down by a row. Announced politely: it is reassurance about motion on screen, not
+      something to interrupt a screen reader mid-line for.
+    -->
+    <Transition name="fade">
+      <p
+        v-if="catchingUp"
+        role="status"
+        aria-live="polite"
+        class="bg-base-300/80 text-base-content/70 pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-fit items-center gap-2 rounded-b-lg px-3 py-1 text-xs backdrop-blur"
+      >
+        <span class="loading loading-spinner loading-xs"></span>
+        {{ t('chat.catchingUp') }}
+      </p>
+    </Transition>
 
     <div ref="scrollBox" class="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
       <!--
@@ -258,7 +294,10 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           <div class="skeleton h-3 flex-1" :style="{ maxWidth: `${8 + ((row * 11) % 13)}rem` }"></div>
         </div>
       </div>
-      <p v-else-if="loading" class="py-10 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
+      <p v-else-if="loading" class="flex items-center justify-center gap-2 py-6 text-sm opacity-50">
+        <span class="loading loading-spinner loading-xs"></span>
+        {{ t('common.loading') }}
+      </p>
       <p v-else-if="!items.length" class="py-10 text-center text-sm opacity-50">
         {{ t('dashboard.noChat') }}
       </p>
