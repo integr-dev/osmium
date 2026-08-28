@@ -109,4 +109,38 @@ describe('useFeed', () => {
 
     expect(calls).toEqual([null, '3'])
   })
+
+  /**
+   * A chat panel switched to another server while its first page was still in flight. The guard
+   * against a doubled `more` swallowed the reset, so the new server was never fetched and the old
+   * server's page arrived and filled the panel — somebody else's conversation, with nothing saying
+   * so.
+   */
+  it('does not swallow a reset that arrives during a load', async () => {
+    const pages: Array<(page: FeedPage<number>) => void> = []
+    const calls: (string | null)[] = []
+
+    const feed = useFeed<number>((cursor) => {
+      calls.push(cursor)
+      return new Promise((resolve) => pages.push(resolve))
+    })
+
+    const first = feed.reset()
+    const second = feed.reset()
+
+    expect(calls).toEqual([null, null])
+
+    // The superseded request answers first, and must not be what the panel ends up showing.
+    pages[0]!({ items: [1, 2, 3], nextCursor: 'old' })
+    await first
+    expect(feed.items.value).toEqual([])
+    // Still loading: its replacement is in flight, and clearing the flag would drop the spinner.
+    expect(feed.loading.value).toBe(true)
+
+    pages[1]!({ items: [9], nextCursor: null })
+    await second
+
+    expect(feed.items.value).toEqual([9])
+    expect(feed.loading.value).toBe(false)
+  })
 })

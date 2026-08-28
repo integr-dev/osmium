@@ -99,21 +99,9 @@ export const en = {
     noListener: 'No agent is online here, so nothing is forwarding this server’s chat.',
     noServers: 'No servers yet. Assign an agent to one to read its chat.',
     noSpeaker: 'Nobody is in game here to speak through.',
-    /** A line the backend accepted but the host has not echoed back into the transcript yet. */
-    sending: 'sending',
     /** A line the host could not attribute to any player: a join notice, command output, or a chat
      * format it has no pattern for. Never the agent that happened to overhear it. */
     fromServer: 'server',
-    /**
-     * The server never said the line back. Not stated as a failure — it may well have been said and
-     * the echo lost — but not left looking like an ordinary line either.
-     *
-     * A message is drawn from the server's own echo, so that an agent's words carry the same rank
-     * and colours as everybody else's. This is what shows when that echo does not arrive: muted,
-     * rate-limited, filtered, or a chat format the host has no pattern for. Commands do not wait,
-     * having nothing to wait for.
-     */
-    notEchoed: 'not confirmed',
     speakerOffline: '{name} is not in game.',
     hostOffline: 'Host {host} is unreachable.',
   },

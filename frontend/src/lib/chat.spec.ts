@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { belongsTo, parseScopeKey, scopeFilter, scopeKey, speakerCandidates } from './chat'
+import { agentBehind, agentsByAccount, belongsTo, parseScopeKey, scopeFilter, scopeKey, speakerCandidates } from './chat'
 import type { ChatMessageResponse } from '../api/client'
 import type { FleetAgent } from '../stores/agents'
 
@@ -116,5 +116,56 @@ describe('who can speak', () => {
 
   it('offers nobody for an agent it has never heard of', () => {
     expect(speakerCandidates([], AGENT)).toEqual([])
+  })
+})
+
+/**
+ * Chat names an account and an operator thinks in agents, and one account can be played by two
+ * agents on two servers. Keyed on the account alone, the second overwrote the first and every line
+ * from either was labelled with whichever happened to be built last.
+ */
+describe('the agent behind a line', () => {
+  const bot = (id: number, label: string, mcUsername: string, serverAddress: string | null) =>
+    ({ id, label, mcUsername, serverAddress, state: 'ONLINE' }) as FleetAgent
+
+  const HERE = bot(1, 'eu-builder', 'Mason_04', 'mc.example.com:25565')
+  const THERE = bot(2, 'us-builder', 'Mason_04', 'other.example.com:25565')
+
+  it('tells two agents sharing an account apart by server', () => {
+    const named = agentsByAccount([HERE, THERE])
+
+    expect(agentBehind(line({ from: 'Mason_04', serverAddress: 'mc.example.com:25565' }), named)).toBe('eu-builder')
+    expect(agentBehind(line({ from: 'Mason_04', serverAddress: 'other.example.com:25565' }), named)).toBe('us-builder')
+  })
+
+  it('matches however the server cased the name', () => {
+    const named = agentsByAccount([HERE])
+
+    expect(agentBehind(line({ from: 'mason_04', serverAddress: 'mc.example.com:25565' }), named)).toBe('eu-builder')
+  })
+
+  /** An agent moved to another server would otherwise lose its name on everything it said before. */
+  it('still names a sole player of an account on a line from anywhere', () => {
+    const named = agentsByAccount([HERE])
+
+    expect(agentBehind(line({ from: 'Mason_04', serverAddress: 'moved.example.com:25565' }), named)).toBe('eu-builder')
+  })
+
+  /** The ambiguity the pair exists to settle is real here, so guessing is worse than saying nothing. */
+  it('says nothing rather than guessing when the account is shared', () => {
+    const named = agentsByAccount([HERE, THERE])
+
+    expect(agentBehind(line({ from: 'Mason_04', serverAddress: 'moved.example.com:25565' }), named)).toBeUndefined()
+  })
+
+  it('says nothing about an account the fleet does not play', () => {
+    const named = agentsByAccount([HERE])
+
+    expect(agentBehind(line({ from: 'Notch' }), named)).toBeUndefined()
+    expect(agentBehind(line({ from: 'server' }), named)).toBeUndefined()
+  })
+
+  it('ignores an agent that has never been set up', () => {
+    expect(agentsByAccount([bot(3, 'unlinked', '', null)]).size).toBe(0)
   })
 })

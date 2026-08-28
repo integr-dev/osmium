@@ -43,12 +43,33 @@ export function useFeed<T>(
   const exhausted = ref(false)
   const cursor = ref<string | null>(null)
 
+  /**
+   * Which load is the current one.
+   *
+   * A reset that happened while a request was in flight used to be dropped on the floor by the
+   * guard below, because `loading` was already true. Switching a chat panel to another server
+   * during its first page therefore cleared the list, never fetched the new one, and then filled it
+   * with the *old* server's page when the original request landed — a panel showing somebody else's
+   * conversation with nothing saying so.
+   *
+   * So a fresh load always starts, and the newest one is the only one allowed to write. A request
+   * that has been superseded returns without touching anything, `loading` included: its replacement
+   * is still running, and clearing the flag would take the spinner away mid-load.
+   */
+  let current = 0
+
   async function load(fresh: boolean): Promise<void> {
-    if (loading.value) return
+    // Paging older is still guarded against itself — an observer can fire twice before the first
+    // page lands, and that really would be the same request twice.
+    if (loading.value && !fresh) return
+
+    const mine = (current += 1)
     loading.value = true
     error.value = null
 
     const result = await fetchPage(fresh ? null : cursor.value)
+
+    if (mine !== current) return
     loading.value = false
 
     if ('error' in result) {

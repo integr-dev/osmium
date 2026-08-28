@@ -759,17 +759,25 @@ since it is the one already forwarding the conversation being read. A server nob
 has no global feed at all, so the rail says so rather than showing an empty panel, which would read
 as a quiet server instead of a missing one.
 
-**A sent line is shown before it is confirmed, and marked as unconfirmed.** A 2xx from the send
-endpoint means the backend accepted the message for delivery, not that anything was said — the line
-enters the transcript when the host echoes it back, a round trip through a Minecraft server away.
-Clearing the box on that 2xx and drawing nothing meant the message was simply gone from the screen
-in between, and gone permanently if the host dropped it.
+**Sending is fire and forget.** The box clears on a 2xx and the line appears when the host echoes it
+back, the same way everybody else's does — carrying the rank, the colours and the prefix the server
+put on it. That is the version worth reading, and waiting for it is the only honest way to show it.
 
-So it appears at once, dimmed and italic with a clock beside it, and the echo retires it. Matched on
-text rather than id, because the two have no id in common: the backend mints one when the host
-reports the line, long after the placeholder was drawn. After ten seconds with no echo the clock
-becomes a warning and the line reads *not confirmed* — not *failed*, since the message may well have
-been said and only the echo lost, but not left looking like ordinary chat either.
+There used to be a placeholder: the line drawn dimmed the moment the backend accepted it, matched
+against the echo by text, and marked *not confirmed* after ten seconds. It cost a race with the echo
+— a local host can beat the POST it was sent by, which drew the line twice — a grace timer, and an
+unmatched-echo buffer to unpick the race. All to answer a question the feed itself already answers.
+
+**Which agent said a line is matched on the account *and* the server.** Chat names a Minecraft
+account, an operator thinks in agents, and one account can be played by two agents on two servers.
+Keyed on the account alone the second overwrote the first, and every line from either was labelled
+with whichever agent happened to be built last. An account played by exactly one agent still
+resolves by name alone, so moving an agent between servers does not blank its own history.
+
+**A first page and an older one are different waits.** Switching servers empties the panel and
+fetches a whole transcript, which takes long enough that a single centred word read as a blank
+panel; it now draws skeleton lines in place of what it is about to show. Paging older keeps the one
+line, because the conversation is still on screen and the wait happens off the top edge.
 
 ### Chat is drawn as the server styled it
 
@@ -1165,7 +1173,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-365 unit tests on Vitest with jsdom, in two groups.
+376 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in

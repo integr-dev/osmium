@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Send, Server, TriangleAlert } from 'lucide-vue-next'
+import { Send, Server, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
 import McText from './McText.vue'
 
 import type { ChatMessageResponse } from '../api/client'
 import { fetchChatPage } from '../api/feeds'
-import { belongsTo, scopeFilter, scopeKey, type ChatScope } from '../lib/chat'
+import { agentBehind, agentsByAccount, belongsTo, scopeFilter, scopeKey, type ChatScope } from '../lib/chat'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -62,79 +62,27 @@ watch(
   },
 )
 
-/**
- * Lines sent from here that the host has not echoed back yet.
- *
- * Sending cleared the box on a 2xx and put nothing anywhere. But a 2xx only means the backend
- * accepted the message for delivery — the line enters the transcript when the host echoes it, which
- * is a round trip through a Minecraft server away. In between, the message was simply gone from the
- * screen; and if the host dropped it, gone for good with nothing ever saying so.
- *
- * So it is shown immediately, marked as unconfirmed, and either replaced by the real line or —
- * after [ECHO_GRACE_MS] — marked as never having arrived. What is never done is claim it was said.
- */
-interface PendingLine {
-  key: number
-  text: string
-  at: string
-  stalled: boolean
-}
-
-const pending = ref<PendingLine[]>([])
-
-/** Local identity only. The backend's id arrives with the echo, by which point this line is gone. */
-let nextKey = 0
-
-/**
- * Echoes that arrived before the send they belong to had come back.
- *
- * The placeholder is added once the backend has accepted the message — deliberately, see above —
- * and the host can beat that. It goes to the host over a socket that is already open, into the
- * game and back onto the feed while the POST is still in flight; on a local host that round trip
- * is a few milliseconds and the POST is not. The echo then found nothing to retire, the
- * placeholder was added behind it, and the transcript showed the line twice — once said, once
- * sending — until the grace ran out and the second copy accused the first of never arriving.
- *
- * So an unmatched echo is remembered instead, and the send it belongs to skips its placeholder.
- * Matched on text like the other direction, because there is still no id in common at this point.
- */
-let overtook: Array<{ text: string; at: number }> = []
-
-/**
- * How long the host gets to echo before the line is called into question.
- *
- * A message goes to the host, into Minecraft, and comes back on the chat feed. Several seconds is
- * ordinary; ten is not, and quietly waiting forever is what this exists to stop.
- */
-const ECHO_GRACE_MS = 10_000
-
 /** What the host calls a line it could not attribute to a player. */
 const SERVER_SENDER = 'server'
 
+/**
+ * Sending is fire and forget.
+ *
+ * There used to be a placeholder here: the line was drawn dimmed the moment the backend accepted
+ * it, matched against the host's echo by text, and marked "not confirmed" if no echo arrived. It
+ * cost a race with the echo, a grace timer, and a second copy of every line that overtook its own
+ * placeholder — all to answer a question an operator can already answer by looking at the feed.
+ *
+ * A message appears when it is said, the same way everybody else's does, carrying the rank and the
+ * colours the server put on it. That is the version worth reading, and waiting for it is the only
+ * honest way to show it.
+ */
 const stopListening = agentStore.onFeedEvent((name, data) => {
   if (name !== 'chat') return
   const line = data as ChatMessageResponse
   if (!belongsTo(line, props.scope)) return
 
-  // The echo of something sent from here retires its placeholder. Matched on the text of the
-  // oldest unconfirmed line rather than on an id, because the two have no id in common: the
-  // backend mints one when the host reports the line, long after this was drawn.
-  if (line.scope === 'OUTBOUND') {
-    // Contained rather than equal. What comes back is the server's rendering of the line — a rank,
-    // a colour, `<Name>` in front — and only the words that were typed survive inside it.
-    const at = pending.value.findIndex((entry) => line.text.includes(entry.text))
-    if (at !== -1) pending.value = pending.value.filter((_, index) => index !== at)
-    else overtook.push({ text: line.text, at: Date.now() })
-  }
-
   feed.prepend(line)
-})
-
-// A pending line belongs to the conversation it was sent into. Carried across a scope change it
-// would appear under somebody else's transcript as though it had been said there.
-watch(() => scopeKey(props.scope), () => {
-  pending.value = []
-  overtook = []
 })
 
 onBeforeUnmount(stopListening)
@@ -171,25 +119,6 @@ async function send(): Promise<void> {
   try {
     await agentStore.say(props.speaker.id, text)
     message.value = ''
-
-    // Nothing to wait for: the echo of this very message is already on the transcript.
-    const now = Date.now()
-    overtook = overtook.filter((echo) => now - echo.at < ECHO_GRACE_MS)
-    const raced = overtook.findIndex((echo) => echo.text.includes(text))
-    if (raced !== -1) {
-      overtook.splice(raced, 1)
-      return
-    }
-
-    // Only once the backend has accepted it. Drawn before the request, a refused message would
-    // have appeared in the transcript and then vanished, which is worse than never showing it.
-    const entry: PendingLine = { key: nextKey++, text, at: new Date().toISOString(), stalled: false }
-    pending.value = [entry, ...pending.value]
-
-    window.setTimeout(() => {
-      const waiting = pending.value.find((line) => line.key === entry.key)
-      if (waiting) waiting.stalled = true
-    }, ECHO_GRACE_MS)
   } catch (failure) {
     sendError.value = failure instanceof Error ? failure.message : t('errors.sendMessage')
   } finally {
@@ -213,29 +142,12 @@ function fromServer(line: ChatMessageResponse): boolean {
   return line.from === SERVER_SENDER
 }
 
-/**
- * Every Minecraft account the fleet plays, by name, pointing at the agent that plays it.
- *
- * Chat names an account; an operator thinks in agents. The two are the same thing seen from either
- * end of the setup, and this is the only place that can join them — a host reports who spoke, and
- * has no idea which of Osmium's agents that is.
- *
- * Lower-cased, because Minecraft compares names that way and a formatter may not preserve the case
- * the account was registered with.
- */
-const fleetNames = computed(() => {
-  const named = new Map<string, string>()
-
-  for (const agent of agentStore.agents) {
-    if (agent.mcUsername) named.set(agent.mcUsername.toLowerCase(), agent.label)
-  }
-
-  return named
-})
+/** Every account the fleet plays, by account **and** server — see `agentsByAccount`. */
+const fleetNames = computed(() => agentsByAccount(agentStore.agents))
 
 /** The agent behind a line, when the account that said it is one of ours. */
-function agentBehind(line: ChatMessageResponse): string | undefined {
-  return fleetNames.value.get(line.from.toLowerCase())
+function nameBehind(line: ChatMessageResponse): string | undefined {
+  return agentBehind(line, fleetNames.value)
 }
 
 /**
@@ -284,31 +196,6 @@ function involvesAgent(line: ChatMessageResponse): boolean {
         the full note.
       -->
       <TransitionGroup name="feed" tag="div" class="flex flex-col-reverse gap-1">
-        <!--
-          Unconfirmed lines, newest-first like everything else, and therefore first in the reversed
-          column. Dimmed and marked rather than drawn as ordinary chat: the point is that the host
-          has not said this was said, and rendering it identically would be claiming that it was.
-        -->
-        <p
-          v-for="line in pending"
-          :key="`pending-${line.key}`"
-          class="flex items-start gap-2 px-1 text-sm"
-        >
-          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
-          <component
-            :is="line.stalled ? TriangleAlert : Clock"
-            class="mt-1 size-3.5 shrink-0"
-            :class="line.stalled ? 'text-warning' : 'opacity-40'"
-          />
-          <span class="min-w-0 flex-1 break-words italic opacity-50">{{ line.text }}</span>
-          <span
-            class="shrink-0 pt-0.5 text-xs"
-            :class="line.stalled ? 'text-warning' : 'opacity-40'"
-          >
-            {{ line.stalled ? t('chat.notEchoed') : t('chat.sending') }}
-          </span>
-        </p>
-
         <p v-for="line in items" :key="line.id" class="flex items-start gap-2 px-1 text-sm">
           <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
           <!--
@@ -324,8 +211,8 @@ function involvesAgent(line: ChatMessageResponse): boolean {
             it comes first, because that is the name the operator gave it and the one they are
             looking for.
           -->
-          <span v-if="agentBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
-            {{ agentBehind(line) }}
+          <span v-if="nameBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
+            {{ nameBehind(line) }}
           </span>
           <!--
             The account name, but only when the line does not already carry one. A server-rendered
@@ -356,8 +243,23 @@ function involvesAgent(line: ChatMessageResponse): boolean {
         </p>
       </TransitionGroup>
 
-      <p v-if="loading" class="py-10 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
-      <p v-else-if="!items.length && !pending.length" class="py-10 text-center text-sm opacity-50">
+      <!--
+        A first page and an older one are different waits and read differently. Switching servers
+        empties the panel and fetches a whole transcript, which takes long enough that a single
+        centred word looked like a blank panel — so it stands in for the lines it is about to
+        replace. Paging older keeps the one line, because the conversation is still on screen and
+        the wait happens off the top edge.
+      -->
+      <div v-if="loading && !items.length" class="flex flex-col-reverse gap-2 py-2" aria-busy="true">
+        <div v-for="row in 8" :key="row" class="flex items-start gap-2 px-1">
+          <div class="skeleton h-3 w-10 shrink-0"></div>
+          <div class="skeleton size-4 shrink-0 rounded"></div>
+          <div class="skeleton h-3 shrink-0" :style="{ width: `${3 + ((row * 7) % 5)}rem` }"></div>
+          <div class="skeleton h-3 flex-1" :style="{ maxWidth: `${8 + ((row * 11) % 13)}rem` }"></div>
+        </div>
+      </div>
+      <p v-else-if="loading" class="py-10 text-center text-sm opacity-50">{{ t('common.loading') }}</p>
+      <p v-else-if="!items.length" class="py-10 text-center text-sm opacity-50">
         {{ t('dashboard.noChat') }}
       </p>
 

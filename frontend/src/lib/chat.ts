@@ -31,6 +31,51 @@ export function scopeFilter(scope: ChatScope): { agentId: number } | { server: s
 }
 
 /**
+ * Which of the fleet's agents said a line, when one of them did.
+ *
+ * Chat names an **account**; an operator thinks in **agents**. This is the only place the two can be
+ * joined — a host reports who spoke and has no idea which of Osmium's agents that is.
+ *
+ * **Matched on the account *and* the server**, because one Minecraft account can be played by two
+ * agents on two servers. Keyed on the account alone, the second agent overwrote the first and every
+ * line from either was labelled with whichever happened to be built last.
+ *
+ * The fallback keeps the common case working. An agent moved to a different server would otherwise
+ * lose its name on everything it said before the move, since the line carries the address it was
+ * said on. So an account played by exactly one agent still resolves by name alone — the ambiguity
+ * the pair exists to settle does not exist there.
+ *
+ * Lower-cased, because Minecraft compares names that way and a formatter may not preserve the case
+ * the account was registered with.
+ */
+export function agentsByAccount(agents: FleetAgent[]): Map<string, string> {
+  const named = new Map<string, string>()
+  const labelsFor = new Map<string, string[]>()
+
+  for (const agent of agents) {
+    if (!agent.mcUsername) continue
+
+    const account = agent.mcUsername.toLowerCase()
+    // Joined by a character neither an account nor an address can contain, like widestGap does.
+    named.set(`${account}\u0000${agent.serverAddress ?? ''}`, agent.label)
+    labelsFor.set(account, [...(labelsFor.get(account) ?? []), agent.label])
+  }
+
+  for (const [account, labels] of labelsFor) {
+    if (labels.length === 1) named.set(account, labels[0]!)
+  }
+
+  return named
+}
+
+/** The agent behind a line, from the map [agentsByAccount] built. */
+export function agentBehind(line: ChatMessageResponse, named: Map<string, string>): string | undefined {
+  const account = line.from.toLowerCase()
+
+  return named.get(`${account}\u0000${line.serverAddress ?? ''}`) ?? named.get(account)
+}
+
+/**
  * Whether a line arriving on the live stream belongs in a panel showing [scope].
  *
  * The two are not mirror images. A **server** takes everything that happened there — the global
