@@ -97,8 +97,58 @@ export function senderOf(text: string, pattern: RegExp = VANILLA): string {
   return found && usable(found) ? found : SERVER
 }
 
-/** Mojang's rules, applied to whatever the pattern captured. A pattern written for a server that
- * decorates its names must capture the name, not the decoration. */
+/**
+ * What the speaker actually typed, with the server's own decoration taken off the front.
+ *
+ * The same pattern that names the speaker also says where its prefix ends, because it has to match
+ * through the separator to be sure it found a chat line at all. So the end of that match is the
+ * start of the message — ` [★57] [MEMBER] integr [ʙʟᴏᴏᴍ] » hello` leaves `hello`.
+ *
+ * **This is what makes "at the start of the line" mean anything.** A command prefix is at position
+ * zero of what a player typed, which on a server that renders a rank is nowhere near position zero
+ * of what arrives here. Anchoring on the raw line looks stricter and is simply broken: the prefix is
+ * never there, so nothing ever matches.
+ *
+ * Nothing when the pattern does not match, which is the honest answer for a line that is not chat -
+ * a join notice or command output has no speaker and nothing anybody typed.
+ */
+export function spokenIn(text: string, pattern: RegExp = VANILLA): string | undefined {
+  const found = pattern.exec(text)
+
+  return found ? text.slice(found[0].length).trim() : undefined
+}
+
+/**
+ * How to send somebody a private message, as a command template.
+ *
+ * `/msg` is what vanilla, Essentials and most plugin suites all answer to, so it is the guess most
+ * likely to work on a server nobody has configured. A server that wants `/w`, `/tell` or something
+ * of its own sets `chat.whisperCommand`.
+ *
+ * A template rather than a command name, because the argument order is not universal either.
+ */
+export const WHISPER_COMMAND = '/msg {name} {message}'
+
+/**
+ * Fills a whisper template in, or nothing when it could not be used.
+ *
+ * Refused rather than half-filled when the template has no `{message}`: a command that dropped what
+ * it was supposed to say would send an empty whisper on every reply, and an operator watching an
+ * agent answer nothing would have nowhere to look. `{name}` is checked for the same reason - a reply
+ * with no recipient is a reply that goes to whoever the server guesses.
+ */
+export function whisperWith(template: string, to: string, message: string): string | undefined {
+  if (!template.includes('{name}') || !template.includes('{message}')) return undefined
+  if (!USERNAME.test(to)) return undefined
+
+  return template.replaceAll('{name}', to).replaceAll('{message}', message)
+}
+
+/** Mojang's rules: letters, digits and underscore, up to sixteen. */
+export const USERNAME = /^[A-Za-z0-9_]{1,16}$/
+
+/** Applied to whatever the pattern captured. A pattern written for a server that decorates its
+ * names must capture the name, not the decoration. */
 function usable(name: string): boolean {
-  return name.length > 0 && name.length <= 16 && /^[A-Za-z0-9_]+$/.test(name)
+  return USERNAME.test(name)
 }

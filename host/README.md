@@ -266,9 +266,12 @@ one would otherwise run on defaults with nothing saying so.
 |---|---|
 | `chat.sender` | How this server writes the speaker into a chat line. One capture group, the player name. Unset means vanilla `<Name> `. See §4.3. |
 | `chat.whisper` | How this server writes a whisper *to* this agent. One capture group, who sent it. A line that matches is scope `direct` rather than `global`, and is reported whether or not this agent is the chat listener. Unset means vanilla `Name whispers to you: `. |
+| `chat.whisperCommand` | The command this server takes for a private message, as a template: `{name}` and `{message}` are filled in. Unset means `/msg {name} {message}`. See §5.1. |
 | `chat.whisperSent` | The other direction: a whisper this agent sent, as the server echoes it back. One capture group, the recipient. A line that matches is scope `outbound`. Unset means vanilla `You whisper to Name: `. |
 | `mc.version` | The version to speak, skipping the status ping entirely. Unset means ask the server, which is right almost always — set it for one that refuses a version check or answers dishonestly. A version this build has no protocol for is refused and the ping happens anyway. Read when a session opens. |
+| `mc.takeKnockback` | `false` to ignore knockback entirely — the agent is not pushed by hits, explosions or anything else. Unset means take it, like a player. With it off `mc.knockback` does not apply, since nothing is applied either way. |
 | `mc.knockback` | `true`, `false`, or unset. Whether to undo the client library's velocity scaling. Unset decides it from the version; three states rather than two because a proxy can forward a version it does not advertise, and the packet's shape follows what is on the wire rather than what the handshake claimed. Read when a session opens. |
+| `players.whitelist` | Who may command this agent from inside the game, comma-separated. `name` for chat, `name:commands` for chat and server commands. **Empty means nobody.** See §5.1. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
 
 ### `delete_agent`
@@ -603,6 +606,91 @@ being permanent.
 synchronised with each other, and a skewed one would file its chat into the middle of the feed or
 into the future — which in a newest-first feed means invisible or permanently pinned to the top.
 Ordering within a reconnect replay is preserved by row id, so replaying a buffer in order is fine.
+
+### 5.1 Chat commands, and the only untrusted input in this host
+
+An agent can be told to do things from inside the game:
+
+```
+!osm [account] id | ping | health | food | uptime | say <message> | help   trusted for chat
+!osm [account] run <command> | disconnect | reconnect                       trusted for commands
+```
+
+Naming an account addresses one agent — `@name` works too. Leaving it out addresses every agent that
+heard the line. `help` is generated from the command table and **filtered to the asker's tier**, so a
+command added there lists itself, and somebody who cannot use `run` is not told it exists.
+
+**Two tiers, because talking and acting are different powers.** `players.whitelist` holds `name` for
+chat and `name:commands` for both; an entry with no tier written on it, or one written with a tier
+this build does not know, is chat. A setting from a newer Osmium must never quietly grant more than
+it says.
+
+- **chat** — `id`, `ping`, `health`, `food`, `uptime`, `say`, `help`. Makes the agent talk and
+  report about itself.
+- **commands** — also `run`, `disconnect` and `reconnect`. `run` sends a server command under
+  whatever permissions the agent's Minecraft account holds; on an operator account this is close to
+  handing the account over, since whoever holds it can `/op` themselves and nothing here can tell
+  that apart from an intended `/tp`.
+
+**A command works in a private message too, and is answered there.** A whisper reached exactly one
+agent because somebody sent it to exactly one account, so it is already addressed — `!osm run …` on
+its own is enough, and naming the account says twice what the whisper already said. The answer goes
+back the same way, using `chat.whisperCommand`; if that template is unusable the answer falls back to
+chat rather than vanishing, because an answer in the wrong channel is a small indiscretion and an
+answer nobody ever sees is a feature that looks broken.
+
+`say` and `run` ignore all of this on purpose. Neither is an answer — one is speech into the room and
+the other is an action in the world — and doing either privately would do a different thing from the
+one that was asked for.
+
+**Nothing reports where an agent is standing.** The readings a command answers with are about the
+agent itself — latency, health, food, uptime — and there is deliberately no command for coordinates or
+dimension. That is the one thing chat could give away that somebody on the server does not already
+have, and an agent that can be asked where it is standing is an agent that can be found and killed
+for its inventory.
+
+**`disconnect` from chat does not clear the operator's intent.** The host leaves; `connect.rejoin`
+lives on the backend and still says the agent is wanted, so with that on the agent comes back at the
+next sweep. That is the design working rather than a fault — a host never decides where an agent
+belongs — but it means chat can pause an agent, not retire it. `reconnect` is the same round trip
+made on purpose: the session ends, and the address it was on is dialled again once there is nothing
+in the way of it.
+
+`say` refuses anything beginning with `/` — that is `run`'s job and it needs the other tier — and
+anything beginning with the prefix, so an agent cannot be made to issue a command every other agent
+then hears. `run` filters nothing: there is no list of safe commands (`/tp` is fine until the agent
+is an operator and somebody sends it into a vault), so the tier is the whole decision, made once by
+the operator. A `run` is written to the activity feed naming who asked and what was sent.
+
+**This is the one place a host acts on something a stranger typed.** Everything else arrives over the
+authenticated socket from the backend. So the guards are the whole of the trust boundary, and they
+are checked in the order that fails cheapest:
+
+1. It parses as a command. Nearly every line stops here.
+2. It is addressed to this agent — by account, or to everybody.
+3. The person who said it is in `players.whitelist`.
+
+**An empty whitelist means nobody**, not everybody. An unset setting has to be the safe answer, and
+on a public server the unsafe answer is every stranger standing in spawn.
+
+**A known command name is never read as an account.** `!osm id` is `id` asked of everybody, because
+resolving the alternative needs a lookup no single host can do — it only knows its own agents. The
+cost is that an agent whose account is literally `id` cannot be addressed by name, which is written
+down rather than hidden.
+
+**Answer with silence, not a refusal.** Telling a stranger "you may not do that" confirms the account
+is a bot, names the software behind it, and advertises that a list exists to get onto — and hands
+anybody a way to make the fleet talk.
+
+**Handle it before the listener check.** The election decides who *forwards* chat to the backend, not
+who hears it. Every agent hears the room, and `!osm id` asked of everybody has to be answered by
+everybody; an agent that stayed silent because somebody else was elected would look broken.
+
+**The trust is only as good as `chat.sender`.** Where the protocol signs player chat, the speaker
+came from a uuid and cannot be faked. Where it does not — a server that reformats its chat, which is
+exactly the kind that needs a pattern — the name was read out of the rendered line. A pattern
+anchored at `^`, as the documented ones are, cannot be talked past by anything inside a message; a
+loose one is a way in.
 
 ---
 

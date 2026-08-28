@@ -4,7 +4,19 @@ import mineflayer, { type Bot, type BotOptions } from 'mineflayer'
 
 import { type Endpoint, locate } from './address.ts'
 import { type Component, componentsOf } from './chat.ts'
-import { compile, SERVER, senderOf, VANILLA, WHISPER, WHISPER_SENT } from './sender.ts'
+import { addressedTo, allows, commandIn, COMMANDS, helpLine, runnable, sayable, TRUST, type Trust } from './command.ts'
+import {
+  compile,
+  SERVER,
+  senderOf,
+  spokenIn,
+  USERNAME,
+  VANILLA,
+  WHISPER,
+  WHISPER_COMMAND,
+  whisperWith,
+  WHISPER_SENT,
+} from './sender.ts'
 
 import { log, reason } from '../log.ts'
 import type { CommandBody, Event, SetupResult, Vitals } from '../protocol/message.ts'
@@ -12,6 +24,7 @@ import { ActivityScope, ChatScope, LoginState, type Player, Severity, type Vec3 
 import { identify, type Identity, type LinkCode, NotSignedIn, signIn } from '../token/auth.ts'
 import { LoginKind } from '../token/login.ts'
 import type { AccountStore, Entry } from '../token/store.ts'
+import { VERSION } from '../version.ts'
 
 /** How often the vitals are sampled while an agent is in game.
  *
@@ -133,6 +146,25 @@ export class Agent {
   /** Whether to undo mineflayer's velocity scaling. Undefined means decide from the version, which
    * is what an unconfigured agent does - see `absoluteVelocity`. */
   private knockback: boolean | undefined
+  /** Whether to be pushed around at all. Undefined means yes, which is what a Minecraft client does.
+   * Turning it off makes the correction above irrelevant, since nothing is applied either way. */
+  private takeKnockback: boolean | undefined
+  /** The server's own command for sending a private message, as a template. Undefined means `/msg`,
+   * which is what vanilla and most plugin suites answer to - see `WHISPER_COMMAND`. */
+  private whisperCommand: string | undefined
+  /** Where to go once this session has finished ending. Set by a `reconnect`. */
+  private returning: string | undefined
+  /**
+   * Who may command this agent from inside the game, lower-cased.
+   *
+   * **Empty means nobody.** An unset setting has to be the safe answer, and on a public server the
+   * unsafe answer is every stranger standing in spawn. An agent nobody has put a name on simply does
+   * not take chat commands.
+   *
+   * A map rather than a set, because being in the list is not one power: see {@link Trust}. An entry
+   * with no tier written on it is trusted for chat only.
+   */
+  private trusted = new Map<string, Trust>()
   /**
    * What this session is, for the sentences written about it after it ends.
    *
@@ -492,7 +524,7 @@ export class Agent {
       live((why: string) => this.ended(why)),
     )
 
-    unscaleVelocity(bot, this.id, this.knockback)
+    unscaleVelocity(bot, this.id, { take: this.takeKnockback, correct: this.knockback })
   }
 
   /** Settles one session, whichever of the several endings arrived first. */
@@ -532,6 +564,13 @@ export class Agent {
     if (this.leaving) {
       this.leaving = false
       this.report({ state: LoginState.LinkedCredentials })
+
+      // A `reconnect` is a disconnect with a return ticket, and this is the first moment there is
+      // nothing in the way of using it: the session is settled and `bot` is already undefined.
+      const address = this.returning
+      this.returning = undefined
+      if (address) this.handle({ type: 'connect', address })
+
       return
     }
 
@@ -579,7 +618,16 @@ export class Agent {
    * alongside the one it does not.
    */
   private configure(values: Record<string, string>): void {
-    const known = new Set(['chat.sender', 'chat.whisper', 'chat.whisperSent', 'mc.version', 'mc.knockback'])
+    const known = new Set([
+      'chat.sender',
+      'chat.whisper',
+      'chat.whisperSent',
+      'chat.whisperCommand',
+      'mc.version',
+      'mc.knockback',
+      'mc.takeKnockback',
+      'players.whitelist',
+    ])
     const unknown = Object.keys(values).filter((key) => !known.has(key))
 
     if (unknown.length) log.debug(`Agent ${this.id} was sent settings it does not know: ${unknown.join(', ')}`)
@@ -587,6 +635,7 @@ export class Agent {
     this.chatSender = compile(values['chat.sender'], `Agent ${this.id}'s chat sender pattern`)
     this.chatWhisper = compile(values['chat.whisper'], `Agent ${this.id}'s whisper pattern`)
     this.chatWhisperSent = compile(values['chat.whisperSent'], `Agent ${this.id}'s sent-whisper pattern`)
+    this.whisperCommand = values['chat.whisperCommand']?.trim() || undefined
 
     log.info(
       `Agent ${this.id} reads chat senders with ${this.chatSender ?? `${VANILLA} (vanilla)`}` +
@@ -599,6 +648,19 @@ export class Agent {
     // while an agent is in game is owed an answer about why nothing happened.
     this.version = playable(values['mc.version'], `Agent ${this.id}'s Minecraft version`)
     this.knockback = switched(values['mc.knockback'], `Agent ${this.id}'s knockback correction`)
+    this.takeKnockback = switched(values['mc.takeKnockback'], `Agent ${this.id}'s knockback`)
+
+    this.trusted = trustedFrom(values['players.whitelist'])
+
+    // Each entry with the tier it was given, because which of the two somebody holds is the whole
+    // question when a command is refused - and a Map joined plainly reads as `integr,commands`.
+    const who = [...this.trusted].map(([name, tier]) => `${name} (${tier})`).join(', ')
+
+    log.info(
+      who
+        ? `Agent ${this.id} takes chat commands from ${who}`
+        : `Agent ${this.id} takes chat commands from nobody, because no player is trusted`,
+    )
 
     log.info(
       `Agent ${this.id} speaks ${this.version ?? 'whatever the server asks for'}` +
@@ -703,6 +765,29 @@ export class Agent {
     const direct = !ours && whispered !== SERVER
 
     /*
+     * Commands, before the listener guard, because that guard is about *reporting* and this is not.
+     *
+     * The election exists so twenty agents do not send the backend one line twenty times. Every
+     * agent still hears the room, and `!osm id` asked of everybody has to be answered by everybody -
+     * an agent that stayed silent because somebody else was elected to forward chat would look
+     * broken to whoever typed it.
+     */
+    if (!ours) {
+      /*
+       * The command is read out of what the speaker **typed**, not out of the rendered line.
+       *
+       * The same pattern that named them says where the server's decoration ends, so ` [★57]
+       * [MEMBER] integr [ʙʟᴏᴏᴍ] » !osm id` becomes `!osm id`. Anchoring on the raw line instead
+       * looked stricter and was simply broken - on any server that renders a rank the prefix is
+       * never at position zero, so no command ever fired.
+       */
+      const format = direct ? (this.chatWhisper ?? WHISPER) : (this.chatSender ?? VANILLA)
+      const typed = spokenIn(message, format)
+
+      if (typed !== undefined) this.commanded(typed, direct ? whispered : speaker, direct)
+    }
+
+    /*
      * The listener role covers **the room**, and only the room.
      *
      * Our own words and anything said *to* this agent are owed to the operator whether or not this
@@ -738,6 +823,179 @@ export class Agent {
    *
    * Told before it is forgotten, so it leaves the game rather than having its session torn down
    * around it. */
+  /**
+   * Acts on a line of chat, if it is a command and the person who said it may give one.
+   *
+   * **The only place in this host that acts on something a stranger typed.** Everything else arrives
+   * over the authenticated socket from the backend, so the guards here are the whole of the trust
+   * boundary and are checked in the order that fails cheapest:
+   *
+   * 1. It has to parse as a command. Nearly every line stops here.
+   * 2. It has to be addressed to this agent, by account or to everybody.
+   * 3. It has to come from somebody the operator named.
+   *
+   * **Only as trustworthy as the name is.** Where the protocol signs player chat, `speaker` came
+   * from a uuid and cannot be faked. Where it does not - a server that reformats its chat, which is
+   * exactly the kind that needs `chat.sender` - the name was read out of the rendered line, so a
+   * loose pattern is a way in. A pattern anchored at the start of the line, as the documented ones
+   * are, cannot be talked past by anything typed into a message.
+   *
+   * Silence is the answer to a command from somebody untrusted. Saying "you may not do that" tells
+   * a stranger that this account is a bot, that Osmium is behind it, and that there is a list to get
+   * onto - and it hands anybody a way to make the fleet talk.
+   */
+  private commanded(message: string, speaker: string | undefined, direct: boolean): void {
+    const command = commandIn(message)
+    if (!command) return
+
+    /*
+     * A private message is already addressed: it reached exactly one agent because somebody sent it
+     * to exactly one account. So `!osm run …` on its own is enough there, and naming the account
+     * would be saying twice what the whisper already said.
+     *
+     * Naming a *different* account is still honoured — it is refused here, and answered by nothing,
+     * since the agent it names never heard the whisper. Acting anyway would be this agent answering
+     * to a name that is not its own.
+     */
+    if (!addressedTo(command, this.identity?.username)) return
+
+    const held = speaker ? this.trusted.get(speaker.toLowerCase()) : undefined
+
+    if (!allows(held, COMMANDS[command.name].needs)) {
+      log.debug(
+        `Agent ${this.id} ignored ${command.name} from ${speaker ?? 'somebody it could not name'}` +
+          ` (trusted for ${held ?? 'nothing'})`,
+      )
+      return
+    }
+
+    log.info(`Agent ${this.id} was told to ${command.name} by ${speaker}`)
+
+    /*
+     * Where an answer goes: back the way the question came.
+     *
+     * A question asked privately is answered privately — the room did not ask and does not need the
+     * agent reciting its health at it. Asked in chat, the answer belongs in chat, where whoever
+     * asked is looking.
+     *
+     * `say` and `run` ignore this on purpose. They are not answers: one is speech into the room and
+     * the other is an action in the world, and doing either privately would do a different thing
+     * than the one that was asked for.
+     */
+    const back = direct ? speaker : undefined
+
+    switch (command.name) {
+      case 'id':
+        this.answer(`Agent ${this.id} running osmium v${VERSION}`, back)
+        return
+
+      case 'say': {
+        // Refused rather than trimmed into something else: see `sayable`. A server command and a
+        // command to the fleet are both things this agent must not be talked into.
+        const words = sayable(command.args)
+        if (!words) {
+          log.debug(`Agent ${this.id} would not say what ${speaker} asked it to`)
+          return
+        }
+
+        this.say(words)
+        return
+      }
+
+      case 'ping':
+        // From our own row of the player list, which is the only place a server states our latency.
+        this.answer(`Agent ${this.id} at ${Math.max(0, Math.round(this.bot?.player?.ping ?? 0))}ms`, back)
+        return
+
+      /*
+       * Out of twenty, the way the game shows them, rather than as a bare number.
+       *
+       * `18` alone is only a reading to somebody who already knows the scale, and half the point of
+       * asking from in game is that the person asking is looking at their own bar.
+       */
+      case 'health':
+        this.answer(`Agent ${this.id} at ${halves(this.bot?.health)} health`, back)
+        return
+
+      case 'food':
+        this.answer(`Agent ${this.id} at ${halves(this.bot?.food)} food`, back)
+        return
+
+      /* How long this session has been going, which is not how long the process has. An agent that
+       * dropped and came back an hour ago has been in game for an hour, and that is the number
+       * somebody in the room is asking about. */
+      case 'uptime': {
+        const since = this.session?.joinedAt
+        this.answer(since ? `Agent ${this.id} in game for ${lasted(since)}` : `Agent ${this.id} has just arrived`, back)
+        return
+      }
+
+      case 'help':
+        this.answer(helpLine(held), back)
+        return
+
+      case 'disconnect':
+        log.info(`Agent ${this.id} was told to leave by ${speaker}`)
+        this.activity(ActivityScope.System, Severity.Warning, `${speaker} disconnected this agent from chat`)
+        this.handle({ type: 'disconnect' })
+        return
+
+      case 'reconnect': {
+        const address = this.session?.address
+        if (!address) return
+
+        log.info(`Agent ${this.id} was told to reconnect by ${speaker}`)
+        this.activity(ActivityScope.System, Severity.Warning, `${speaker} reconnected this agent from chat`)
+
+        // Remembered rather than queued behind the disconnect: leaving is fire and forget and the
+        // session ends some time later, so a `connect` queued now would arrive while this one is
+        // still in game and be refused as already connected. `ended` starts it once there is
+        // nothing to be in the way.
+        this.returning = address
+        this.handle({ type: 'disconnect' })
+        return
+      }
+
+      case 'run': {
+        const typed = runnable(command.args)
+        if (!typed) return
+
+        // Logged at info, unlike the others. This is the one command that acts under the agent's own
+        // Minecraft permissions, so what was run and who asked belongs in the record whether or not
+        // anybody is reading debug.
+        log.info(`Agent ${this.id} is running ${typed} for ${speaker}`)
+        this.activity(ActivityScope.System, Severity.Warning, `${speaker} ran ${typed} through this agent`)
+        this.say(typed)
+        return
+      }
+    }
+  }
+
+  /**
+   * Answers a command, privately when it was asked privately.
+   *
+   * **Falls back to the room rather than staying silent.** Whispering needs the server's own command
+   * for it, which is not the same everywhere — `chat.whisperCommand` says which, and a host with the
+   * wrong one would otherwise answer into a void. An answer in the wrong channel is a small
+   * indiscretion; an answer nobody ever sees is a feature that looks broken.
+   */
+  private answer(text: string, to: string | undefined): void {
+    if (!to) {
+      this.say(text)
+      return
+    }
+
+    const whispered = whisperWith(this.whisperCommand ?? WHISPER_COMMAND, to, text)
+
+    if (!whispered) {
+      log.warn(`Agent ${this.id} could not whisper ${to}, so it answered in chat instead`)
+      this.say(text)
+      return
+    }
+
+    this.say(whispered)
+  }
+
   private async remove(): Promise<void> {
     this.done = true
 
@@ -1078,9 +1336,31 @@ function status(endpoint: Endpoint): Promise<{ version?: { protocol?: number } }
  *
  * Remove once mineflayer scales by version. See PrismarineJS/mineflayer.
  */
-function unscaleVelocity(bot: Bot, id: number, wanted: boolean | undefined): void {
+function unscaleVelocity(bot: Bot, id: number, wanted: { take: boolean | undefined; correct: boolean | undefined }): void {
   bot.once('login', () => {
-    if (!(wanted ?? absoluteVelocity(bot.version))) return
+    /*
+     * Not being pushed at all, which is a different setting from correcting the arithmetic.
+     *
+     * Knockback reaches a client as a velocity to apply to itself, so an agent that drops the one
+     * meant for its own entity simply is not moved by hits, explosions or anything else that shoves.
+     * Only our own entity: everybody else's motion is what the world looks like, and freezing that
+     * would leave the agent watching a room where nothing moves.
+     *
+     * With this off the correction below is irrelevant, so it is not installed - two handlers
+     * writing the same field, one zeroing and one restoring, is a race nobody should have to read.
+     */
+    if (wanted.take === false) {
+      log.debug(`Agent ${id} will not be pushed around: knockback is turned off`)
+
+      bot._client.on('entity_velocity', (packet: { entityId: number }) => {
+        if (packet.entityId !== bot.entity?.id) return
+
+        bot.entity.velocity.set(0, 0, 0)
+      })
+      return
+    }
+
+    if (!(wanted.correct ?? absoluteVelocity(bot.version))) return
 
     log.debug(`Agent ${id} is correcting mineflayer's velocity scaling for ${bot.version}`)
 
@@ -1124,6 +1404,33 @@ export function playable(source: string | undefined, why: string): string | unde
  * for: it means the host decides, and a caller that collapsed it to `false` would turn "work it out"
  * into "definitely not" for every agent nobody has touched.
  */
+/**
+ * Who may command an agent from in game, read from the one string a setting holds.
+ *
+ * Lower-cased, because Minecraft compares names that way and nobody typing a name into chat is
+ * checking their capitals. Anything that could not be a Minecraft name is dropped rather than kept
+ * as an entry that matches nobody - the interface validates on the way in, and this is the same
+ * check applied again on the side that actually acts on it.
+ *
+ * An unset or unusable setting yields an empty set, which is the safe answer: no player is trusted,
+ * so no chat command is obeyed.
+ */
+export function trustedFrom(source: string | undefined): Map<string, Trust> {
+  const trusted = new Map<string, Trust>()
+
+  for (const entry of (source ?? '').split(/[\s,]+/)) {
+    // `name` or `name:commands`. A username cannot contain a colon, so the split is unambiguous -
+    // and an entry written with a tier this build does not know falls back to `chat` rather than to
+    // the powerful one. A setting from a newer Osmium must not quietly grant more than it says.
+    const [name, tier] = entry.split(':')
+    if (!name || !USERNAME.test(name)) continue
+
+    trusted.set(name.toLowerCase(), tier === TRUST.commands ? TRUST.commands : TRUST.chat)
+  }
+
+  return trusted
+}
+
 export function switched(source: string | undefined, why: string): boolean | undefined {
   const wanted = source?.trim().toLowerCase()
   if (!wanted) return undefined
@@ -1241,6 +1548,17 @@ export function placeOf(bot: Bot): string | undefined {
  */
 function dimensionOf(bot: Bot): string | undefined {
   return bot.game?.dimension?.replace(/^minecraft:/, '') || undefined
+}
+
+/**
+ * A health or food reading, on the scale the game draws it on: `18/20`.
+ *
+ * Rounded to a whole point, because that is what a bar shows. Undefined until the server has sent
+ * one - a session that has just opened has no reading rather than a reading of zero, and answering
+ * `0/20` would report a dying agent that is perfectly well.
+ */
+function halves(value: number | undefined): string {
+  return value === undefined ? 'an unknown' : `${Math.max(0, Math.round(value))}/20`
 }
 
 /** A duration an operator reads rather than counts: `3 seconds`, `12 minutes`, `2 hours`.

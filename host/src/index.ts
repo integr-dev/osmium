@@ -1,13 +1,10 @@
-import { createRequire } from 'node:module'
-
 import { readNbtStringsProperly } from './agent/nbt.ts'
 import { log, reason } from './log.ts'
 import { Dispatcher } from './router/dispatch.ts'
 import { HostSocket } from './socket/client.ts'
 import { accountsPath, cachePath } from './token/paths.ts'
 import { AccountStore } from './token/store.ts'
-
-const { version } = createRequire(import.meta.url)('../package.json') as { version: string }
+import { VERSION } from './version.ts'
 
 async function main(): Promise<void> {
   // Before any session opens: it corrects how every NBT string on the wire is decoded.
@@ -24,7 +21,7 @@ async function main(): Promise<void> {
   const store = await AccountStore.open(accounts)
   log.info(`Reading accounts from ${accounts}`)
 
-  const socket = new HostSocket(url, token, version, {
+  const socket = new HostSocket(url, token, VERSION, {
     connected: () => dispatcher.announce(),
     command: (command) => dispatcher.command(command),
   })

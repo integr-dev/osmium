@@ -1,0 +1,191 @@
+import { USERNAME } from './sender.ts'
+
+/**
+ * Commands an operator can give an agent from inside the game.
+ *
+ * **Chat is an untrusted channel and this is the only thing in the host that acts on what it says.**
+ * Everything else the host does arrives over the authenticated socket from the backend; this
+ * arrives from whoever is standing in a Minecraft server typing. So the rules are deliberately
+ * narrow and the surface is deliberately small.
+ *
+ * The shape is `!osm [account] <command> [args…]`. Naming an account addresses one agent; leaving it
+ * out addresses every agent that heard the line, which is every one of ours on that server.
+ */
+export const PREFIX = '!osm'
+
+/**
+ * How far a trusted player is trusted.
+ *
+ * **Two powers, not one.** Making an agent talk and making an agent *act* are different things, and
+ * a list with one level forces the operator to grant both to get either. `chat` is the tier somebody
+ * gets for being in the list at all; `commands` additionally lets them run server commands through
+ * the agent, under whatever permissions its Minecraft account holds.
+ *
+ * `commands` is close to handing over the account. Anyone holding it on an operator bot can `/op`
+ * themselves, and nothing here can tell that apart from an intended `/tp`.
+ */
+export const TRUST = { chat: 'chat', commands: 'commands' } as const
+
+export type Trust = (typeof TRUST)[keyof typeof TRUST]
+
+/** Whether somebody trusted at [held] may use a command needing [needed]. */
+export function allows(held: Trust | undefined, needed: Trust): boolean {
+  if (held === undefined) return false
+
+  return needed === TRUST.chat || held === TRUST.commands
+}
+
+/**
+ * The commands this build answers, and how each one is written.
+ *
+ * **A table rather than a list, so `help` is generated from it.** Help that is maintained separately
+ * from the commands is help that goes stale the first time somebody is in a hurry — and it goes
+ * stale silently, because nothing fails. Adding a command here is the whole of adding a command:
+ * the parser accepts it, `help` lists it, and the only thing left is what it does.
+ *
+ * A first word that is not one of these keys is read as an account instead.
+ */
+export const COMMANDS = {
+  id: { args: '', needs: 'chat' },
+  ping: { args: '', needs: 'chat' },
+  health: { args: '', needs: 'chat' },
+  food: { args: '', needs: 'chat' },
+  uptime: { args: '', needs: 'chat' },
+  say: { args: '<message>', needs: 'chat' },
+  help: { args: '', needs: 'chat' },
+  run: { args: '<command>', needs: 'commands' },
+  disconnect: { args: '', needs: 'commands' },
+  reconnect: { args: '', needs: 'commands' },
+} as const
+
+/** Minecraft refuses a chat message longer than this, and a server usually kicks for trying. */
+const SAY_MAX = 256
+
+export type CommandName = keyof typeof COMMANDS
+
+/**
+ * Every command, on one line.
+ *
+ * One line rather than one message each: a fleet answers `help` once per agent, so three commands
+ * across four agents would be twelve messages and a spam kick. Usage only, no descriptions - chat is
+ * 256 characters and a name plus its arguments is what somebody needs to type the next thing.
+ */
+export function helpLine(held: Trust | undefined): string {
+  const usages = Object.entries(COMMANDS)
+    // Only what the asker could actually use. A chat-only player shown `run` would be reading about
+    // a power they will be silently refused, and it advertises the escalated command to the room.
+    .filter(([, { needs }]) => allows(held, needs))
+    .map(([name, { args }]) => (args ? `${name} ${args}` : name))
+
+  return `${PREFIX} [account] ${usages.join(' | ')}`
+}
+
+/**
+ * What an agent may be made to run, or nothing when there is nothing to run.
+ *
+ * **A leading `/` is preserved rather than normalised away.** `//set stone` is WorldEdit, not a typo,
+ * and a helpful cleanup that collapsed the two slashes would quietly run a different command than the
+ * one that was typed. Anything not already starting with one gets exactly one, so `run tp me` and
+ * `run /tp me` both mean the same thing.
+ *
+ * No filtering of *which* command. There is no list of safe ones — `/tp` is fine until the agent is
+ * an operator and somebody sends it into a vault — so the decision is the trust tier, made once by
+ * the operator, rather than a guess made here per command.
+ */
+export function runnable(words: string[]): string | undefined {
+  const typed = words.join(' ').trim()
+  if (!typed) return undefined
+
+  return (typed.startsWith('/') ? typed : `/${typed}`).slice(0, SAY_MAX)
+}
+
+export interface ChatCommand {
+  /** The account this was addressed to, or undefined when it was addressed to everybody. */
+  account: string | undefined
+  name: CommandName
+  args: string[]
+}
+
+/**
+ * Reads a chat line as a command, or answers nothing.
+ *
+ * **The first word decides what it is, and a known command name wins.** `!osm id` is the `id`
+ * command asked of everybody rather than a command asked of an agent called `id` — the alternative
+ * needs a lookup this side cannot do for agents on other hosts, and an operator typing the common
+ * case must not have to name themselves out of an ambiguity they cannot see.
+ *
+ * The consequence is written down rather than hidden: an agent whose Minecraft account is called
+ * `id` cannot be addressed by name. Nothing else about it stops working.
+ *
+ * Returns nothing for anything it is not certain about. A line that merely mentions the prefix, a
+ * command this build does not have, an account name that could not be one - all of them are chat.
+ */
+export function commandIn(message: string): ChatCommand | undefined {
+  const words = message.trim().split(/\s+/)
+
+  // Anchored at the start of the line. A line that quotes the prefix inside a sentence is somebody
+  // talking about commands, not issuing one - and on a server that renders a rank in front, the
+  // prefix never lands at position zero of anything a player did not type themselves.
+  if (words[0] !== PREFIX) return undefined
+
+  const [first, ...rest] = words.slice(1)
+  if (first === undefined) return undefined
+
+  if (isCommand(first)) return { account: undefined, name: first, args: rest }
+
+  // `@name` as well as `name`. Addressing somebody with an `@` is what chat has taught everybody to
+  // do, and refusing it teaches nothing - the first person to try it typed `!osm @intemeow id`.
+  const account = first.startsWith('@') ? first.slice(1) : first
+
+  // Not a command, so it is meant to be an account - and if it could not be one, this is not a
+  // command at all rather than a command aimed at nobody.
+  if (!USERNAME.test(account)) return undefined
+
+  const [name, ...args] = rest
+  if (name === undefined || !isCommand(name)) return undefined
+
+  return { account, name, args }
+}
+
+/**
+ * What an agent may be made to say, or nothing when it may not be made to say it.
+ *
+ * Two refusals, both about the difference between an agent repeating a sentence and an agent being
+ * used as a weapon by somebody who was only trusted with chat.
+ *
+ * **Nothing beginning with `/`.** Minecraft would run it as a server command, under whatever
+ * permissions the agent's account holds — so a player trusted to make a bot talk would also be able
+ * to make an operator bot `/op` them. Speaking and acting are different powers and this one is
+ * speech. A separate command can be added for the other, with its own list and its own argument.
+ *
+ * **Nothing beginning with the prefix.** An agent saying `!osm …` is a command in the room, heard by
+ * every other agent; whether it loops then depends on whose account is trusted, which is exactly the
+ * kind of thing that is easy to get wrong once and hard to notice. Cutting it here means it cannot
+ * happen however the list is configured.
+ *
+ * Truncated rather than refused when it is too long: the operator's sentence mostly arrives, which
+ * beats silence for a message that was one word over.
+ */
+export function sayable(words: string[]): string | undefined {
+  const message = words.join(' ').trim()
+  if (!message) return undefined
+
+  if (message.startsWith('/')) return undefined
+  if (message.startsWith(PREFIX)) return undefined
+
+  return message.slice(0, SAY_MAX)
+}
+
+/** Whether this line is addressed to an agent playing [account]. */
+export function addressedTo(command: ChatCommand, account: string | undefined): boolean {
+  if (command.account === undefined) return true
+  if (account === undefined) return false
+
+  // Minecraft compares names case-insensitively, and an operator typing one into chat is not
+  // checking their capitals.
+  return command.account.toLowerCase() === account.toLowerCase()
+}
+
+function isCommand(word: string): word is CommandName {
+  return Object.hasOwn(COMMANDS, word)
+}
