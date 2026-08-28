@@ -524,7 +524,7 @@ export class Agent {
       live((why: string) => this.ended(why)),
     )
 
-    unscaleVelocity(bot, this.id, { take: this.takeKnockback, correct: this.knockback })
+    unscaleVelocity(bot, this.id, () => ({ take: this.takeKnockback, correct: this.knockback }))
   }
 
   /** Settles one session, whichever of the several endings arrived first. */
@@ -662,10 +662,17 @@ export class Agent {
         : `Agent ${this.id} takes chat commands from nobody, because no player is trusted`,
     )
 
+    // Knockback is read per packet, so it applies at once; the version is settled before a session
+    // opens and cannot. Said separately, because "from its next connect" applied to both was how a
+    // setting that had in fact taken effect looked like one that had not.
+    log.info(
+      `Agent ${this.id} ${this.takeKnockback === false ? 'ignores knockback' : 'takes knockback'}` +
+        `, correcting it ${this.knockback === undefined ? 'when the version needs it' : this.knockback ? 'always' : 'never'}`,
+    )
+
     log.info(
       `Agent ${this.id} speaks ${this.version ?? 'whatever the server asks for'}` +
-        `, and corrects knockback ${this.knockback === undefined ? 'when the version needs it' : this.knockback ? 'always' : 'never'}` +
-        `${this.bot ? ', from its next connect' : ''}`,
+        `${this.version && this.bot ? ', from its next connect' : ''}`,
     )
   }
 
@@ -1336,40 +1343,49 @@ function status(endpoint: Endpoint): Promise<{ version?: { protocol?: number } }
  *
  * Remove once mineflayer scales by version. See PrismarineJS/mineflayer.
  */
-function unscaleVelocity(bot: Bot, id: number, wanted: { take: boolean | undefined; correct: boolean | undefined }): void {
+function unscaleVelocity(
+  bot: Bot,
+  id: number,
+  wanted: () => { take: boolean | undefined; correct: boolean | undefined },
+): void {
   bot.once('login', () => {
     /*
-     * Not being pushed at all, which is a different setting from correcting the arithmetic.
+     * **Read per packet rather than captured at login.** Both of these are settings an operator
+     * changes while watching the agent, and a handler that froze them meant turning knockback off
+     * did nothing until the next reconnect - with the only clue in a debug line nobody was reading.
      *
-     * Knockback reaches a client as a velocity to apply to itself, so an agent that drops the one
-     * meant for its own entity simply is not moved by hits, explosions or anything else that shoves.
-     * Only our own entity: everybody else's motion is what the world looks like, and freezing that
-     * would leave the agent watching a room where nothing moves.
+     * One handler rather than one per mode, for the same reason: two of them writing the same field,
+     * one zeroing and one restoring, is a race nobody should have to reason about.
      *
-     * With this off the correction below is irrelevant, so it is not installed - two handlers
-     * writing the same field, one zeroing and one restoring, is a race nobody should have to read.
+     * **Not being pushed is a different setting from correcting the arithmetic.** Knockback reaches
+     * a client as a velocity to apply to itself, so an agent that drops the one meant for its own
+     * entity is not moved by hits, explosions or anything else that shoves. Only our own entity:
+     * everybody else's motion is what the world looks like, and freezing that would leave the agent
+     * watching a room where nothing moves.
      */
-    if (wanted.take === false) {
-      log.debug(`Agent ${id} will not be pushed around: knockback is turned off`)
+    const absolute = absoluteVelocity(bot.version)
 
-      bot._client.on('entity_velocity', (packet: { entityId: number }) => {
-        if (packet.entityId !== bot.entity?.id) return
+    log.debug(`Agent ${id} handles velocity for ${bot.version}, which is ${absolute ? '' : 'not '}absolute`)
 
-        bot.entity.velocity.set(0, 0, 0)
-      })
-      return
-    }
+    bot._client.on(
+      'entity_velocity',
+      (packet: { entityId: number; velocity?: { x: number; y: number; z: number } }) => {
+        const { take, correct } = wanted()
 
-    if (!(wanted.correct ?? absoluteVelocity(bot.version))) return
+        if (take === false && packet.entityId === bot.entity?.id) {
+          bot.entity.velocity.set(0, 0, 0)
+          return
+        }
 
-    log.debug(`Agent ${id} is correcting mineflayer's velocity scaling for ${bot.version}`)
+        // Upstream is right before 1.21.9, so on those versions there is nothing to undo.
+        if (!(correct ?? absolute)) return
 
-    bot._client.on('entity_velocity', (packet: { entityId: number; velocity: { x: number; y: number; z: number } }) => {
-      const entity = bot.entities?.[packet.entityId]
-      if (!entity?.velocity || !packet.velocity) return
+        const entity = bot.entities?.[packet.entityId]
+        if (!entity?.velocity || !packet.velocity) return
 
-      entity.velocity.set(packet.velocity.x, packet.velocity.y, packet.velocity.z)
-    })
+        entity.velocity.set(packet.velocity.x, packet.velocity.y, packet.velocity.z)
+      },
+    )
   })
 }
 
