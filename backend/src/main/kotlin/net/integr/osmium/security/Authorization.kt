@@ -65,6 +65,20 @@ object Nodes {
     const val AGENT_READ = "agent.read"
 
     /**
+     * Watching an agent's world: the blocks around it and everyone moving through them.
+     *
+     * A read like the rest of the viewer tier, and separate from [AGENT_READ] because of what it
+     * costs rather than what it shows. Every other read answers from what the backend already
+     * holds; this one makes a host follow every block change and every entity movement in an
+     * agent's view for as long as the screen is open. Its own node so that it can be withdrawn from
+     * an account without taking the fleet screens with it.
+     *
+     * Watching only. Nothing here lets an operator move an agent, and driving one from this screen
+     * would be a second node rather than a wider reading of this one.
+     */
+    const val AGENT_VIEW = "agent.view"
+
+    /**
      * Acting on agents, split by what the act costs.
      *
      * `run` is the all-day verb and undoes itself - an agent connected by mistake is disconnected
@@ -127,6 +141,7 @@ object Nodes {
         AUDIT_READ,
         AUDIT_EXPORT,
         AGENT_READ,
+        AGENT_VIEW,
         HOST_READ,
         CHAT_READ,
         CHAT_SPEAK,
@@ -173,6 +188,7 @@ object RoleDefinitions {
         // tier sits in the ladder.
         Nodes.ROLE_READ,
         Nodes.AGENT_READ,
+        Nodes.AGENT_VIEW,
         Nodes.HOST_READ,
         Nodes.CHAT_READ,
         Nodes.ACTIVITY_READ,

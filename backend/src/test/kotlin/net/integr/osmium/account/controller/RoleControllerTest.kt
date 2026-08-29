@@ -28,6 +28,7 @@ class RoleControllerTest : AbstractRestTest() {
                     contains(
                         Nodes.ACTIVITY_READ,
                         Nodes.AGENT_READ,
+                        Nodes.AGENT_VIEW,
                         Nodes.CHAT_READ,
                         Nodes.HOST_READ,
                         Nodes.ROLE_READ,
@@ -60,6 +61,7 @@ class RoleControllerTest : AbstractRestTest() {
                         Nodes.AGENT_READ,
                         Nodes.AGENT_RUN,
                         Nodes.AGENT_SETUP,
+                        Nodes.AGENT_VIEW,
                         Nodes.AGENT_WRITE,
                         Nodes.CHAT_READ,
                         Nodes.CHAT_SPEAK,

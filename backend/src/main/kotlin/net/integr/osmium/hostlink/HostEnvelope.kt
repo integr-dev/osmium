@@ -71,6 +71,19 @@ object CommandType {
     const val SET_CHAT_LISTENER = "set_chat_listener"
 
     /**
+     * Start or stop streaming this agent's world: `{ "enabled": true }`.
+     *
+     * Demand-driven, and the only command that is. Following an agent means listening to every
+     * block change and every entity movement in its view, so it runs only while somebody has the
+     * screen open - [net.integr.osmium.viewer.ViewerConnections] turns it on for the first watcher
+     * and off after the last.
+     *
+     * A host holds this in memory only, so one that reconnects is asked again for whatever still
+     * has watchers rather than being expected to remember.
+     */
+    const val SET_VIEWER = "set_viewer"
+
+    /**
      * Everything an operator has configured for this agent: `{ "values": { "chat.sender": "…" } }`.
      *
      * **The whole set, not a patch.** A key that is absent has been cleared, which is the only

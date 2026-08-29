@@ -56,6 +56,24 @@ class SecurityConfig(
         .build()
 
     /**
+     * The viewer socket, for the same reason as the host socket above and one of its own.
+     *
+     * A browser cannot put an `Authorization` header on a WebSocket handshake, so there is no JWT
+     * here to authenticate at all - what authorises it is a one-shot ticket in the subprotocol,
+     * minted by a REST call that *was* node checked against `agent.view`. This chain opens the door
+     * to [net.integr.osmium.viewer.ViewerHandshakeAuthenticator], which is the only thing that can
+     * decide it, and which refuses with 401 when the ticket is missing, forged, expired or spent.
+     */
+    @Bean
+    @Order(2)
+    fun viewerSocketFilterChain(http: HttpSecurity): SecurityFilterChain = http
+        .securityMatcher("/ws/viewer")
+        .csrf { it.disable() }
+        .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+        .authorizeHttpRequests { it.anyRequest().permitAll() }
+        .build()
+
+    /**
      * The segment fetch, for the same reason and by the same means as the socket above.
      *
      * A host asks for the blocks of a segment it holds, presenting a ticket minted when that segment
@@ -67,7 +85,7 @@ class SecurityConfig(
      * What this chain does is decline to have an opinion about a credential it does not understand.
      */
     @Bean
-    @Order(2)
+    @Order(3)
     fun hostFetchFilterChain(http: HttpSecurity): SecurityFilterChain = http
         .securityMatcher("/api/hostlink/**")
         .csrf { it.disable() }
@@ -76,7 +94,7 @@ class SecurityConfig(
         .build()
 
     @Bean
-    @Order(3)
+    @Order(4)
     fun securityFilterChain(
         http: HttpSecurity,
         jwtAuthenticationConverter: DatabaseJwtAuthenticationConverter,

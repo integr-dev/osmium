@@ -64,6 +64,7 @@ class AuthControllerTest : AbstractRestTest() {
                     "agent.read",
                     "agent.run",
                     "agent.setup",
+                    "agent.view",
                     "agent.write",
                     "chat.read",
                     "chat.speak",
