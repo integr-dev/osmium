@@ -389,6 +389,24 @@ export const en = {
   },
 
   /** A placeholder screen. Nothing is built behind it yet. */
+  /**
+   * The live world view. Camera words rather than agent words: both modes read the same stream and
+   * neither sends anything to the agent, so nothing here says 'control'.
+   */
+  viewer: {
+    title: 'View',
+    subtitle: "What this agent can see, as it sees it.",
+    orbit: 'Free camera',
+    firstPerson: 'First person',
+    connecting: 'Waiting for the world…',
+    refused: 'You are not allowed to watch this agent.',
+    lost: 'The connection to this agent ended.',
+    unreachable: 'Could not open a stream for this agent.',
+    broken: 'The renderer could not start: {reason}',
+    unsupported: 'This host is streaming a format this page cannot read. Update Osmium.',
+    unstaged: "The renderer has no block data for Minecraft {version}. Stage it with OSMIUM_VIEWER_VERSIONS and rebuild.",
+  },
+
   map: {
     title: 'Map',
     subtitle: 'Where the fleet is working.',

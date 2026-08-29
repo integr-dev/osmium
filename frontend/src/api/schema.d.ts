@@ -428,6 +428,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{id}/viewer/ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a one-shot ticket for this agent's viewer socket.
+         * @description Open `/ws/viewer` with `new WebSocket(url, ['osmium-viewer', ticket])`. The ticket is single-use, expires in 30 seconds, and is good for this agent only. It goes in the subprotocol rather than the query string so that it stays out of access logs and browser history.
+         *
+         *     The socket carries binary frames only, and is receive-only: acting on an agent goes over REST, where it is node checked and audited.
+         */
+        post: operations["ticket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agents/{id}/setup": {
         parameters: {
             query?: never;
@@ -1407,6 +1429,12 @@ export interface components {
              * @example mc.example.com
              */
             serverAddress?: string | null;
+        };
+        TicketResponse: {
+            ticket?: string;
+            protocol?: string;
+            /** Format: int64 */
+            expiresInSeconds?: number;
         };
         /** @description Asks the host to set the agent up. The method is a mechanism the operator chose, relayed to the host uninterpreted. It must never identify an account. */
         SetupAgentRequest: {
@@ -2568,6 +2596,46 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    ticket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TicketResponse"];
+                };
+            };
+            /** @description Missing node `agent.view`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TicketResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TicketResponse"];
                 };
             };
         };

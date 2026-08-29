@@ -77,6 +77,30 @@ server {
         proxy_read_timeout 1h;
     }
 
+    # The viewer socket. Needs the upgrade handshake forwarded, which the `/api/` block below does
+    # not do - without `Upgrade` and `Connection` the request is proxied as a plain GET and the
+    # browser sees a failed handshake.
+    #
+    # `proxy_read_timeout` is what keeps a quiet socket alive: an agent standing still sends nothing
+    # for as long as it stands there, and the default 60s would close it out from under a watcher.
+    #
+    # No `add_header` here either, for the reason given above the stream block.
+    location /ws/ {
+        resolver ${DNS_RESOLVER} valid=10s ipv6=off;
+        set $backend "${BACKEND_URL}";
+        proxy_pass $backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+
     location /api/ {
         # ipv6=off: resolve to A records only. Without it the resolver may hand back an AAAA record
         # for a backend that only listens on IPv4, which fails as a 502. Matches how the old literal

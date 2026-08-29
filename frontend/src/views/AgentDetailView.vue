@@ -7,6 +7,7 @@ import {
   Beef,
   Bot as Agent,
   Clock,
+  Eye,
   Hammer,
   Heart,
   ChevronLeft,
@@ -441,6 +442,20 @@ async function confirmRemove() {
             {{ uptimeOf(agent) }}
           </div>
         </div>
+        <!--
+          Watching is its own authority, and a read rather than an act on the fleet - so it sits
+          apart from the buttons that reshape or destroy, and is offered while an agent is in game
+          because there is no world to watch otherwise.
+        -->
+        <RouterLink
+          v-if="auth.can('agent.view') && isOnline(agent)"
+          :to="{ name: 'agent-viewer', params: { id: agent.id } }"
+          class="btn btn-ghost btn-sm gap-1"
+        >
+          <Eye class="size-4" />
+          {{ t('viewer.title') }}
+        </RouterLink>
+
         <!-- Reshaping and destroying are separate authorities, so they are separate checks. -->
         <div
           v-if="auth.can('agent.write') || auth.can('agent.delete')"

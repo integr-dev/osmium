@@ -23,3 +23,6 @@ test-results
 *.njsproj
 *.sln
 *.sw?
+
+# Staged by scripts/viewer-assets.mjs at build time; ~78 MB of generated renderer assets.
+public/viewer

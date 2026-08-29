@@ -39,6 +39,15 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/AgentDetailView.vue'),
       },
       {
+        // Its own node, and not `agent.read`: watching makes a host follow every block change and
+        // every entity movement in an agent's view for as long as this screen is open, so it can be
+        // withdrawn without taking the fleet screens with it.
+        path: 'agents/:id/view',
+        name: 'agent-viewer',
+        component: () => import('../views/AgentViewerView.vue'),
+        meta: { node: 'agent.view' },
+      },
+      {
         // Read-only, like the dashboard and hosts, so it carries no node of its own.
         path: 'map',
         name: 'map',

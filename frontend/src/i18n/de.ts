@@ -329,6 +329,20 @@ export const de: Copy = {
     agentTag: 'Agent',
   },
 
+  viewer: {
+    title: 'Ansicht',
+    subtitle: 'Was dieser Agent sieht, so wie er es sieht.',
+    orbit: 'Freie Kamera',
+    firstPerson: 'Egoperspektive',
+    connecting: 'Warte auf die Welt…',
+    refused: 'Du darfst diesen Agenten nicht beobachten.',
+    lost: 'Die Verbindung zu diesem Agenten ist beendet.',
+    unreachable: 'Es konnte kein Stream für diesen Agenten geöffnet werden.',
+    broken: 'Der Renderer konnte nicht starten: {reason}',
+    unsupported: 'Dieser Host sendet ein Format, das diese Seite nicht lesen kann. Aktualisiere Osmium.',
+    unstaged: 'Für Minecraft {version} liegen keine Blockdaten bereit. Mit OSMIUM_VIEWER_VERSIONS bereitstellen und neu bauen.',
+  },
+
   map: {
     title: 'Karte',
     subtitle: 'Wo die Flotte arbeitet.',
