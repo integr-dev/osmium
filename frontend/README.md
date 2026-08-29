@@ -1017,6 +1017,66 @@ empty fleet apart from one nobody has asked for yet.
 `loaded` stays true once set. A later refresh is a background update over content already on screen,
 and blanking it back to skeletons would be a worse lie than briefly stale numbers.
 
+## The world viewer
+
+An agent's surroundings, rendered live, at `/agents/:id/view` behind `agent.view`. Offered from the
+agent screen while it is in game, because there is no world to watch otherwise.
+
+The renderer is **prismarine-viewer's own, unmodified at runtime**: writing one would mean
+reimplementing Minecraft's block models. What this app supplies is the transport — upstream talks
+socket.io straight to a host, and Osmium's hosts dial out and are never reachable — and the assets.
+
+Free camera and first person are a **camera choice** over the same stream. Neither sends anything to
+the agent; watching is all `agent.view` grants, and driving one would be a second node.
+
+### Its assets are built, not shipped
+
+`scripts/viewer-assets.mjs` stages everything the renderer fetches at runtime into `public/viewer/`,
+and runs before `dev` and `build`. It is gitignored — the atlas and block-state pair is ~14 MB per
+version.
+
+Upstream ships those prebuilt only up to **1.21.4**. Anything newer is generated from
+`minecraft-assets`, and the meshing worker is rebuilt against the `minecraft-data` this project
+resolves, because the bundle upstream ships predates every version published since its release and
+answers a newer one by throwing. Set `OSMIUM_VIEWER_VERSIONS` to change what is staged; a fleet on a
+major nobody staged fails at build time rather than per browser.
+
+**The build proves what it produced.** It starts the worker it just built, feeds it every staged
+version, and checks that the data the mesher reaches for by name survived the filter. All of that
+fails inside a Web Worker otherwise, where it surfaces as `Uncaught` lines with no stack into this
+project and a viewer that silently renders nothing.
+
+### Four accommodations for a renderer built for webpack
+
+Upstream's build does things Vite does not, and each gap is a different failure:
+
+- **`canvas`** — its nametag drawing imports Node's `canvas`. Aliased to `src/lib/nodeCanvas.ts`; a
+  browser's own canvas is what that package exists to emulate.
+- **`process` and `__dirname`** — read before the code decides it is not in Node. `process` is set
+  before the renderer is imported, `__dirname` defined away.
+- **`worker.js`, textures and block states** — resolved by bare relative path against the page URL.
+  The worker's constructor is swapped for the moment its workers are made; the atlas and states are
+  handed over directly; entity textures are rewritten through three's loading manager.
+- **the global `THREE`** — its entity models read one rather than importing it.
+
+### Two patches to upstream sources, at build time
+
+Both for the assumption that a world starts at y=0: the section lookup reads the array as though
+index 0 were y=0, and a face whose neighbour lies below y=0 is culled as though it faced the void.
+Together they left everything under bedrock level invisible except blocks with no cullable faces.
+
+Patching a dependency is not free. It was taken because the checks sit inside a Web Worker two
+callers deep, so there is nothing to wrap from outside, and vendoring the files to change two
+expressions would mean owning the rest of them. Each patch asserts how many occurrences it expects,
+so an upstream change fails the build rather than quietly reverting.
+
+### What it does not draw
+
+Block entities — chests, heads, signs, beds — have deliberately empty block models, because vanilla
+draws them with dedicated renderers. They appear as holes. Players wear the default skin, and a few
+of upstream's entity models cannot be assembled at all; those are filtered out rather than shown as
+the magenta box upstream substitutes.
+
 ## Player heads
 
 Agents, nearby players and chat lines carry a Minecraft head. It comes from Osmium's own

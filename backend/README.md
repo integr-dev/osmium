@@ -105,6 +105,7 @@ model honest. A null role means no permissions at all.
 | `audit.read` | read the operator audit trail, including outbound message text |
 | `audit.export` | pull the trail out as a CSV file |
 | `agent.read` | see agents, their telemetry and player heads |
+| `agent.view` | watch an agent's world: the blocks around it and everyone moving through them |
 | `host.read` | see the hosts that run them |
 | `activity.read` | read the incident feed |
 | `chat.read` | read what was said in game |
@@ -198,6 +199,7 @@ changes automatically.
 | `POST` | `/api/hosts/{id}/rotate-token` | `host.token` |
 | `DELETE` | `/api/hosts/{id}` | `host.delete` (cascades to its agents) |
 | `GET` | `/api/agents`, `/api/agents/{id}` | `agent.read` |
+| `POST` | `/api/agents/{id}/viewer/ticket` | `agent.view` (mints a single-use 30s ticket for `/ws/viewer`) |
 | `POST` | `/api/agents` | `agent.write` (`serverAddress` optional) |
 | `PATCH` | `/api/agents/{id}` | `agent.write` (rename) |
 | `PUT` | `/api/agents/{id}/server` | `agent.write` (assign a server, or null for none; offline only) |
@@ -638,6 +640,57 @@ The fix it points at is `matches()` comparing the subscriber's nodes to `event.t
 
 They are not *fleet* events. The channel carries whatever a browser has to learn about without
 asking, and hosts and agents are only what it carries today.
+
+## The viewer socket
+
+Browsers watching an agent's world connect to `/ws/viewer`. The backend relays what the host sends
+and stores none of it.
+
+**Frames ride the host's existing socket, as binary.** A WebSocket says which of the two kinds a
+frame was, so a world frame is told from a command without reading either: the control protocol
+stays JSON and this stays bytes. `HostMessageHandler` overrides `handleBinaryMessage` for it —
+`TextWebSocketHandler` answers a binary frame by closing the connection, so without that override
+the first world a host streamed would take its control socket with it.
+
+Nothing here parses a frame. A six-byte header names the agent; the body is the renderer's business.
+
+### It only runs while somebody is watching
+
+`ViewerConnections` counts watchers per agent and sends `set_viewer` to the host holding it — on for
+the first, off after the last. Following an agent means listening to every block change and every
+entity movement in its view, which is not something to leave running for a screen nobody has open.
+
+A host holds that subscription in memory, so it is re-asked on reconnect for whatever still has
+watchers. A host may only stream agents it was asked to stream: the host each `set_viewer` went to
+is recorded, and a frame that disagrees is dropped and logged.
+
+### Authorising a socket a browser cannot sign
+
+A browser cannot put an `Authorization` header on a WebSocket handshake, so the node check happens
+on `POST /api/agents/{id}/viewer/ticket` — an ordinary authenticated request, gated on `agent.view`.
+What comes back stands in for it exactly once.
+
+A ticket is random, opaque, valid for 30 seconds, single-use, and bound to one agent. It is spent by
+being removed before it is checked, so a replay loses the race with itself. It travels in
+`Sec-WebSocket-Protocol`, not the query string, because a URL is written to access logs, proxy logs
+and browser history. `ViewerSocketHandler` is `SubProtocolCapable` and agrees to that protocol: a
+browser that offers one and is answered with none closes the connection the moment it opens,
+abnormally and without a word.
+
+`/ws/viewer` gets its own filter chain, `permitAll`, for the same reason `/ws/host` does — there is
+no JWT to authenticate, and the handshake interceptor is the only thing that can decide it.
+
+### One slow browser must not stall a host
+
+Frames are relayed on the host's read thread. Each watcher is therefore wrapped in a
+`ConcurrentWebSocketSessionDecorator` with its own bounded buffer and send deadline: a browser that
+falls behind is dropped on its own, and the host thread returns immediately either way. A watcher
+past the buffer is dropped rather than served stale — the next frame of a world is worth more than
+the last one, and a viewer that reconnects starts from a fresh fill.
+
+The host session's binary limit is raised per session from the container's 8 KB default, since a
+gzipped chunk column is tens of kilobytes and exceeding the limit fails the session rather than the
+frame.
 
 ## Audit log
 

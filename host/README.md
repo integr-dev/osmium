@@ -595,6 +595,64 @@ what it can log in with, rather than being offered a chooser that cannot work.
 
 ---
 
+## 4.5 Streaming an agent's world
+
+A host that implements this can be watched live. It is optional: a host that ignores `set_viewer`
+and never sends a binary frame is fully compliant, and its agents simply cannot be watched.
+
+### `set_viewer`
+
+```jsonc
+// backend → host
+{ "id": "cmd-9c2b", "kind": "command", "type": "set_viewer", "agentId": 42,
+  "payload": { "enabled": true } }
+```
+
+The only command sent because somebody is *looking*. Following an agent means listening to every
+block change and every entity movement in its view, so it runs only while a screen is open — the
+backend turns it on for the first watcher and off after the last.
+
+**Hold it in memory, and do not persist it.** A host that reconnects is asked again for whatever
+still has watchers. Remembering it across a restart would leave a world streaming for nobody.
+
+Remember the subscription even when it cannot be served: an agent between sessions has no world, and
+being told about a watcher then is the only way to have one waiting when it spawns back in.
+
+### The frames
+
+World updates are **binary frames on the same socket**, not envelopes. A WebSocket reports which of
+the two a frame was, so the backend tells them apart without reading either — the control protocol
+stays JSON and this stays bytes.
+
+```
+0      u8   frame version (1)
+1      u8   flags (bit 0: body is gzipped)
+2..5   u32  agent id, big endian
+6..    body: UTF-8 JSON, an array of { name, data }
+```
+
+The body's vocabulary is prismarine-viewer's, because that is what the browser renders with:
+`version`, `loadChunk`, `unloadChunk`, `blockUpdate`, `entity`, `position`.
+
+`version` must come **first** and again on every session. It carries the Minecraft version and the
+world's vertical bounds — the renderer cannot place a block without the first, and assumes the
+pre-1.18 range of 0 to 256 without the second.
+
+### Three things that will bite
+
+**Gzip the big ones.** A chunk column is JSON and compresses about fifteen times. Below a few
+kilobytes it costs more than it saves.
+
+**Coalesce entities.** `entityMoved` fires per entity per tick, so a busy server offers thousands of
+messages a second of which all but the last per entity are already stale. Gather them onto a tick —
+but *merge* a spawn into the movement that supersedes it rather than dropping it, because the spawn
+is the only update that ever states how big a thing is.
+
+**Pace the fill.** Send the view nearest column first, with a gap between them. Sent back to back a
+full view arrives as several megabytes within a few milliseconds, overruns the relay's write buffer,
+and takes the watcher's socket down with it — as an unexplained abnormal close, because nothing gets
+the chance to say why.
+
 ## 5. Chat scoping and the listener role
 
 The host is the only side that can classify chat — it sees the raw packet types, and the backend

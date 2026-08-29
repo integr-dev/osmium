@@ -15,15 +15,17 @@ what needs attention, and what is being said in game.
 > they see; building is the part of it still to be written. A mock host in this repository speaks the
 > same protocol, and the feeds stay empty until something connects and starts reporting. Remote
 > configuration is wired end to end — what an operator sets is stored, sent to the host, and replayed
-> on every reconnect — so nothing in the interface runs on mock data any more.
+> on every reconnect — so nothing in the interface runs on mock data any more. An agent's world can
+> also be watched live: the host streams the blocks and entities around it, and the browser renders
+> them.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 496 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard and the build pipeline. | Built, 389 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays and reports; does not build yet, 156 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 515 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline and the live world viewer. | Built, 399 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports and streams its world; does not build yet, 188 tests |
 
 ## The one idea worth knowing
 
@@ -83,9 +85,9 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 496 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 389 tests
-cd host && npm test              # 156 tests
+cd backend && ./gradlew test     # 515 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 399 tests
+cd host && npm test              # 188 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
@@ -93,8 +95,9 @@ clients over real host sockets, and unit tests on an injected clock for anything
 time. The frontend covers the route guard, the auth store, the API client middleware, the fleet
 store's derived state, cursor paging, the geometry behind the charts and the box viewer, and that
 the English and German copy stay in step. The host covers the protocol codec, the chat formats
-against lines captured from real servers, and the chat command system — including an adversarial
-pass on the one input it takes from strangers.
+against lines captured from real servers, the chat command system — including an adversarial pass on
+the one input it takes from strangers — and the world stream, where the columns a viewer actually
+puts on the wire are checked against the ones its own spiral asked for.
 
 ## CI
 

@@ -722,6 +722,88 @@ other, and that browser never sees the event. Solving it needs a shared broker (
 sticky routing. Not worth building now, but worth keeping the fan-out behind a small internal
 interface so that later becomes one implementation rather than a rewrite.
 
+## Watching an agent's world
+
+> **Built.** The host streams the blocks and entities around an agent; the browser renders them with
+> prismarine-viewer's renderer. Watching only.
+
+Everything else in this document is *state*: small, structured, and worth keeping. A world is
+neither. It is megabytes, it is only interesting while somebody is looking at it, and none of it is
+worth storing — so it takes a different path through the same connections.
+
+```
+host ──WS binary──▶ backend ──WS binary──▶ browser
+     ◀── set_viewer ┘                ▲
+                                     └── REST (mint a ticket, node-gated)
+```
+
+### It rides the socket that already exists
+
+World frames travel on the **host's existing socket**, as binary. A WebSocket reports which of the
+two kinds a frame was, so the backend can tell a world frame from a command without reading either:
+the control protocol stays JSON, and this stays bytes. No second connection, no second
+authentication, no second thing to reconnect.
+
+They are **relayed, never parsed**. A six-byte header names the agent and the backend reads nothing
+past it — a JSON parse in front of every frame of every watched agent would be the most expensive
+thing it does, and it has no use for the contents.
+
+```
+0      u8   frame version
+1      u8   flags (bit 0: body is gzipped)
+2..5   u32  agent id, big endian
+6..    body: UTF-8 JSON, an array of { name, data }
+```
+
+A host may only stream agents it was **asked** to stream. The backend records which host it sent
+each `set_viewer` to and refuses frames that disagree; nothing else would stop one host having
+another's world relayed to that agent's watchers.
+
+### Demand-driven, unlike everything else
+
+`set_viewer` is the only command sent because somebody is *looking*. Following an agent means
+listening to every block change and every entity movement in its view, so it runs only while a
+screen is open: the backend turns it on for the first watcher and off after the last. A host holds
+that in memory alone, so one that reconnects is asked again for whatever still has watchers rather
+than being expected to remember.
+
+### A browser cannot authenticate a WebSocket
+
+There is no way to put a JWT on a WebSocket handshake from a browser. So the node check happens
+where every other one does — on a REST call — and what comes back is a **single-use ticket**, valid
+for thirty seconds, good for one agent.
+
+It travels in `Sec-WebSocket-Protocol`, the one request header a browser may choose. Deliberately
+not the query string: a URL is written to access logs, proxy logs and browser history, and a
+credential should be in none of them. The server must also *agree* to that subprotocol — a browser
+that offers one and is answered with none closes the connection the instant it opens, abnormally
+and saying nothing.
+
+### What the wire carries, and what it costs
+
+The vocabulary is prismarine-viewer's own — `loadChunk`, `unloadChunk`, `blockUpdate`, `entity`,
+`position` — because that is the contract its renderer already speaks. Two departures from
+upstream, both because this link is not in-process:
+
+- **Frames are gzipped** past a few kilobytes. A chunk column is JSON and compresses about fifteen
+  times.
+- **Entity updates are coalesced** onto a tick. `entityMoved` fires per entity per tick, so a busy
+  server offers thousands of messages a second of which all but the last per entity are already
+  stale. A spawn is *merged* into the movement that supersedes it rather than dropped, because the
+  spawn is the only update that ever states how big a thing is.
+
+The initial fill is **paced**, nearest column first. Sent back to back they arrive as several
+megabytes within a few milliseconds and overrun the relay's write buffer; paced, the view is usable
+immediately and complete in about two seconds. Each browser is written to through a bounded buffer,
+because frames are relayed on the host's read thread — one viewer that cannot keep up would
+otherwise block the host and then be dropped along with it.
+
+### Why not render on the host
+
+Because hosts dial out and are never reachable, pixels would have to cross the backend anyway, and
+encoding them costs a core per stream. Sending the world instead means the camera is local: moving
+it is instant rather than a round trip, and the same stream serves every angle.
+
 ## Chat
 
 "Chat" is several different things, and only some of them are per-agent. Rendering a server's global
@@ -1016,6 +1098,7 @@ New nodes, following the existing convention of authorizing routes on nodes and 
 | Node | Grants | Tier |
 |---|---|---|
 | `agent.read` | View agents, telemetry, nearby players | viewer |
+| `agent.view` | Watch an agent's world: the blocks around it and everyone moving through them | viewer |
 | `host.read` | View the hosts that run them | viewer |
 | `activity.read` | Read the incident feed | viewer |
 | `chat.read` | Read what was said in game | viewer |
@@ -1041,6 +1124,13 @@ measure of progress computed from it.
 Reading schematics is its own node rather than part of `agent.read`, because a schematic is a design
 rather than fleet state — it is what somebody means to build, and it exists before any agent has
 been pointed at it.
+
+`agent.view` is separate for a different reason again: not what it shows, but what it costs. Every
+other read answers from what the backend already holds, while this one makes a host follow every
+block change and every entity movement in an agent's view for as long as a screen is open. Its own
+node so it can be withdrawn from an account without taking the fleet screens with it. It is watching
+only — nothing behind it moves an agent, and driving one from that screen would be a second node
+rather than a wider reading of this one.
 
 The nodes are split by **what an act costs**, not by which resource it touches: `run` undoes itself,
 `write` is recoverable, `delete` is not. Two are separated for what they *are* rather than what they
