@@ -18,6 +18,8 @@ import {
   WHISPER_SENT,
 } from './sender.ts'
 
+import { AgentViewer } from './viewer.ts'
+
 import { log, reason } from '../log.ts'
 import type { CommandBody, Event, SetupResult, Vitals } from '../protocol/message.ts'
 import { ActivityScope, ChatScope, LoginState, type Player, Severity, type Vec3 } from '../protocol/wire.ts'
@@ -73,6 +75,12 @@ const NEARBY_LIMIT = 20
 /** How an agent reaches the rest of the host. */
 export interface AgentHooks {
   event(event: Event): void
+  /** One batch of world updates, for whoever is watching this agent.
+   *
+   * Not an {@link Event}: it carries nothing the backend keeps, and it is binary, so it neither
+   * fits the JSON envelope nor should be parsed by anything in the middle. The backend relays it
+   * to the browsers watching this agent and stores none of it. */
+  viewer(frame: Buffer): void
   /** Answers the `setup_agent` that asked for this agent. Called at most once, and never for an
    * agent rebuilt from the store - nothing asked for that one. */
   result(setup: SetupResult): void
@@ -105,6 +113,12 @@ export class Agent {
   private entry: Entry | undefined
   private identity: Identity | undefined
   private listening = false
+  /** Whether somebody has a viewer open on this agent. Survives a reconnect within one session so
+   * a watcher does not go blank when the agent rejoins; cleared when the backend says nobody is
+   * watching any more, or when this agent is finished with. */
+  private watched = false
+  /** Runs only while {@link watched} and in game. Rebuilt per session: it holds the bot. */
+  private watcher: AgentViewer | undefined
   /** Whether this session ever got in. `spawn` fires again on every respawn and every dimension
    * change, and an agent that died has not rejoined the server. */
   private joined = false
@@ -276,6 +290,10 @@ export class Agent {
         this.listening = command.enabled
         return
 
+      case 'set_viewer':
+        this.watch(command.enabled)
+        return
+
       case 'settings':
         return this.configure(command.values)
 
@@ -407,6 +425,12 @@ export class Agent {
       live(() => {
         this.report({ state: LoginState.Online })
 
+        // The world is there now, so a watcher that was waiting on this session can be served. On
+        // a respawn or a dimension change the old one is holding chunks that no longer exist, so
+        // it is rebuilt rather than left running.
+        this.unwatch()
+        if (this.watched) this.begin_watching()
+
         // Only the first one, and only one sampler. `spawn` fires again on every respawn and every
         // dimension change, and an agent that died has not rejoined the server.
         if (this.joined) return
@@ -537,6 +561,9 @@ export class Agent {
     this.watchdog = undefined
     this.vitals = undefined
     this.listening = false
+    // The stream goes, the subscription stays: a watcher whose agent is reconnecting is still
+    // watching, and gets the world back when the agent spawns into it.
+    this.unwatch()
 
     // Torn down here, because we may have settled this before the protocol did - an attempt that
     // failed its version ping still holds an open socket nothing else will ever close.
@@ -1005,6 +1032,9 @@ export class Agent {
 
   private async remove(): Promise<void> {
     this.done = true
+    // Not just the stream: the agent is gone, so there is nothing left to come back for.
+    this.watched = false
+    this.unwatch()
 
     if (this.bot) {
       this.leaving = true
@@ -1085,6 +1115,40 @@ export class Agent {
     log.warn(
       `Agent ${this.id} is in game but its chunks did not load, so it will not move, fall or take knockback. Run with OSMIUM_LOG=debug to see what the server sent.`,
     )
+  }
+
+  /**
+   * Takes the backend's word for whether anyone is watching.
+   *
+   * The subscription is remembered even when it cannot be served - an agent between sessions has no
+   * world to stream, and being told about a watcher then is the only way to have one waiting when
+   * it spawns back in.
+   */
+  private watch(enabled: boolean): void {
+    if (this.watched === enabled) return
+    this.watched = enabled
+
+    if (!enabled) {
+      this.unwatch()
+      return
+    }
+
+    // Only once the world is there. Before `spawn` there is nothing to send, and `bot.entity` -
+    // which the viewer centres on - does not exist yet.
+    if (this.joined && this.bot?.entity) this.begin_watching()
+  }
+
+  private begin_watching(): void {
+    const bot = this.bot
+    if (!bot?.entity || this.watcher) return
+
+    this.watcher = new AgentViewer(this.id, bot, (frame) => this.hooks.viewer(frame))
+    this.watcher.start()
+  }
+
+  private unwatch(): void {
+    this.watcher?.stop()
+    this.watcher = undefined
   }
 
   private report(status: {

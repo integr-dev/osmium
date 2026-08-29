@@ -73,6 +73,12 @@ function body(name: string, payload: Json): CommandBody {
       return { type: 'set_chat_listener', enabled }
     }
 
+    case 'set_viewer': {
+      const enabled = payload['enabled']
+      if (typeof enabled !== 'boolean') throw new MessageError("missing or ill-typed 'payload.enabled'")
+      return { type: 'set_viewer', enabled }
+    }
+
     case 'settings': {
       const values = payload['values']
       if (typeof values !== 'object' || values === null) throw new MessageError("missing or ill-typed 'payload.values'")

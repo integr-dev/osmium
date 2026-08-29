@@ -26,7 +26,12 @@ async function main(): Promise<void> {
     command: (command) => dispatcher.command(command),
   })
 
-  const dispatcher = new Dispatcher(store, cache, (message) => socket.send(message))
+  const dispatcher = new Dispatcher(
+    store,
+    cache,
+    (message) => socket.send(message),
+    (frame) => socket.stream(frame),
+  )
 
   dispatcher.restore()
   socket.start()

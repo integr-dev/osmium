@@ -66,6 +66,18 @@ export class HostSocket {
     this.socket.send(serialize(message))
   }
 
+  /**
+   * Sends one batch of world updates, or drops it when there is no socket.
+   *
+   * A binary frame, so the backend can tell it from the control protocol without reading either -
+   * that one stays JSON, this stays bytes and is relayed untouched. Dropped rather than queued for
+   * the same reason as {@link send}, and more so: a stale frame of a world is worse than none.
+   */
+  stream(frame: Buffer): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return
+    this.socket.send(frame, { binary: true })
+  }
+
   private open(): void {
     // Authentication happens during the handshake, before any frame is accepted, which is why this
     // rides on the upgrade rather than being a first message.

@@ -26,6 +26,9 @@ export class Dispatcher {
     private readonly store: AccountStore,
     private readonly cacheDirectory: string,
     private readonly send: (message: Outbound) => void,
+    /** World updates. They ride the same socket as a binary frame, and are relayed rather than
+     * read - nothing between here and the browser has any use for what is in them. */
+    private readonly stream: (frame: Buffer) => void,
   ) {}
 
   /**
@@ -137,6 +140,7 @@ export class Dispatcher {
 
     const agent = new Agent(agentId, credential, this.store, this.cacheDirectory, {
       event: (event) => this.forward(agentId, event),
+      viewer: (frame) => this.stream(frame),
       result: (setup) => {
         const id = running.pending.shift()
         if (id === undefined) {

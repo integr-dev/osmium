@@ -26,6 +26,15 @@ export type CommandBody =
   | { type: 'disconnect' }
   | { type: 'chat'; message: string }
   | { type: 'set_chat_listener'; enabled: boolean }
+  /** Start or stop streaming this agent's world to whoever is watching it.
+   *
+   * Demand-driven, unlike everything else here. Following an agent means listening to every block
+   * change and every entity movement in its view, so it runs only while somebody has a screen open
+   * on it - the backend turns it off again when the last watcher goes away.
+   *
+   * Not remembered across a reconnect, and deliberately: a watcher that is still there re-asks, and
+   * one that is not would otherwise leave the stream running for nobody. */
+  | { type: 'set_viewer'; enabled: boolean }
   /** Configuration for this agent, as a flat map.
    *
    * **Whole, not a patch.** What arrives is everything the operator has set, so a key that is no
