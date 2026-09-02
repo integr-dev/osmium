@@ -220,6 +220,20 @@ const VIEW_DISTANCE = 6
  */
 const FILL_PACE = 15
 
+/**
+ * How often the view is reconciled against what the agent can actually see.
+ *
+ * Derived rather than event-driven, for the same reason the backend sweeps for agents to rejoin: a
+ * column can be missed two ways and neither leaves anything to hook. A chunk that arrives before
+ * the position update that follows a teleport is judged against the old centre and refused; a
+ * column the server has not streamed yet is skipped by the fill walking past it. Both are gaps that
+ * no later event mentions, and a sweep closes them without having to enumerate them.
+ *
+ * Nearly free when there is nothing to do - a pass over a full view of already-loaded columns is a
+ * hundred and forty-four set lookups.
+ */
+const RECONCILE = 3_000
+
 function pause(millis: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, millis))
 }
@@ -234,6 +248,9 @@ export class AgentViewer {
   private readonly loaded = new Set<string>()
   private pending: ViewerEvent[] = []
   private flusher: NodeJS.Timeout | undefined
+  private sweeper: NodeJS.Timeout | undefined
+  /** One fill at a time: the sweep and a chunk boundary can ask for one at the same moment. */
+  private filling = false
   private centre: { x: number; z: number }
   private stopped = false
 
@@ -266,6 +283,7 @@ export class AgentViewer {
     this.bot.on('entityGone', this.onGone)
 
     this.flusher = setInterval(() => this.flush(), COALESCE)
+    this.sweeper = setInterval(() => void this.fillNew(), RECONCILE)
 
     // First, and before anything that depends on it: the renderer reads block state ids against a
     // version, so a chunk arriving ahead of this one would be drawn against whatever it assumed.
@@ -298,7 +316,10 @@ export class AgentViewer {
     this.bot.removeListener('entityGone', this.onGone)
 
     clearInterval(this.flusher)
+    clearInterval(this.sweeper)
     this.flusher = undefined
+    this.sweeper = undefined
+    this.filling = false
     this.pending = []
     this.loaded.clear()
 
@@ -364,13 +385,27 @@ export class AgentViewer {
     void this.fillNew()
   }
 
+  /**
+   * Sends whatever is in view and has not been sent, and nothing else.
+   *
+   * Guarded rather than queued: a second request while one is running would walk the same spiral
+   * against the same set and send the same columns twice. Whatever the running pass misses is
+   * picked up by the next sweep, which is the point of having one.
+   */
   private async fillNew(): Promise<void> {
-    for (const offset of spiral(VIEW_DISTANCE)) {
-      if (this.stopped) return
-      const at = { x: this.centre.x + offset.x, z: this.centre.z + offset.z }
-      if (this.loaded.has(`${at.x},${at.z}`)) continue
-      await this.load(at)
-      await pause(FILL_PACE)
+    if (this.filling || this.stopped) return
+    this.filling = true
+
+    try {
+      for (const offset of spiral(VIEW_DISTANCE)) {
+        if (this.stopped) return
+        const at = { x: this.centre.x + offset.x, z: this.centre.z + offset.z }
+        if (this.loaded.has(`${at.x},${at.z}`)) continue
+        await this.load(at)
+        await pause(FILL_PACE)
+      }
+    } finally {
+      this.filling = false
     }
   }
 

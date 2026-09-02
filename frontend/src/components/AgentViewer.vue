@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Eye, Orbit } from 'lucide-vue-next'
+import { Eye, Orbit, TriangleAlert } from 'lucide-vue-next'
 
 import { api } from '../api/client'
+import { isOnline, useAgentStore } from '../stores/agents'
 import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerStream'
 
 /**
@@ -20,6 +21,22 @@ import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerS
 const props = defineProps<{ agentId: number }>()
 
 const { t } = useI18n()
+const agentStore = useAgentStore()
+
+/** The agent as the fleet knows it, which is how this screen learns it has left the game. */
+const agent = computed(() => agentStore.byId(props.agentId))
+
+/**
+ * A world nobody is in any more.
+ *
+ * The last frames stay on screen deliberately - blanking them would throw away the only picture of
+ * where the agent was when it went - but they stop being true the moment it leaves, and saying so
+ * is the difference between a record and a lie.
+ */
+const stale = computed(() => agent.value !== undefined && !isOnline(agent.value))
+
+/** What the fleet last heard about the people around it, for the labels over their heads. */
+const nearby = computed(() => agent.value?.telemetry?.nearby ?? [])
 
 const canvas = ref<HTMLCanvasElement>()
 /** Free orbit, or looking through the agent's own eyes. Purely a camera choice: both read the same
@@ -36,8 +53,16 @@ interface Scene {
   viewer: ViewerLike
   emitter: Emitter
   socket: WebSocket
-  renderer: { setSize(w: number, h: number): void; render(s: unknown, c: unknown): void; dispose(): void }
-  controls?: { update(): void; dispose(): void; target: { set(x: number, y: number, z: number): void } }
+  renderer: {
+    setSize(w: number, h: number, updateStyle?: boolean): void
+    render(s: unknown, c: unknown): void
+    dispose(): void
+  }
+  /** Watches the canvas, not the window - see {@link resize}. */
+  watcher?: ResizeObserver
+  /** The one material every player's box shares; its width is in pixels, so it tracks the canvas. */
+  outlineMaterial?: { resolution: { set(width: number, height: number): void } }
+  controls?: { enabled: boolean; update(): void; dispose(): void; target: { set(x: number, y: number, z: number): void } }
   frame: number
   position?: { pos: { x: number; y: number; z: number }; yaw: number; pitch: number }
   /** Entity types the renderer can build a mesh for - see {@link buildableModels}. */
@@ -50,16 +75,36 @@ interface Scene {
   buildBody?: () => Mesh | undefined
   /** three's texture constants, carried here so the nametag fix-up needs no import. */
   filters: { linear: number; clamp: number }
+  /** Where the agent was last seen, so a jump can be told from a walk. See {@link frameCamera}. */
+  lastAt?: { x: number; y: number; z: number }
   /** How many columns the host has sent, for {@link reportCoverage}. */
   received: number
+  /** Entity ids seen on the wire, and the types they arrived as. */
+  seen: Map<number, string>
+  /** Usernames, for redrawing the nametags upstream draws off-centre. */
+  names: Map<number, string>
+  /** Where each entity is, for the distance on its label. */
+  at: Map<number, { x: number; y: number; z: number }>
+  /** How big each is, for the box drawn around it. */
+  sizes: Map<number, { width: number; height: number }>
+  /** Builds an outline in the entity mesh's own units. Held so the decoration needs no imports. */
+  buildOutline?: (width: number, height: number) => Mesh | undefined
   summary?: ReturnType<typeof setTimeout>
 }
 
 interface Mesh {
   position: { set(x: number, y: number, z: number): void }
+  scale: { set(x: number, y: number, z: number): void }
   rotation: { y: number }
+  visible: boolean
+  frustumCulled: boolean
+  renderOrder: number
+  userData: Record<string, unknown>
+  add(child: unknown): void
   children?: Array<{
     isSprite?: boolean
+    frustumCulled: boolean
+    renderOrder: number
     scale: { set(x: number, y: number, z: number): void }
     userData: Record<string, unknown>
     material?: SpriteMaterial
@@ -70,7 +115,11 @@ interface SpriteMaterial {
   transparent: boolean
   depthWrite: boolean
   needsUpdate: boolean
+  depthTest: boolean
+  /** False keeps the label one size at every distance. */
+  sizeAttenuation: boolean
   map?: {
+    image?: HTMLCanvasElement
     generateMipmaps: boolean
     minFilter: number
     magFilter: number
@@ -80,11 +129,29 @@ interface SpriteMaterial {
   }
 }
 
+/** One vertex stream of a section mesh. `onUpload` fires once three has handed it to the GPU. */
+interface AttributeLike {
+  onUpload(callback: (this: { array: unknown }) => void): unknown
+}
+
+interface GeometryLike {
+  dispose(): void
+  computeBoundingSphere(): void
+  attributes: Record<string, AttributeLike | undefined>
+  index?: AttributeLike | null
+}
+
+interface WorkerLike {
+  terminate(): void
+  onmessage: ((event: { data: { type: string; key?: string } }) => void) | null
+}
+
 interface WorldLike {
   texturesDataUrl?: string
   blockStatesData?: unknown
   scene: { remove(object: unknown): void }
-  sectionMeshs?: Record<string, { geometry?: { dispose(): void } } | undefined>
+  sectionMeshs?: Record<string, { geometry?: GeometryLike } | undefined>
+  workers: WorkerLike[]
   loadedChunks?: Record<string, boolean>
   addColumn(x: number, z: number, chunk: unknown): void
   removeColumn(x: number, z: number): void
@@ -109,9 +176,17 @@ watch(firstPerson, (on) => {
   const current = scene.value
   if (!current) return
 
+  // Orbit has to be switched off, not merely left un-updated: it goes on listening for drags and
+  // moving the camera, which then fights the agent's own head for it every frame.
+  if (current.controls) current.controls.enabled = !on
+
+  // And the agent's body has to go. The camera sits inside it in first person, so what it renders
+  // is the inside of its own skull.
+  if (current.body) current.body.visible = !on
+
   if (on) return
-  // Coming back out of first person, the orbit camera is wherever the agent's head left it, which
-  // is inside its own skull. Pulled back to where the free camera started.
+  // Coming back out, the orbit camera is wherever that head left it. Pulled back to where the free
+  // camera started.
   const at = current.position?.pos
   if (!at) return
   current.controls?.target.set(at.x, at.y, at.z)
@@ -186,6 +261,13 @@ function reportCoverage(current: Scene): void {
 
     // `info`, not `debug`: the browser hides debug behind a verbosity setting that is off by
     // default, so a line nobody sees is a line that does not exist.
+    const drawn = Object.keys(current.viewer.entities?.entities ?? {}).length
+    const kinds = [...new Set(current.seen.values())].sort().join(' ')
+
+    console.info(
+      `[osmium] viewer entities: ${current.seen.size} seen, ${current.undrawable.size} skipped, ` +
+        `${drawn} drawn — types: ${kinds || '(none)'}`,
+    )
     console.info(
       `[osmium] viewer @ ${home.x},${home.z}: host sent ${current.received} columns, ` +
         `renderer holds ${columns.length}, ${columns.length - undrawn.length} have geometry. ` +
@@ -261,6 +343,44 @@ const NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
 ]
 
 /**
+ * How many meshing workers to run. Upstream hardcodes four in `WorldRenderer`'s constructor.
+ *
+ * Meshing is sharded across them, but the world is not: `addColumn` hands every column to every
+ * worker, and each one parses its own copy of the block states - 12.7 MB of JSON that costs about
+ * 30 MB of heap once parsed. A worker is therefore a large fixed cost for a share of the meshing,
+ * and the fourth was buying less than it cost.
+ */
+const WORKERS = 3
+
+/** Sets `array` to null. Called by three with the attribute as `this`. */
+function shed(this: { array: unknown }): void {
+  this.array = null
+}
+
+/**
+ * Lets a finished section mesh drop its vertex data once the GPU has it.
+ *
+ * `BufferAttribute` keeps the `Float32Array` it was built from alive for as long as the mesh is in
+ * the scene, so every section is held twice over - once in the GPU buffer that draws it and once in
+ * a copy on the JS heap that nothing reads. It is not nothing: the renderer does no greedy meshing,
+ * so a section is four vertices of eleven floats for every visible face, and there are 24 of them
+ * per column across 144 columns.
+ *
+ * The copy is only worth keeping for something that reads vertices back - raycasting, or recomputing
+ * bounds. Neither happens here: `Viewer.listen` raycasts nothing (its pointer handler emits the ray
+ * rather than intersecting with it), and the bounds are computed here, while the data still exists,
+ * because frustum culling needs them on the first frame.
+ */
+function releaseGeometry(mesh: { geometry?: GeometryLike } | undefined): void {
+  const geometry = mesh?.geometry
+  if (!geometry) return
+
+  geometry.computeBoundingSphere()
+  for (const attribute of Object.values(geometry.attributes)) attribute?.onUpload(shed)
+  geometry.index?.onUpload(shed)
+}
+
+/**
  * The entity types the renderer can actually build, which is fewer than the ones it lists.
  *
  * Six of its models name a parent bone they never define - a piglin's `leftItem` hangs off a
@@ -299,14 +419,28 @@ function buildableModels(entities: Record<string, { geometry?: Record<string, { 
  * Only a spawn names its type; every movement after it is an id and a position. So an entity ruled
  * out here is remembered, and its later updates are dropped with it.
  */
-function drawable(current: Scene, entity: { id: number; name?: string }): boolean {
-  if (current.undrawable.has(entity.id)) return false
+function drawable(current: Scene, entity: { id: number; name?: string; delete?: true }): boolean {
+  // A removal always passes, and clears the ruling with it. It carries no name, so it used to fall
+  // through to the nameless branch below and blacklist the id - and ids are reused: a player who
+  // walks out of view distance and back arrives under the same one, now permanently unable to be
+  // drawn. It also says nothing about whether the thing was drawable; it says it is gone.
+  if (entity.delete) {
+    current.undrawable.delete(entity.id)
+    return true
+  }
 
+  // A name is the authority and may arrive after a nameless update was ruled out, so it clears a
+  // previous ruling rather than being refused by it.
   if (entity.name !== undefined) {
-    if (current.models.has(entity.name)) return true
+    if (current.models.has(entity.name)) {
+      current.undrawable.delete(entity.id)
+      return true
+    }
     current.undrawable.add(entity.id)
     return false
   }
+
+  if (current.undrawable.has(entity.id)) return false
 
   // Nameless, and the renderer has never seen this id. Only the first update for an entity carries
   // its type, and `getEntityMesh` builds a model only when it has one - given none, it falls
@@ -333,36 +467,223 @@ function drawable(current: Scene, entity: { id: number; name?: string }): boolea
  * name is composited rather than dropped.
  */
 function shapeNametags(current: Scene): void {
-  for (const mesh of Object.values(current.viewer.entities?.entities ?? {})) {
-    for (const child of mesh?.children ?? []) {
-      if (!child.isSprite || child.userData['osmiumShaped']) continue
+  for (const [id, mesh] of Object.entries(current.viewer.entities?.entities ?? {})) {
+    if (!mesh) continue
+
+    // These meshes are built with their geometry in absolute model coordinates while their bones
+    // carry accumulated pivots, so the bounding sphere three computes for them does not describe
+    // where they actually are - and an entity disappears at the angles where that wrong sphere
+    // leaves the frustum. There are a few dozen of them; not culling them costs nothing.
+    mesh.frustumCulled = false
+
+    // A box around each player, drawn through everything. Only players: an operator watching an
+    // agent is watching for people, and outlining every cow would bury them.
+    if (current.seen.get(Number(id)) === 'player' && !mesh.userData['osmiumOutlined']) {
+      const size = current.sizes.get(Number(id))
+      const outline = size && current.buildOutline?.(size.width, size.height)
+      if (outline) {
+        mesh.userData['osmiumOutlined'] = true
+        mesh.add(outline)
+      }
+    }
+
+    for (const child of mesh.children ?? []) {
+      if (!child.isSprite || child.userData['osmiumOutline']) continue
+      child.frustumCulled = false
+      if (child.userData['osmiumShaped']) continue
       child.userData['osmiumShaped'] = true
 
+      // Last in the transparent pass, whatever the camera thinks the order should be.
+      //
+      // The entity's own material is transparent too, so both it and this sprite are sorted
+      // back-to-front by distance - and orbiting the player swaps which of the two is nearer. For
+      // the half-circle where the body sorts last it is drawn over the tag, which is why the name
+      // vanished for half of every turn. Turning depth testing off does not help: nothing is being
+      // tested, the body simply arrives later.
+      child.renderOrder = NAMETAG_ORDER
       child.scale.set(NAMETAG_WIDTH, NAMETAG_WIDTH * (NAMETAG_CANVAS.height / NAMETAG_CANVAS.width), 1)
+
 
       const material = child.material
       if (!material) continue
       material.transparent = true
       material.depthWrite = false
+      // One size, whatever the distance. A sprite shrinks with range by default, which is right for
+      // a thing in the world and wrong for a label about one: the name furthest away is the hardest
+      // to read and often the one worth reading.
+      material.sizeAttenuation = false
+      // Over the world, as Minecraft draws them: depth-tested, a tag is occluded by the very head
+      // it labels at every angle where that head is nearer the camera.
+      material.depthTest = false
 
       const map = material.map
       if (!map) continue
-      // Clamped and unmipped: the combination a non-power-of-two texture needs, and the one that
-      // stops the sampler reaching past the edge of the drawn name.
+      // Clamped and unmipped: what a non-power-of-two texture needs, and what stops the sampler
+      // reaching past the edge of the drawn name.
       map.generateMipmaps = false
       map.minFilter = current.filters.linear
       map.magFilter = current.filters.linear
       map.wrapS = current.filters.clamp
       map.wrapT = current.filters.clamp
-      map.needsUpdate = true
+
       material.needsUpdate = true
+    }
+
+    // Outside the once-only block: the distance changes as the agent and the player move, so the
+    // label is redrawn when the number it shows would differ - not every frame, and not never.
+    for (const child of mesh.children ?? []) {
+      if (!child.isSprite || child.userData['osmiumOutline']) continue
+      const map = child.material?.map
+      if (!map?.image) continue
+
+      const name = current.names.get(Number(id))
+      const away = distanceTo(current, Number(id))
+      const stats = statsFor(name)
+
+      const label = `${away ?? ''}|${stats ?? ''}`
+      if (child.userData['osmiumLabel'] === label) continue
+      child.userData['osmiumLabel'] = label
+
+      redrawNametag(map.image, name, away, stats)
+      map.needsUpdate = true
     }
   }
 }
 
-/** What upstream draws a name onto, and how wide to hang it in the world. */
+/**
+ * How far the agent is from an entity, in whole blocks. Null when either position is unknown.
+ *
+ * Distance rather than health, because health is not ours to show: a client is only told its own,
+ * and everyone else's lives in raw entity metadata at an index that moves between versions.
+ * mineflayer does not decode it, and guessing at a byte offset per protocol would produce a number
+ * that is wrong without ever looking wrong.
+ */
+function distanceTo(current: Scene, id: number): number | null {
+  const from = current.position?.pos
+  const to = current.at.get(id)
+  if (!from || !to) return null
+  return Math.round(Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z))
+}
+
+/**
+ * Draws the name again, centred and legible.
+ *
+ * Upstream writes it left-aligned from a fifth of the way across a 500-pixel canvas, so where the
+ * name sits over its player depends on how long the name is - and paints it black on nothing, which
+ * disappears against half the blocks in the game. Redrawn here because the position is baked into
+ * the texture: no amount of moving the sprite can centre text that is off-centre within it.
+ */
+/**
+ * The second line: how far, how well connected, and how they are playing.
+ *
+ * Read from the agent's own telemetry rather than the world stream. The fleet already reports who
+ * is nearby and what the server said about them, so this needs nothing new on the wire - and the
+ * two sources agree, because both are the same server's account of the same people.
+ */
+function statsFor(name: string | undefined): string | null {
+  if (!name) return null
+
+  const player = nearby.value.find((candidate) => candidate.name === name)
+  if (!player) return null
+
+  const parts: string[] = []
+  if (player.ping !== null && player.ping !== undefined) parts.push(`${player.ping}ms`)
+  const mode = GAMEMODES[player.gamemode ?? -1]
+  if (mode) parts.push(mode)
+  if (player.isAgent) parts.push(t('viewer.ours'))
+
+  return parts.length ? parts.join(' · ') : null
+}
+
+/** The protocol's own numbering. Survival is the default and says nothing, so it is left unnamed. */
+const GAMEMODES: Record<number, string | undefined> = { 1: 'creative', 2: 'adventure', 3: 'spectator' }
+
+function redrawNametag(
+  canvas: HTMLCanvasElement | undefined,
+  name: string | undefined,
+  away: number | null,
+  stats: string | null,
+): void {
+  if (!canvas || !name) return
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+
+  // White on a dark outline rather than plain black: a label has to stay readable over stone,
+  // grass, lava and the sky, and no single fill colour does that.
+  const write = (text: string, y: number, size: number, colour: string) => {
+    ctx.font = `${Math.floor(size)}px sans-serif`
+    ctx.lineWidth = Math.max(2, size * 0.16)
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)'
+    ctx.strokeText(text, canvas.width / 2, y)
+    ctx.fillStyle = colour
+    ctx.fillText(text, canvas.width / 2, y)
+  }
+
+  // The name identifies; the distance is what an operator is actually watching for, so it is there
+  // but subordinate.
+  const below = [away === null ? null : `${away}m`, stats].filter(Boolean).join('  ·  ')
+  if (!below) {
+    write(name, canvas.height / 2, canvas.height * 0.62, '#ffffff')
+    return
+  }
+
+  write(name, canvas.height * 0.34, canvas.height * 0.48, '#ffffff')
+  write(below, canvas.height * 0.78, canvas.height * 0.3, '#d4d4d8')
+}
+
+/** Past anything the world puts in the transparent pass, so a name is never sorted behind a body. */
+const NAMETAG_ORDER = 1000
+
+/**
+ * The box takes the interface's own accent, so a viewer looks like the rest of Osmium and follows a
+ * change of theme without a second place to edit.
+ *
+ * Resolved through a canvas rather than parsed: the token is authored in oklch, which three's colour
+ * parser does not read, and a one-pixel fill is the browser's own converter. Falls back to the
+ * accent's default if the token is missing or in some notation the canvas also refuses.
+ */
+function themeColour(): number {
+  const token = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
+  if (!token) return OUTLINE_FALLBACK
+
+  const probe = document.createElement('canvas')
+  probe.width = 1
+  probe.height = 1
+  const ctx = probe.getContext('2d')
+  if (!ctx) return OUTLINE_FALLBACK
+
+  // An unreadable value leaves fillStyle untouched, so a sentinel says whether it was understood.
+  ctx.fillStyle = '#000000'
+  ctx.fillStyle = token
+  if (ctx.fillStyle === '#000000') return OUTLINE_FALLBACK
+
+  ctx.fillRect(0, 0, 1, 1)
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+  return ((r ?? 0) << 16) | ((g ?? 0) << 8) | (b ?? 0)
+}
+
+const OUTLINE_FALLBACK = 0x4ade80
+
+/** How thick the box is drawn, in pixels. */
+const OUTLINE_WIDTH = 3
+
+/** What upstream draws a name onto. */
 const NAMETAG_CANVAS = { width: 500, height: 100 }
-const NAMETAG_WIDTH = 2.5
+
+/**
+ * How wide the label is on screen, as world units at unit distance.
+ *
+ * Not blocks: with size attenuation off, three cancels the perspective divide, so this number is
+ * read against the frustum rather than against the world. At a 75 degree field of view it works out
+ * near a sixth of the viewport's width, whatever the distance.
+ */
+const NAMETAG_WIDTH = 0.28
 
 function socketUrl(): string {
   const base = import.meta.env['VITE_API_BASE_URL'] || window.location.origin
@@ -383,7 +704,28 @@ let building = false
 /** Hands one update to the renderer. */
 function apply(current: Scene, event: ViewerEvent): void {
   if (event.name === 'position') current.position = event.data as Scene['position']
-  if (event.name === 'entity' && !drawable(current, event.data as { id: number; name?: string })) return
+  if (event.name === 'entity') {
+    const entity = event.data as {
+      id: number
+      name?: string
+      username?: string
+      width?: number
+      height?: number
+      pos?: { x: number; y: number; z: number }
+      delete?: true
+    }
+    if (entity.name) current.seen.set(entity.id, entity.name)
+    if (entity.username) current.names.set(entity.id, entity.username)
+    if (entity.pos) current.at.set(entity.id, entity.pos)
+    if (entity.width !== undefined && entity.height !== undefined) {
+      current.sizes.set(entity.id, { width: entity.width, height: entity.height })
+    }
+    if (entity.delete) {
+      current.at.delete(entity.id)
+      current.sizes.delete(entity.id)
+    }
+    if (!drawable(current, entity)) return
+  }
 
   current.emitter.emit(event.name, event.data)
   if (event.name === 'entity') shapeNametags(current)
@@ -451,6 +793,8 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
   const current = scene.value
   if (!current?.position) return
 
+  frameCamera(current)
+
   if (firstPerson.value) {
     const { pos, yaw, pitch } = current.position
     current.viewer.setFirstPersonCamera(pos, yaw, pitch)
@@ -471,6 +815,40 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
  * Only outside first person, where the camera is inside this mesh and would be looking at the back
  * of its own head.
  */
+/**
+ * Puts the free camera on the agent when it first appears, and again when it jumps.
+ *
+ * Nothing else ever aims it. Without this the camera starts at the origin looking at nothing, and
+ * an agent that teleports leaves it behind pointing at ground that has since been unloaded - in
+ * both cases the world is loaded and meshed and simply off screen, which is why changing camera
+ * mode appeared to fix it: that was the only code path that aimed the camera at all.
+ *
+ * Only on a jump. Following continuously would wrench the view back every time the operator orbited
+ * away from a walking agent to look at something.
+ */
+function frameCamera(current: Scene): void {
+  const at = current.position?.pos
+  if (!at) return
+
+  const previous = current.lastAt
+  current.lastAt = { x: at.x, y: at.y, z: at.z }
+
+  const jumped =
+    !previous || Math.hypot(at.x - previous.x, at.y - previous.y, at.z - previous.z) > TELEPORT
+  if (!jumped) return
+
+  current.controls?.target.set(at.x, at.y, at.z)
+  current.viewer.camera.position.set(at.x, at.y + 20, at.z + 20)
+}
+
+/**
+ * How far an agent must move between updates to count as having been put there rather than walked.
+ *
+ * Positions arrive coalesced onto a tenth of a second, so ordinary movement is a few blocks at
+ * most - well inside this, and a sprint or a boat still is.
+ */
+const TELEPORT = 32
+
 function showAgent(current: Scene): void {
   const { pos, yaw } = current.position ?? {}
   if (!pos || yaw === undefined) return
@@ -479,6 +857,7 @@ function showAgent(current: Scene): void {
     const built = current.buildBody?.()
     if (!built) return
     current.body = built
+    built.visible = !firstPerson.value
     current.viewer.scene.add(built)
   }
 
@@ -516,6 +895,9 @@ async function mount(world: { version: string; minY?: number; height?: number },
   const THREE = await import('three')
   const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
   const { Viewer, Entity, supportedVersions } = await import('prismarine-viewer/viewer')
+  const { LineSegments2 } = await import('three/examples/jsm/lines/LineSegments2.js')
+  const { LineSegmentsGeometry } = await import('three/examples/jsm/lines/LineSegmentsGeometry.js')
+  const { LineMaterial } = await import('three/examples/jsm/lines/LineMaterial.js')
 
   // `viewer/lib/entity/Entity.js` reads a global `THREE` rather than importing one, so without this
   // every entity throws on construction and nothing with a body is ever drawn. Upstream's own
@@ -533,7 +915,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
 
   const renderer = new THREE.WebGLRenderer({ canvas: element })
   renderer.setPixelRatio(window.devicePixelRatio || 1)
-  renderer.setSize(element.clientWidth, element.clientHeight)
+  renderer.setSize(element.clientWidth, element.clientHeight, false)
 
   const native = window.Worker
   window.Worker = class extends native {
@@ -546,6 +928,23 @@ async function mount(world: { version: string; minY?: number; height?: number },
     viewer = new Viewer(renderer) as ViewerLike
   } finally {
     window.Worker = native
+  }
+
+  // Both of the next two reach past the public surface because `Viewer` builds its `WorldRenderer`
+  // itself and passes nothing through: the worker count is a constructor default, and the handler
+  // that turns a worker's reply into a mesh is assigned inside that constructor.
+
+  // Before `setVersion`, so a worker about to be dropped is never given a world to hold. Everything
+  // upstream does with the pool reads `this.workers` as it goes, its length included.
+  for (const surplus of viewer.world.workers.splice(WORKERS)) surplus.terminate()
+
+  for (const worker of viewer.world.workers) {
+    const built = worker.onmessage
+    worker.onmessage = (event) => {
+      built?.(event)
+      // After upstream has built the mesh and put it in the scene, before three has drawn it.
+      if (event.data.type === 'geometry') releaseGeometry(viewer.world.sectionMeshs?.[event.data.key ?? ''])
+    }
   }
 
   viewer.world.texturesDataUrl = `${ASSETS}/textures/${version}.png`
@@ -566,6 +965,16 @@ async function mount(world: { version: string; minY?: number; height?: number },
   // the same class, imported the way the rest of this app imports anything.
   const controls = new OrbitControls(viewer.camera as never, element)
 
+  // Shared by every box: the width is measured in pixels, so the material has to be told the size
+  // of the canvas - and one material means one thing to keep in step with it. See `resize`.
+  const outlineMaterial = new LineMaterial({
+    color: themeColour(),
+    linewidth: OUTLINE_WIDTH,
+    depthTest: false,
+    transparent: true,
+  })
+  outlineMaterial.resolution.set(element.clientWidth, element.clientHeight)
+
   const models = await import('prismarine-viewer/viewer/lib/entity/entities.json')
   const built: Scene = {
     viewer,
@@ -579,8 +988,34 @@ async function mount(world: { version: string; minY?: number; height?: number },
     // The version is upstream's fixed one for entities, not the server's - that is the only set of
     // entity models the renderer ships textures for.
     buildBody: () => new Entity('1.16.4', 'player', viewer.scene).mesh as Mesh,
+    // In world units, not model units: what an entity is attached to is a plain Object3D, and the
+    // sixteenth-scale lives on its children. Scaling for it here made everything sixteen times its
+    // size.
+    buildOutline: (width: number, height: number) => {
+      const box = new THREE.BoxGeometry(width, height, width)
+      // The model stands on its origin, so the box is raised to sit around it rather than straddle.
+      box.translate(0, height / 2, 0)
+
+      // `LineSegments2` rather than `LineSegments`: `linewidth` is inert on a plain line material -
+      // WebGL draws every line one pixel wide whatever it says - and this one builds the segments
+      // out of quads instead, so a width is actually a width.
+      const outline = new LineSegments2(
+        new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(box)),
+        outlineMaterial,
+      ) as unknown as Mesh
+      outline.renderOrder = NAMETAG_ORDER
+      outline.frustumCulled = false
+      // Named so the pass that owns nametags leaves it alone.
+      outline.userData['osmiumOutline'] = true
+      return outline
+    },
     filters: { linear: THREE.LinearFilter, clamp: THREE.ClampToEdgeWrapping },
     received: 0,
+    outlineMaterial,
+    seen: new Map(),
+    names: new Map(),
+    at: new Map(),
+    sizes: new Map(),
   }
   scene.value = built
   status.value = 'watching'
@@ -593,7 +1028,11 @@ async function mount(world: { version: string; minY?: number; height?: number },
   }
   draw()
 
-  window.addEventListener('resize', resize)
+  // The canvas, not the window. Opening or closing the chat rail changes how much room this has
+  // without the window changing at all, and a viewer that only listened for the latter kept
+  // rendering at its old width until something else happened to trigger it.
+  built.watcher = new ResizeObserver(() => resize())
+  built.watcher.observe(element)
 }
 
 function resize(): void {
@@ -603,7 +1042,9 @@ function resize(): void {
 
   current.viewer.camera.aspect = element.clientWidth / element.clientHeight
   current.viewer.camera.updateProjectionMatrix()
-  current.renderer.setSize(element.clientWidth, element.clientHeight)
+  current.renderer.setSize(element.clientWidth, element.clientHeight, false)
+  // The box's width is a number of pixels, which means nothing without knowing how many there are.
+  current.outlineMaterial?.resolution.set(element.clientWidth, element.clientHeight)
 }
 
 function fail(message: string): void {
@@ -621,12 +1062,11 @@ function teardown(): void {
   waiting = []
   building = false
 
-  window.removeEventListener('resize', resize)
-
   const current = scene.value
   scene.value = undefined
   if (!current) return
 
+  current.watcher?.disconnect()
   clearTimeout(current.summary)
   cancelAnimationFrame(current.frame)
   current.emitter.removeAllListeners()
@@ -640,11 +1080,28 @@ const ASSETS = '/viewer'
 </script>
 
 <template>
-  <div class="relative min-h-0 flex-1 overflow-hidden rounded-box">
+  <div class="bg-base-300 relative min-h-0 flex-1 overflow-hidden">
     <canvas ref="canvas" class="size-full" />
 
-    <div class="absolute top-3 right-3">
-      <label class="btn btn-sm gap-2" :class="firstPerson ? 'btn-primary' : ''">
+    <!--
+      The world stays on screen when the agent leaves it, because it is the only picture of where it
+      was when it went - but it stops being true at that moment, and a still frame is indistinguish-
+      able from a live one. Said over the scene rather than replacing it, and it clears itself when
+      the agent is back and the stream resumes.
+    -->
+    <Transition name="fade">
+      <p
+        v-if="stale"
+        role="status"
+        class="alert alert-warning alert-soft absolute inset-x-0 top-3 z-10 mx-auto w-fit gap-2 py-2 shadow-md"
+      >
+        <TriangleAlert class="size-4 shrink-0" />
+        {{ t('viewer.outdated') }}
+      </p>
+    </Transition>
+
+    <div class="absolute top-3 right-3 z-10">
+      <label class="btn btn-sm gap-2 shadow-md" :class="firstPerson ? 'btn-primary' : ''">
         <input v-model="firstPerson" type="checkbox" class="hidden" />
         <component :is="firstPerson ? Eye : Orbit" class="size-4" />
         {{ firstPerson ? t('viewer.firstPerson') : t('viewer.orbit') }}

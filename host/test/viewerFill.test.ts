@@ -137,4 +137,41 @@ describe('AgentViewer fill', () => {
 
     expect(columnsIn(frames)).toEqual([])
   })
+
+  it('recovers columns the world did not have yet when the agent was put somewhere new', async () => {
+    vi.useFakeTimers()
+    const frames: Buffer[] = []
+    const bot = fakeBot()
+
+    // A world that answers for nothing at first: the server has not streamed the destination yet,
+    // which is the state a teleport lands in.
+    let streamed = false
+    bot.world.getColumnAt = (pos: { x: number; z: number }) =>
+      Promise.resolve(streamed ? { toJson: () => JSON.stringify({ at: [pos.x, pos.z] }) } : null)
+
+    const viewer = new AgentViewer(1, bot as never, (frame) => frames.push(frame))
+    viewer.start()
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    // Put it a long way off. Every old column leaves view, and the fill walks a world that is still
+    // empty - so without a sweep nothing would ever ask for these again.
+    frames.length = 0
+    bot.entity.position.x = 8 + 16 * 40
+    bot.fire('move')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(columnsIn(frames), 'the world had nothing to give yet').toEqual([])
+
+    // The chunks arrive, with no event to announce them to the viewer.
+    streamed = true
+    await vi.advanceTimersByTimeAsync(20_000)
+    viewer.stop()
+    vi.useRealTimers()
+
+    const sent = new Set(columnsIn(frames))
+    const wanted = expectedColumns({ x: 40, z: 0 })
+    const missing = [...wanted].filter((column) => !sent.has(column))
+
+    expect(missing, `never recovered ${missing.length} of ${wanted.size} columns`).toEqual([])
+  })
+
 })

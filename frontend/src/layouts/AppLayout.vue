@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -55,6 +55,7 @@ const chat = useChatStore()
 // stretches somebody happened to be looking at it.
 useHistoryStore()
 const router = useRouter()
+const route = useRoute()
 
 const addAgentOpen = ref(false)
 const addHostOpen = ref(false)
@@ -303,7 +304,11 @@ async function logout() {
           No scrollbar gutter here any more: nothing on this element scrolls, so there is none to
           reserve room for.
         -->
-        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6 py-8">
+        <!-- Padding is the layout's, except where a screen has asked to own the whole frame. -->
+        <main
+          class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          :class="route.meta.full ? '' : 'px-6 py-8'"
+        >
           <!--
             On every page rather than tucked into My account. It is the only way the person it
             happened to hears about it at all — the audit trail needs `audit.read`, which reaches an

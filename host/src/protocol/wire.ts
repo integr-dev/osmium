@@ -68,4 +68,10 @@ export interface Player {
   name: string
   distance: number
   position: Vec3
+  /** Their account, so an interface can draw the right head rather than guess from the name. */
+  uuid?: string
+  /** Round trip as the server measures it, in milliseconds. The server's figure, not ours. */
+  ping?: number
+  /** 0 survival, 1 creative, 2 adventure, 3 spectator - the protocol's own numbering. */
+  gamemode?: number
 }

@@ -70,6 +70,20 @@ data class NearbyPlayerResponse(
      */
     @field:Schema(description = "Where the player is, when the host reported it.")
     val position: PositionResponse?,
+
+    /**
+     * What the server told the host about them, and no more.
+     *
+     * Health is not here and cannot be: a client is only sent its own, and everyone else's lives in
+     * raw entity metadata at an index that moves between protocol versions. A guessed one would be
+     * wrong without ever looking wrong, which is worse than absent.
+     */
+    @field:Schema(description = "Their account, for drawing the right head. Null when unreported.")
+    val uuid: String?,
+    @field:Schema(description = "Round trip as the server measures it, in ms.", example = "84")
+    val ping: Int?,
+    @field:Schema(description = "0 survival, 1 creative, 2 adventure, 3 spectator.", example = "0")
+    val gamemode: Int?,
     /**
      * Named explicitly because Kotlin's `is` prefix becomes a getter Jackson reads as the property
      * `agent`, which would put `nearby[].agent` on the wire and read as nonsense next to `name`.
@@ -128,6 +142,13 @@ data class AgentResponse(
             "elected by the backend - a server with none has no global feed.",
     )
     val chatListener: Boolean,
+
+    @field:Schema(
+        description = "True while Osmium still intends to put this agent back in the game: it was " +
+            "connected on purpose and is not online. Covers the wait between attempts as well as " +
+            "an attempt in flight, so an interface can offer to stop trying. Cleared by a disconnect.",
+    )
+    val rejoining: Boolean,
 )
 
 @Schema(
@@ -183,6 +204,7 @@ fun Agent.toResponse(telemetry: AgentTelemetryResponse?): AgentResponse = AgentR
     onlineSince = onlineSince,
     telemetry = telemetry,
     chatListener = chatListener,
+    rejoining = wanted && effectiveState() != AgentState.ONLINE,
 )
 
 const val AGENT_LABEL_MAX_LENGTH = 64

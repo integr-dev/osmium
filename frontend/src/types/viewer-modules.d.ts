@@ -11,11 +11,14 @@ declare module 'three' {
   const THREE: {
     DefaultLoadingManager: { setURLModifier(modifier: (url: string) => string): void }
     LinearFilter: number
+    BoxGeometry: new (width: number, height: number, depth: number) => { translate(x: number, y: number, z: number): void }
+    EdgesGeometry: new (geometry: unknown) => unknown
     ClampToEdgeWrapping: number
     WebGLRenderer: new (parameters: { canvas: HTMLCanvasElement }) => {
       domElement: HTMLCanvasElement
       setPixelRatio(ratio: number): void
-      setSize(width: number, height: number): void
+      /** `updateStyle: false` leaves the CSS size alone, for a canvas sized by the page. */
+      setSize(width: number, height: number, updateStyle?: boolean): void
       render(scene: unknown, camera: unknown): void
       dispose(): void
     }
@@ -26,6 +29,7 @@ declare module 'three' {
 declare module 'three/examples/jsm/controls/OrbitControls.js' {
   export class OrbitControls {
     constructor(camera: unknown, element: HTMLElement)
+    enabled: boolean
     target: { set(x: number, y: number, z: number): void }
     update(): void
     dispose(): void
@@ -48,4 +52,24 @@ declare module 'prismarine-viewer/viewer' {
    * table of majors, so appending a version is enough to have that version accepted.
    */
   export const supportedVersions: string[]
+}
+
+/** three's thick-line helpers, which its own examples ship untyped. */
+declare module 'three/examples/jsm/lines/LineSegments2.js' {
+  export class LineSegments2 {
+    constructor(geometry: unknown, material: unknown)
+  }
+}
+
+declare module 'three/examples/jsm/lines/LineSegmentsGeometry.js' {
+  export class LineSegmentsGeometry {
+    fromEdgesGeometry(geometry: unknown): LineSegmentsGeometry
+  }
+}
+
+declare module 'three/examples/jsm/lines/LineMaterial.js' {
+  export class LineMaterial {
+    constructor(parameters: { color: number; linewidth: number; depthTest: boolean; transparent: boolean })
+    resolution: { set(width: number, height: number): void }
+  }
 }
