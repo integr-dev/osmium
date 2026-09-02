@@ -21,6 +21,11 @@ export type HostResponse = Required<components['schemas']['HostResponse']>
  */
 export type NearbyPlayerResponse = Required<components['schemas']['NearbyPlayerResponse']> & {
   position: Required<components['schemas']['PositionResponse']> | null
+  /** Null whenever the server said nothing, which is every field the host merely relays. */
+  uuid: string | null
+  ping: number | null
+  gamemode: number | null
+  health: number | null
 }
 
 /** Nested objects need asserting too — `Required` only reaches the top level. */
@@ -37,6 +42,22 @@ export type AgentResponse = Required<components['schemas']['AgentResponse']> & {
   telemetry: AgentTelemetryResponse | null
 }
 /**
+ * `damage` and `maxDamage` are genuinely nullable, and together: absent means the item does not
+ * wear out, which is a different thing from an undamaged tool.
+ */
+export type InventorySlotResponse = Required<components['schemas']['InventorySlotResponse']> & {
+  damage: number | null
+  maxDamage: number | null
+}
+
+export type AgentInventoryResponse = Omit<
+  Required<components['schemas']['AgentInventoryResponse']>,
+  'slots'
+> & {
+  slots: InventorySlotResponse[]
+}
+
+/**
  * `clientIp` and `userAgent` are genuinely nullable: they are whatever the request happened to
  * carry, and a deployment that does not pass proxy headers through records neither.
  */
@@ -45,6 +66,27 @@ export type SessionResponse = Required<components['schemas']['SessionResponse']>
   userAgent: string | null
 }
 export type AuditEntryResponse = Required<components['schemas']['AuditEntryResponse']>
+
+/**
+ * `oldest` is genuinely nullable: an area with nothing in it has no oldest row, and one that
+ * cannot be purged is never asked for one.
+ */
+export type StorageAreaResponse = Required<components['schemas']['StorageAreaResponse']> & {
+  oldest: string | null
+}
+
+/**
+ * `areas` is replaced rather than intersected.
+ *
+ * `Required<T> & { areas: Area[] }` leaves the property as `RawArea[] & Area[]`, and calling `map`
+ * on an intersection of two array types picks the first overload — so every element came back with
+ * the generated type's optional fields, one `possibly undefined` at a time.
+ */
+export type StorageResponse = Omit<Required<components['schemas']['StorageResponse']>, 'areas'> & {
+  areas: StorageAreaResponse[]
+}
+
+export type StorageArea = StorageAreaResponse['area']
 
 /**
  * `contentHash` and `failure` are genuinely nullable, and so is every field of `content`: nothing

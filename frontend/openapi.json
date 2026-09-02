@@ -18,10 +18,6 @@
   ],
   "tags": [
     {
-      "name": "Audit",
-      "description": "What operators did. Agent-side events are the activity feed, not this."
-    },
-    {
       "name": "Roles",
       "description": "The seeded roles and the permission nodes they grant."
     },
@@ -32,6 +28,26 @@
     {
       "name": "Avatars",
       "description": "Minecraft player heads, proxied so the browser stays same-origin."
+    },
+    {
+      "name": "Chat",
+      "description": "What was said in game. Operator actions are the audit log, not this."
+    },
+    {
+      "name": "Viewer",
+      "description": "Watching an agent's world."
+    },
+    {
+      "name": "Stream",
+      "description": "Server-sent events. Receive-only; commands go over REST."
+    },
+    {
+      "name": "Audit",
+      "description": "What operators did. Agent-side events are the activity feed, not this."
+    },
+    {
+      "name": "Storage",
+      "description": "What the deployment is holding on disk, and how to hold less of it."
     },
     {
       "name": "Agents",
@@ -50,20 +66,8 @@
       "description": "Machines that run the agents. They hold the credentials; Osmium does not."
     },
     {
-      "name": "Chat",
-      "description": "What was said in game. Operator actions are the audit log, not this."
-    },
-    {
-      "name": "Viewer",
-      "description": "Watching an agent's world."
-    },
-    {
       "name": "Authentication",
       "description": "Sessions, password rotation and self lookup."
-    },
-    {
-      "name": "Stream",
-      "description": "Server-sent events. Receive-only; commands go over REST."
     }
   ],
   "paths": {
@@ -470,6 +474,111 @@
           },
           "404": {
             "description": "No such account."
+          }
+        }
+      }
+    },
+    "/api/storage/{area}/purge": {
+      "post": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Delete an area's data.",
+        "description": "Frees the space as *dead* rows: the table keeps it and will reuse it, and the disk does not shrink until `/api/storage/reclaim` rewrites the table. The audit trail is not purgeable — it is the record of this having happened.",
+        "operationId": "purge",
+        "parameters": [
+          {
+            "name": "area",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CHAT",
+                "ACTIVITY",
+                "MAP",
+                "AUDIT",
+                "SCHEMATICS",
+                "BUILDS",
+                "FLEET",
+                "ACCOUNTS",
+                "OTHER"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What was deleted.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An area that cannot be purged here.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `storage.purge`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/reclaim": {
+      "post": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Return deleted rows' space to the operating system.",
+        "description": "Rewrites every table, **locking each one exclusively while it runs**. On a live deployment that stalls hosts reporting and browsers reading for as long as the largest table takes. It is a separate action from purging for exactly that reason.",
+        "operationId": "reclaim",
+        "responses": {
+          "200": {
+            "description": "Database size before and after.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReclaimResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `storage.purge`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReclaimResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1496,6 +1605,285 @@
         }
       }
     },
+    "/api/agents/{id}/inventory/move": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Move an item from one square to another.",
+        "description": "Fire and forget: where the item ended up arrives on the next inventory report, which is also what a move the server refused looks like. Online only — this is a click in a window that only exists while the agent is in the game.",
+        "operationId": "moveItem",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Command accepted.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A slot outside the player window.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `agent.run`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The agent is not online.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The owning host is not connected.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{id}/inventory/hold": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Put a hotbar square in the agent's hand.",
+        "description": "What the agent is holding is what it hits, places and eats with, so this changes what it does rather than only what it owns. Fire and forget: the new hand arrives as `held` on the next inventory report. Online only.",
+        "operationId": "holdItem",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HoldItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Command accepted.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A slot outside the hotbar.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `agent.run`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The agent is not online.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The owning host is not connected.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{id}/inventory/drop": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Throw an item on the ground.",
+        "description": "Destructive and not undoable: what lands on the ground is anybody's, and despawns. Online only, like the move.",
+        "operationId": "dropItem",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Command accepted.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A slot outside the player window.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `agent.run`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The agent is not online.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The owning host is not connected.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/agents/{id}/disconnect": {
       "post": {
         "tags": [
@@ -2456,6 +2844,38 @@
         }
       }
     },
+    "/api/storage": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "What is stored, by area.",
+        "description": "Sizes come from Postgres itself rather than from adding up what the application believes it wrote. Row counts are estimates from the statistics collector — counting them exactly means reading every row in the database.",
+        "operationId": "breakdown",
+        "responses": {
+          "200": {
+            "description": "The breakdown.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `storage.read`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/schematics/{id}/split": {
       "get": {
         "tags": [
@@ -3281,6 +3701,69 @@
         }
       }
     },
+    "/api/agents/{id}/inventory": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Read what the agent is carrying.",
+        "description": "Latest reported, never stored: an agent that has not reported recently has none, rather than showing an hour-old inventory as though it were now. Slot numbers are Minecraft's own — 5-8 armour, 9-35 the backpack, 36-44 the hotbar, 45 the off hand.",
+        "operationId": "inventory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The inventory.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInventoryResponse"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "The agent has not reported one.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInventoryResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `agent.read`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInventoryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInventoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/activity": {
       "get": {
         "tags": [
@@ -3824,6 +4307,15 @@
             "description": "0 survival, 1 creative, 2 adventure, 3 spectator.",
             "example": 0
           },
+          "health": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Hit points out of twenty. Null when the server did not say.",
+            "example": 18.5
+          },
           "isAgent": {
             "type": "boolean"
           }
@@ -3888,6 +4380,71 @@
         "required": [
           "username"
         ]
+      },
+      "PurgeRequest": {
+        "type": "object",
+        "description": "Deletes stored data in bulk. Space is freed as *dead* rows — reclaiming it for the operating system is a second step.",
+        "properties": {
+          "keepDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Keep anything written within this many days. Null deletes everything in the area, which is a different decision and is not the default for that reason.",
+            "example": 30,
+            "minimum": 1
+          }
+        }
+      },
+      "PurgeResponse": {
+        "type": "object",
+        "description": "What a purge removed.",
+        "properties": {
+          "area": {
+            "type": "string",
+            "enum": [
+              "CHAT",
+              "ACTIVITY",
+              "MAP",
+              "AUDIT",
+              "SCHEMATICS",
+              "BUILDS",
+              "FLEET",
+              "ACCOUNTS",
+              "OTHER"
+            ]
+          },
+          "deleted": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows deleted. Exact, unlike the estimate on the way in.",
+            "example": 18402
+          },
+          "totalBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What the area costs now. Barely lower than before a purge until the space is reclaimed, which is the point of saying it."
+          }
+        }
+      },
+      "ReclaimResponse": {
+        "type": "object",
+        "description": "What reclaiming recovered.",
+        "properties": {
+          "beforeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Database size before.",
+            "example": 162529280
+          },
+          "afterBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Database size after.",
+            "example": 31457280
+          }
+        }
       },
       "CreateSchematicRequest": {
         "type": "object",
@@ -4532,6 +5089,58 @@
           "method"
         ]
       },
+      "MoveItemRequest": {
+        "type": "object",
+        "description": "Moves what is in one square onto another, as two clicks would. Fire and forget: where the item ended up arrives on the next inventory report.",
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 45,
+            "minimum": 5
+          },
+          "to": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 45,
+            "minimum": 5
+          }
+        }
+      },
+      "HoldItemRequest": {
+        "type": "object",
+        "description": "Puts a hotbar square in the agent's hand. The square, 36-44, not the 0-8 index the game keeps: every request here names a square the same way, and the one index in this API is `held`, which is a field the game itself defines as one.",
+        "properties": {
+          "slot": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 44,
+            "minimum": 36
+          }
+        }
+      },
+      "DropItemRequest": {
+        "type": "object",
+        "description": "Throws what is in a square on the ground.",
+        "properties": {
+          "slot": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 45,
+            "minimum": 5
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many to throw. Null throws the whole stack.",
+            "example": 16,
+            "minimum": 1
+          }
+        }
+      },
       "ChatRequest": {
         "type": "object",
         "description": "Sends a chat message as an agent. This is impersonation - gated on chat.",
@@ -4666,6 +5275,81 @@
           "timeout": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "StorageAreaResponse": {
+        "type": "object",
+        "description": "One kind of stored data, and what it is costing.",
+        "properties": {
+          "area": {
+            "type": "string",
+            "enum": [
+              "CHAT",
+              "ACTIVITY",
+              "MAP",
+              "AUDIT",
+              "SCHEMATICS",
+              "BUILDS",
+              "FLEET",
+              "ACCOUNTS",
+              "OTHER"
+            ]
+          },
+          "totalBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Everything it costs on disk: the rows, their indexes and their out-of-line storage.",
+            "example": 21495808
+          },
+          "deadBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Space held by rows that have been deleted and not yet reclaimed. Freed by reclaiming, not by deleting more.",
+            "example": 66060288
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Roughly how many rows. An estimate from the statistics collector — counting them exactly means reading every one.",
+            "example": 28628
+          },
+          "oldest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the oldest row was written, for anything that can be purged."
+          },
+          "purgeable": {
+            "type": "boolean",
+            "description": "Whether rows here can be deleted from the storage screen."
+          },
+          "tables": {
+            "type": "array",
+            "description": "The tables it is made of, for whoever is looking at the database itself.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "StorageResponse": {
+        "type": "object",
+        "description": "What the deployment is storing. Sizes come from Postgres rather than from adding up what the application thinks it wrote.",
+        "properties": {
+          "databaseBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The size of the whole database, which is at least the sum of the areas: it also carries the catalogue and anything no area claims.",
+            "example": 162529280
+          },
+          "areas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageAreaResponse"
+            }
           }
         }
       },
@@ -5046,6 +5730,7 @@
               "AGENT_CONNECT",
               "AGENT_DISCONNECT",
               "AGENT_CHAT",
+              "AGENT_INVENTORY",
               "HOST_ENROL",
               "HOST_RENAME",
               "HOST_ROTATE_TOKEN",
@@ -5056,6 +5741,7 @@
               "USER_ROLE_CHANGE",
               "USER_PASSWORD_CHANGE",
               "AUDIT_EXPORT",
+              "STORAGE_PURGE",
               "SESSION_REUSE_DETECTED",
               "SESSION_REVOKED_ALL",
               "SCHEMATIC_UPLOAD",
@@ -5096,6 +5782,70 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "AgentInventoryResponse": {
+        "type": "object",
+        "description": "What an agent is carrying. Never stored - an agent that has not reported recently has none, rather than showing an hour-old inventory as though it were now.",
+        "properties": {
+          "slots": {
+            "type": "array",
+            "description": "Occupied squares only.",
+            "items": {
+              "$ref": "#/components/schemas/InventorySlotResponse"
+            }
+          },
+          "held": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Which hotbar square is in hand, 0 to 8.",
+            "example": 0
+          }
+        }
+      },
+      "InventorySlotResponse": {
+        "type": "object",
+        "description": "One occupied square of an agent's inventory. Empty squares are absent rather than null, which is what a client draws anyway.",
+        "properties": {
+          "slot": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minecraft's own slot number in the player window: 5-8 armour, 9-35 the backpack, 36-44 the hotbar, 45 the off hand.",
+            "example": 36
+          },
+          "name": {
+            "type": "string",
+            "description": "The item id, for looking up an icon.",
+            "example": "diamond_pickaxe"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "What the game calls it.",
+            "example": "Diamond Pickaxe"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "example": 1
+          },
+          "damage": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How much of the item's life is used up. Null for anything that does not wear out, which is not the same as an undamaged tool.",
+            "example": 142
+          },
+          "maxDamage": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "What `damage` is out of. Present exactly when `damage` is.",
+            "example": 1561
           }
         }
       },

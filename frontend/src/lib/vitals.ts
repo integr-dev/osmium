@@ -25,6 +25,44 @@ export function gamemodeLabel(mode: number | null | undefined): string | null {
   return { 1: 'creative', 2: 'adventure', 3: 'spectator' }[mode ?? -1] ?? null
 }
 
+/**
+ * Hit points, on the scale the game draws them.
+ *
+ * Half a heart survives, because it is a real state and the difference between one hit from dead
+ * and two. A whole number never grows a `.0` for it: most players are on a whole number, and a
+ * column of `20.0` is noise everywhere except the one row that needs the half.
+ *
+ * Not clamped to twenty. A player under a health boost genuinely has more, and rounding that down
+ * would report somebody as easier to kill than they are.
+ */
+export function heartsLabel(health: number | null | undefined): string | null {
+  if (typeof health !== 'number' || !Number.isFinite(health) || health < 0) return null
+
+  const halves = Math.round(health * 2) / 2
+  return i18n.global.t('map.hearts', { n: Number.isInteger(halves) ? halves : halves.toFixed(1) })
+}
+
+/**
+ * The one-line reading for somebody standing near an agent, wherever one is drawn.
+ *
+ * Shared because it is drawn in four places — the 3D nametags, the map markers, the map's list of
+ * strangers and the agent's own page — and four copies of "health, then ping, then gamemode" is
+ * four chances for the same player to be described differently on two screens at once.
+ *
+ * Health first: it is the field somebody is actually scanning for, and it is the one that changes
+ * while they watch. Every part is dropped when the server said nothing, so a line is short rather
+ * than padded with blanks.
+ */
+export function playerVitals(player: {
+  health?: number | null
+  ping?: number | null
+  gamemode?: number | null
+}): string {
+  return [heartsLabel(player.health), player.ping == null ? null : `${player.ping}ms`, gamemodeLabel(player.gamemode)]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 export function dimensionLabel(id: string): string {
   const known = `agents.dimensions.${id}`
   if (i18n.global.te(known)) return i18n.global.t(known)

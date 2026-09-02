@@ -57,6 +57,7 @@ export const en = {
     operations: 'Operations',
     configuration: 'Configuration',
     auditLog: 'Audit log',
+    storage: 'Storage',
     logOut: 'Log out',
   },
 
@@ -334,6 +335,8 @@ export const en = {
     blockedNoServer: 'Assigned to no server, so there is nowhere to connect to.',
     blockedNotOnline: 'Not in game, so there is no session to end.',
     blockedNotConnected: 'Not connected, and not trying to be.',
+    /** Where an agent plays decides what its *next* connection targets, so it is an offline edit. */
+    blockedOnlineServer: 'Disconnect this agent before changing the server it plays on.',
     cancelConnect: 'Cancel',
     stopRejoining: 'Stop trying',
     /**
@@ -416,6 +419,32 @@ export const en = {
     broken: 'The renderer could not start: {reason}',
     unsupported: 'This host is streaming a format this page cannot read. Update Osmium.',
     unstaged: "The renderer has no block data for Minecraft {version}. Stage it with OSMIUM_VIEWER_VERSIONS and rebuild.",
+  },
+
+  /** The agent's own inventory screen, laid out the way Minecraft lays one out. */
+  inventory: {
+    title: 'Inventory',
+    /** Said of the report, not of the agent: it is carrying something, we have not been told what. */
+    none: 'The agent has not reported what it is carrying.',
+    armour: 'Armour',
+    offhand: 'Off hand',
+    /** The game's own word for the twenty-seven, which is what an operator will look for. */
+    main: 'Inventory',
+    hotbar: 'Hotbar',
+    /** On the square that is in hand, which the game draws with a highlight rather than a word. */
+    held: 'In hand',
+    hold: 'Put in hand',
+    empty: 'Empty square',
+    /** Durability, on the scale the game shows it: what is left, not what is used. */
+    durability: '{left} of {max} durability left',
+    /** The one instruction the grid needs, and only while there is something to act on. */
+    /** In the panel, because it is the one thing the panel itself cannot offer. */
+    dragToMove: 'Drag a square onto another to move it.',
+    dropOne: 'Drop one',
+    dropStack: 'Drop stack',
+    /** Why the squares do nothing. Moving an item is a click in a window that needs a session. */
+    blockedOffline: 'Not in game, so nothing can be moved.',
+    blockedPermission: 'Moving items needs the same permission as running the agent.',
   },
 
   map: {
@@ -951,6 +980,65 @@ export const en = {
     signedOut: '{name} has been signed out everywhere.',
   },
 
+  /**
+   * The storage screen.
+   *
+   * The copy carries one idea the interface cannot show on its own: deleting and reclaiming are two
+   * different things, and only the second makes the disk smaller. Every string that touches a size
+   * is written to keep that distinction rather than to be brief about it.
+   */
+  storage: {
+    title: 'Storage',
+    subtitle: 'What Osmium is keeping on disk, and how to keep less of it.',
+    database: 'Database',
+    /** The areas add up to less than the database: the catalogue and free pages are the rest. */
+    accounted: '{size} across the areas below',
+    reclaimable: 'Freed, not returned',
+    reclaimableNote: 'Approximate. Deleted rows the tables have kept.',
+    byArea: 'By area',
+    /** The bar's axis, said once above the list rather than guessed at per row. */
+    shareNote: 'The bar is each area’s share of everything stored.',
+    /** An estimate from Postgres, which is why it is never presented as a count. */
+    rows: 'about {n} rows',
+    since: 'oldest {when}',
+    dead: '{size} freed',
+    purge: 'Delete',
+    purging: 'Deleting…',
+    keptAudit: 'Kept: this is the record',
+    keptElsewhere: 'Managed on its own page',
+    /** Nothing is stored; the disk simply has not been handed back yet. */
+    emptied: 'Nothing stored — awaiting reclaim',
+
+    purgeTitle: 'Delete {area}',
+    keep: 'Keep the last',
+    keepHint: 'Days. Zero deletes everything in this area.',
+    purgeOlder: 'Everything older than {days} days goes. This cannot be undone.',
+    purgeAll: 'Every {area} record goes. This cannot be undone.',
+    /** The part that surprises people, said before the button rather than after. */
+    purgeNote: 'The space is freed inside the database, not on the disk. Returning it to the disk is the step below.',
+
+    reclaimTitle: 'Return freed space to the disk',
+    reclaimBody:
+      'Deleting rows leaves the space inside the tables, which keep it and reuse it. Rewriting the tables hands it back to the operating system.',
+    reclaimAction: 'Reclaim space',
+    reclaiming: 'Reclaiming…',
+    reclaimConfirm: 'About {size} should come back.',
+    /** The cost, plainly: this is why it is not something a delete does on its own. */
+    reclaimLock: 'Every table is locked while it is rewritten. Hosts cannot report and pages will not load until it finishes.',
+
+    areas: {
+      CHAT: 'Chat',
+      ACTIVITY: 'Activity',
+      MAP: 'Map',
+      AUDIT: 'Audit trail',
+      SCHEMATICS: 'Schematics',
+      BUILDS: 'Builds',
+      FLEET: 'Hosts and agents',
+      ACCOUNTS: 'Accounts and sessions',
+      OTHER: 'Everything else',
+    },
+  },
+
   audit: {
     title: 'Audit log',
     subtitle: 'A record of who did what, and when.',
@@ -1001,6 +1089,7 @@ export const en = {
     AGENT_CONNECT: 'Connect',
     AGENT_DISCONNECT: 'Disconnect',
     AGENT_CHAT: 'Chat',
+    AGENT_INVENTORY: 'Items moved',
     HOST_ENROL: 'Host enrolled',
     HOST_RENAME: 'Host renamed',
     HOST_ROTATE_TOKEN: 'Token rotated',
@@ -1011,6 +1100,7 @@ export const en = {
     USER_ROLE_CHANGE: 'Role changed',
     USER_PASSWORD_CHANGE: 'Password changed',
     AUDIT_EXPORT: 'Log exported',
+    STORAGE_PURGE: 'Storage cleared',
     SESSION_REUSE_DETECTED: 'Session token replayed',
     SESSION_REVOKED_ALL: 'Signed out everywhere',
     SCHEMATIC_UPLOAD: 'Schematic uploaded',
@@ -1128,6 +1218,14 @@ export const en = {
     connectAgent: 'Could not connect.',
     disconnectAgent: 'Could not disconnect.',
     sendMessage: 'Could not send the message.',
+    loadInventory: 'Could not read what the agent is carrying.',
+    loadStorage: 'Could not read what is stored.',
+    purgeStorage: 'Could not delete that data.',
+    reclaimStorage: 'Could not return the space.',
+    moveItem: 'Could not move the item.',
+    dropItem: 'Could not drop the item.',
+    holdItem: 'Could not change what the agent is holding.',
+    itemIcons: 'Item icons are unavailable, so squares are drawn without them.',
     renameAccount: 'Could not change the username.',
     createAccount: 'Could not create the account.',
     updateAccount: 'Could not update the account.',

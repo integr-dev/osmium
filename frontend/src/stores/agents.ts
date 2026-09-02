@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, errorMessage, type AgentResponse, type HostResponse, type UserResponse } from '../api/client'
+import {
+  api,
+  errorMessage,
+  type AgentInventoryResponse,
+  type AgentResponse,
+  type HostResponse,
+  type UserResponse,
+} from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
 import {
   addJobAgent,
@@ -38,6 +45,15 @@ import { isOnline } from '../lib/agentState'
  * agent nobody has heard from.
  */
 export type AgentTelemetry = NonNullable<AgentResponse['telemetry']>
+
+/**
+ * An inventory is **absent, not empty**, until an agent reports one.
+ *
+ * The same distinction the telemetry makes, and it matters more here: an empty grid is a perfectly
+ * ordinary thing for an agent to be carrying, so drawing one for an agent that has said nothing is
+ * not a blank screen but a wrong answer.
+ */
+export type AgentInventory = AgentInventoryResponse
 export type NearbyPlayer = AgentTelemetry['nearby'][number]
 
 /**
@@ -246,9 +262,17 @@ export const useAgentStore = defineStore('agents', () => {
       case 'agent':
         upsertAgent(data as AgentResponse)
         break
-      case 'agent-removed':
-        agents.value = agents.value.filter((agent) => agent.id !== (data as { id: number }).id)
+      case 'agent-removed': {
+        const gone = (data as { id: number }).id
+        agents.value = agents.value.filter((agent) => agent.id !== gone)
+        // Otherwise the map keeps an inventory per agent that has ever existed in this tab.
+        if (inventories.value.has(gone)) {
+          const without = new Map(inventories.value)
+          without.delete(gone)
+          inventories.value = without
+        }
         break
+      }
       case 'host': {
         const host = data as HostResponse
         announceHost(
@@ -264,6 +288,11 @@ export const useAgentStore = defineStore('agents', () => {
       case 'telemetry':
         applyTelemetry(data as { agentId: number; telemetry: AgentTelemetry })
         break
+      case 'inventory': {
+        const incoming = data as { agentId: number; inventory: AgentInventory }
+        inventories.value = new Map(inventories.value).set(incoming.agentId, incoming.inventory)
+        break
+      }
       case 'permissions':
         // Not fleet state, but there is one stream and therefore one ingest. The backend enforces a
         // role change on the next request either way; this is what stops the UI from going on
@@ -389,6 +418,87 @@ export const useAgentStore = defineStore('agents', () => {
     const index = agents.value.findIndex((agent) => agent.id === incoming.agentId)
     if (index === -1) return
     agents.value[index] = { ...agents.value[index]!, telemetry: incoming.telemetry }
+  }
+
+  /**
+   * What each agent is carrying, for whoever is looking at one.
+   *
+   * Kept here rather than in the card because the live stream is opened once, by the store: an
+   * inventory arrives whether or not anybody has the page open, and a card that owned this would
+   * have to be mounted to receive it.
+   *
+   * Never cleared on its own. An agent that stops reporting has its inventory aged out by the
+   * backend, which answers the next read with nothing - so what is on screen goes stale for as long
+   * as the page stays open, and is corrected the moment anybody asks again. Holding a timer here to
+   * blank it would be inventing a second answer to a question the backend already answers.
+   */
+  const inventories = ref(new Map<number, AgentInventory>())
+
+  /** What an agent is carrying, or null when it has not reported. */
+  function inventoryOf(id: number): AgentInventory | null {
+    return inventories.value.get(id) ?? null
+  }
+
+  /**
+   * Fetches an agent's inventory once, for a page that has just opened.
+   *
+   * The live stream keeps it current afterwards, so this is only ever about the gap between opening
+   * a page and the next time an item moves - which for an agent standing still is forever.
+   */
+  async function loadInventory(id: number): Promise<void> {
+    const { data, error: failure, response } = await api.GET('/api/agents/{id}/inventory', {
+      params: { path: { id } },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.loadInventory')))
+
+    // 204 means the agent has not reported one, which is an answer rather than a failure. Dropped
+    // rather than stored as empty: an empty grid is what an agent carrying nothing looks like.
+    if (response.status === 204 || !data) {
+      const without = new Map(inventories.value)
+      without.delete(id)
+      inventories.value = without
+      return
+    }
+    inventories.value = new Map(inventories.value).set(id, data as AgentInventory)
+  }
+
+  /**
+   * Moves an item between two squares.
+   *
+   * Nothing is written here. What the agent is carrying is the host's to say, and moving the item
+   * locally would show the move as done before the server had agreed to it - then quietly disagree
+   * with the report that follows.
+   */
+  async function moveItem(id: number, from: number, to: number): Promise<void> {
+    const { error: failure } = await api.POST('/api/agents/{id}/inventory/move', {
+      params: { path: { id } },
+      body: { from, to },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.moveItem')))
+  }
+
+  /**
+   * Puts a hotbar square in the agent's hand.
+   *
+   * A separate verb rather than a move onto a special slot, because it is a different kind of
+   * change: what an agent holds decides what it hits, places and eats with, and nothing about it
+   * moves an item anywhere.
+   */
+  async function holdItem(id: number, slot: number): Promise<void> {
+    const { error: failure } = await api.POST('/api/agents/{id}/inventory/hold', {
+      params: { path: { id } },
+      body: { slot },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.holdItem')))
+  }
+
+  /** Throws a square's contents on the ground. An absent count throws the whole stack. */
+  async function dropItem(id: number, slot: number, count?: number): Promise<void> {
+    const { error: failure } = await api.POST('/api/agents/{id}/inventory/drop', {
+      params: { path: { id } },
+      body: { slot, ...(count === undefined ? {} : { count }) },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.dropItem')))
   }
 
   function upsertHost(incoming: HostResponse): void {
@@ -740,6 +850,11 @@ export const useAgentStore = defineStore('agents', () => {
     connect,
     disconnect,
     say,
+    inventoryOf,
+    loadInventory,
+    moveItem,
+    dropItem,
+    holdItem,
   }
 })
 

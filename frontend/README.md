@@ -1096,6 +1096,35 @@ version, and checks that the data the mesher reaches for by name survived the fi
 fails inside a Web Worker otherwise, where it surfaces as `Uncaught` lines with no stack into this
 project and a viewer that silently renders nothing.
 
+### Block entities are drawn as boxes
+
+A chest and a shulker box render as **nothing at all** in an unpatched build, and the reason is not
+a missing texture. They are *block entities*: Minecraft draws them with a dedicated entity renderer
+from `entity/chest/*`, and their block model file is deliberately empty — a particle texture and no
+geometry. A mesher builds from model elements, so it emits none, and a wall of chests is thin air.
+
+The staging step gives those blocks a box of their own particle texture, at roughly the size the
+real thing occupies. A shulker box *is* a full cube, so that one is nearly exact; a chest is inset a
+pixel either side and comes out a shade large and plank-coloured. Both are the right size, in the
+right place, and visible, which is the whole difference that matters when the point of the screen is
+seeing what is around an agent.
+
+Heads and skulls get the same treatment at an eighth of a block, and **their colour is the one thing
+this gets wrong**: the only texture a skull model declares is its particle, which is `soul_sand`,
+because what vanilla draws is an entity texture — and for a player head that texture is a skin
+fetched per player. A head therefore comes out a soul-sand-coloured cube of the right size in the
+right cell. That is the whole choice on offer: a wrong colour, or nothing there at all. Which way a
+wall head faces is not in the block states either — vanilla leaves skull rotation entirely to the
+block entity — so those sit centred in their cell, which is never badly wrong for any facing.
+
+Only the ones a box describes. Beds, signs, banners, conduits and decorated pots are left alone: a
+solid block where a flat wall sign should be reads as a wall nobody can walk through, which is worse
+than the gap it replaces. Drawing those properly means implementing a second renderer, which is a
+different project.
+
+It also reaches the map and the inventory icons for free — both derive from the same block states —
+so a chest now has a colour from above and a picture in a slot.
+
 ### Four accommodations for a renderer built for webpack
 
 Upstream's build does things Vite does not, and each gap is a different failure:
@@ -1194,6 +1223,142 @@ Agents are drawn in the theme's accent with a fading trail of their last thirty 
 motion is what makes a fleet read as working rather than as a list of dots. **A player who is not
 one of ours is drawn in red** — a stranger walking onto a build is the question an operator opens a
 map to answer. Strangers are collapsed by name, since two agents seeing one person is one person.
+
+## The inventory card
+
+What an agent is carrying, on its own page under the vitals. Here rather than on a screen of its
+own because it is one of the readings: an operator asking why an agent stopped mining is asking
+about its pickaxe, and a page that answers that two clicks away is one they check less often than
+they should.
+
+Laid out the way Minecraft lays it out — armour and the off hand, then the backpack above the
+hotbar — because whoever is reading it has the game's own screen in their head, and a grid in any
+other order is one they have to translate. The slot numbers underneath are the game's too, all the
+way to the click the host performs, so what is drawn in a square and what a click says about it
+cannot disagree.
+
+### Absent is not empty
+
+An empty grid is a perfectly ordinary thing for an agent to be carrying, so drawing one for an agent
+that has reported nothing is not a blank screen but a wrong answer. The API answers `204` for the
+second case and the card says so in words.
+
+### Laid out the way the game lays it out
+
+The twenty-seven, the nine set apart below them, and the worn things together off to one side.
+Whoever is reading this has the game's own screen in their head, and a grid in any other order is
+one they have to translate every time.
+
+The one departure is where that last group goes. Minecraft stacks the armour *above* the twenty-
+seven because it has a whole window to spend; a card does not, so the column sits beside them, which
+costs a strip that was empty anyway instead of five rows of height.
+
+**The two columns are sized off different axes.** The nine squares are driven by the width they are
+given; the armour by the height the nine end up occupying — one grid of seven rows, five of them
+equal fractions, stretched to whatever the left column comes to. So the two always end level, and
+the armour squares come out smaller, which is the right way round: there are five of them against
+thirty-six. All five are in *one* grid rather than two stacked blocks, because split across two the
+armour's own row gaps would make it the smaller of the pair.
+
+Squares are sized by their cell rather than in rem. The first cut fixed them at 2.25rem, reasoning
+that a 16-pixel sprite in a 31.4-pixel box has a seam through it — true of a bitmap scaled by a
+fraction, false of `image-rendering: pixelated` over a background sized in percentages. What it
+actually bought was a grid using a third of the row with the rest of it empty.
+
+Which square is **in hand** is part of it and can be changed from here: it decides what the agent
+hits, places and eats with, so it is a fact worth both showing and setting. An empty hotbar square
+is therefore selectable even though there is nothing in it — an empty hand is a real choice — while
+an empty square anywhere else is not, because no click there could mean anything.
+
+### Moving is a drag; clicking opens a panel
+
+It was both for a while, sharing one selection — which meant clicking two squares in a row moved an
+item, and therefore that every click was half of a move somebody might not have meant to start. A
+drag says what it is doing while it is doing it and is abandoned by letting go somewhere else. The
+square under the cursor is filled in hard while a drag is over it: that is a question being asked
+with an item in hand and half a second to read the answer, so it is louder than any of the states
+that merely describe how things are.
+
+A click opens a small panel anchored to the square — put in hand, drop one, drop stack. Over the
+square rather than in a row under the grid, which is where it started: a strip at the bottom of the
+card is a long way from the square somebody just clicked, and on a thirty-six square grid it is not
+obvious which one it is about.
+
+Nothing is written locally. What an agent is carrying is the host's to say, so a move is sent and
+the grid waits: showing it done before the server had agreed is showing something that then has to
+be taken back. The whole grid is disabled while a move is out, because the answer is a whole new
+inventory and a second click lands on squares that are about to be renumbered.
+
+**The square in hand is ringed; the square an operator picked up is filled.** One is a fact about
+the agent and the other is a selection somebody made, and they must not look alike on one grid.
+
+### Its icons are built, not shipped
+
+The same pipeline as the viewer's atlas and the map's palette, and the same bargain: the API sends
+item *names*, and `scripts/viewer-assets.mjs` generates a sprite sheet from `minecraft-assets`.
+
+Minecraft has two kinds of item and the sheet has two sources. Something you hold — a pickaxe, a
+carrot — has a flat sprite of its own. Something you place has none, because the game draws its icon
+by rendering the block; what stands in for it is the same face the map reads, copied out of the
+block atlas and tinted the same way, so a stack of grass blocks is the colour grass is everywhere
+else in this app. A cube drawn in perspective would be closer to the game and is a renderer this
+project has no reason to own.
+
+**An item's name is not its texture's name**, and assuming it was cost a hundred and forty icons.
+An enchanted golden apple is drawn from `items/golden_apple`, a waxed copper block from
+`block/copper_block`, every stair and slab from the block it is cut out of. `items_textures.json`
+is the mapping; a block texture is resolved by handing its name back to the same block lookup, which
+is how a slab inherits the tint and the face ordering its parent already gets right. The item's own
+sprite and its own block are still tried first, because where they apply they are the better answer
+— a block's model gives grass a green top rather than the dirt its texture reference points at.
+
+Two more things worth knowing before touching it:
+
+- **A face in the block atlas carries the crop its model samples, not the whole texture.** A torch's
+  top face is the two pixels by two it happens to be, which as an icon is four yellow pixels of
+  flame. Snapping back out to the tile that crop sits in recovers the texture, which is what an icon
+  is. The map wants the opposite and reads the crop, because there the question is what that face
+  looks like.
+- **Coverage is a floor, not an exact count**, and it is there to catch a resolver regression: it
+  sat at 87% while the texture mapping was missing. It cannot be total either, because
+  `minecraft-assets` lags `minecraft-data` by about a release — at 1.21.4 it carries no pale oak
+  and no resin at all, which is 27 items nothing can find a texture for. Five named items guard the
+  five paths through the resolver, which is the part that actually catches a break.
+
+An item the sheet has never heard of is drawn as its name in the square rather than as an empty one:
+it is still an item somebody has to decide about.
+
+## Pages that scroll themselves
+
+Most views are given the height of the frame and put a scrollbar on the part of themselves that is
+long — the table, the list of jobs — so the title and the filters above it stay put while the rows
+move. A page that is simply a column of cards has no such part: the whole column is the long thing.
+
+Those pages set `meta.scrolls` and the layout hands them the frame's own margins, which they apply
+*inside* their scroller. The scroller is the full width of the frame and the centred column sits
+within it, so the scrollbar runs down the right edge next to the chat rail. The other way round — a
+centred column that scrolls — puts the scrollbar wherever that column happens to end, which on a
+wide screen is a bar down the middle of the page with content on both sides of it.
+
+The two layout-level notices keep their margin either way. They belong to the frame rather than to
+the page, and a warning hard against the window edge reads as broken.
+
+## The storage screen
+
+Under All accounts, gated on `storage.read`, which only administrators hold. What the deployment is
+keeping on disk, by area, with a bar scaled against the **largest area** rather than the database —
+the database total carries the catalogue and free pages, so scaling to it leaves every real bar
+short and the picture flat, which is the one thing a bar chart is for.
+
+The screen is built around a distinction the interface cannot show on its own: **deleting frees
+space inside the database, and only rewriting the tables returns it to the disk.** Somebody who
+deletes a month of chat and watches the number not move concludes the button is broken. So space
+that has been freed but not returned is a column of its own, the total is a stat of its own, and
+returning it is a separate button that says what it costs — every table locked while it is rewritten.
+
+Two areas carry an explanation instead of a button: the audit trail, because it is the record of
+this screen being used, and everything whose rows hang off other rows, because those are owned by
+pages that understand what would go with them.
 
 ## Player heads
 

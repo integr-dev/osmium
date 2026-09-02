@@ -72,11 +72,8 @@ data class NearbyPlayerResponse(
     val position: PositionResponse?,
 
     /**
-     * What the server told the host about them, and no more.
-     *
-     * Health is not here and cannot be: a client is only sent its own, and everyone else's lives in
-     * raw entity metadata at an index that moves between protocol versions. A guessed one would be
-     * wrong without ever looking wrong, which is worse than absent.
+     * What the server told the host about them, and no more. Every field here is nullable, and an
+     * absent one means the server said nothing rather than that the value is zero.
      */
     @field:Schema(description = "Their account, for drawing the right head. Null when unreported.")
     val uuid: String?,
@@ -84,6 +81,21 @@ data class NearbyPlayerResponse(
     val ping: Int?,
     @field:Schema(description = "0 survival, 1 creative, 2 adventure, 3 spectator.", example = "0")
     val gamemode: Int?,
+    /**
+     * Hit points on the game's own scale, where twenty is full.
+     *
+     * **This used to say health could not be known.** It can: health is a synced field on every
+     * living entity, which is how a health-tag mod works with no server plugin behind it. What was
+     * true is that mineflayer does not lift it out for anything but the bot itself, so the host
+     * reads it from the entity metadata — by the name `minecraft-data` gives the key for that
+     * version, never by a written-down index.
+     *
+     * A fraction, because half a heart is a real state and a player on 0.5 is one hit from dead.
+     * Null when the server strips it, and for the moment after somebody comes into view and before
+     * their first metadata packet arrives.
+     */
+    @field:Schema(description = "Hit points out of twenty. Null when the server did not say.", example = "18.5")
+    val health: Double?,
     /**
      * Named explicitly because Kotlin's `is` prefix becomes a getter Jackson reads as the property
      * `agent`, which would put `nearby[].agent` on the wire and read as nonsense next to `name`.

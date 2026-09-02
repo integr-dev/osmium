@@ -74,4 +74,11 @@ export interface Player {
   ping?: number
   /** 0 survival, 1 creative, 2 adventure, 3 spectator - the protocol's own numbering. */
   gamemode?: number
+  /**
+   * Hit points, on the game's own scale where twenty is full.
+   *
+   * A float, and deliberately not rounded: half a heart is a real state, and a player on 0.5 is a
+   * player one hit from dead. Absent when the server did not say - see `healthKey`.
+   */
+  health?: number
 }

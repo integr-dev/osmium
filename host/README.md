@@ -296,6 +296,60 @@ one would otherwise run on defaults with nothing saying so.
 | `players.whitelist` | Who may command this agent from inside the game, comma-separated. `name` for chat, `name:commands` for chat and server commands, `name:run+say` for exactly those. **Empty means nobody.** See §5.1. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
 
+### `inventory_move`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "inventory_move", "agentId": 42,
+  "payload": { "from": 36, "to": 9 } }
+```
+
+Fire and forget. Move what is in one square of the agent's own inventory onto another, as two
+clicks would.
+
+Slot numbers are **Minecraft's own**, in the player window: 5–8 armour, 9–35 the backpack, 36–44 the
+hotbar, 45 the off hand. Refuse anything outside that range — the crafting grid holds items only
+while a recipe is half-assembled, and its output square is not a container at all.
+
+Report nothing. Where the item ended up goes out on the next `inventory` event (§4.7), which is the
+same event that reports the agent moving something itself — so a move the server refused reads as
+the item not having moved, which is what happened.
+
+### `inventory_drop`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "inventory_drop", "agentId": 42,
+  "payload": { "slot": 36, "count": 16 } }
+```
+
+Fire and forget. Throw a square's contents on the ground. An **absent `count` means the whole
+stack**, which is the ordinary case. Same slot range as `inventory_move`.
+
+**Use the game's own drop click — mode 4 on the named slot.** Button 1 throws the stack, button 0
+throws one, and neither picks anything up. There is no "drop N" click in the protocol, so a partial
+drop is that many button-0 clicks.
+
+mineflayer's `bot.toss` is the trap here, and it is the wrong shape twice over: it searches by *item
+type* across the whole inventory range, so dropping one from a hotbar square can take it off a
+different stack of the same thing — and it works by lifting the stack onto the cursor and putting
+the remainder back through `putSelectedItemRange`, which returns it to the first slot it fits in
+rather than the one it came from. Dropping one item from the hotbar moved the other sixty-three
+into the backpack.
+
+### `inventory_hold`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "inventory_hold", "agentId": 42,
+  "payload": { "slot": 40 } }
+```
+
+Fire and forget. Put a hotbar square in the agent's hand — refuse anything outside 36–44.
+
+The **square**, not the 0-to-8 index the game keeps. Every command here names a square the same way,
+and the one index in this protocol is `held` on the `inventory` event (§4.7), which is a field the
+game itself defines as one. Translate at the edge; do not let either numbering leak into the other.
+
+Report nothing. The new hand goes out as `held` on the next `inventory` event.
+
 ### `delete_agent`
 
 ```jsonc
@@ -355,7 +409,9 @@ Carries two things with very different lifetimes, and **either half may be sent 
                "health": 18, "food": 17, "pingMs": 42, "dimension": "overworld",
                "position": { "x": 128.5, "y": 71.0, "z": -344.25 },
                "nearby": [ { "name": "Notch", "distance": 12.4,
-                             "position": { "x": 140.0, "y": 71.0, "z": -338.0 } } ] } }
+                             "position": { "x": 140.0, "y": 71.0, "z": -338.0 },
+                             "uuid": "…", "ping": 84, "gamemode": 0,
+                             "health": 18.5 } ] } }
 
 // state only, when nothing else is worth reporting
 { "kind": "event", "type": "agent_status", "agentId": 42, "payload": { "state": "CONNECT_FAILED" } }
@@ -381,7 +437,7 @@ that is not in game has no vitals, and Osmium shows that as "not reporting" rath
 | `pingMs` | **with the other three** | round trip to the Minecraft server |
 | `position` | **with the other three** | `{x, y, z}`, doubles — all three coordinates |
 | `dimension` | no | defaults to `overworld` |
-| `nearby` | no | `[{ "name", "distance", "position" }]` — `position` optional; defaults to empty |
+| `nearby` | no | `[{ "name", "distance", "position", "uuid", "ping", "gamemode", "health" }]` — everything but the first two optional |
 
 **`health`, `food`, `pingMs` and `position` are all-or-nothing.** Send all four or none of them.
 A tick carrying only some is **dropped whole** and logged, rather than having the rest filled in with
@@ -405,6 +461,22 @@ you must; the cap is a ceiling for a spawn lobby, not a range.
 
 **Do not send `isAgent` on nearby players.** Osmium decides that, because a host sees only its own
 agents and a server's fleet can span several hosts — no host can tell one of ours from a stranger.
+
+**A nearby player's `health` is readable, and this document used to say it was not.** The claim was
+that a client is only sent its own. It is not: health is a synced field on every living entity,
+which is how a health-tag mod works with no server plugin behind it. What is true is that mineflayer
+lifts it out only for the bot itself, so it has to be read from the entity's metadata.
+
+Read the index **by name**, out of `minecraft-data`'s `entitiesByName.player.metadataKeys`, never
+written down. It is 9 on every version checked, and hardcoding that is precisely how you get a
+number that is wrong without ever looking wrong — some other field will move into slot nine
+eventually and be reported as hit points.
+
+Send it as a **fraction on the game's own scale**, where 20 is full. Half a heart is a real state
+and the difference between one hit from dead and two. Do not clamp it: a player under a health boost
+genuinely has more than 20, and capping it reports somebody as easier to kill than they are. Omit
+it, like `ping` and `gamemode`, when the server has not said — which covers a server that strips it
+and the moment between somebody coming into view and their first metadata packet.
 
 **Vitals go stale after 30 seconds**, matching the heartbeat grace. Stop reporting and Osmium shows
 the agent as not reporting rather than holding the last numbers on screen as though they were
@@ -712,6 +784,56 @@ Six rules, each of which has already been got wrong once:
 
 A tile of the wrong length, or one indexing past its own palette, is refused by the backend rather
 than stored.
+
+## 4.7 What the agent is carrying
+
+Reported **for the whole session**, like the map and unlike the viewer: it is a few hundred bytes,
+it only moves when items do, and an operator opening the page wants to see what is there now rather
+than wait for a first report.
+
+```jsonc
+{ "kind": "event", "type": "inventory", "agentId": 42,
+  "payload": { "slots": [ { "slot": 36, "name": "diamond_pickaxe",
+                            "displayName": "Diamond Pickaxe", "count": 1,
+                            "damage": 142, "maxDamage": 1561 } ],
+               "held": 0 } }
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `slots` | yes | **occupied squares only** — a square not named is empty, which is what a client draws |
+| `slot` | yes | Minecraft's own number in the player window |
+| `name` | yes | the item id; the interface looks an icon up by it |
+| `displayName` | no | falls back to the id: a worse label, never an empty one |
+| `count` | yes | |
+| `damage`, `maxDamage` | no | **together or not at all**; absent means the item does not wear out |
+| `held` | no | which hotbar square is in hand, 0–8 — an *index*, not a slot |
+
+Five rules:
+
+- **Send the whole inventory, never a patch.** It is forty squares of a few bytes each, and a client
+  assembling one out of deltas would have to be told when to throw its copy away — which is every
+  respawn, every dimension change and every reconnect, none of which is an event that says so.
+- **Report the square you read from**, not the item's own idea of which square it is in. The window
+  keeps that field up to date and it agrees today; a stale one is a way for an item to be drawn in a
+  square it is not in.
+- **Wear travels as used-out-of-total**, and both halves or neither. "Undamaged" and "not the kind of
+  thing that takes damage" are different answers, and a client draws a bar for the first and nothing
+  for the second.
+- **Settle and deduplicate**, as with tiles. `updateSlot` fires on every window refresh the server
+  sends, including the full one after a respawn, and picking a stack off the floor is several
+  updates. Wait for the changes to stop, hash the result, and send only what differs.
+- **Leave the crafting grid out.** Those squares hold items only while a recipe is half-assembled,
+  and reporting them puts two squares on an operator's screen that no click can do anything with.
+
+**Say it again whenever a socket comes up.** The backend holds this in memory only, latest wins,
+and a new socket may well be a new backend holding none of it — so restate every agent's inventory
+alongside the handshake. Nothing else covers it: this event exists only because items moved, so an
+agent standing still would otherwise have nothing to say until it next picked something up, and its
+card would sit empty for as long as it stood there.
+
+The backend clears an inventory when the agent leaves the game and at no other time. There is no
+clock on it, deliberately — see the Charting section's neighbour in FLEET_CONNECTIVITY.md.
 
 ## 5. Chat scoping and the listener role
 

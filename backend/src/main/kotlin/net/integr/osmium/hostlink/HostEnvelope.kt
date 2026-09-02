@@ -134,6 +134,36 @@ object CommandType {
     const val CANCEL_SEGMENT = "cancel_segment"
 
     /**
+     * Move what is in one inventory square onto another: `{ "from": 36, "to": 9 }`.
+     *
+     * Slot numbers are **Minecraft's own**, in the player window - 5-8 armour, 9-35 the backpack,
+     * 36-44 the hotbar, 45 the off hand. Relayed rather than renumbered, because the host carries
+     * this out as a click on a slot, and any renumbering in between is somewhere the screen and
+     * the click can disagree about which square was pointed at.
+     *
+     * Fire and forget, like everything else here. Where the item ended up arrives on the next
+     * [EventType.INVENTORY] - the same event that reports the agent moving something itself - so a
+     * move the server refused reads as the item not having moved, which is what happened.
+     */
+    const val INVENTORY_MOVE = "inventory_move"
+
+    /**
+     * Throw what is in an inventory square on the ground: `{ "slot": 36, "count": 16 }`.
+     *
+     * An absent `count` means the whole stack, which is the ordinary case.
+     */
+    const val INVENTORY_DROP = "inventory_drop"
+
+    /**
+     * Put a hotbar square in the agent's hand: `{ "slot": 40 }`.
+     *
+     * The **square**, 36-44, not the 0-to-8 index the game keeps. Every command here names a square
+     * the same way; the one index in this protocol is `held` on [EventType.INVENTORY], which is a
+     * field the game itself defines as one, and the host translates between them.
+     */
+    const val INVENTORY_HOLD = "inventory_hold"
+
+    /**
      * This agent is gone: `{}`, with the agent named on the envelope.
      *
      * A host binds each credential to the agent it was acquired for, so that a restart can rebuild
@@ -250,4 +280,27 @@ object EventType {
      * map is about a place: every agent standing in one fills in the same map.
      */
     const val MAP_TILE = "map_tile"
+
+    /**
+     * What an agent is carrying:
+     *
+     * ```jsonc
+     * { "slots": [ { "slot": 36, "name": "diamond_pickaxe", "displayName": "Diamond Pickaxe",
+     *                "count": 1, "damage": 142, "maxDamage": 1561 } ],
+     *   "held": 0 }
+     * ```
+     *
+     * **Whole, not a patch.** An inventory is forty squares of a few bytes each, and a client that
+     * assembled one out of deltas would have to be told when to throw its copy away - which is
+     * every respawn, every dimension change and every reconnect. Occupied squares only: a square
+     * that is not named is empty, which is what a client draws anyway.
+     *
+     * `damage` and `maxDamage` are present together or not at all. Absent means the item does not
+     * wear out, which is a different thing from an undamaged tool.
+     *
+     * Sent when items move rather than on a tick, so an agent that has reported nothing for a
+     * minute is standing still rather than gone - which is why it ages out more slowly than the
+     * vitals do. See [net.integr.osmium.agent.service.AgentInventoryStore].
+     */
+    const val INVENTORY = "inventory"
 }

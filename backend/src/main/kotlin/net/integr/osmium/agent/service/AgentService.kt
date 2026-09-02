@@ -1,10 +1,14 @@
 package net.integr.osmium.agent.service
 
+import net.integr.osmium.agent.dto.AgentInventoryResponse
 import net.integr.osmium.agent.dto.AgentResponse
 import net.integr.osmium.agent.dto.AgentSettingsRequest
 import net.integr.osmium.agent.dto.ChatRequest
 import net.integr.osmium.agent.dto.AssignServerRequest
 import net.integr.osmium.agent.dto.CreateAgentRequest
+import net.integr.osmium.agent.dto.DropItemRequest
+import net.integr.osmium.agent.dto.HoldItemRequest
+import net.integr.osmium.agent.dto.MoveItemRequest
 import net.integr.osmium.agent.dto.SetupAgentRequest
 import net.integr.osmium.agent.dto.UpdateAgentRequest
 import net.integr.osmium.agent.dto.toResponse
@@ -47,6 +51,7 @@ class AgentService(
     private val chatRateLimiter: ChatRateLimiter,
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
+    private val inventoryStore: AgentInventoryStore,
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
@@ -182,6 +187,7 @@ class AgentService(
         chatRateLimiter.forget(id)
         telemetryStore.forget(id)
         telemetryPublisher.forget(id)
+        inventoryStore.forget(id)
         auditService.record(
             action = AuditAction.AGENT_DELETE,
             target = label,
@@ -426,6 +432,83 @@ class AgentService(
             action = AuditAction.AGENT_CHAT,
             target = agent.label,
             detail = request.message,
+        )
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /**
+     * What the agent is carrying, or null when it has not reported recently enough to trust.
+     *
+     * Read straight out of the store rather than asked for. An inventory arrives whenever items
+     * move and is already there by the time anybody opens the page, which is the same bargain the
+     * map makes - and there is no command that means "tell me again", because a host that would
+     * answer one is a host that has already sent it.
+     */
+    fun inventory(id: Long): AgentInventoryResponse? {
+        val agent = require(id)
+        return inventoryStore.find(agent.id)
+    }
+
+    /**
+     * Moves what an agent is carrying from one square to another.
+     *
+     * Online only: this is a click in a window that only exists while the agent is in the game.
+     * Nothing is echoed back and the stored inventory is left alone - the host reports where the
+     * item ended up, and reporting it here first would show the move as done before the server had
+     * agreed to it.
+     */
+    @Transactional
+    fun moveItem(id: Long, request: MoveItemRequest): AgentResponse {
+        val agent = require(id)
+        check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
+
+        dispatch(
+            agent,
+            CommandType.INVENTORY_MOVE,
+            mapOf("from" to request.from, "to" to request.to),
+        )
+        auditService.record(
+            action = AuditAction.AGENT_INVENTORY,
+            target = agent.label,
+            // The squares, because that is all this knows. What was in them is the host's to say,
+            // and asking would make an audit line depend on a reading that may already be stale.
+            detail = "moved slot ${request.from} to ${request.to}",
+        )
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /** Throws what is in a square on the ground. Online only, for the same reason as [moveItem]. */
+    @Transactional
+    fun dropItem(id: Long, request: DropItemRequest): AgentResponse {
+        val agent = require(id)
+        check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
+
+        dispatch(
+            agent,
+            CommandType.INVENTORY_DROP,
+            // Omitted rather than sent as null when the whole stack goes, which is what the host
+            // reads an absent count as.
+            mapOf("slot" to request.slot) + (request.count?.let { mapOf("count" to it) } ?: emptyMap()),
+        )
+        auditService.record(
+            action = AuditAction.AGENT_INVENTORY,
+            target = agent.label,
+            detail = "dropped ${request.count?.toString() ?: "everything"} from slot ${request.slot}",
+        )
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /** Puts a hotbar square in the agent's hand. Online only, for the same reason as [moveItem]. */
+    @Transactional
+    fun holdItem(id: Long, request: HoldItemRequest): AgentResponse {
+        val agent = require(id)
+        check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
+
+        dispatch(agent, CommandType.INVENTORY_HOLD, mapOf("slot" to request.slot))
+        auditService.record(
+            action = AuditAction.AGENT_INVENTORY,
+            target = agent.label,
+            detail = "held slot ${request.slot}",
         )
         return agent.toResponse(telemetryStore.find(agent.id))
     }

@@ -6,7 +6,7 @@ import { Eye, Orbit, TriangleAlert } from 'lucide-vue-next'
 import { api } from '../api/client'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerStream'
-import { gamemodeLabel } from '../lib/vitals'
+import { playerVitals } from '../lib/vitals'
 
 /**
  * An agent's world, rendered live.
@@ -627,11 +627,9 @@ function statsFor(name: string | undefined): string | null {
   const player = nearby.value.find((candidate) => candidate.name === name)
   if (!player) return null
 
-  const parts: string[] = []
-  if (player.ping !== null && player.ping !== undefined) parts.push(`${player.ping}ms`)
-  const mode = gamemodeLabel(player.gamemode)
-  if (mode) parts.push(mode)
-  if (player.isAgent) parts.push(t('viewer.ours'))
+  // The shared reading, plus the one thing only this screen knows to say: whether the name over
+  // somebody's head belongs to the fleet.
+  const parts = [playerVitals(player), player.isAgent ? t('viewer.ours') : null].filter(Boolean)
 
   return parts.length ? parts.join(' · ') : null
 }

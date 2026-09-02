@@ -60,6 +60,12 @@ export class Dispatcher {
     const agents: AgentSnapshot[] = [...this.agents].map(([agentId, running]) => ({ agentId, state: running.state }))
 
     this.send({ kind: 'event', body: { type: 'handshake', agents, loginMethods: advertised() } })
+
+    // Everything the backend holds only in memory has to be said again, because a new socket may
+    // well be a new backend - and one that has never heard of this host's agents. Inventories are
+    // reported on change and deduplicated, so without this an agent that is standing still would
+    // have nothing to say until it next picked something up, and its card would sit empty.
+    for (const running of this.agents.values()) running.agent.restate()
   }
 
   command(command: Command): void {

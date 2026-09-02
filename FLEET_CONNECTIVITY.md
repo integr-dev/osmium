@@ -930,6 +930,130 @@ Both sit behind `agent.read` rather than a node of their own. Nothing here asks 
 anything — unlike the viewer, this is what agents have already reported in the course of their work,
 sitting in a table.
 
+## What an agent is carrying
+
+> **Built.** Every agent reports its inventory whenever items move; the browser draws it as the
+> game's own screen and can move and drop items from it.
+
+```
+items move ──▶ host reads the window ──▶ inventory event ──▶ held in memory, latest wins
+                                                                      │
+        operator clicks two squares ◀── live update ── browser ◀──────┘
+                │
+                └──▶ POST …/inventory/move ──▶ inventory_move ──▶ the host clicks the two slots
+```
+
+### Slot numbers are Minecraft's, all the way through
+
+5–8 armour, 9–35 the backpack, 36–44 the hotbar, 45 the off hand. Relayed rather than renumbered at
+every hop: the host carries a move out as a click on a slot, so a renumbering anywhere between the
+square somebody pointed at and the click is a place the two can come to disagree — and the host
+would have to undo it again to act on it.
+
+The crafting grid (1–4) and its output (0) are outside the range every layer accepts. They hold
+items only while a recipe is half-assembled, and the output is not a container at all: putting
+something into it is not a move any server can take.
+
+```jsonc
+// host → backend, whenever items move
+{ "kind": "event", "type": "inventory", "agentId": 42,
+  "payload": { "slots": [ { "slot": 36, "name": "diamond_pickaxe",
+                            "displayName": "Diamond Pickaxe", "count": 1,
+                            "damage": 142, "maxDamage": 1561 } ],
+               "held": 0 } }
+
+// backend → host, fire and forget
+{ "id": "cmd-4b81", "kind": "command", "type": "inventory_move", "agentId": 42,
+  "payload": { "from": 36, "to": 9 } }
+{ "id": "cmd-4b82", "kind": "command", "type": "inventory_drop", "agentId": 42,
+  "payload": { "slot": 36, "count": 16 } }   // an absent count means the whole stack
+{ "id": "cmd-4b83", "kind": "command", "type": "inventory_hold", "agentId": 42,
+  "payload": { "slot": 40 } }                // the square, not the 0-8 index
+```
+
+`inventory_hold` names the **square**, 36–44, like every other command here. The one index in this
+protocol is `held`, which is a field the game itself defines as one, and the host translates. What
+an agent holds decides what it hits, places and eats with, so it changes what the agent *does*
+rather than only what it owns — which is why it is a verb of its own and not a move onto a special
+slot.
+
+| Field | Required | Notes |
+|---|---|---|
+| `slots` | yes | **occupied squares only** — a square not named is empty, which is what a client draws |
+| `slot` | yes | Minecraft's own number in the player window |
+| `name` | yes | the item id, which is what an icon is looked up by |
+| `displayName` | no | falls back to the id: a worse label, never an empty one |
+| `count` | yes | |
+| `damage`, `maxDamage` | no | **together or not at all** — absent means the item does not wear out |
+
+### Absent is not empty
+
+An agent carrying nothing and an agent nobody has heard from look identical if a missing report is
+answered with an empty list, and only one of those is worth acting on. So `GET
+/api/agents/{id}/inventory` answers `204` for the second, and the card says the agent has not
+reported rather than drawing forty empty squares.
+
+The same distinction the telemetry makes, and it is stored the same way: in memory, latest wins,
+never written to Postgres. A restart must not be able to resurrect the contents of a chest an agent
+emptied an hour ago and present it as what it is holding now.
+
+### It does not age out, and that is the difference from the telemetry
+
+Vitals are resent every few seconds whether or not they changed, so a stale sample there means a
+host that has stopped talking, and a time limit reads it correctly. An inventory is sent only when
+items **move** — so nothing refreshes the one an agent is standing still with, and a time limit
+reads a quiet agent as an agent nobody has heard from.
+
+It did exactly that: an operator who reloaded the page a minute after opening it was told the agent
+had reported nothing, until it next picked something up. The rule that survived is that what
+invalidates an inventory is the **session ending**, which the backend is told about — so leaving the
+game clears it, and nothing else does.
+
+The other direction is the host's job. **A host restates every agent's inventory when a socket comes
+up**, because a new socket may be a new backend holding none of this. Without it a backend restart
+left the same empty card, for the same reason and with no clock to blame.
+
+### Whole, not a patch
+
+Forty squares of a few bytes each. A client assembling one out of deltas would have to be told when
+to throw its copy away, which is every respawn, every dimension change and every reconnect — and
+none of those is an event that says so.
+
+The report is deduplicated by digest rather than by trusting the events. `updateSlot` fires on every
+window refresh a server sends, including the full one after a respawn, and most of those describe an
+inventory identical to the one already reported. It also settles for 400 ms first, so picking a
+stack off the floor is one report rather than one per item.
+
+### A move is fire and forget, like everything else
+
+Nothing is echoed back and nothing is written locally. Where the item ended up arrives on the next
+`inventory` event — the same event that reports the agent moving something itself — so a move the
+server refused reads as the item not having moved, which is what happened. Writing it optimistically
+would show the move as done before the server had agreed, then disagree with the report that
+follows.
+
+### Why `agent.run` and not a node of its own
+
+Chat has its own node because it is *impersonation*: the agent says something a person reads as
+having been said. Moving an item is the agent doing what an agent does, and anyone trusted to put it
+in the game is already trusted with everything it is carrying.
+
+Both are audited, though, and for the same reason: they act in the world under an account somebody
+owns. Dropping is the destructive one — a stack thrown on the ground at a server's spawn is gone in
+five minutes, and nothing else in Osmium would ever say who threw it.
+
+### Icons are the frontend's problem
+
+The same bargain the map makes. A slot carries the item *name*; which picture that is comes from a
+sprite sheet generated at build time, and the backend holds no opinion about what anything looks
+like.
+
+Minecraft has two kinds of item and the sheet has two sources. Something you hold has a flat sprite
+of its own; something you place has none, because the game draws its icon by rendering the block —
+so what stands in for it is the same face the map reads, copied out of the block atlas and tinted
+the same way. One trap: a face in the block atlas carries the *crop* the model samples, which for a
+torch is the two pixels by two its top happens to be. An icon wants the tile that crop sits in.
+
 ## Chat
 
 "Chat" is several different things, and only some of them are per-agent. Rendering a server's global

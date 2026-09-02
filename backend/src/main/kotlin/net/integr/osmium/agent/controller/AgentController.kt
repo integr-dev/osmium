@@ -5,15 +5,20 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
+import net.integr.osmium.agent.dto.AgentInventoryResponse
 import net.integr.osmium.agent.dto.AgentResponse
 import net.integr.osmium.agent.dto.AgentSettingsRequest
 import net.integr.osmium.agent.dto.AssignServerRequest
 import net.integr.osmium.agent.dto.ChatRequest
 import net.integr.osmium.agent.dto.CreateAgentRequest
+import net.integr.osmium.agent.dto.DropItemRequest
+import net.integr.osmium.agent.dto.HoldItemRequest
+import net.integr.osmium.agent.dto.MoveItemRequest
 import net.integr.osmium.agent.dto.SetupAgentRequest
 import net.integr.osmium.agent.dto.UpdateAgentRequest
 import net.integr.osmium.agent.service.AgentService
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
@@ -244,4 +249,93 @@ class AgentController(private val agentService: AgentService) {
     )
     fun chat(@PathVariable id: Long, @Valid @RequestBody request: ChatRequest): AgentResponse =
         agentService.chat(id, request)
+
+    @GetMapping("/{id}/inventory")
+    @PreAuthorize("hasAuthority('agent.read')")
+    @Operation(
+        summary = "Read what the agent is carrying.",
+        description = "Latest reported, never stored: an agent that has not reported recently has " +
+            "none, rather than showing an hour-old inventory as though it were now. Slot numbers " +
+            "are Minecraft's own — 5-8 armour, 9-35 the backpack, 36-44 the hotbar, 45 the off hand.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "The inventory."),
+        ApiResponse(responseCode = "204", description = "The agent has not reported one."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+    )
+    fun inventory(@PathVariable id: Long): ResponseEntity<AgentInventoryResponse> =
+        // 204 rather than a null body: "this agent has not said" and "this agent is carrying
+        // nothing" are different answers, and an empty `slots` list is the second one.
+        agentService.inventory(id)?.let { ResponseEntity.ok(it) } ?: ResponseEntity.noContent().build()
+
+    /**
+     * `agent.run`, the same authority that puts an agent in the game and takes it out.
+     *
+     * This acts in the world under an account somebody owns, which is the argument that gave chat
+     * its own node — but chat is *impersonation*, where the agent says something a person reads as
+     * having been said. Moving an item is the agent doing what an agent does, and anyone trusted to
+     * run one is already trusted with everything it is carrying.
+     */
+    @PostMapping("/{id}/inventory/move")
+    @PreAuthorize("hasAuthority('agent.run')")
+    @Operation(
+        summary = "Move an item from one square to another.",
+        description = "Fire and forget: where the item ended up arrives on the next inventory " +
+            "report, which is also what a move the server refused looks like. Online only — this " +
+            "is a click in a window that only exists while the agent is in the game.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Command accepted."),
+        ApiResponse(responseCode = "400", description = "A slot outside the player window."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online."),
+        ApiResponse(responseCode = "503", description = "The owning host is not connected."),
+    )
+    fun moveItem(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: MoveItemRequest,
+    ): AgentResponse = agentService.moveItem(id, request)
+
+    @PostMapping("/{id}/inventory/drop")
+    @PreAuthorize("hasAuthority('agent.run')")
+    @Operation(
+        summary = "Throw an item on the ground.",
+        description = "Destructive and not undoable: what lands on the ground is anybody's, and " +
+            "despawns. Online only, like the move.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Command accepted."),
+        ApiResponse(responseCode = "400", description = "A slot outside the player window."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online."),
+        ApiResponse(responseCode = "503", description = "The owning host is not connected."),
+    )
+    fun dropItem(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: DropItemRequest,
+    ): AgentResponse = agentService.dropItem(id, request)
+
+    @PostMapping("/{id}/inventory/hold")
+    @PreAuthorize("hasAuthority('agent.run')")
+    @Operation(
+        summary = "Put a hotbar square in the agent's hand.",
+        description = "What the agent is holding is what it hits, places and eats with, so this " +
+            "changes what it does rather than only what it owns. Fire and forget: the new hand " +
+            "arrives as `held` on the next inventory report. Online only.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Command accepted."),
+        ApiResponse(responseCode = "400", description = "A slot outside the hotbar."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online."),
+        ApiResponse(responseCode = "503", description = "The owning host is not connected."),
+    )
+    fun holdItem(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: HoldItemRequest,
+    ): AgentResponse = agentService.holdItem(id, request)
 }

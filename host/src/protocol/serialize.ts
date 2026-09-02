@@ -89,6 +89,16 @@ function event(body: Event): Json {
         payload: { scope: body.scope, severity: body.severity, text: body.text },
       }
 
+    case 'inventory':
+      return {
+        kind: 'event',
+        type: 'inventory',
+        agentId: body.agentId,
+        // Flat, like a map tile and for the same reason: the payload of an envelope is already the
+        // body of one event, and a second wrapper inside it says nothing the type has not said.
+        payload: { slots: body.inventory.slots, held: body.inventory.held },
+      }
+
     case 'map_tile':
       return {
         kind: 'event',

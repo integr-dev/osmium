@@ -38,6 +38,15 @@ enum class AuditAction {
     AGENT_DISCONNECT,
     AGENT_CHAT,
 
+    /**
+     * An operator moved or dropped something an agent was carrying.
+     *
+     * Recorded for the same reason [AGENT_CHAT] is: it acts in the world under an account somebody
+     * owns, and this one is destructive. A stack thrown on the ground at a server's spawn is gone
+     * in five minutes, and nothing else in Osmium would ever say who threw it.
+     */
+    AGENT_INVENTORY,
+
     HOST_ENROL,
     HOST_RENAME,
     HOST_ROTATE_TOKEN,
@@ -56,6 +65,15 @@ enum class AuditAction {
      * nothing here sees it again. The detail carries the range asked for and the row count.
      */
     AUDIT_EXPORT,
+
+    /**
+     * Stored data was deleted in bulk, or the space it had been occupying was reclaimed.
+     *
+     * The detail carries what was removed and how much of it. This is the one action whose whole
+     * point is that records stop existing, so the line saying it happened is the only thing left
+     * afterwards - which is exactly why the trail itself is not something this can be pointed at.
+     */
+    STORAGE_PURGE,
 
     /**
      * A refresh token was presented twice, and every session descended from that login was revoked.

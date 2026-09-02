@@ -118,6 +118,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage/{area}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete an area's data.
+         * @description Frees the space as *dead* rows: the table keeps it and will reuse it, and the disk does not shrink until `/api/storage/reclaim` rewrites the table. The audit trail is not purgeable — it is the record of this having happened.
+         */
+        post: operations["purge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage/reclaim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Return deleted rows' space to the operating system.
+         * @description Rewrites every table, **locking each one exclusively while it runs**. On a live deployment that stalls hosts reporting and browsers reading for as long as the largest table takes. It is a separate action from purging for exactly that reason.
+         */
+        post: operations["reclaim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schematics": {
         parameters: {
             query?: never;
@@ -474,6 +514,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{id}/inventory/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move an item from one square to another.
+         * @description Fire and forget: where the item ended up arrives on the next inventory report, which is also what a move the server refused looks like. Online only — this is a click in a window that only exists while the agent is in the game.
+         */
+        post: operations["moveItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{id}/inventory/hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put a hotbar square in the agent's hand.
+         * @description What the agent is holding is what it hits, places and eats with, so this changes what it does rather than only what it owns. Fire and forget: the new hand arrives as `held` on the next inventory report. Online only.
+         */
+        post: operations["holdItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{id}/inventory/drop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Throw an item on the ground.
+         * @description Destructive and not undoable: what lands on the ground is anybody's, and despawns. Online only, like the move.
+         */
+        post: operations["dropItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agents/{id}/disconnect": {
         parameters: {
             query?: never;
@@ -687,6 +787,26 @@ export interface paths {
          * @description The same events as the whole stream, filtered to this agent. A server's global chat arrives here too, under whichever agent currently forwards it, so a view showing one agent's conversation filters on `scope`.
          */
         get: operations["agent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What is stored, by area.
+         * @description Sizes come from Postgres itself rather than from adding up what the application believes it wrote. Row counts are estimates from the statistics collector — counting them exactly means reading every row in the database.
+         */
+        get: operations["breakdown"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1016,6 +1136,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{id}/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read what the agent is carrying.
+         * @description Latest reported, never stored: an agent that has not reported recently has none, rather than showing an hour-old inventory as though it were now. Slot numbers are Minecraft's own — 5-8 armour, 9-35 the backpack, 36-44 the hotbar, 45 the off hand.
+         */
+        get: operations["inventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/activity": {
         parameters: {
             query?: never;
@@ -1240,6 +1380,12 @@ export interface components {
              * @example 0
              */
             gamemode?: number | null;
+            /**
+             * Format: double
+             * @description Hit points out of twenty. Null when the server did not say.
+             * @example 18.5
+             */
+            health?: number | null;
             isAgent?: boolean;
         };
         /** @description A position in the world. */
@@ -1265,6 +1411,46 @@ export interface components {
             password?: string;
             /** @description Role name to assign. Must already exist. Omit for no permissions. */
             role?: string | null;
+        };
+        /** @description Deletes stored data in bulk. Space is freed as *dead* rows — reclaiming it for the operating system is a second step. */
+        PurgeRequest: {
+            /**
+             * Format: int32
+             * @description Keep anything written within this many days. Null deletes everything in the area, which is a different decision and is not the default for that reason.
+             * @example 30
+             */
+            keepDays?: number | null;
+        };
+        /** @description What a purge removed. */
+        PurgeResponse: {
+            /** @enum {string} */
+            area?: "CHAT" | "ACTIVITY" | "MAP" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
+            /**
+             * Format: int32
+             * @description Rows deleted. Exact, unlike the estimate on the way in.
+             * @example 18402
+             */
+            deleted?: number;
+            /**
+             * Format: int64
+             * @description What the area costs now. Barely lower than before a purge until the space is reclaimed, which is the point of saying it.
+             */
+            totalBytes?: number;
+        };
+        /** @description What reclaiming recovered. */
+        ReclaimResponse: {
+            /**
+             * Format: int64
+             * @description Database size before.
+             * @example 162529280
+             */
+            beforeBytes?: number;
+            /**
+             * Format: int64
+             * @description Database size after.
+             * @example 31457280
+             */
+            afterBytes?: number;
         };
         CreateSchematicRequest: {
             name: string;
@@ -1524,6 +1710,29 @@ export interface components {
              */
             method: string;
         };
+        /** @description Moves what is in one square onto another, as two clicks would. Fire and forget: where the item ended up arrives on the next inventory report. */
+        MoveItemRequest: {
+            /** Format: int32 */
+            from?: number;
+            /** Format: int32 */
+            to?: number;
+        };
+        /** @description Puts a hotbar square in the agent's hand. The square, 36-44, not the 0-8 index the game keeps: every request here names a square the same way, and the one index in this API is `held`, which is a field the game itself defines as one. */
+        HoldItemRequest: {
+            /** Format: int32 */
+            slot?: number;
+        };
+        /** @description Throws what is in a square on the ground. */
+        DropItemRequest: {
+            /** Format: int32 */
+            slot?: number;
+            /**
+             * Format: int32
+             * @description How many to throw. Null throws the whole stack.
+             * @example 16
+             */
+            count?: number | null;
+        };
         /** @description Sends a chat message as an agent. This is impersonation - gated on chat. */
         ChatRequest: {
             message: string;
@@ -1559,6 +1768,48 @@ export interface components {
         SseEmitter: {
             /** Format: int64 */
             timeout?: number;
+        };
+        /** @description One kind of stored data, and what it is costing. */
+        StorageAreaResponse: {
+            /** @enum {string} */
+            area?: "CHAT" | "ACTIVITY" | "MAP" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
+            /**
+             * Format: int64
+             * @description Everything it costs on disk: the rows, their indexes and their out-of-line storage.
+             * @example 21495808
+             */
+            totalBytes?: number;
+            /**
+             * Format: int64
+             * @description Space held by rows that have been deleted and not yet reclaimed. Freed by reclaiming, not by deleting more.
+             * @example 66060288
+             */
+            deadBytes?: number;
+            /**
+             * Format: int64
+             * @description Roughly how many rows. An estimate from the statistics collector — counting them exactly means reading every one.
+             * @example 28628
+             */
+            rows?: number;
+            /**
+             * Format: date-time
+             * @description When the oldest row was written, for anything that can be purged.
+             */
+            oldest?: string | null;
+            /** @description Whether rows here can be deleted from the storage screen. */
+            purgeable?: boolean;
+            /** @description The tables it is made of, for whoever is looking at the database itself. */
+            tables?: string[];
+        };
+        /** @description What the deployment is storing. Sizes come from Postgres rather than from adding up what the application thinks it wrote. */
+        StorageResponse: {
+            /**
+             * Format: int64
+             * @description The size of the whole database, which is at least the sum of the areas: it also carries the catalogue and anything no area claims.
+             * @example 162529280
+             */
+            databaseBytes?: number;
+            areas?: components["schemas"]["StorageAreaResponse"][];
         };
         SegmentResponse: {
             /** Format: int32 */
@@ -1717,7 +1968,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "AGENT_INVENTORY" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "STORAGE_PURGE" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -1725,6 +1976,53 @@ export interface components {
         AuditPageResponse: {
             items?: components["schemas"]["AuditEntryResponse"][];
             nextCursor?: string | null;
+        };
+        /** @description What an agent is carrying. Never stored - an agent that has not reported recently has none, rather than showing an hour-old inventory as though it were now. */
+        AgentInventoryResponse: {
+            /** @description Occupied squares only. */
+            slots?: components["schemas"]["InventorySlotResponse"][];
+            /**
+             * Format: int32
+             * @description Which hotbar square is in hand, 0 to 8.
+             * @example 0
+             */
+            held?: number;
+        };
+        /** @description One occupied square of an agent's inventory. Empty squares are absent rather than null, which is what a client draws anyway. */
+        InventorySlotResponse: {
+            /**
+             * Format: int32
+             * @description Minecraft's own slot number in the player window: 5-8 armour, 9-35 the backpack, 36-44 the hotbar, 45 the off hand.
+             * @example 36
+             */
+            slot?: number;
+            /**
+             * @description The item id, for looking up an icon.
+             * @example diamond_pickaxe
+             */
+            name?: string;
+            /**
+             * @description What the game calls it.
+             * @example Diamond Pickaxe
+             */
+            displayName?: string;
+            /**
+             * Format: int32
+             * @example 1
+             */
+            count?: number;
+            /**
+             * Format: int32
+             * @description How much of the item's life is used up. Null for anything that does not wear out, which is not the same as an undamaged tool.
+             * @example 142
+             */
+            damage?: number | null;
+            /**
+             * Format: int32
+             * @description What `damage` is out of. Present exactly when `damage` is.
+             * @example 1561
+             */
+            maxDamage?: number | null;
         };
         /** @description Something that happened to an agent: kicked, died, connected, relink needed. */
         ActivityEntryResponse: {
@@ -2067,6 +2365,79 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    purge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                area: "CHAT" | "ACTIVITY" | "MAP" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeRequest"];
+            };
+        };
+        responses: {
+            /** @description What was deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PurgeResponse"];
+                };
+            };
+            /** @description An area that cannot be purged here. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PurgeResponse"];
+                };
+            };
+            /** @description Missing node `storage.purge`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PurgeResponse"];
+                };
+            };
+        };
+    };
+    reclaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Database size before and after. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ReclaimResponse"];
+                };
+            };
+            /** @description Missing node `storage.purge`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ReclaimResponse"];
+                };
             };
         };
     };
@@ -2869,6 +3240,219 @@ export interface operations {
             };
         };
     };
+    moveItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description A slot outside the player window. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is not online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    holdItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HoldItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description A slot outside the hotbar. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is not online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    dropItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DropItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description A slot outside the player window. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is not online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
     disconnect: {
         parameters: {
             query?: never;
@@ -3647,6 +4231,35 @@ export interface operations {
             };
         };
     };
+    breakdown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["StorageResponse"];
+                };
+            };
+            /** @description Missing node `storage.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["StorageResponse"];
+                };
+            };
+        };
+    };
     split: {
         parameters: {
             query: {
@@ -4200,6 +4813,55 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    inventory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentInventoryResponse"];
+                };
+            };
+            /** @description The agent has not reported one. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentInventoryResponse"];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentInventoryResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentInventoryResponse"];
+                };
             };
         };
     };

@@ -1,4 +1,5 @@
 import type { Component } from '../agent/chat.ts'
+import type { Inventory } from '../agent/inventory.ts'
 import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
@@ -59,6 +60,21 @@ export type CommandBody =
   /** Stop building that box. Not an error for one already finished or never started: it asks us to
    * stop, which having stopped satisfies. */
   | { type: 'cancel_segment'; jobId: number; segmentId: number }
+  /** Move what is in one slot onto another, as a click on each would.
+   *
+   * Slot numbers are Minecraft's own, in the player window. Fire and forget: what came of it is
+   * reported by the next `inventory` event, which is the same event that reports the agent
+   * moving something itself. Refused for a slot outside the ones an operator may touch - see
+   * `agent/inventory.ts`. */
+  | { type: 'inventory_move'; from: number; to: number }
+  /** Throw what is in a slot on the ground. An absent `count` means the whole stack. */
+  | { type: 'inventory_drop'; slot: number; count?: number }
+  /** Put a hotbar square in the agent's hand.
+   *
+   * The **window slot**, 36 to 44, not the 0-to-8 index the game keeps: every command here names a
+   * square the same way, and the one index in this protocol is `held`, which is a field the game
+   * itself defines as one. Refused for anything outside the hotbar. */
+  | { type: 'inventory_hold'; slot: number }
   /** This agent is gone. Release everything held for it.
    *
    * Not an error for an agent this host has never heard of - it asks us to hold nothing for it,
@@ -127,6 +143,12 @@ export type Event =
       components?: Component
     }
   | { type: 'activity'; agentId: number; scope: ActivityScope; severity: Severity; text: string }
+  /** What the agent is carrying, whenever it changes.
+   *
+   * Whole rather than per slot: an inventory is forty squares of a few bytes each, and a client
+   * that assembled one out of deltas would have to be told when to throw its copy away - which is
+   * every respawn, every dimension change and every reconnect. */
+  | { type: 'inventory'; agentId: number; inventory: Inventory }
   /** One chunk of the world as it looks from above, for the map.
    *
    * Sent for the whole session rather than on demand, which is what makes the map worth opening:

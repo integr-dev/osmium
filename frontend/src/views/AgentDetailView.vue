@@ -26,13 +26,14 @@ import {
   TriangleAlert,
   Users,
 } from 'lucide-vue-next'
+import AgentInventory from '../components/AgentInventory.vue'
 import FormField from '../components/FormField.vue'
 import PlayerHead from '../components/PlayerHead.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { agentBadge, agentStateLabel } from '../lib/agentState'
-import { dimensionLabel } from '../lib/vitals'
+import { dimensionLabel, playerVitals } from '../lib/vitals'
 import { prefersReducedMotion, vFlash } from '../lib/motion'
 import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -394,615 +395,671 @@ async function confirmRemove() {
 </script>
 
 <template>
-  <div v-if="agent" class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
-    <!-- The same way back the host page offers, from the page it is the sibling of. -->
-    <RouterLink :to="{ name: 'resources' }" class="btn btn-ghost btn-sm w-fit gap-1 px-2">
-      <ChevronLeft class="size-4" />
-      {{ t('resources.title') }}
-    </RouterLink>
-    <header class="flex flex-wrap items-start justify-between gap-4">
-      <div class="flex items-center gap-4">
-        <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="lg" />
-        <div>
-        <h1 class="text-2xl leading-tight font-semibold tracking-tight">{{ agent.label }}</h1>
-        <!--
-          One line: the Minecraft account, where it plays, and the host running it. Each is named
-          when absent rather than dropped — before setup there is no account and an agent assigned
-          nowhere has no server, and both are answers somebody is looking for rather than gaps.
-        -->
-        <p class="flex flex-wrap items-center gap-2 text-sm opacity-60">
-          <span v-if="agent.mcUsername" class="font-mono">{{ agent.mcUsername }}</span>
-          <span v-else class="italic">{{ t('agents.notLinked') }}</span>
-          <span>·</span>
-          <span :class="agent.serverAddress ? '' : 'italic'">
-            {{ agent.serverAddress ?? t('agents.noServer') }}
-          </span>
-          <span>·</span>
-          <span>{{ agent.hostName }}</span>
-        </p>
-        </div>
-      </div>
-
-      <div class="flex items-center gap-4 text-right">
-        <div>
-          <div class="text-xs uppercase opacity-50">{{ t('common.status') }}</div>
+  <!--
+    The frame scrolls; the column inside it is what is centred. The other way round puts the
+    scrollbar wherever that column happens to end, which on a wide screen is a bar down the middle
+    of the page with content either side of it. The layout hands this page its own margins for the
+    same reason - see `scrolls` in AppLayout.
+  -->
+  <div v-if="agent" class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
+    <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
+      <!-- The same way back the host page offers, from the page it is the sibling of. -->
+      <RouterLink :to="{ name: 'resources' }" class="btn btn-ghost btn-sm w-fit gap-1 px-2">
+        <ChevronLeft class="size-4" />
+        {{ t('resources.title') }}
+      </RouterLink>
+      <header class="flex flex-wrap items-start justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="lg" />
+          <div>
+          <h1 class="text-2xl leading-tight font-semibold tracking-tight">{{ agent.label }}</h1>
           <!--
-            The state is the one thing on this page that changes without the operator doing it —
-            a host reporting a disconnect, a relink coming through. The vitals beside it change
-            every second, which is why nothing there flashes: constant motion carries no news.
+            One line: the Minecraft account, where it plays, and the host running it. Each is named
+            when absent rather than dropped — before setup there is no account and an agent assigned
+            nowhere has no server, and both are answers somebody is looking for rather than gaps.
           -->
-          <span
-            v-flash="agent.state"
-            class="badge badge-sm"
-            :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
-          >
-            {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
-          </span>
-          <!-- Which piece of which build, spelled out: this page has the room the fleet table did not. -->
-          <RouterLink
-            v-if="assignment"
-            :to="{ name: 'operations', query: { tab: 'jobs' } }"
-            class="link-hover mt-1 block text-xs opacity-60"
-          >
-            {{
-              t('agents.buildingOn', {
-                build: assignment?.buildName,
-                ordinal: assignment?.ordinal,
-              })
-            }}
-          </RouterLink>
-        </div>
-        <div>
-          <div class="text-xs uppercase opacity-50">{{ t('agents.uptime') }}</div>
-          <div class="flex items-center gap-1 font-medium tabular-nums">
-            <Clock class="size-3.5 opacity-50" />
-            {{ uptimeOf(agent) }}
-          </div>
-        </div>
-        <!--
-          The record, not the agent: renaming this page's subject and removing it. Everything that
-          operates the agent is one card below, so a button's place says which of the two it is.
-        -->
-        <div
-          v-if="auth.can('agent.write') || auth.can('agent.delete')"
-          class="flex items-center gap-1"
-        >
-          <button v-if="auth.can('agent.write')" class="btn btn-ghost btn-sm gap-1" @click="openEdit">
-            <SquarePen class="size-4" />
-            {{ t('common.edit') }}
-          </button>
-          <button
-            v-if="auth.can('agent.delete')"
-            class="btn btn-ghost btn-sm text-error gap-1"
-            @click="removeDialog?.showModal()"
-          >
-            <Trash2 class="size-4" />
-            {{ t('common.delete') }}
-          </button>
-        </div>
-      </div>
-    </header>
-
-    <!--
-      Everything that operates this agent, directly under its name.
-
-      One place, and grouped rather than piled: the three that decide whether it is in the game, the
-      one that decides where, and the two that open a view onto it. An operator arriving at this
-      page is almost always here to do one of those, so it comes before the readings rather than
-      after them.
-    -->
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-4">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <Power class="text-primary size-4" />
-          {{ t('common.actions') }}
-        </h2>
-
-        <!--
-          The way out of a setup that is never going to finish.
-
-          SETUP_PENDING is open-ended on purpose — the backend cannot see how far along a login is,
-          so nothing can honestly time it out — and that made it a dead end: a sign-in started on the
-          wrong machine, or one whose device code expired, left the agent pending forever with the
-          Set-up button disabled *because a setup was in progress*.
-
-          The copy is careful about what this does. It stops Osmium waiting; it does not reach into
-          the host and cancel anything, and a login finished afterwards still links the agent.
-        -->
-        <div
-          v-if="agent.state === 'SETUP_PENDING' && auth.can('agent.setup')"
-          role="status"
-          class="alert alert-info alert-soft items-start"
-        >
-          <KeyRound class="mt-0.5 size-4 shrink-0" />
-          <span class="min-w-0 flex-1">
-            <span class="block font-medium">{{ t('agents.pendingTitle', { host: agent.hostName }) }}</span>
-            <span class="block text-sm opacity-80">{{ t('agents.pendingBody') }}</span>
-          </span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs"
-            :disabled="busy"
-            @click="run(() => agentStore.cancelSetup(agent!.id))"
-          >
-            {{ t('agents.stopWaiting') }}
-          </button>
-        </div>
-
-        <div class="flex flex-wrap gap-x-8 gap-y-4">
-          <!--
-            Whether it is in the game. Each carries its reason on the title as well as in the line
-            under the card, so hovering a grey button answers the question where it was asked.
-          -->
-          <div v-if="auth.can('agent.setup') || auth.can('agent.run')" class="flex flex-col gap-2">
-            <div class="text-xs uppercase opacity-50">{{ t('agents.actionsSession') }}</div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-if="auth.can('agent.setup')"
-                class="btn btn-soft btn-sm gap-2"
-                :disabled="busy || setupBlocked !== null"
-                :title="setupBlocked ?? ''"
-                @click="openSetup"
-              >
-                <KeyRound class="size-4" />
-                {{ t('agents.setUp') }}
-              </button>
-              <button
-                v-if="auth.can('agent.run')"
-                class="btn btn-soft btn-sm gap-2"
-                :disabled="busy || connectBlocked !== null"
-                :title="connectBlocked ?? ''"
-                @click="run(() => agentStore.connect(agent!.id))"
-              >
-                <RotateCw class="size-4" :class="agent.state === 'CONNECTING' ? 'animate-spin' : ''" />
-                {{ agent.state === 'CONNECTING' ? t('agents.connecting') : t('agents.connect') }}
-              </button>
-              <button
-                v-if="auth.can('agent.run')"
-                class="btn btn-soft btn-sm gap-2"
-                :disabled="busy || disconnectBlocked !== null"
-                :title="disconnectBlocked ?? ''"
-                @click="run(() => agentStore.disconnect(agent!.id))"
-              >
-                <Power class="size-4" />
-                {{ disconnectLabel }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Where it plays. Its own group because it is the one thing here that is not a session. -->
-          <div v-if="auth.can('agent.write')" class="flex flex-col gap-2">
-            <div class="text-xs uppercase opacity-50">{{ t('agents.actionsPlacement') }}</div>
-            <div class="flex flex-wrap gap-2">
-              <button class="btn btn-soft btn-sm gap-2" @click="openServer">
-                <Server class="size-4" />
-                {{ t('agents.setServer') }}
-              </button>
-            </div>
-          </div>
-
-          <!--
-            Ways of looking at it, neither of which changes anything. The conversation itself is the
-            rail's, not this page's — one panel, wherever it is pointed. This aims it here, so the
-            page still leads to the chat without carrying a second copy of it.
-          -->
-          <div v-if="auth.can('chat.read') || auth.can('agent.view')" class="flex flex-col gap-2">
-            <div class="text-xs uppercase opacity-50">{{ t('agents.actionsOpen') }}</div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-if="auth.can('chat.read')"
-                class="btn btn-soft btn-sm gap-2"
-                @click="chat.show({ kind: 'agent', id: agent.id })"
-              >
-                <MessageSquare class="size-4" />
-                {{ t('agents.chat') }}
-              </button>
-              <!-- Offered while the agent is in game, because there is no world to watch otherwise. -->
-              <RouterLink
-                v-if="auth.can('agent.view') && isOnline(agent)"
-                :to="{ name: 'agent-viewer', params: { id: agent.id } }"
-                class="btn btn-soft btn-sm gap-2"
-              >
-                <Eye class="size-4" />
-                {{ t('viewer.title') }}
-              </RouterLink>
-              <!--
-                Offered whenever the agent has reported a position, in game or not. Unlike the live
-                view there is nothing to stream: the map is ground already charted, and where an
-                agent was last seen is worth looking at precisely when it is no longer there.
-              -->
-              <RouterLink
-                v-if="agent.telemetry"
-                :to="{ name: 'map', query: { agent: agent.id } }"
-                class="btn btn-soft btn-sm gap-2"
-              >
-                <MapIcon class="size-4" />
-                {{ t('map.title') }}
-              </RouterLink>
-            </div>
-          </div>
-        </div>
-
-        <!--
-          Why the grey buttons are grey. Deduplicated, so an unreachable host — which blocks all
-          three — is stated once rather than three times.
-        -->
-        <ul v-if="blockedReasons.length" class="flex flex-col gap-1">
-          <li v-for="reason in blockedReasons" :key="reason" class="text-xs opacity-50">
-            {{ reason }}
-          </li>
-        </ul>
-      </div>
-    </div>
-
-
-    <div v-if="error" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span>{{ error }}</span>
-    </div>
-
-    <div v-if="!hostReachable" role="alert" class="alert alert-warning alert-soft">
-      <TriangleAlert class="size-4 shrink-0" />
-      <span>{{ t('agents.hostOffline', { host: agent.hostName }) }}</span>
-    </div>
-
-    <div
-      v-else-if="agent.state === 'UNLINKED' || agent.state === 'NEEDS_RELINK'"
-      role="alert"
-      class="alert alert-info alert-soft"
-    >
-      <KeyRound class="size-4 shrink-0" />
-      <span>
-        {{ t('agents.notSetUp') }}
-      </span>
-    </div>
-
-    <!--
-      Vitals are the host's, and absent until it reports. Nothing is invented in their place: an
-      agent showing 0/20 health at 0,0,0 is a much more convincing lie than an empty panel.
-    -->
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-4">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <Agent class="text-primary size-4" />
-          {{ t('agents.stats') }}
-        </h2>
-
-        <p v-if="!vitals" class="py-10 text-center text-sm opacity-50">{{ t('agents.noTelemetry') }}</p>
-
-        <template v-else>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="flex items-center gap-3">
-            <Heart class="text-error size-4 shrink-0" />
-            <div class="min-w-0 flex-1">
-              <div class="flex justify-between text-xs opacity-60">
-                <span>{{ t('agents.health') }}</span>
-                <span class="tabular-nums">{{ vitals.health }} / 20</span>
-              </div>
-              <progress class="progress progress-error mt-1 w-full" :value="healthPercent" max="100"></progress>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <Beef class="text-warning size-4 shrink-0" />
-            <div class="min-w-0 flex-1">
-              <div class="flex justify-between text-xs opacity-60">
-                <span>{{ t('agents.food') }}</span>
-                <span class="tabular-nums">{{ vitals.food }} / 20</span>
-              </div>
-              <progress class="progress progress-warning mt-1 w-full" :value="foodPercent" max="100"></progress>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
-          <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-            <MapPin class="text-primary size-3.5 shrink-0 opacity-70" />
-            <span class="min-w-0">
-              <span class="block text-xs opacity-50">{{ t('agents.position') }}</span>
-              <span class="block truncate font-mono text-sm tabular-nums">
-                {{ formatPosition(vitals.position) }}
-              </span>
+          <p class="flex flex-wrap items-center gap-2 text-sm opacity-60">
+            <span v-if="agent.mcUsername" class="font-mono">{{ agent.mcUsername }}</span>
+            <span v-else class="italic">{{ t('agents.notLinked') }}</span>
+            <span>·</span>
+            <span :class="agent.serverAddress ? '' : 'italic'">
+              {{ agent.serverAddress ?? t('agents.noServer') }}
             </span>
-          </div>
-          <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-            <Layers class="text-primary size-3.5 shrink-0 opacity-70" />
-            <span class="min-w-0">
-              <span class="block text-xs opacity-50">{{ t('agents.dimension') }}</span>
-              <span class="block truncate text-sm">{{ dimensionLabel(vitals.dimension) }}</span>
-            </span>
-          </div>
-          <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-            <Signal class="text-primary size-3.5 shrink-0 opacity-70" />
-            <span class="min-w-0">
-              <span class="block text-xs opacity-50">{{ t('agents.ping') }}</span>
-              <span class="block truncate text-sm tabular-nums">{{ vitals.pingMs }} ms</span>
-            </span>
-          </div>
-          <!-- Still mock: nothing reports build progress until the schematic pipeline lands. -->
-          <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-            <Hammer class="text-primary size-3.5 shrink-0 opacity-70" />
-            <span class="min-w-0">
-              <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
-              <!--
-                Its own segment, not a fleet total and not an invented one. An agent building
-                nothing says so rather than showing a zero, which reads as a stalled builder.
-              -->
-              <span v-if="assignment" class="block truncate text-sm tabular-nums">
-                {{ n(assignment.blocksPlaced) }} / {{ n(assignment.blocks) }}
-              </span>
-              <span v-else class="block truncate text-sm italic opacity-50">
-                {{ t('agents.notBuilding') }}
-              </span>
-            </span>
+            <span>·</span>
+            <span>{{ agent.hostName }}</span>
+          </p>
           </div>
         </div>
-        </template>
-      </div>
-    </div>
 
-    <!-- Nearby players -->
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-3">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <Users class="text-primary size-4" />
-          {{ t('agents.nearbyPlayers') }}
-          <span class="badge badge-ghost badge-sm">{{ vitals?.nearby.length ?? 0 }}</span>
-        </h2>
-
-        <!--
-          Always mounted, empty or not, and **without** `appear`. A list that is drawn only once
-          it has somebody in it mounts holding its first arrival, which a group does not animate —
-          and telling it to animate what it was born with means the whole list plays every time
-          the page is opened. Kept alive instead, the first player to walk up is an insertion like
-          any other, and arriving at the page is not an event at all.
-        -->
-        <!--
-          Animated by hand rather than by class.
-
-          Three CSS attempts at this did nothing an operator could see, and the reason each time
-          was invisible from the stylesheet: a departure drawn over the arrival, a distance too
-          small to read on a one-line list, a rule that resolved to nothing at all. The Web
-          Animations call cannot half-work — it either runs and calls `done`, or it throws.
-        -->
-        <TransitionGroup
-          tag="ul"
-          class="relative flex flex-col gap-1"
-          :css="false"
-          @enter="playerIn"
-          @leave="playerOut"
-        >
-          <li
-            v-for="player in vitals?.nearby ?? []"
-            :key="player.name"
-            class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
-          >
-            <!-- A name is what the host reports for a nearby player; there is no UUID to key on. -->
-            <PlayerHead :id="player.name" :name="player.name" size="sm" />
-            <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium">{{ player.name }}</span>
-              <!--
-                Only when the host sent one. A player without coordinates is still worth listing —
-                that somebody is there is the point — so the line simply loses its second row.
-              -->
-              <span v-if="player.position" class="block font-mono text-xs tabular-nums opacity-40">
-                {{ formatPosition(player.position) }}
-              </span>
-            </span>
-            <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">{{ t('agents.agentTag') }}</span>
-            <span class="text-xs tabular-nums opacity-50">{{ player.distance.toFixed(1) }} m</span>
-          </li>
-        </TransitionGroup>
-
-        <!-- The height of one row: the first player to walk up must not also resize the card. -->
-        <p
-          v-if="!vitals?.nearby.length"
-          class="flex min-h-13 items-center justify-center text-sm opacity-50"
-        >
-          {{ t('agents.noNearby') }}
-        </p>
-      </div>
-    </div>
-
-    <!-- Activity: incidents, kept out of chat so they are not buried -->
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-3">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <Activity class="text-primary size-4" />
-          {{ t('agents.activity') }}
-        </h2>
-
-        <div ref="activityBox" class="flex max-h-72 flex-col gap-1 overflow-y-auto">
-          <!-- Insertions animate, the first render does not. See the dashboard for the full note. -->
-          <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
-            <div
-              v-for="line in activity"
-              :key="line.id"
-              class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
+        <div class="flex items-center gap-4 text-right">
+          <div>
+            <div class="text-xs uppercase opacity-50">{{ t('common.status') }}</div>
+            <!--
+              The state is the one thing on this page that changes without the operator doing it —
+              a host reporting a disconnect, a relink coming through. The vitals beside it change
+              every second, which is why nothing there flashes: constant motion carries no news.
+            -->
+            <span
+              v-flash="agent.state"
+              class="badge badge-sm"
+              :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
             >
-              <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
-              <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
-              <span class="min-w-0 flex-1">{{ line.text }}</span>
+              {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
+            </span>
+            <!-- Which piece of which build, spelled out: this page has the room the fleet table did not. -->
+            <RouterLink
+              v-if="assignment"
+              :to="{ name: 'operations', query: { tab: 'jobs' } }"
+              class="link-hover mt-1 block text-xs opacity-60"
+            >
+              {{
+                t('agents.buildingOn', {
+                  build: assignment?.buildName,
+                  ordinal: assignment?.ordinal,
+                })
+              }}
+            </RouterLink>
+          </div>
+          <div>
+            <div class="text-xs uppercase opacity-50">{{ t('agents.uptime') }}</div>
+            <div class="flex items-center gap-1 font-medium tabular-nums">
+              <Clock class="size-3.5 opacity-50" />
+              {{ uptimeOf(agent) }}
             </div>
-          </TransitionGroup>
+          </div>
+          <!--
+            The record, not the agent: renaming this page's subject and removing it. Everything that
+            operates the agent is one card below, so a button's place says which of the two it is.
+          -->
+          <div
+            v-if="auth.can('agent.write') || auth.can('agent.delete')"
+            class="flex items-center gap-1"
+          >
+            <button v-if="auth.can('agent.write')" class="btn btn-ghost btn-sm gap-1" @click="openEdit">
+              <SquarePen class="size-4" />
+              {{ t('common.edit') }}
+            </button>
+            <button
+              v-if="auth.can('agent.delete')"
+              class="btn btn-ghost btn-sm text-error gap-1"
+              @click="removeDialog?.showModal()"
+            >
+              <Trash2 class="size-4" />
+              {{ t('common.delete') }}
+            </button>
+          </div>
+        </div>
+      </header>
 
-          <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
-            {{ t('common.loading') }}
-          </p>
-          <p v-else-if="!activity.length" class="py-10 text-center text-sm opacity-50">
-            {{ t('agents.noActivity') }}
-          </p>
+      <!--
+        Everything that operates this agent, directly under its name.
 
-          <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
-          <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
+        One place, and grouped rather than piled: the three that decide whether it is in the game, the
+        one that decides where, and the two that open a view onto it. An operator arriving at this
+        page is almost always here to do one of those, so it comes before the readings rather than
+        after them.
+      -->
+      <div class="card border-base-300 bg-base-200 border">
+        <div class="card-body gap-4">
+          <h2 class="card-title flex items-center gap-2 text-base">
+            <Power class="text-primary size-4" />
+            {{ t('common.actions') }}
+          </h2>
+
+          <!--
+            The way out of a setup that is never going to finish.
+
+            SETUP_PENDING is open-ended on purpose — the backend cannot see how far along a login is,
+            so nothing can honestly time it out — and that made it a dead end: a sign-in started on the
+            wrong machine, or one whose device code expired, left the agent pending forever with the
+            Set-up button disabled *because a setup was in progress*.
+
+            The copy is careful about what this does. It stops Osmium waiting; it does not reach into
+            the host and cancel anything, and a login finished afterwards still links the agent.
+          -->
+          <div
+            v-if="agent.state === 'SETUP_PENDING' && auth.can('agent.setup')"
+            role="status"
+            class="alert alert-info alert-soft items-start"
+          >
+            <KeyRound class="mt-0.5 size-4 shrink-0" />
+            <span class="min-w-0 flex-1">
+              <span class="block font-medium">{{ t('agents.pendingTitle', { host: agent.hostName }) }}</span>
+              <span class="block text-sm opacity-80">{{ t('agents.pendingBody') }}</span>
+            </span>
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs"
+              :disabled="busy"
+              @click="run(() => agentStore.cancelSetup(agent!.id))"
+            >
+              {{ t('agents.stopWaiting') }}
+            </button>
+          </div>
+
+          <div class="flex flex-wrap gap-x-8 gap-y-4">
+            <!--
+              Whether it is in the game. Each carries its reason on the title as well as in the line
+              under the card, so hovering a grey button answers the question where it was asked.
+            -->
+            <div v-if="auth.can('agent.setup') || auth.can('agent.run')" class="flex flex-col gap-2">
+              <div class="text-xs uppercase opacity-50">{{ t('agents.actionsSession') }}</div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-if="auth.can('agent.setup')"
+                  class="btn btn-soft btn-sm gap-2"
+                  :disabled="busy || setupBlocked !== null"
+                  :title="setupBlocked ?? ''"
+                  @click="openSetup"
+                >
+                  <KeyRound class="size-4" />
+                  {{ t('agents.setUp') }}
+                </button>
+                <button
+                  v-if="auth.can('agent.run')"
+                  class="btn btn-soft btn-sm gap-2"
+                  :disabled="busy || connectBlocked !== null"
+                  :title="connectBlocked ?? ''"
+                  @click="run(() => agentStore.connect(agent!.id))"
+                >
+                  <RotateCw class="size-4" :class="agent.state === 'CONNECTING' ? 'animate-spin' : ''" />
+                  {{ agent.state === 'CONNECTING' ? t('agents.connecting') : t('agents.connect') }}
+                </button>
+                <button
+                  v-if="auth.can('agent.run')"
+                  class="btn btn-soft btn-sm gap-2"
+                  :disabled="busy || disconnectBlocked !== null"
+                  :title="disconnectBlocked ?? ''"
+                  @click="run(() => agentStore.disconnect(agent!.id))"
+                >
+                  <Power class="size-4" />
+                  {{ disconnectLabel }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Where it plays. Its own group because it is the one thing here that is not a session. -->
+            <div v-if="auth.can('agent.write')" class="flex flex-col gap-2">
+              <div class="text-xs uppercase opacity-50">{{ t('agents.actionsPlacement') }}</div>
+              <div class="flex flex-wrap gap-2">
+                <button class="btn btn-soft btn-sm gap-2" @click="openServer">
+                  <Server class="size-4" />
+                  {{ t('agents.setServer') }}
+                </button>
+              </div>
+            </div>
+
+            <!--
+              Ways of looking at it, neither of which changes anything. The conversation itself is the
+              rail's, not this page's — one panel, wherever it is pointed. This aims it here, so the
+              page still leads to the chat without carrying a second copy of it.
+            -->
+            <div v-if="auth.can('chat.read') || auth.can('agent.view')" class="flex flex-col gap-2">
+              <div class="text-xs uppercase opacity-50">{{ t('agents.actionsOpen') }}</div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-if="auth.can('chat.read')"
+                  class="btn btn-soft btn-sm gap-2"
+                  @click="chat.show({ kind: 'agent', id: agent.id })"
+                >
+                  <MessageSquare class="size-4" />
+                  {{ t('agents.chat') }}
+                </button>
+                <!-- Offered while the agent is in game, because there is no world to watch otherwise. -->
+                <RouterLink
+                  v-if="auth.can('agent.view') && isOnline(agent)"
+                  :to="{ name: 'agent-viewer', params: { id: agent.id } }"
+                  class="btn btn-soft btn-sm gap-2"
+                >
+                  <Eye class="size-4" />
+                  {{ t('viewer.title') }}
+                </RouterLink>
+                <!--
+                  Offered whenever the agent has reported a position, in game or not. Unlike the live
+                  view there is nothing to stream: the map is ground already charted, and where an
+                  agent was last seen is worth looking at precisely when it is no longer there.
+                -->
+                <RouterLink
+                  v-if="agent.telemetry"
+                  :to="{ name: 'map', query: { agent: agent.id } }"
+                  class="btn btn-soft btn-sm gap-2"
+                >
+                  <MapIcon class="size-4" />
+                  {{ t('map.title') }}
+                </RouterLink>
+              </div>
+            </div>
+          </div>
+
+          <!--
+            Why the grey buttons are grey. Deduplicated, so an unreachable host — which blocks all
+            three — is stated once rather than three times.
+          -->
+          <ul v-if="blockedReasons.length" class="flex flex-col gap-1">
+            <li v-for="reason in blockedReasons" :key="reason" class="text-xs opacity-50">
+              {{ reason }}
+            </li>
+          </ul>
         </div>
       </div>
-    </div>
 
-    <dialog ref="editDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <SquarePen class="text-primary size-5" />
-          {{ t('agents.editTitle', { name: agent.label }) }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">{{ t('agents.editHint') }}</p>
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveEdit">
-          <FormField
-            v-model="draft.label"
-            :label="t('agents.label')"
-            :icon="Agent"
-            type="text"
-            maxlength="64"
-            required
-          />
-          <div v-if="editError" role="alert" class="alert alert-error alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ editError }}</span>
-          </div>
 
-          <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="editBusy" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="editBusy">
-              {{ editBusy ? t('common.saving') : t('common.save') }}
-            </button>
-          </div>
-        </form>
+      <div v-if="error" role="alert" class="alert alert-error alert-soft">
+        <TriangleAlert class="size-4" />
+        <span>{{ error }}</span>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
 
-    <dialog ref="serverDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <Server class="text-primary size-5" />
-          {{ t('agents.setServerTitle', { name: agent.label }) }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">{{ t('agents.setServerHint') }}</p>
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveServer">
-          <FormField
-            v-model="serverDraft"
-            :label="t('agents.server')"
-            :placeholder="t('agents.serverPlaceholder')"
-            :icon="Server"
-            type="text"
-            :disabled="isOnline(agent)"
-          />
-          <!-- Emptying the field is how an agent is taken off a server, so it is said out loud. -->
-          <p class="text-xs opacity-60">
-            {{ isOnline(agent) ? t('agents.moveOffline') : t('agents.unassignHint') }}
-          </p>
-
-          <div v-if="serverError" role="alert" class="alert alert-error alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ serverError }}</span>
-          </div>
-
-          <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="serverBusy" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent) || serverBusy">
-              {{ serverBusy ? t('common.saving') : t('common.save') }}
-            </button>
-          </div>
-        </form>
+      <div v-if="!hostReachable" role="alert" class="alert alert-warning alert-soft">
+        <TriangleAlert class="size-4 shrink-0" />
+        <span>{{ t('agents.hostOffline', { host: agent.hostName }) }}</span>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
 
-    <dialog ref="setupDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <KeyRound class="text-primary size-5" />
-          {{ t('agents.setUpTitle', { name: agent.label }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">{{ t('agents.setUpBody', { host: agent.hostName }) }}</p>
+      <div
+        v-else-if="agent.state === 'UNLINKED' || agent.state === 'NEEDS_RELINK'"
+        role="alert"
+        class="alert alert-info alert-soft"
+      >
+        <KeyRound class="size-4 shrink-0" />
+        <span>
+          {{ t('agents.notSetUp') }}
+        </span>
+      </div>
 
-        <!--
-          The host's list, not ours. Its copy comes from the host too: it is the only party that
-          knows what its mechanisms are, so it is the only one that can describe them. The id is
-          shown when it sends none, which is at least the string it will be asked to act on.
-        -->
-        <ul v-if="loginMethods.length" class="list bg-base-100 border-base-300 mt-4 rounded-box border">
-          <li v-for="method in loginMethods" :key="method.id" class="list-row items-center">
-            <label class="flex w-full cursor-pointer items-center gap-3">
-              <input
-                v-model="setupMethod"
-                type="radio"
-                :value="method.id"
-                class="radio radio-sm radio-primary"
-              />
-              <span class="min-w-0 flex-1">
-                <span class="block text-sm font-medium">{{ method.label || method.id }}</span>
-                <span v-if="method.description" class="block text-xs opacity-60">
-                  {{ method.description }}
+      <!--
+        Vitals are the host's, and absent until it reports. Nothing is invented in their place: an
+        agent showing 0/20 health at 0,0,0 is a much more convincing lie than an empty panel.
+      -->
+      <div class="card border-base-300 bg-base-200 border">
+        <div class="card-body gap-4">
+          <h2 class="card-title flex items-center gap-2 text-base">
+            <Agent class="text-primary size-4" />
+            {{ t('agents.stats') }}
+          </h2>
+
+          <p v-if="!vitals" class="py-10 text-center text-sm opacity-50">{{ t('agents.noTelemetry') }}</p>
+
+          <template v-else>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="flex items-center gap-3">
+              <Heart class="text-error size-4 shrink-0" />
+              <div class="min-w-0 flex-1">
+                <div class="flex justify-between text-xs opacity-60">
+                  <span>{{ t('agents.health') }}</span>
+                  <span class="tabular-nums">{{ vitals.health }} / 20</span>
+                </div>
+                <progress class="progress progress-error mt-1 w-full" :value="healthPercent" max="100"></progress>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <Beef class="text-warning size-4 shrink-0" />
+              <div class="min-w-0 flex-1">
+                <div class="flex justify-between text-xs opacity-60">
+                  <span>{{ t('agents.food') }}</span>
+                  <span class="tabular-nums">{{ vitals.food }} / 20</span>
+                </div>
+                <progress class="progress progress-warning mt-1 w-full" :value="foodPercent" max="100"></progress>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
+              <MapPin class="text-primary size-3.5 shrink-0 opacity-70" />
+              <span class="min-w-0">
+                <span class="block text-xs opacity-50">{{ t('agents.position') }}</span>
+                <span class="block truncate font-mono text-sm tabular-nums">
+                  {{ formatPosition(vitals.position) }}
                 </span>
               </span>
-            </label>
-          </li>
-        </ul>
-
-        <div v-else role="alert" class="alert alert-warning alert-soft mt-4 text-sm">
-          <TriangleAlert class="size-4 shrink-0" />
-          <span>{{ t('agents.noLoginMethods', { host: agent.hostName }) }}</span>
-        </div>
-
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">{{ t('common.cancel') }}</button>
-          <button
-            class="btn btn-primary btn-sm gap-2"
-            type="button"
-            :disabled="!setupMethod"
-            @click="confirmSetup"
-          >
-            <KeyRound class="size-4" />
-            {{ t('agents.setUpStart') }}
-          </button>
-        </div>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
-
-    <dialog ref="removeDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <TriangleAlert class="text-error size-5" />
-          {{ t('agents.removeTitle', { name: agent.label }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">
-          {{ t('agents.removeWarning', { host: agent.hostName }) }}
-        </p>
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" :disabled="removeBusy" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
-          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
-            <Trash2 class="size-4" />
-            {{ removeBusy ? t('common.deleting') : t('common.delete') }}
-          </button>
+            </div>
+            <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
+              <Layers class="text-primary size-3.5 shrink-0 opacity-70" />
+              <span class="min-w-0">
+                <span class="block text-xs opacity-50">{{ t('agents.dimension') }}</span>
+                <span class="block truncate text-sm">{{ dimensionLabel(vitals.dimension) }}</span>
+              </span>
+            </div>
+            <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
+              <Signal class="text-primary size-3.5 shrink-0 opacity-70" />
+              <span class="min-w-0">
+                <span class="block text-xs opacity-50">{{ t('agents.ping') }}</span>
+                <span class="block truncate text-sm tabular-nums">{{ vitals.pingMs }} ms</span>
+              </span>
+            </div>
+            <!-- Still mock: nothing reports build progress until the schematic pipeline lands. -->
+            <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
+              <Hammer class="text-primary size-3.5 shrink-0 opacity-70" />
+              <span class="min-w-0">
+                <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
+                <!--
+                  Its own segment, not a fleet total and not an invented one. An agent building
+                  nothing says so rather than showing a zero, which reads as a stalled builder.
+                -->
+                <span v-if="assignment" class="block truncate text-sm tabular-nums">
+                  {{ n(assignment.blocksPlaced) }} / {{ n(assignment.blocks) }}
+                </span>
+                <span v-else class="block truncate text-sm italic opacity-50">
+                  {{ t('agents.notBuilding') }}
+                </span>
+              </span>
+            </div>
+          </div>
+          </template>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+
+      <!--
+        Side by side, because they answer the same question from two directions: what this agent
+        has and who is next to it. Neither fills a row on its own - the inventory is nine squares
+        wide and the list is one column of names - so stacked they left half the page empty on
+        every screen wide enough to matter.
+
+        The inventory takes what it needs and the list takes the rest, rather than an even split:
+        one is a fixed grid whose width is decided by the squares in it, and stretching it would
+        only add margin inside its own card. Stacks again below `lg`, where there is no width to
+        share out.
+      -->
+      <div class="grid gap-6 lg:grid-cols-[auto_minmax(0,1fr)]">
+          <!--
+            What it is carrying, under the readings and beside who is standing near it.
+
+            Here rather than on a screen of its own because it is one of the readings: an operator
+            asking why an agent stopped mining is asking about its pickaxe, and a page that answers that
+            two clicks away is a page they check less often than they should.
+          -->
+          <AgentInventory :agent-id="agent.id" :online="isOnline(agent)" />
+
+          <!-- Nearby players -->
+        <div class="card border-base-300 bg-base-200 border">
+          <div class="card-body gap-3">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <Users class="text-primary size-4" />
+              {{ t('agents.nearbyPlayers') }}
+              <span class="badge badge-ghost badge-sm">{{ vitals?.nearby.length ?? 0 }}</span>
+            </h2>
+
+            <!--
+              Always mounted, empty or not, and **without** `appear`. A list that is drawn only once
+              it has somebody in it mounts holding its first arrival, which a group does not animate —
+              and telling it to animate what it was born with means the whole list plays every time
+              the page is opened. Kept alive instead, the first player to walk up is an insertion like
+              any other, and arriving at the page is not an event at all.
+            -->
+            <!--
+              Animated by hand rather than by class.
+
+              Three CSS attempts at this did nothing an operator could see, and the reason each time
+              was invisible from the stylesheet: a departure drawn over the arrival, a distance too
+              small to read on a one-line list, a rule that resolved to nothing at all. The Web
+              Animations call cannot half-work — it either runs and calls `done`, or it throws.
+            -->
+            <!--
+              Scrolled, like the activity log and at the same height. Nearby is everything in the
+              agent's render distance rather than a handful within a few blocks, so on a busy server
+              it is a hundred names — and a card that grows to hold all of them pushes everything
+              below it off the screen.
+            -->
+            <div class="flex max-h-72 flex-col overflow-y-auto">
+              <TransitionGroup
+                  tag="ul"
+                  class="relative flex flex-col gap-1"
+                  :css="false"
+                  @enter="playerIn"
+                  @leave="playerOut"
+                >
+                <li
+                  v-for="player in vitals?.nearby ?? []"
+                  :key="player.name"
+                  class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2"
+                >
+                  <!--
+                    The account when the host knew it, which draws the right head rather than a
+                    name-shaped guess. The name is the fallback, and the key either way.
+                  -->
+                  <PlayerHead :id="player.uuid ?? player.name" :name="player.name" size="sm" />
+
+                  <span class="min-w-0 flex-1">
+                    <span class="flex items-center gap-2">
+                      <span class="truncate text-sm font-medium">{{ player.name }}</span>
+                      <span v-if="player.isAgent" class="badge badge-primary badge-soft badge-xs">
+                        {{ t('agents.agentTag') }}
+                      </span>
+                    </span>
+                    <!--
+                      Everything the server said about them, on one line under the name: where they
+                      are, how hurt, how laggy, and what they are playing as. Each part is absent
+                      rather than blank when the server said nothing, so the line is short instead
+                      of padded with dashes — and a player with no coordinates is still listed,
+                      because that somebody is there is the point.
+                    -->
+                    <span class="block truncate text-xs tabular-nums opacity-40">
+                      <span v-if="player.position" class="font-mono">{{ formatPosition(player.position) }}</span>
+                      <template v-if="playerVitals(player)">
+                        <span v-if="player.position" class="opacity-60"> · </span>{{ playerVitals(player) }}
+                      </template>
+                    </span>
+                  </span>
+                  <span class="text-xs tabular-nums opacity-50">{{ player.distance.toFixed(1) }} m</span>
+                </li>
+              </TransitionGroup>
+            </div>
+
+            <!-- The height of one row: the first player to walk up must not also resize the card. -->
+            <p
+              v-if="!vitals?.nearby.length"
+              class="flex min-h-13 items-center justify-center text-sm opacity-50"
+            >
+              {{ t('agents.noNearby') }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity: incidents, kept out of chat so they are not buried -->
+      <div class="card border-base-300 bg-base-200 border">
+        <div class="card-body gap-3">
+          <h2 class="card-title flex items-center gap-2 text-base">
+            <Activity class="text-primary size-4" />
+            {{ t('agents.activity') }}
+          </h2>
+
+          <div ref="activityBox" class="flex max-h-72 flex-col gap-1 overflow-y-auto">
+            <!-- Insertions animate, the first render does not. See the dashboard for the full note. -->
+            <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
+              <div
+                v-for="line in activity"
+                :key="line.id"
+                class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
+              >
+                <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
+                <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
+                <span class="min-w-0 flex-1">{{ line.text }}</span>
+              </div>
+            </TransitionGroup>
+
+            <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
+              {{ t('common.loading') }}
+            </p>
+            <p v-else-if="!activity.length" class="py-10 text-center text-sm opacity-50">
+              {{ t('agents.noActivity') }}
+            </p>
+
+            <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
+            <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
+          </div>
+        </div>
+      </div>
+
+      <dialog ref="editDialog" class="modal">
+        <div class="modal-box">
+          <h3 class="flex items-center gap-2 text-lg font-semibold">
+            <SquarePen class="text-primary size-5" />
+            {{ t('agents.editTitle', { name: agent.label }) }}
+          </h3>
+          <p class="mt-1 text-sm opacity-60">{{ t('agents.editHint') }}</p>
+          <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveEdit">
+            <FormField
+              v-model="draft.label"
+              :label="t('agents.label')"
+              :icon="Agent"
+              type="text"
+              maxlength="64"
+              required
+            />
+            <div v-if="editError" role="alert" class="alert alert-error alert-soft">
+              <TriangleAlert class="size-4" />
+              <span>{{ editError }}</span>
+            </div>
+
+            <div class="modal-action">
+              <button class="btn btn-ghost btn-sm" type="button" :disabled="editBusy" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
+              <button class="btn btn-primary btn-sm" type="submit" :disabled="editBusy">
+                {{ editBusy ? t('common.saving') : t('common.save') }}
+              </button>
+            </div>
+          </form>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      </dialog>
+
+      <dialog ref="serverDialog" class="modal">
+        <div class="modal-box">
+          <h3 class="flex items-center gap-2 text-lg font-semibold">
+            <Server class="text-primary size-5" />
+            {{ t('agents.setServerTitle', { name: agent.label }) }}
+          </h3>
+          <p class="mt-1 text-sm opacity-60">{{ t('agents.setServerHint') }}</p>
+          <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveServer">
+            <FormField
+              v-model="serverDraft"
+              :label="t('agents.server')"
+              :placeholder="t('agents.serverPlaceholder')"
+              :icon="Server"
+              type="text"
+              :disabled="isOnline(agent)"
+            />
+            <!-- Emptying the field is how an agent is taken off a server, so it is said out loud. -->
+            <p class="text-xs opacity-60">
+              {{ isOnline(agent) ? t('agents.moveOffline') : t('agents.unassignHint') }}
+            </p>
+
+            <div v-if="serverError" role="alert" class="alert alert-error alert-soft">
+              <TriangleAlert class="size-4" />
+              <span>{{ serverError }}</span>
+            </div>
+
+            <div class="modal-action">
+              <button class="btn btn-ghost btn-sm" type="button" :disabled="serverBusy" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
+              <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent) || serverBusy">
+                {{ serverBusy ? t('common.saving') : t('common.save') }}
+              </button>
+            </div>
+          </form>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      </dialog>
+
+      <dialog ref="setupDialog" class="modal">
+        <div class="modal-box">
+          <h3 class="flex items-center gap-2 text-lg font-semibold">
+            <KeyRound class="text-primary size-5" />
+            {{ t('agents.setUpTitle', { name: agent.label }) }}
+          </h3>
+          <p class="mt-3 text-sm opacity-70">{{ t('agents.setUpBody', { host: agent.hostName }) }}</p>
+
+          <!--
+            The host's list, not ours. Its copy comes from the host too: it is the only party that
+            knows what its mechanisms are, so it is the only one that can describe them. The id is
+            shown when it sends none, which is at least the string it will be asked to act on.
+          -->
+          <ul v-if="loginMethods.length" class="list bg-base-100 border-base-300 mt-4 rounded-box border">
+            <li v-for="method in loginMethods" :key="method.id" class="list-row items-center">
+              <label class="flex w-full cursor-pointer items-center gap-3">
+                <input
+                  v-model="setupMethod"
+                  type="radio"
+                  :value="method.id"
+                  class="radio radio-sm radio-primary"
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="block text-sm font-medium">{{ method.label || method.id }}</span>
+                  <span v-if="method.description" class="block text-xs opacity-60">
+                    {{ method.description }}
+                  </span>
+                </span>
+              </label>
+            </li>
+          </ul>
+
+          <div v-else role="alert" class="alert alert-warning alert-soft mt-4 text-sm">
+            <TriangleAlert class="size-4 shrink-0" />
+            <span>{{ t('agents.noLoginMethods', { host: agent.hostName }) }}</span>
+          </div>
+
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">{{ t('common.cancel') }}</button>
+            <button
+              class="btn btn-primary btn-sm gap-2"
+              type="button"
+              :disabled="!setupMethod"
+              @click="confirmSetup"
+            >
+              <KeyRound class="size-4" />
+              {{ t('agents.setUpStart') }}
+            </button>
+          </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      </dialog>
+
+      <dialog ref="removeDialog" class="modal">
+        <div class="modal-box">
+          <h3 class="flex items-center gap-2 text-lg font-semibold">
+            <TriangleAlert class="text-error size-5" />
+            {{ t('agents.removeTitle', { name: agent.label }) }}
+          </h3>
+          <p class="mt-3 text-sm opacity-70">
+            {{ t('agents.removeWarning', { host: agent.hostName }) }}
+          </p>
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="removeBusy" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
+              <Trash2 class="size-4" />
+              {{ removeBusy ? t('common.deleting') : t('common.delete') }}
+            </button>
+          </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      </dialog>
+    </div>
   </div>
 
   <!--
     Loading before missing. On a reload or a deep link the fleet has not arrived yet, and "not
     found" is a claim this page is in no position to make until it has.
   -->
-  <div v-else-if="!agentStore.loaded" class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
-    <div class="flex flex-col gap-2">
-      <div class="skeleton h-8 w-64"></div>
-      <div class="skeleton h-4 w-40"></div>
-    </div>
-    <div class="skeleton h-32 w-full"></div>
-    <div class="grid gap-6 lg:grid-cols-2">
-      <div class="skeleton h-64 w-full"></div>
-      <div class="skeleton h-64 w-full"></div>
+  <div v-else-if="!agentStore.loaded" class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
+    <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
+      <div class="flex flex-col gap-2">
+        <div class="skeleton h-8 w-64"></div>
+        <div class="skeleton h-4 w-40"></div>
+      </div>
+      <div class="skeleton h-32 w-full"></div>
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="skeleton h-64 w-full"></div>
+        <div class="skeleton h-64 w-full"></div>
+      </div>
     </div>
   </div>
 
-  <div v-else class="mx-auto w-full max-w-6xl">
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body items-center gap-2 py-20 text-center">
-        <Agent class="size-8 opacity-30" />
-        <p class="text-sm opacity-50">{{ t('agents.notFound') }}</p>
+  <div v-else class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
+    <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
+      <div class="card border-base-300 bg-base-200 border">
+        <div class="card-body items-center gap-2 py-20 text-center">
+          <Agent class="size-8 opacity-30" />
+          <p class="text-sm opacity-50">{{ t('agents.notFound') }}</p>
+        </div>
       </div>
     </div>
   </div>

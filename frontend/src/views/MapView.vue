@@ -13,7 +13,7 @@ import { atShort } from '../lib/time'
 import { parsePlace } from '../lib/mapCoords'
 import { agentDot, agentStateLabel } from '../lib/agentState'
 import { avatarUrl } from '../lib/avatars'
-import { gamemodeLabel } from '../lib/vitals'
+import { dimensionLabel, heartsLabel, playerVitals } from '../lib/vitals'
 
 /**
  * Where the fleet is working, on the ground it has charted.
@@ -162,6 +162,7 @@ interface Stranger {
   /** Everything else the server said about them. Each is absent when it was not reported. */
   ping: number | null
   gamemode: number | null
+  health: number | null
 }
 
 /**
@@ -193,6 +194,7 @@ const strangers = computed<Stranger[]>(() => {
         uuid: player.uuid,
         ping: player.ping,
         gamemode: player.gamemode,
+        health: player.health,
       })
     }
   }
@@ -211,22 +213,17 @@ function agentVitals(agent: (typeof shown.value)[number]): string {
   const telemetry = agent.telemetry
   const parts: string[] = []
 
-  if (typeof telemetry?.health === 'number') parts.push(t('map.hearts', { n: Math.round(telemetry.health) }))
+  const hearts = heartsLabel(telemetry?.health)
+  if (hearts) parts.push(hearts)
   if (typeof telemetry?.food === 'number') parts.push(t('map.food', { n: Math.round(telemetry.food) }))
   if (typeof telemetry?.pingMs === 'number') parts.push(`${telemetry.pingMs}ms`)
 
   return parts.join(' · ')
 }
 
-/** The same for somebody who is not ours, which is less: a client is only told its own health. */
+/** The same for somebody who is not ours, which is now the same fields. See `playerVitals`. */
 function strangerVitals(player: Stranger): string {
-  const parts: string[] = []
-
-  if (player.ping !== null) parts.push(`${player.ping}ms`)
-  const mode = gamemodeLabel(player.gamemode)
-  if (mode) parts.push(mode)
-
-  return parts.join(' · ')
+  return playerVitals(player)
 }
 
 /**
@@ -420,20 +417,15 @@ watch(worlds, (available) => {
 /**
  * What to call a world.
  *
- * The three vanilla ones get the names the game uses; everything else keeps the name the server
- * gave it. A Multiverse world is called whatever its operators called it, and that string is what
- * they type into `/mvtp` - rewriting it into something prettier would only make it harder to match
- * up with the server they are looking at.
+ * The same `dimensionLabel` an agent's own page uses, rather than a second table here.
+ *
+ * This kept the raw name for anything that was not one of the vanilla three, reasoning that a
+ * Multiverse world is called whatever its operators called it and that `pvp_arena` is the string
+ * they type into `/mvtp`. That is true of the *id*, and this is a label: the same world was
+ * "Pvp Arena" on the agent's page and `pvp_arena` here, which reads as two different worlds rather
+ * than as one described carefully.
  */
-const VANILLA: Record<string, string> = {
-  overworld: 'Overworld',
-  the_nether: 'Nether',
-  the_end: 'End',
-}
-
-function worldName(raw: string): string {
-  return VANILLA[raw] ?? raw
-}
+const worldName = dimensionLabel
 </script>
 
 <template>

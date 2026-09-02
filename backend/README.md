@@ -111,7 +111,9 @@ model honest. A null role means no permissions at all.
 | `chat.read` | read what was said in game |
 | `schematic.read` | see the schematic library, its materials and how it divides |
 | `chat.speak` | **speak in game as an agent** |
-| `agent.run` | connect and disconnect agents |
+| `agent.run` | connect and disconnect agents, and move or drop what they carry |
+| `storage.read` | see what the deployment is holding on disk, by area |
+| `storage.purge` | delete stored data in bulk, and return the space to the disk |
 | `agent.write` | create and rename agents, and place them on a server |
 | `agent.delete` | delete an agent, and its history with it |
 | `agent.setup` | trigger `setup_agent` on a host |
@@ -188,6 +190,9 @@ changes automatically.
 | `PUT` | `/api/users/{id}/role` | `user.role.write` |
 | `GET` | `/api/roles` | `role.read` |
 | `GET` | `/api/audit` | `audit.read` (cursor-paged, `query` searches, `limit` clamped to 1..500) |
+| `GET` | `/api/storage` | `storage.read` (sizes per area, straight out of Postgres) |
+| `POST` | `/api/storage/{area}/purge` | `storage.purge` (**400** for an area that is not purgeable) |
+| `POST` | `/api/storage/reclaim` | `storage.purge` (rewrites every table; **locks each one**) |
 | `GET` | `/api/audit/export` | `audit.export` (CSV attachment; `from` inclusive, `to` exclusive) |
 | `GET` | `/api/activity` | `activity.read` (cursor-paged; `agentId` narrows to one agent) |
 | `GET` | `/api/chat` | `chat.read` (cursor-paged; **exactly one** of `agentId` or `server`) |
@@ -209,6 +214,10 @@ changes automatically.
 | `DELETE` | `/api/agents/{id}/setup` | `agent.setup` (stop waiting on one; sends the host nothing) |
 | `POST` | `/api/agents/{id}/connect`, `/disconnect` | `agent.run` (connect holds the agent at CONNECTING; **409** while one is in flight) |
 | `POST` | `/api/agents/{id}/chat` | `chat.speak` (rate limited per agent; **429** when exceeded) |
+| `GET` | `/api/agents/{id}/inventory` | `agent.read` (**204** when the agent has reported none) |
+| `POST` | `/api/agents/{id}/inventory/move` | `agent.run` (online only; slots 5–45) |
+| `POST` | `/api/agents/{id}/inventory/drop` | `agent.run` (online only; an absent `count` throws the stack) |
+| `POST` | `/api/agents/{id}/inventory/hold` | `agent.run` (online only; the hotbar square, 36–44) |
 | `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
 | `GET` | `/api/schematics`, `/api/schematics/{id}` | `schematic.read` |
 | `GET` | `/api/schematics/{id}/materials` | `schematic.read` (by block, heaviest first) |
@@ -542,6 +551,38 @@ regardless of what it could do — a chooser where three of four selections were
 screen said which. See *`method` is a mechanism, never an account* in FLEET_CONNECTIVITY.md, whose
 earlier rejection of advertisement this reverses.
 
+## Storage
+
+`GET /api/storage` reports what the database is holding, grouped into **areas** rather than tables.
+A table is an implementation detail nobody deciding whether to free space can reason about: a
+schematic's blocks are in `schematic_cells` and its material tally in `schematic_materials`, and
+showing those separately makes the question harder rather than more precise.
+
+Sizes come from `pg_class`, not from adding up what the application believes it wrote. What a row
+costs on disk is a question about page layout, alignment, indexes and out-of-line storage, and any
+number computed from the entities would be a guess dressed as a measurement. Row counts are
+estimates from the statistics collector for the same reason a count is not offered: counting means
+reading every row in the biggest table in the database.
+
+**Deleting and reclaiming are two different things.** A purge issues `DELETE`, which leaves the
+space inside the table as dead rows for that table to reuse — the disk does not shrink. Returning it
+means `VACUUM FULL`, which rewrites the table and **takes an exclusive lock on it**. That is why it
+is a second, explicit action rather than something a purge does on the caller's behalf, and why the
+screen has a separate column for space that has been freed but not returned.
+
+Two areas are deliberately not purgeable:
+
+- **The audit trail.** A screen that can delete the record of its own use has a hole in it shaped
+  like somebody covering their tracks. It is exportable, so a deployment that needs the space can
+  take the trail with it and decide about it somewhere that is not one button.
+- **Anything whose rows hang off other rows** — schematics, builds, the fleet, accounts. Deleting
+  those from a storage screen means a second, blunter deletion path beside the one that already
+  understands the relationships, and it would take a schematic's cells without the schematic.
+
+`OTHER` exists so the areas add up to the database. A table added by a migration and named in no
+area would otherwise disappear from the one screen whose job is saying what is on the disk, and the
+total would quietly start meaning something else.
+
 ## Live updates
 
 `GET /api/stream` is a server-sent event stream of everything that changes;
@@ -557,6 +598,7 @@ on REST, where they are node-gated and audited.
 | `chat` | `chat.read` | one new line | appends it to the feed |
 | `activity` | `activity.read` | one new line | appends it to the feed |
 | `telemetry` | `agent.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
+| `inventory` | `agent.read` | `{ agentId, inventory }` | replaces what the agent is carrying |
 | `user` | `user.read` | the account | replaces it in the list |
 | `user-removed` | `user.read` | `{ id }` | drops it |
 | `audit` | `audit.read` | one new entry | appends it to the trail |
@@ -567,6 +609,11 @@ on REST, where they are node-gated and audited.
 | `build-removed` | `schematic.read` | `{ id }` | drops it |
 | `build-job` | `agent.read` | the job and its segments | replaces it in place |
 | `build-job-removed` | `agent.read` | `{ id }` | drops it |
+
+`inventory` is forwarded as it arrives rather than coalesced onto a tick the way `telemetry` is.
+An inventory event only exists because items actually moved, so there is no firehose to flatten —
+and half of what the screen is for is watching an item leave the square somebody just dropped it
+from.
 
 `build-job` is gated on `agent.read` rather than on the schematic node its plan uses, because what
 it carries is which agents are on which piece: reading designs does not entitle you to read the

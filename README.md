@@ -23,9 +23,9 @@ what needs attention, and what is being said in game.
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 515 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline and the live world viewer. | Built, 399 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports and streams its world; does not build yet, 188 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 568 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer and the charted map. | Built, 455 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports and streams its world; does not build yet, 237 tests |
 
 ## The one idea worth knowing
 

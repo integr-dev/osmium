@@ -47,6 +47,15 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      */
     AGENT_TELEMETRY("telemetry", Nodes.AGENT_READ),
 
+    /**
+     * What an agent is carrying, on its own event for the same reason the vitals are.
+     *
+     * Forwarded as it arrives rather than coalesced onto a tick, unlike the telemetry: an inventory
+     * is only reported when items actually move, so there is no firehose to flatten - and an
+     * operator who has just dropped something wants to see it gone, not to wait out a tick.
+     */
+    AGENT_INVENTORY("inventory", Nodes.AGENT_READ),
+
     USER_CHANGED("user", Nodes.USER_READ),
     USER_REMOVED("user-removed", Nodes.USER_READ),
 

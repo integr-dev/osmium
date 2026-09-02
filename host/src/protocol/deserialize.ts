@@ -104,6 +104,28 @@ function body(name: string, payload: Json): CommandBody {
         blocks: num(payload, 'blocks', 'payload.blocks'),
       }
 
+    // Slot numbers are validated where they are acted on rather than here: which squares an
+    // operator may touch is a fact about the window, and `agent/inventory.ts` owns it.
+    case 'inventory_move':
+      return {
+        type: 'inventory_move',
+        from: num(payload, 'from', 'payload.from'),
+        to: num(payload, 'to', 'payload.to'),
+      }
+
+    case 'inventory_drop': {
+      const count = payload['count']
+      return {
+        type: 'inventory_drop',
+        slot: num(payload, 'slot', 'payload.slot'),
+        // Absent means the whole stack, which is the ordinary case and not an omission.
+        ...(typeof count === 'number' ? { count } : {}),
+      }
+    }
+
+    case 'inventory_hold':
+      return { type: 'inventory_hold', slot: num(payload, 'slot', 'payload.slot') }
+
     case 'cancel_segment':
       return {
         type: 'cancel_segment',

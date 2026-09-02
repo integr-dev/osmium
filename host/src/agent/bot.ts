@@ -28,6 +28,15 @@ import {
   WHISPER_SENT,
 } from './sender.ts'
 
+import {
+  AgentInventory,
+  DROP_CLICK,
+  DROP_ONE,
+  DROP_STACK,
+  HOTBAR_FIRST,
+  holdable,
+  movable,
+} from './inventory.ts'
 import { AgentMap, worldOf } from './map.ts'
 import { AgentViewer } from './viewer.ts'
 
@@ -133,6 +142,7 @@ export class Agent {
   /** Runs for every session, watched or not: the map is worth having drawn before anyone asks for
    * it. Rebuilt per session, like the watcher, because it holds the bot. */
   private mapper: AgentMap | undefined
+  private carrying: AgentInventory | undefined
   /**
    * The name of the world this session is standing in, as the server calls it.
    *
@@ -325,6 +335,15 @@ export class Agent {
       case 'settings':
         return this.configure(command.values)
 
+      case 'inventory_move':
+        return this.shift(command.from, command.to)
+
+      case 'inventory_drop':
+        return this.drop(command.slot, command.count)
+
+      case 'inventory_hold':
+        return this.hold(command.slot)
+
       // Not built yet. Ignoring is the honest answer - reporting progress on a box nobody is placing
       // would be worse than silence.
       case 'build_segment':
@@ -489,6 +508,7 @@ export class Agent {
         // different world, and a mapper that kept its "already sent this" memory across one would
         // report the Nether's ceiling as the Overworld's ground.
         this.begin_mapping()
+        this.begin_carrying()
 
         // Only the first one, and only one sampler. `spawn` fires again on every respawn and every
         // dimension change, and an agent that died has not rejoined the server.
@@ -634,6 +654,7 @@ export class Agent {
     // watching, and gets the world back when the agent spawns into it.
     this.unwatch()
     this.unmap()
+    this.uncarry()
 
     // Torn down here, because we may have settled this before the protocol did - an attempt that
     // failed its version ping still holds an open socket nothing else will ever close.
@@ -1249,6 +1270,120 @@ export class Agent {
     this.mapper = undefined
   }
 
+  /** Starts reporting this session's inventory, replacing any reporter left from the last one. */
+  /**
+   * Says again everything the backend keeps only in memory.
+   *
+   * Called when a socket comes up, which may be a backend that has just restarted and holds none
+   * of it. Only the inventory today: state is restated by the handshake itself, vitals go out on
+   * their own timer within seconds, and map tiles are in Postgres.
+   *
+   * Safe to call at any time. It asks the reporter to send on its next pass rather than sending
+   * anything here, so an agent between sessions does nothing at all.
+   */
+  restate(): void {
+    this.carrying?.refresh()
+  }
+
+  private begin_carrying(): void {
+    const bot = this.bot
+    if (!bot?.entity) return
+
+    this.uncarry()
+    this.carrying = new AgentInventory(this.id, bot, (inventory) =>
+      this.hooks.event({ type: 'inventory', agentId: this.id, inventory }),
+    )
+    this.carrying.start()
+  }
+
+  private uncarry(): void {
+    this.carrying?.stop()
+    this.carrying = undefined
+  }
+
+  /**
+   * Moves what is in one square onto another, as two clicks would.
+   *
+   * Both ends are checked before anything is clicked. `moveSlotItem` on the crafting output is not
+   * a move the server can accept, and one on a slot outside the window is a click on nothing - so
+   * an out-of-range request is refused here rather than sent and quietly lost.
+   *
+   * Nothing is reported back. The next inventory event says where the item ended up, which is the
+   * same event that would have said so had the agent moved it itself, and it is the answer whether
+   * or not the server allowed the move.
+   */
+  /**
+   * Puts a hotbar square in the agent's hand.
+   *
+   * Converted to the index mineflayer wants here, at the one place that knows both numberings. The
+   * wire names the square the way every other inventory command does; the game keeps the hand as an
+   * index into the hotbar, and translating at the edge is what keeps that from leaking either way.
+   *
+   * Not awaited and nothing is reported: the change is a single packet, and the inventory event
+   * that follows carries the new `held` the same way it carries everything else.
+   */
+  private hold(slot: number): void {
+    const bot = this.bot
+    if (!bot || !this.joined) return log.warn(`Agent ${this.id} is not in game, ignoring a hand change`)
+    if (!holdable(slot)) return log.warn(`Agent ${this.id} cannot hold slot ${slot}`)
+
+    bot.setQuickBarSlot(slot - HOTBAR_FIRST)
+    this.carrying?.refresh()
+  }
+
+  private async shift(from: number, to: number): Promise<void> {
+    const bot = this.bot
+    if (!bot || !this.joined) return log.warn(`Agent ${this.id} is not in game, ignoring a slot move`)
+    if (!movable(from) || !movable(to)) return log.warn(`Agent ${this.id} cannot move ${from} to ${to}`)
+    if (from === to) return
+
+    try {
+      await bot.moveSlotItem(from, to)
+    } catch (failure) {
+      // A slot the server refused, or a window that closed mid-move. The operator sees the item
+      // stay where it was, which is what happened.
+      log.debug(`Agent ${this.id} could not move slot ${from} to ${to}: ${String(failure)}`)
+    }
+    this.carrying?.refresh()
+  }
+
+  /**
+   * Throws what is in a square on the ground.
+   *
+   * **The game's own drop click, not `bot.toss`.** Mode 4 acts on the square named in the packet
+   * and picks nothing up: button 1 throws the stack, button 0 throws one, which is Q and Ctrl-Q.
+   *
+   * `toss` looked like the obvious call and is the wrong shape twice over. It searches by *item
+   * type* across the whole inventory range, so dropping one from a hotbar square could take it off
+   * a different stack of the same thing - and it works by picking the stack up onto the cursor and
+   * putting the remainder back through `putSelectedItemRange`, which returns it to the first slot
+   * it will fit in rather than to the one it came from. Dropping one item from the hotbar therefore
+   * moved the other sixty-three into the backpack.
+   *
+   * There is no "drop N" click in the protocol - a player presses Q N times - so a partial drop is
+   * that many clicks, bounded by what is actually in the square.
+   */
+  private async drop(slot: number, count: number | undefined): Promise<void> {
+    const bot = this.bot
+    if (!bot || !this.joined) return log.warn(`Agent ${this.id} is not in game, ignoring a drop`)
+    if (!movable(slot)) return log.warn(`Agent ${this.id} cannot drop slot ${slot}`)
+
+    const item = bot.inventory.slots[slot]
+    if (!item) return
+
+    try {
+      if (count === undefined || count >= item.count) {
+        await bot.clickWindow(slot, DROP_STACK, DROP_CLICK)
+      } else {
+        const throwing = Math.max(1, Math.floor(count))
+        for (let thrown = 0; thrown < throwing; thrown++) await bot.clickWindow(slot, DROP_ONE, DROP_CLICK)
+      }
+    } catch (failure) {
+      log.debug(`Agent ${this.id} could not drop slot ${slot}: ${String(failure)}`)
+    }
+    this.carrying?.refresh()
+  }
+
   private report(status: {
     state?: LoginState
     vitals?: Vitals
@@ -1385,6 +1520,7 @@ function session(token: string, identity: Identity): NonNullable<BotOptions['aut
  * the contract forbids sending `isAgent`. */
 function nearby(bot: Bot, from: Vec3): Player[] {
   const found: Player[] = []
+  const health = healthKey(bot)
 
   for (const [name, player] of Object.entries(bot.players)) {
     // Ourselves. We are a player entity like any other and would otherwise be reported as standing
@@ -1398,9 +1534,7 @@ function nearby(bot: Bot, from: Vec3): Player[] {
 
     const position = point(player.entity.position)
 
-    // Everything the server actually told us about them. Health is deliberately absent: a client
-    // is only sent its own, and everyone else's lives in raw metadata at an index that moves
-    // between versions - a number that would be wrong without ever looking wrong.
+    // Everything the server actually told us about them, and nothing inferred.
     found.push({
       name,
       distance: separation(from, position),
@@ -1408,10 +1542,51 @@ function nearby(bot: Bot, from: Vec3): Player[] {
       ...(player.uuid ? { uuid: player.uuid } : {}),
       ...(typeof player.ping === 'number' ? { ping: player.ping } : {}),
       ...(typeof player.gamemode === 'number' ? { gamemode: player.gamemode } : {}),
+      ...healthOf(player.entity, health),
     })
   }
 
   return found.sort((one, other) => one.distance - other.distance).slice(0, NEARBY_LIMIT)
+}
+
+/**
+ * Where this version keeps a living entity's health in its metadata.
+ *
+ * **Looked up by name, never written down.** Health is index 9 on every version this has been
+ * checked against, and hardcoding that is exactly the mistake that produces a number which is wrong
+ * without ever looking wrong. `minecraft-data` names the keys per version and mineflayer resolves
+ * its own metadata the same way.
+ *
+ * Read once per report rather than per player: it is a scan of twenty-odd entries, and a busy
+ * server is two hundred players.
+ */
+export function healthKey(bot: Bot): number | undefined {
+  const player = bot.registry.entitiesByName['player'] as { metadataKeys?: Record<string, string> } | undefined
+  for (const [at, named] of Object.entries(player?.metadataKeys ?? {})) {
+    if (named === 'health') return Number(at)
+  }
+  return undefined
+}
+
+/**
+ * What the server has said about somebody else's health, if anything.
+ *
+ * **Every client is sent this**, contrary to what this file used to claim: health is a synced field
+ * on every living entity, which is how a health-tag mod works without a server plugin. What is
+ * genuinely true is that mineflayer does not lift it out for entities other than the bot, so it is
+ * read from the metadata array here.
+ *
+ * Absent rather than guessed, on the same terms as ping and gamemode. A server may strip it, and a
+ * player who has just come into view has none until their first metadata packet arrives.
+ */
+export function healthOf(entity: { metadata?: unknown }, at: number | undefined): { health?: number } {
+  if (at === undefined) return {}
+
+  const value = (entity.metadata as unknown[] | undefined)?.[at]
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return {}
+
+  // Half a heart is the smallest state the game has, so one decimal is all there is to keep.
+  return { health: Math.round(value * 10) / 10 }
 }
 
 /** Whether a name could belong to a person rather than to scenery.

@@ -2,11 +2,14 @@ package net.integr.osmium.hostlink
 
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
+import net.integr.osmium.agent.dto.AgentInventoryResponse
 import net.integr.osmium.agent.dto.AgentTelemetryResponse
+import net.integr.osmium.agent.dto.InventorySlotResponse
 import net.integr.osmium.agent.dto.NearbyPlayerResponse
 import net.integr.osmium.agent.dto.PositionResponse
 import net.integr.osmium.agent.dto.toResponse
 import net.integr.osmium.agent.model.Agent
+import net.integr.osmium.agent.service.AgentInventoryStore
 import net.integr.osmium.agent.service.AgentTelemetryPublisher
 import net.integr.osmium.agent.service.AgentTelemetryStore
 import net.integr.osmium.agent.model.AgentState
@@ -46,6 +49,7 @@ class HostReportService(
     private val activityService: ActivityService,
     private val buildJobs: BuildJobService,
     private val telemetryStore: AgentTelemetryStore,
+    private val inventoryStore: AgentInventoryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val broker: LiveUpdateBroker,
     private val mapService: MapService,
@@ -88,6 +92,8 @@ class HostReportService(
             EventType.BUILD_PROGRESS -> recordProgress(hostId, envelope)
 
             EventType.MAP_TILE -> recordMapTile(hostId, envelope)
+
+            EventType.INVENTORY -> recordInventory(hostId, envelope)
 
             // Forward compatible by design: a newer host reporting something this backend has not
             // learned about yet is normal, so it is logged and dropped rather than fatal.
@@ -290,6 +296,11 @@ class HostReportService(
             // An agent that left the game has stopped forwarding whatever it was forwarding. Saying
             // so here means the next election sees a vacancy rather than a listener that is gone.
             if (state != AgentState.ONLINE) agent.chatListener = false
+            // And what it was carrying is no longer what it is carrying. This is what bounds the
+            // inventory's life instead of a clock: it is only ever reported when items move, so
+            // there is nothing to go stale, only a session to end. It says so again on its next
+            // spawn.
+            if (state != AgentState.ONLINE) agent.id?.let { inventoryStore.forget(it) }
             // And it has stopped building. The segment goes back to the pool rather than to FAILED:
             // losing the builder is not failure of the work.
             if (state != AgentState.ONLINE) buildJobs.releaseSegmentsOf(agent)
@@ -376,6 +387,9 @@ class HostReportService(
                 uuid = entry.get("uuid")?.asString(),
                 ping = entry.get("ping")?.takeIf { it.isNumber }?.asInt(),
                 gamemode = entry.get("gamemode")?.takeIf { it.isNumber }?.asInt(),
+                // Not clamped to twenty: a player under a health boost genuinely has more, and
+                // capping it would report a lie about somebody who is harder to kill than they look.
+                health = entry.get("health")?.takeIf { it.isNumber }?.asDouble()?.takeIf { it >= 0 },
                 isAgent = name.lowercase() in ours,
             )
         }
@@ -515,6 +529,68 @@ class HostReportService(
                 // the future, where they would outrank every later correction to the same chunk.
                 at = Instant.now(),
             ),
+        )
+    }
+
+    /**
+     * Records what an agent is carrying, and says so at once.
+     *
+     * Published as it arrives rather than coalesced onto a tick like the vitals. An inventory event
+     * only exists because items moved, so there is no burst to flatten - and half of what this
+     * screen is for is watching an item leave the square an operator just dropped it from.
+     *
+     * A malformed slot is dropped and the rest of the inventory kept. A square is independent of
+     * every other square, so refusing the whole report over one of them would blank a screen that
+     * was about to be almost entirely right.
+     */
+    private fun recordInventory(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val agentId = agent.id ?: return
+        val payload = envelope.payload ?: return
+
+        val slots = payload.get("slots")?.takeIf { it.isArray }?.mapNotNull { slotOf(it) }
+        if (slots == null) {
+            log.debug("Ignoring an inventory with no slots from host {}", hostId)
+            return
+        }
+
+        val inventory = AgentInventoryResponse(
+            slots = slots,
+            // A host too old to say what is in hand is reporting an inventory that is still worth
+            // drawing, and the first hotbar square is where a client would put the highlight anyway.
+            held = payload.get("held")?.takeIf { it.isNumber }?.asInt() ?: 0,
+        )
+
+        inventoryStore.record(agentId, inventory)
+        broker.publish(
+            LiveUpdateEvent(
+                type = LiveUpdateType.AGENT_INVENTORY,
+                data = mapOf("agentId" to agentId, "inventory" to inventory),
+                agentId = agentId,
+            ),
+        )
+    }
+
+    /** One square, or null when it does not carry the four things every square needs. */
+    private fun slotOf(node: JsonNode): InventorySlotResponse? {
+        val slot = node.get("slot")?.takeIf { it.isNumber }?.asInt() ?: return null
+        val name = node.get("name")?.asString()?.takeIf { it.isNotBlank() } ?: return null
+        val count = node.get("count")?.takeIf { it.isNumber }?.asInt() ?: return null
+
+        // Together or not at all. A damage with no maximum is a bar with nothing to fill, and a
+        // maximum with no damage would draw a full one on an item nobody knows the wear of.
+        val damage = node.get("damage")?.takeIf { it.isNumber }?.asInt()
+        val maxDamage = node.get("maxDamage")?.takeIf { it.isNumber }?.asInt()
+        val worn = damage != null && maxDamage != null && maxDamage > 0
+
+        return InventorySlotResponse(
+            slot = slot,
+            name = name,
+            // Falls back to the id, which is a worse label but never an empty one.
+            displayName = node.get("displayName")?.asString()?.takeIf { it.isNotBlank() } ?: name,
+            count = count,
+            damage = if (worn) damage else null,
+            maxDamage = if (worn) maxDamage else null,
         )
     }
 
