@@ -559,6 +559,43 @@ The form is seeded from the **first agent checked** and pushed to every agent ch
 can hold different values for one field and there is no honest way to show both in one input, so one
 has to be the source; that is named above the fields, and unchecking it hands the role to the next.
 
+### Who may command an agent, and with which commands
+
+`players.whitelist` is one string holding a list of players and, for each, **exactly the commands
+they may use** — `Notch:say+run`, or `Notch:none` for somebody on the list who may do nothing.
+`+` joins the commands because the entries themselves are comma-separated.
+
+**No tiers in the interface.** The setting used to hold `name` for chat commands and
+`name:commands` for all of them, and both are still *read* — a stored setting holds them — but
+nothing writes one, and a tier read is expanded into its commands on the way in. A tier is a name
+for a set somebody has to learn, while every question actually asked of this list ("can they use
+`run`?") is a question about the set. So the set is the whole model, and an entry normalises the
+first time the form is saved.
+
+That normalisation is worth the longer string: what is stored then says what is granted, and adding
+a command to a later build cannot widen a grant somebody already made.
+
+The picker is a dialog rather than a row that unfolds. Ten commands and their descriptions do not
+fit beside a username, and a whitelist is read *down* — a row growing to three times its height
+while being edited pushes the rest of the list off the screen. It borrows the add-agent dialog's
+frame and the agent picker's checkbox rows, and edits **a copy**: a tick writing straight through
+would leave the form dirty after a dialog somebody then cancelled. The row itself shows only a
+count, coloured when any of `run`, `disconnect` or `reconnect` are in there — what a list is
+scanned for is "does anybody hold more than they should", which a number and a colour answer.
+
+Two rules that both exist so a grant is never widened by accident:
+
+- **A word after the colon that is not a tier is a list of one**, never a tier guessed at. So
+  `Notch:everything` from some future Osmium grants nothing here rather than falling back to chat
+  and handing over seven commands. A host refuses any command it cannot name, which is what makes
+  that safe.
+- **A command this build cannot name survives a round trip untouched**, shown as a greyed chip.
+  Dropping it would revoke a grant every time an older interface saved this form.
+
+The command table is duplicated from the host, which is the authority — a host is a separate program
+and may be newer. What that costs is a list that can go stale; what it buys is a picker that can
+show names and descriptions at all.
+
 ### The pattern box highlights what it is
 
 `RegexField.vue` draws a syntax-highlighted layer under a transparent `<input>`. The tokeniser lives
@@ -1072,14 +1109,32 @@ Upstream's build does things Vite does not, and each gap is a different failure:
   handed over directly; entity textures are rewritten through three's loading manager.
 - **the global `THREE`** — its entity models read one rather than importing it.
 
-### Two patches to upstream sources, at build time
+### Three patches to upstream sources, at build time
 
-Both for the assumption that a world starts at y=0: the section lookup reads the array as though
+Two are the assumption that a world starts at y=0: the section lookup reads the array as though
 index 0 were y=0, and a face whose neighbour lies below y=0 is culled as though it faced the void.
 Together they left everything under bedrock level invisible except blocks with no cullable faces.
 
+The third is a substring test standing in for an equality test, and it is the more instructive bug.
+The mesher opens by refusing to model air:
+
+```js
+if (block.name.includes('air')) return []
+```
+
+`'oak_stairs'.includes('air')` is **true** — *st**air**s* contains *air*. Every staircase in the game
+was therefore treated as air and given no model at all, so none had ever been drawn. Narrowed to the
+three blocks that actually are air. `missing_texture` is deliberately not among them: it has a
+model, and it is the fallback the line beneath depends on.
+
+That one was found by running the mesher headlessly rather than by reading it — a synthetic world
+holding one block, counting the faces that came back. Stairs returned zero where a slab of the
+identical first element returned six, which is what pointed at the lookup rather than at the
+geometry. Worth reaching for early on this file: three separate theories about culling and variant
+matching were wrong before the measurement settled it.
+
 Patching a dependency is not free. It was taken because the checks sit inside a Web Worker two
-callers deep, so there is nothing to wrap from outside, and vendoring the files to change two
+callers deep, so there is nothing to wrap from outside, and vendoring the files to change three
 expressions would mean owning the rest of them. Each patch asserts how many occurrences it expects,
 so an upstream change fails the build rather than quietly reverting.
 
