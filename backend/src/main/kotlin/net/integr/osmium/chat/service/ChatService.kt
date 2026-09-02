@@ -110,6 +110,43 @@ class ChatService(
         )
     }
 
+    /**
+     * Everything the fleet heard or said, narrowed to what matches.
+     *
+     * A null `serverAddress` searches every server, which is the case this exists for: a phrase or a
+     * name somebody half-remembers is rarely remembered along with which server it was on.
+     */
+    fun search(serverAddress: String?, query: String, limit: Int, cursor: String?): ChatPageResponse {
+        val (beforeAt, beforeId) = PageCursor.decode(cursor)
+        return page(
+            chatMessageRepository.search(
+                beforeAt = beforeAt,
+                beforeId = beforeId,
+                serverAddress = serverAddress,
+                scopes = SERVER_SCOPES,
+                query = query,
+                limit = Limit.of(limit),
+            ),
+            limit,
+        )
+    }
+
+    /** One agent's conversation, searched. Excludes global chat, exactly as reading it does. */
+    fun searchForAgent(agentId: Long, query: String, limit: Int, cursor: String?): ChatPageResponse {
+        val (beforeAt, beforeId) = PageCursor.decode(cursor)
+        return page(
+            chatMessageRepository.searchForAgent(
+                beforeAt = beforeAt,
+                beforeId = beforeId,
+                agentId = agentId,
+                scopes = PER_AGENT_SCOPES,
+                query = query,
+                limit = Limit.of(limit),
+            ),
+            limit,
+        )
+    }
+
     @Scheduled(cron = PURGE_CRON)
     @Transactional
     fun purgeExpired() {

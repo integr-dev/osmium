@@ -43,15 +43,25 @@ export async function fetchActivityPage(
 }
 
 /**
- * Exactly one of `agentId` or `server`, which is what the endpoint enforces. An agent's feed is the
- * conversation to or about it; a server's feed is the global chat everyone there saw.
+ * One of `agentId` or `server`, which is what the endpoint enforces - except when searching, where
+ * neither is allowed and the search spans every server the fleet was listening to. An agent's feed
+ * is the conversation to or about it; a server's feed is the global chat everyone there saw.
  */
 export async function fetchChatPage(
   cursor: string | null,
-  filter: { agentId: number } | { server: string },
+  filter: { agentId: number } | { server: string } | Record<string, never>,
+  query?: string,
 ): Promise<Result<ChatMessageResponse>> {
   const { data, error } = await api.GET('/api/chat', {
-    params: { query: { limit: PAGE_SIZE, cursor: cursor ?? undefined, ...filter } },
+    params: {
+      query: {
+        limit: PAGE_SIZE,
+        cursor: cursor ?? undefined,
+        // Blank is somebody clearing the box, and the endpoint refuses it - so it is not sent.
+        query: query?.trim() ? query.trim() : undefined,
+        ...filter,
+      },
+    },
   })
   if (error) return { error: errorMessage(error, t('errors.loadChat')) }
   return page(data?.items as ChatMessageResponse[] | undefined, data?.nextCursor)

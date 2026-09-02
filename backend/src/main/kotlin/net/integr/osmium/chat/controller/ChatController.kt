@@ -39,13 +39,18 @@ class ChatController(private val chatService: ChatService) {
             the mirror of the above: a whisper to one agent is still something that happened on that
             server.
 
+            `query` searches the message text and the sender, case-insensitively, and narrows
+            whichever of the two filters was given. With neither, it searches every server the fleet
+            was listening to - a phrase somebody half-remembers rarely comes with the server it was
+            said on.
+
             Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
             from the previous response to continue. Kept for 3 days.
         """,
     )
     @ApiResponses(
         ApiResponse(responseCode = "200", description = "A page of chat."),
-        ApiResponse(responseCode = "400", description = "Neither or both filters given, or a malformed `cursor`."),
+        ApiResponse(responseCode = "400", description = "Both filters given, neither given without a `query`, or a malformed `cursor`."),
         ApiResponse(responseCode = "403", description = "Missing node `chat.read`."),
     )
     fun list(
@@ -53,21 +58,35 @@ class ChatController(private val chatService: ChatService) {
         @RequestParam(required = false) agentId: Long?,
         @Parameter(description = "Global chat on this server address.", example = "mc.example.com")
         @RequestParam(required = false) server: String?,
+        @Parameter(
+            description = "Search the text and the sender, case-insensitively. With neither " +
+                "`agentId` nor `server`, searches every server the fleet was listening to.",
+        )
+        @RequestParam(required = false) query: String?,
         @Parameter(description = "How many lines to return. Clamped to 1..500.")
         @RequestParam(defaultValue = "100") limit: Int,
         @Parameter(description = "`nextCursor` from the previous page. Omit for the newest lines.")
         @RequestParam(required = false) cursor: String?,
     ): ChatPageResponse {
         val page = limit.coerceIn(MIN_LIMIT, MAX_LIMIT)
+        val search = query?.trim()?.takeIf { it.isNotEmpty() }
 
-        require((agentId == null) != (server == null)) {
-            "Pass exactly one of agentId or server"
+        require(agentId == null || server == null) { "Pass at most one of agentId or server" }
+        // Reading needs a scope; searching supplies its own. Every server at once is a firehose to
+        // read and the whole point to search, which is the one asymmetry here.
+        require(search != null || agentId != null || server != null) {
+            "Pass exactly one of agentId or server, or a query to search"
         }
 
-        return if (agentId != null) {
-            chatService.findForAgent(agentId = agentId, limit = page, cursor = cursor)
-        } else {
-            chatService.findForServer(serverAddress = server!!, limit = page, cursor = cursor)
+        return when {
+            search == null && agentId != null ->
+                chatService.findForAgent(agentId = agentId, limit = page, cursor = cursor)
+            search == null ->
+                chatService.findForServer(serverAddress = server!!, limit = page, cursor = cursor)
+            agentId != null ->
+                chatService.searchForAgent(agentId = agentId, query = search, limit = page, cursor = cursor)
+            else ->
+                chatService.search(serverAddress = server, query = search, limit = page, cursor = cursor)
         }
     }
 

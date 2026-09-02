@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Send, Server, TriangleAlert } from 'lucide-vue-next'
+import { Search, Send, Server, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
 import McText from './McText.vue'
 
@@ -40,7 +40,31 @@ const message = ref('')
 const sending = ref(false)
 const sendError = ref<string | null>(null)
 
-const feed = useFeed<ChatMessageResponse>((cursor) => fetchChatPage(cursor, scopeFilter(props.scope)))
+/**
+ * What is being searched for, and what the feed is actually reading.
+ *
+ * Two refs rather than one: every keystroke would otherwise be a query. `searching` is what the
+ * feed reads and only moves when the typing settles.
+ */
+const search = ref('')
+const searching = ref('')
+
+/**
+ * Whether a search reaches past what is on screen.
+ *
+ * Off by default: the panel is showing one conversation, and a box above it is read as searching
+ * that. Widening it is the deliberate act, because it answers a different question - a phrase
+ * somebody half-remembers rarely comes with the server it was said on.
+ */
+const everywhere = ref(false)
+
+const feed = useFeed<ChatMessageResponse>((cursor) =>
+  fetchChatPage(
+    cursor,
+    searching.value && everywhere.value ? {} : scopeFilter(props.scope),
+    searching.value,
+  ),
+)
 const { items, loading, error, exhausted } = feed
 const scroll = useInfiniteScroll(sentinel, () => void loadMore(), scrollBox)
 
@@ -50,6 +74,37 @@ onMounted(async () => {
   await feed.reset()
   scroll.start()
 })
+
+/**
+ * Typing settles before anything is asked for.
+ *
+ * Long enough that a name is typed rather than searched letter by letter, short enough that it
+ * still feels like the box is answering.
+ */
+const SEARCH_SETTLES = 250
+let pending: number | undefined
+
+watch(search, (value) => {
+  window.clearTimeout(pending)
+  pending = window.setTimeout(() => void apply(value.trim()), SEARCH_SETTLES)
+})
+
+// Changing the reach re-asks the question. Only while one is being asked: toggling it against an
+// empty box would reload the same conversation it is already showing.
+watch(everywhere, () => {
+  if (searching.value) void reload()
+})
+
+async function apply(value: string): Promise<void> {
+  if (value === searching.value) return
+  searching.value = value
+  await reload()
+}
+
+async function reload(): Promise<void> {
+  await feed.reset()
+  await scroll.rearm()
+}
 
 /** What the host calls a line it could not attribute to a player. */
 const SERVER_SENDER = 'server'
@@ -87,6 +142,9 @@ let settle: number | undefined
 const stopListening = agentStore.onFeedEvent((name, data) => {
   if (name !== 'chat') return
   const line = data as ChatMessageResponse
+  // A search is a question about the past. Dropping new lines into the middle of its answer would
+  // show something that does not match what was asked for.
+  if (searching.value) return
   if (!belongsTo(line, props.scope)) return
 
   feed.prepend(line)
@@ -101,6 +159,7 @@ const stopListening = agentStore.onFeedEvent((name, data) => {
   }, BURST_QUIET_MS)
 })
 
+onBeforeUnmount(() => window.clearTimeout(pending))
 onBeforeUnmount(() => {
   stopListening()
   window.clearTimeout(settle)
@@ -203,6 +262,27 @@ function involvesAgent(line: ChatMessageResponse): boolean {
 
 <template>
   <div class="relative flex min-h-0 flex-1 flex-col gap-2">
+    <!--
+      Searching is a question about everything the fleet ever heard, not a filter on what is on
+      screen - so it says which of the two it is currently showing.
+    -->
+    <label class="input input-sm w-full gap-2">
+      <Search class="size-4 shrink-0 opacity-40" />
+      <input
+        v-model="search"
+        type="search"
+        class="grow"
+        :placeholder="t('chat.searchPlaceholder')"
+        :aria-label="t('chat.searchPlaceholder')"
+      />
+    </label>
+
+    <!-- Offered only while searching: with an empty box it would govern nothing. -->
+    <label v-if="searching" class="flex cursor-pointer items-center gap-2 text-xs opacity-70">
+      <input v-model="everywhere" type="checkbox" class="toggle toggle-xs" />
+      <span>{{ everywhere ? t('chat.searchingEverywhere') : t('chat.searchingHere') }}</span>
+    </label>
+
     <div v-if="error" role="alert" class="alert alert-error alert-soft">
       <TriangleAlert class="size-4" />
       <span>{{ error }}</span>
@@ -307,6 +387,13 @@ function involvesAgent(line: ChatMessageResponse): boolean {
     </div>
 
     <div v-if="auth.can('chat.speak')" class="flex flex-col gap-1">
+      <!--
+        Whoever is about to speak, named directly above the box that will say it. Filled by the rail,
+        which owns the scope and the choice; this only decides where it belongs, and that is beside
+        the act rather than at the top of a transcript it says nothing about.
+      -->
+      <slot name="speaker" />
+
       <div v-if="sendError" role="alert" class="alert alert-error alert-soft py-2">
         <TriangleAlert class="size-4" />
         <span>{{ sendError }}</span>

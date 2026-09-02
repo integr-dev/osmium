@@ -56,6 +56,61 @@ interface ChatMessageRepository : JpaRepository<ChatMessage, Long> {
         limit: Limit,
     ): List<ChatMessage>
 
+    /**
+     * The server feed, narrowed to lines matching `query`.
+     *
+     * Matched against the text *and* the sender: to somebody typing a name into a search box, "what
+     * did they say" and "who mentioned them" are the same question, and answering only one of them
+     * reads as the search being broken.
+     *
+     * A leading-wildcard `like` cannot use an index, so this is a scan. Deliberately so: chat is
+     * kept for three days, which bounds the table to something a scan crosses in milliseconds, and
+     * the alternative is a full-text index and its maintenance for a feed that small.
+     *
+     * `serverAddress` is nullable here and nowhere else - searching every server at once is the
+     * point of the feature, and the alternative was a second near-identical query.
+     */
+    @Query(
+        """
+        select m from ChatMessage m
+        where (m.at < :beforeAt or (m.at = :beforeAt and m.id < :beforeId))
+          and (:serverAddress is null or m.serverAddress = :serverAddress)
+          and m.scope in :scopes
+          and (lower(m.text) like lower(concat('%', :query, '%'))
+               or lower(m.sender) like lower(concat('%', :query, '%')))
+        order by m.at desc, m.id desc
+        """,
+    )
+    fun search(
+        @Param("beforeAt") beforeAt: Instant,
+        @Param("beforeId") beforeId: Long,
+        @Param("serverAddress") serverAddress: String?,
+        @Param("scopes") scopes: Collection<ChatScope>,
+        @Param("query") query: String,
+        limit: Limit,
+    ): List<ChatMessage>
+
+    /** One agent's conversation, searched. Its scopes differ, so it cannot share the query above. */
+    @Query(
+        """
+        select m from ChatMessage m
+        where (m.at < :beforeAt or (m.at = :beforeAt and m.id < :beforeId))
+          and m.agentId = :agentId
+          and m.scope in :scopes
+          and (lower(m.text) like lower(concat('%', :query, '%'))
+               or lower(m.sender) like lower(concat('%', :query, '%')))
+        order by m.at desc, m.id desc
+        """,
+    )
+    fun searchForAgent(
+        @Param("beforeAt") beforeAt: Instant,
+        @Param("beforeId") beforeId: Long,
+        @Param("agentId") agentId: Long,
+        @Param("scopes") scopes: Collection<ChatScope>,
+        @Param("query") query: String,
+        limit: Limit,
+    ): List<ChatMessage>
+
     @Modifying
     @Query("delete from ChatMessage m where m.at < :cutoff")
     fun deleteOlderThan(@Param("cutoff") cutoff: Instant): Int

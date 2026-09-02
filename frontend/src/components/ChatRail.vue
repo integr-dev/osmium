@@ -183,20 +183,6 @@ function choose(key: string): void {
       </p>
 
       <!--
-        Speaking is impersonation through one agent, so a server scope has to name which. Shown even
-        when there is only one, because "which of my bots just said that" is not a question the
-        operator should have to work out afterwards.
-      -->
-      <label v-if="scope.kind === 'server' && candidates.length" class="flex items-center gap-2 text-xs opacity-60">
-        {{ t('chat.speakAs') }}
-        <select v-model="speakerId" class="select select-xs min-w-0 flex-1">
-          <option v-for="agent in candidates" :key="agent.id" :value="agent.id">
-            {{ agent.label }}{{ agent.chatListener ? ` · ${t('chat.listening')}` : '' }}
-          </option>
-        </select>
-      </label>
-
-      <!--
         Once the rail has stopped moving. See `drawn`.
 
         **Keyed on the scope**, so switching servers builds a new panel rather than re-pointing the
@@ -204,7 +190,23 @@ function choose(key: string): void {
         order — the items, the cursor, the scroll observer — and anything missed showed the previous
         server's conversation under the new server's name. A remount cannot get that wrong.
       -->
-      <ChatPanel v-if="drawn" :key="scopeKey(scope)" :scope="scope" :speaker="speaker" />
+      <ChatPanel v-if="drawn" :key="scopeKey(scope)" :scope="scope" :speaker="speaker">
+        <!--
+          Speaking is impersonation through one agent, so a server scope has to name which. Shown
+          even when there is only one, because "which of my bots just said that" is not a question
+          an operator should have to work out afterwards.
+        -->
+        <template v-if="scope.kind === 'server' && candidates.length" #speaker>
+          <label class="flex items-center gap-2 text-xs opacity-60">
+            {{ t('chat.speakAs') }}
+            <select v-model="speakerId" class="select select-xs min-w-0 flex-1">
+              <option v-for="agent in candidates" :key="agent.id" :value="agent.id">
+                {{ agent.label }}{{ agent.chatListener ? ` · ${t('chat.listening')}` : '' }}
+              </option>
+            </select>
+          </label>
+        </template>
+      </ChatPanel>
       <div v-else class="flex flex-1 flex-col gap-2 p-3">
         <div v-for="line in 6" :key="line" class="skeleton h-8 w-full"></div>
       </div>

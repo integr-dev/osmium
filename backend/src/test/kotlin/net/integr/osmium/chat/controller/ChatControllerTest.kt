@@ -309,4 +309,92 @@ class ChatControllerTest : AbstractRestTest() {
 
         assertNull(JsonPath.read<String?>(body, "$.nextCursor"))
     }
+
+    // ---- search --------------------------------------------------------------------------------
+
+    @Test
+    fun `search spans every server when neither filter is given`() {
+        val here = createAgent("Mason_20", reachableHost("h-a"), server = "alpha.example")
+        val there = createAgent("Mason_21", reachableHost("h-b"), server = "beta.example")
+        line(here, ChatScope.GLOBAL, "meet me at spawn")
+        line(there, ChatScope.GLOBAL, "spawn is on fire")
+        line(there, ChatScope.GLOBAL, "nothing to do with it")
+
+        // The point of the feature: an unfiltered read is refused, but an unfiltered search is not.
+        mockMvc.get("/api/chat?query=spawn") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", "viewer"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(2) }
+        }
+    }
+
+    @Test
+    fun `search narrows to one server when asked`() {
+        val here = createAgent("Mason_22", reachableHost("h-c"), server = "alpha.example")
+        val there = createAgent("Mason_23", reachableHost("h-d"), server = "beta.example")
+        line(here, ChatScope.GLOBAL, "meet me at spawn")
+        line(there, ChatScope.GLOBAL, "spawn is on fire")
+
+        mockMvc.get("/api/chat?server=alpha.example&query=spawn") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", "viewer"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(1) }
+            jsonPath("$.items[0].text") { value("meet me at spawn") }
+        }
+    }
+
+    @Test
+    fun `search matches the sender as well as the text`() {
+        val agent = createAgent("Mason_24", reachableHost("h-e"), server = "alpha.example")
+        line(agent, ChatScope.GLOBAL, "hello there", from = "Dinnerbone")
+        line(agent, ChatScope.GLOBAL, "Dinnerbone was here", from = "Notch")
+
+        // Typing a name into a search box asks both "what did they say" and "who mentioned them".
+        mockMvc.get("/api/chat?query=dinnerbone") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", "viewer"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(2) }
+        }
+    }
+
+    @Test
+    fun `search ignores case`() {
+        val agent = createAgent("Mason_25", reachableHost("h-f"), server = "alpha.example")
+        line(agent, ChatScope.GLOBAL, "Diamonds Below")
+
+        mockMvc.get("/api/chat?query=DIAMONDS") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", "viewer"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(1) }
+        }
+    }
+
+    @Test
+    fun `searching one agent keeps the global chat out, exactly as reading it does`() {
+        val agent = createAgent("Mason_26", reachableHost("h-g"), server = "alpha.example")
+        line(agent, ChatScope.GLOBAL, "spawn is busy")
+        line(agent, ChatScope.DIRECT, "spawn in five")
+
+        mockMvc.get("/api/chat?agentId=${agent.id}&query=spawn") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", "viewer"))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(1) }
+            jsonPath("$.items[0].text") { value("spawn in five") }
+        }
+    }
+
+    @Test
+    fun `a blank query is not a search`() {
+        // Whitespace is somebody clearing the box, not asking for everything ever said.
+        mockMvc.get("/api/chat") {
+            param("query", "   ")
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", "viewer"))
+        }.andExpect { status { isBadRequest() } }
+    }
+
 }
