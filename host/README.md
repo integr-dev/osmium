@@ -653,6 +653,55 @@ full view arrives as several megabytes within a few milliseconds, overruns the r
 and takes the watcher's socket down with it — as an unexplained abnormal close, because nothing gets
 the chance to say why.
 
+## 4.6 Charting the world
+
+The opposite trade to §4.5. That is streamed only while somebody watches and stored nowhere; this is
+reported **for the whole session** and kept for good, because the point of a map is that it is drawn
+before anybody opens it. Both come off the same world your agent is already walking through.
+
+One pixel per block column — vanilla's zoom zero — so a chunk is exactly a 16×16 tile.
+
+```jsonc
+{ "kind": "event", "type": "map_tile", "agentId": 42,
+  "payload": { "x": 24, "z": -7, "dimension": "overworld",
+               "palette": ["grass_block", "water"],
+               "blocks":  "AAAAAQ…",   // base64, 256 bytes, one palette index per column
+               "heights": "RgBGAA…" } } // base64, 256 signed 16-bit LE, -32768 for nothing
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `x`, `z` | yes | **chunk** coordinates, not block ones |
+| `dimension` | no | the world without its `minecraft:` prefix; absent is taken as `overworld` |
+| `palette` | yes | at most 256 names — 256 columns can hold no more |
+| `blocks` | yes | 256 bytes, row-major from the north-west corner: west to east, then north to south |
+| `heights` | yes | 256 signed 16-bit little-endian, matching `blocks` cell for cell |
+
+Six rules, each of which has already been got wrong once:
+
+- **Scan each column down from the build limit and stop at the first block a player could see.** Not
+  the first *solid* one: water is a surface, and a map that shows the riverbed under it is drawing
+  somewhere nobody can see. Air, cave air, void air, barriers, light and structure void are stepped
+  past.
+- **Send names, never colours.** What colour a block reads as is a question about textures, and the
+  backend stores none — the interface owns the palette. This is what lets the whole map be
+  re-coloured without any agent re-walking a chunk.
+- **The dimension identifies the tile, it does not label it.** The worlds are separate places sharing
+  one coordinate system, so filed together an agent through a portal overwrites the map rather than
+  adding to it.
+- **Clear your already-sent digests on a dimension change.** They say *this chunk already looks like
+  this*, which is a statement about a world the agent has left, and would suppress the first look at
+  the new one wherever coordinates coincide.
+- **Never guess a dimension.** Before the server has said which world you are in, hold the tile and
+  read it again later. Terrain filed under a world that does not exist is terrain nobody finds again.
+- **Settle and deduplicate.** A chunk is touched by every block change in it and every reload, and
+  most of those leave the view from above untouched. Wait for the changes to stop, hash the result,
+  and send only what differs — otherwise one player building generates dozens of identical tiles a
+  second.
+
+A tile of the wrong length, or one indexing past its own palette, is refused by the backend rather
+than stored.
+
 ## 5. Chat scoping and the listener role
 
 The host is the only side that can classify chat — it sees the raw packet types, and the backend

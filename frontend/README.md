@@ -759,6 +759,19 @@ since it is the one already forwarding the conversation being read. A server nob
 has no global feed at all, so the rail says so rather than showing an empty panel, which would read
 as a quiet server instead of a missing one.
 
+### Searching what was said
+
+The search box matches message text **and sender**, case-insensitively, against the stored feed
+rather than the lines already fetched — searching what is on screen would look through the newest
+hundred of a three-day retention and report nothing, which reads as an answer.
+
+A toggle decides whether it searches the current view or everything. Scoped is the default because
+that is what is being read; unscoped is the one that earns its place, since a phrase somebody
+half-remembers rarely comes with the server it was said on. Backed by one endpoint filtered two
+ways: `query` narrows whichever of `agentId` or `server` was given, and with neither it goes across
+every server the fleet has listened to. Reading still needs a scope — an unfiltered firehose is not
+something any view wants — so supplying a query is what buys the right to omit one.
+
 **Sending is fire and forget.** The box clears on a 2xx and the line appears when the host echoes it
 back, the same way everybody else's does — carrying the rank, the colours and the prefix the server
 put on it. That is the version worth reading, and waiting for it is the only honest way to show it.
@@ -1076,6 +1089,56 @@ Block entities — chests, heads, signs, beds — have deliberately empty block 
 draws them with dedicated renderers. They appear as holes. Players wear the default skin, and a few
 of upstream's entity models cannot be assembled at all; those are filtered out rather than shown as
 the magenta box upstream substitutes.
+
+## The map
+
+The ground the fleet has charted, at `/map`, drawn one pixel per block column — vanilla's zoom
+zero, so it lines up with the coordinates an operator reads off F3. Full bleed like the viewer, with
+every control floating over it: a map is read by looking at a lot of it at once, and a card with a
+header above it spends a third of the screen saying what the screen is.
+
+Unlike the viewer it asks nothing of a host. Agents report the surface they walk over as they work,
+so the map is already drawn by the time somebody opens it.
+
+### It stores blocks and draws colours
+
+What comes back from the API is block **names** and heights, never colours. The palette is generated
+by the same pipeline that builds the viewer's atlas — every block's top texture, averaged, with the
+biome tints the mesher applies — so the two views cannot disagree about the colour of grass, and
+restyling the whole map costs nothing rather than an agent re-walking the world.
+
+Terrain is shaded by the step up or down to the column to its **north**, including vanilla's parity
+dither, which is what gives a Minecraft map its stippled slopes. Most of what makes the picture read
+as landscape rather than as a chart of what blocks are where is in that one rule.
+
+### Regions, not tiles
+
+A viewport at one pixel per block covers several thousand chunks. Painting is cached per chunk, but
+*drawing* is batched into **32×32 chunk regions** — one 512×512 canvas each — because a `drawImage`
+per chunk per frame is thousands of calls a frame, and panning crawled until it was a couple of
+dozen. The draw loop walks the regions the viewport covers rather than every tile ever loaded.
+
+### The window has to fit
+
+The backend answers at most 4096 chunks a request, so the client shrinks a larger window about its
+centre, keeping the viewport's shape. A window is always an odd number of chunks across — a centre
+plus a half either side — so scaling by the ratio and halving is not enough: 81×51 is 4131 against
+the cap, the ratio is 0.996, and both halves round straight back. It floors to the odd size below and
+then trims the longer side until it genuinely fits.
+
+### Dimensions are separate maps
+
+The worlds share a coordinate system and are otherwise unrelated, so the dimension is part of the
+address rather than a filter. Switching one throws away every painted tile: the coordinates carry
+over, so what is held is not stale, it is somewhere else. Agents in another dimension are dropped
+from the overlay — drawing a Nether agent on the Overworld map puts it on ground it has never seen.
+
+### Who is standing on it
+
+Agents are drawn in the theme's accent with a fading trail of their last thirty positions, because
+motion is what makes a fleet read as working rather than as a list of dots. **A player who is not
+one of ours is drawn in red** — a stranger walking onto a build is the question an operator opens a
+map to answer. Strangers are collapsed by name, since two agents seeing one person is one person.
 
 ## Player heads
 

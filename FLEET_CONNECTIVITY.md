@@ -249,6 +249,14 @@ host has not answered", but a join is seconds of work rather than a human at a b
 **bounded**: past `osmium.agent.connect-window` the backend stops asserting it. The two share a
 colour in the interface for that reason — one fact about the fleet, told twice.
 
+It is also the one state that can be **cancelled**, and here disconnect genuinely is a cancellation
+rather than a way out of a dead end. An agent banned mid-rejoin would otherwise walk its whole
+backoff — several minutes of attempts an operator can see failing and could not stop — so a
+disconnect during `CONNECTING` dispatches to the host *and* clears `wanted`, which is what stops
+the next attempt being scheduled. The host sets a cancelling flag synchronously and checks it at
+every await in its connect path, so an attempt already under way abandons itself rather than
+finishing and reporting a session nobody asked for.
+
 `STALE` is covered in its own section below, because an agent enters it for a reason external to the
 agent: its host went unreachable.
 
@@ -803,6 +811,111 @@ otherwise block the host and then be dropped along with it.
 Because hosts dial out and are never reachable, pixels would have to cross the backend anyway, and
 encoding them costs a core per stream. Sending the world instead means the camera is local: moving
 it is instant rather than a round trip, and the same stream serves every angle.
+
+## Charting the world
+
+> **Built.** Every agent reports the ground it walks over; the backend stores it per server and
+> world; the browser draws it as a Minecraft map.
+
+The opposite trade to the viewer, on almost every axis. That is a world nobody keeps, streamed only
+while somebody is looking. This is a world **kept for good**, gathered whether or not anybody is
+looking — because the point of a map is that it is already drawn by the time somebody opens it.
+
+```
+agent walks ──▶ host reads the surface ──▶ map_tile event ──▶ stored per (server, dimension, chunk)
+                                                                          │
+                                                       browser ◀── REST ──┘
+```
+
+### One pixel per block column
+
+Vanilla's zoom zero, so a chunk is exactly a 16×16 tile and the picture lines up with the
+coordinates an operator reads off F3. Each pixel is the topmost block a player could see in that
+column, which is why water reads as a surface rather than as a hole down to the riverbed.
+
+```jsonc
+{ "kind": "event", "type": "map_tile", "agentId": 42,
+  "payload": { "x": 24, "z": -7, "dimension": "overworld",
+               "palette": ["grass_block", "water"],
+               "blocks":  "AAAAAQ…",   // base64, 256 bytes, one palette index per column
+               "heights": "RgBGAA…" } } // base64, 256 signed 16-bit LE, -32768 for nothing
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `x`, `z` | yes | **chunk** coordinates, not block ones |
+| `dimension` | no | the world without its `minecraft:` prefix; an absent one is taken as `overworld` |
+| `palette` | yes | at most 256 names — 256 columns can hold no more |
+| `blocks` | yes | 256 bytes, row-major from the north-west corner: west to east, then north to south |
+| `heights` | yes | 256 signed 16-bit little-endian, matching `blocks` cell for cell |
+
+### Names travel, colours do not
+
+A tile carries **block names**, and the backend holds no opinion about what any of them look like.
+Colour is a question about textures, and textures live in the frontend beside the atlas the 3D
+viewer already renders from — so the map and the viewer cannot disagree about the colour of grass,
+and the whole stored map can be re-coloured without an agent re-walking a single chunk.
+
+That table is generated at build time by averaging each block's top texture, with the same biome
+tints the mesher applies. Two traps found building it, both worth knowing before touching it:
+
+- **From 1.20 on, `minecraft-data` reports an ordinary biome's grass and foliage tint as `0`** — a
+  sentinel meaning *derive it from the colormap*, not the colour black. Taken at face value it
+  multiplies every plant on the map down to nothing. The renderer sidesteps this by pinning one
+  older release that still carries real numbers, so the map reads its tints from whichever release
+  that is rather than pinning a second one that could drift.
+- **A door's *up* face is a transparent sliver**, and a chain's is empty outright. Taking the top
+  face and stopping leaves several dozen real blocks with no colour, so the resolver walks up-faces
+  from the top down, then any other face, then the particle texture.
+
+### The dimensions are separate maps
+
+`dimension` is part of what **identifies** a tile, not a label on one. The worlds are different
+places that share a coordinate system — and the Nether's is compressed eightfold against the
+Overworld's on top of that. Filed together, an agent stepping through a portal does not add to the
+map, it overwrites it chunk for chunk with terrain from somewhere else.
+
+The host clears its already-sent digests on a dimension change for the same reason: they say *this
+chunk already looks like this*, which is a statement about a world the agent has left, and would
+suppress the first look at the new one wherever the coordinates happen to coincide. A tile read
+before the server has said which world we are in is **held back and re-queued**, never guessed at —
+terrain filed under a world that does not exist is terrain nobody finds again.
+
+### Filed by place, not by agent
+
+Keyed `(server, dimension, chunk x, chunk z)`, so every agent on an address fills in one shared
+map and the **newest look wins** — even when the older one came from an agent standing closer. The
+world is shared and changes under everyone; a reading from ten seconds ago describes a place better
+than one from yesterday.
+
+The agent that looked is recorded as plain columns rather than a relation, the rule chat and audit
+already follow: deleting an agent must not erase the ground it charted.
+
+### It rides the JSON envelope, not the binary socket
+
+Unlike the viewer, a tile is about a kilobyte and arrives a few times a second at most — nothing
+next to a chunk column of block states. And the backend has to *open* this one to store it, which is
+precisely what the binary path exists not to do. Sending it as an ordinary event means it inherits
+the validation, the routing and the tests that every other event already has.
+
+The shape is checked at the door: a tile of the wrong length, or one indexing past its own palette,
+is refused rather than stored. Every later reader would otherwise have to defend against it, and a
+browser drawing it would run off the end of the array.
+
+### Reading it back
+
+`GET /api/map/tiles` takes a rectangle of chunks with both corners included, and `dimension` is
+required — it addresses the world, it does not filter one. **Bounded rather than paged**, at 4096
+chunks a request: a map is drawn as an area rather than read as a list, so a cursor would only let a
+caller ask for more than a screen can show. Past that the caller asks for a smaller window and draws
+at a coarser zoom.
+
+`GET /api/map/servers` lists one row per server **and** world, so a server walked in two dimensions
+appears twice.
+
+Both sit behind `agent.read` rather than a node of their own. Nothing here asks a host to do
+anything — unlike the viewer, this is what agents have already reported in the course of their work,
+sitting in a table.
 
 ## Chat
 
