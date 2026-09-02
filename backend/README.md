@@ -218,6 +218,13 @@ changes automatically.
 | `POST` | `/api/agents/{id}/inventory/move` | `agent.run` (online only; slots 5–45) |
 | `POST` | `/api/agents/{id}/inventory/drop` | `agent.run` (online only; an absent `count` throws the stack) |
 | `POST` | `/api/agents/{id}/inventory/hold` | `agent.run` (online only; the hotbar square, 36–44) |
+
+All three inventory writes answer **409 while the agent holds a build segment**: what a builder is
+carrying is the build. The check is in `AgentService.dispatch`, the one funnel every command goes
+through, and `CommandType.DISRUPTS_BUILDING` is what it reads — so a command added without deciding
+fails `CommandSafetyTest` rather than quietly going through. Stopping is not disrupting:
+`disconnect` is allowed, because it releases the segment cleanly and an operator pressing it has
+decided to stop.
 | `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
 | `GET` | `/api/schematics`, `/api/schematics/{id}` | `schematic.read` |
 | `GET` | `/api/schematics/{id}/materials` | `schematic.read` (by block, heaviest first) |

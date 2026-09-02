@@ -1032,6 +1032,39 @@ server refused reads as the item not having moved, which is what happened. Writi
 would show the move as done before the server had agreed, then disagree with the report that
 follows.
 
+### An agent building is not to be interrupted
+
+What a builder is carrying **is** the build. It places out of a square, so moving a stack out of
+that square, dropping it, or changing which square is in hand leaves it putting the wrong block
+somewhere — or nothing at all — and the damage surfaces minutes later as a wall with holes in it,
+nowhere near the action that caused it.
+
+So `inventory_move`, `inventory_drop` and `inventory_hold` are refused with **409** while the agent
+holds a live segment, and the refusal names the segments rather than saying "is building": an
+operator can act on "building segments 3, 4" and cannot act on a boolean.
+
+**The check sits in the one funnel every command passes through**, not on the three verbs that need
+it today. A guard per call site is a guard somebody forgets on the fourth, and this failure is
+silent — the command works and the build is wrong. Every command is listed in `CommandType.ALL` and
+classified by `CommandType.DISRUPTS_BUILDING`; a test fails if the two fall out of step, so adding a
+command without deciding is a red build rather than a hole.
+
+The line is **corrupts**, not **interrupts**:
+
+| Allowed while building | Why |
+|---|---|
+| `disconnect`, `delete_agent` | Stopping cleanly. The segment goes back to the pool and somebody else takes it, and an operator pressing it has decided to stop with the state in front of them. |
+| `chat`, `set_chat_listener`, `set_viewer` | Reading and talking. Neither moves the agent nor touches what it holds — and somebody watching a build is exactly who needs the viewer working. |
+| `settings` | Configuration, applied by the host when it next matters. |
+| `build_segment`, `cancel_segment` | The build system itself. |
+| `setup_agent`, `connect` | Cannot reach an agent that is already in the game. |
+
+**The host enforces it again, and not out of distrust.** Chat commands never pass through the
+backend at all, so for those it is the only guard there is — and a host that assumes the far side
+has the right idea of what it is doing does the wrong thing the moment the two disagree. It refuses
+`run`, `disconnect` and `reconnect` from chat on the same grounds: `run` hands somebody an arbitrary
+server command, and a `/tp` typed by a trusted player takes a builder off its box.
+
 ### Why `agent.run` and not a node of its own
 
 Chat has its own node because it is *impersonation*: the agent says something a person reads as

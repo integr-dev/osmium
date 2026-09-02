@@ -374,6 +374,7 @@ export const de: Copy = {
     dropOne: 'Einen fallen lassen',
     dropStack: 'Stapel fallen lassen',
     blockedOffline: 'Nicht im Spiel, es kann also nichts verschoben werden.',
+    blockedBuilding: 'Baut gerade. Was der Agent trägt, ist der Bau — bis das Segment fertig ist, lässt sich nichts verschieben.',
     blockedPermission: 'Gegenstände zu verschieben erfordert dieselbe Berechtigung wie das Ausführen des Agenten.',
   },
 

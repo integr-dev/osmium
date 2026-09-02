@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { trustedFrom } from '../src/agent/bot.ts'
 import {
+  disruptsBuilding,
   addressedTo,
   allows,
   COMMANDS,
@@ -412,5 +413,41 @@ describe('granting commands one at a time', () => {
     expect(grantFrom('chat')).toEqual(tier(TRUST.chat))
     expect(grantFrom(undefined)).toEqual(tier(TRUST.chat))
     expect(grantFrom('')).toEqual(tier(TRUST.chat))
+  })
+})
+
+/**
+ * Which chat commands wait for a build to finish.
+ *
+ * The table in `command.ts` is the whole of adding a command, so it is also where this is decided —
+ * and `satisfies` makes answering compulsory, which is why there is no "did somebody forget" test
+ * here to match the backend's. What is worth pinning is the *answers*, because getting one wrong is
+ * silent: the command works, the build comes out wrong, and nothing connects the two.
+ */
+describe('commands that would disturb a build', () => {
+  it('refuses an arbitrary server command', () => {
+    // The reason this exists. `run` hands somebody a `/tp`, and a builder teleported off its box
+    // mid-segment leaves a half-placed wall and no sign of why.
+    expect(disruptsBuilding('run')).toBe(true)
+  })
+
+  it('refuses ending the session under it', () => {
+    expect(disruptsBuilding('disconnect')).toBe(true)
+    expect(disruptsBuilding('reconnect')).toBe(true)
+  })
+
+  it('allows everything that only reads', () => {
+    for (const command of ['id', 'ping', 'health', 'food', 'uptime', 'help']) {
+      expect(disruptsBuilding(command), command).toBe(false)
+    }
+  })
+
+  it('allows talking, which touches nothing the agent is holding', () => {
+    expect(disruptsBuilding('say')).toBe(false)
+  })
+
+  it('has no opinion about a word that is not a command', () => {
+    // Read as an account rather than a verb, and the caller has already refused it by then.
+    expect(disruptsBuilding('Notch')).toBe(false)
   })
 })

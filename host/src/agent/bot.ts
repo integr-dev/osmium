@@ -6,6 +6,7 @@ import { type Endpoint, locate } from './address.ts'
 import { type Component, componentsOf } from './chat.ts'
 import {
   addressedTo,
+  disruptsBuilding,
   allows,
   commandIn,
   grantFrom,
@@ -143,6 +144,16 @@ export class Agent {
    * it. Rebuilt per session, like the watcher, because it holds the bot. */
   private mapper: AgentMap | undefined
   private carrying: AgentInventory | undefined
+
+  /**
+   * The segments this host has been handed for this agent and not been told to drop.
+   *
+   * Tracked even though this build cannot place a block yet, and not as a placeholder for that: the
+   * backend genuinely hands segments out, and holding one is already the fact that decides whether
+   * an action is safe. Once building lands this is the state it works from rather than a second
+   * one beside it.
+   */
+  private readonly segments = new Set<number>()
   /**
    * The name of the world this session is standing in, as the server calls it.
    *
@@ -335,28 +346,53 @@ export class Agent {
       case 'settings':
         return this.configure(command.values)
 
+      // All three move what the agent is placing from. See `busy`.
       case 'inventory_move':
+        if (this.busy('inventory_move')) return
         return this.shift(command.from, command.to)
 
       case 'inventory_drop':
+        if (this.busy('inventory_drop')) return
         return this.drop(command.slot, command.count)
 
       case 'inventory_hold':
+        if (this.busy('inventory_hold')) return
         return this.hold(command.slot)
 
-      // Not built yet. Ignoring is the honest answer - reporting progress on a box nobody is placing
-      // would be worse than silence.
+      // Placing is not built yet, and ignoring that half is the honest answer - reporting progress
+      // on a box nobody is filling would be worse than silence. The segment is still *held*, which
+      // is what makes the agent refuse anything that would disturb it.
       case 'build_segment':
-        log.warn(`Agent ${this.id} cannot build yet, ignoring segment ${command.segmentId}`)
+        this.segments.add(command.segmentId)
+        log.warn(`Agent ${this.id} cannot build yet, holding segment ${command.segmentId} idle`)
         return
 
-      // Satisfied by never having started.
+      // Satisfied by never having started, and it stops being held either way.
       case 'cancel_segment':
+        this.segments.delete(command.segmentId)
         return
 
       case 'delete_agent':
         return this.remove()
     }
+  }
+
+  /**
+   * Whether the agent is in the middle of a segment, and therefore not to be disturbed.
+   *
+   * **Checked here as well as on the backend, which already refuses these.** Two reasons, and
+   * neither is distrust: chat commands never pass through the backend at all, so this is the only
+   * guard they have - and a host that relies on the far side having the right idea of what it is
+   * doing is a host that does the wrong thing the moment the two disagree.
+   *
+   * Refusing is silent apart from the log. There is nobody to answer: a command arrives with no
+   * result channel, and a chat command is answered by the caller.
+   */
+  private busy(what: string): boolean {
+    if (this.segments.size === 0) return false
+
+    log.warn(`Agent ${this.id} refused ${what}: building segment(s) ${[...this.segments].join(', ')}`)
+    return true
   }
 
   private async connect(address: string): Promise<void> {
@@ -655,6 +691,9 @@ export class Agent {
     this.unwatch()
     this.unmap()
     this.uncarry()
+    // Whatever it was holding is the backend's again: leaving the game releases every segment, and
+    // a set that outlived the session would refuse commands on behalf of work nobody is doing.
+    this.segments.clear()
 
     // Torn down here, because we may have settled this before the protocol did - an attempt that
     // failed its version ping still holds an open socket nothing else will ever close.
@@ -1001,6 +1040,11 @@ export class Agent {
       )
       return
     }
+
+    // Silently, like every other refusal here. Somebody trusted enough to send this is somebody who
+    // will see the agent standing on a half-built wall and work out why; answering would announce
+    // to the room that the account is a bot with work queued.
+    if (disruptsBuilding(command.name) && this.busy(`${command.name} from ${speaker ?? 'chat'}`)) return
 
     log.info(`Agent ${this.id} was told to ${command.name} by ${speaker}`)
 

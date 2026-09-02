@@ -29,6 +29,8 @@ const props = defineProps<{
   online: boolean
 }>()
 
+const building = computed(() => agentStore.isBuilding(props.agentId))
+
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 
@@ -123,10 +125,19 @@ const pickedItem = computed(() => (picked.value === null ? null : (bySlot.value.
  */
 const busy = ref(false)
 
-/** Why the squares do nothing, or null when they do. */
+/**
+ * Why the squares do nothing, or null when they do.
+ *
+ * Building is the one of the three that is temporary and that the operator caused. What an agent
+ * is carrying while it builds *is* the build - moving a stack out of the square it places from
+ * leaves it putting the wrong block somewhere, and the damage surfaces minutes later as a wall
+ * with holes in it. The backend refuses these outright; saying so here is what stops an operator
+ * finding out by having a click fail.
+ */
 const blocked = computed<string | null>(() => {
   if (!auth.can('agent.run')) return t('inventory.blockedPermission')
   if (!props.online) return t('inventory.blockedOffline')
+  if (building.value) return t('inventory.blockedBuilding')
   return null
 })
 

@@ -444,6 +444,8 @@ export const en = {
     dropStack: 'Drop stack',
     /** Why the squares do nothing. Moving an item is a click in a window that needs a session. */
     blockedOffline: 'Not in game, so nothing can be moved.',
+    /** Temporary, and the operator's own doing — so it says what to wait for, not what is wrong. */
+    blockedBuilding: 'Building. What it is carrying is the build, so nothing can be moved until the segment is done.',
     blockedPermission: 'Moving items needs the same permission as running the agent.',
   },
 

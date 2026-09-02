@@ -1270,6 +1270,13 @@ hits, places and eats with, so it is a fact worth both showing and setting. An e
 is therefore selectable even though there is nothing in it — an empty hand is a real choice — while
 an empty square anywhere else is not, because no click there could mean anything.
 
+### It locks while the agent is building
+
+A third reason the squares go inert, alongside no permission and not in game — and the only one that
+is temporary and the operator's own doing. What an agent carries while it builds *is* the build, so
+the backend refuses these outright; saying so on the card is what stops somebody discovering it by
+having a click fail.
+
 ### Moving is a drag; clicking opens a panel
 
 It was both for a while, sharing one selection — which meant clicking two squares in a row moved an

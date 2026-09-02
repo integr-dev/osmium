@@ -88,20 +88,26 @@ export function grantLabel(grant: Grant | undefined): string {
  * stale silently, because nothing fails. Adding a command here is the whole of adding a command:
  * the parser accepts it, `help` lists it, and the only thing left is what it does.
  *
+ * `disrupts` says whether it is refused while the agent is holding a build segment, and the
+ * `satisfies` below is what makes answering it compulsory — a command added without it does not
+ * compile. `run` is why it exists at all: it hands somebody an arbitrary server command, so a
+ * `/tp` typed in chat can take a builder off its box mid-segment. `disconnect` and `reconnect` end
+ * the session under it. The rest only read, or talk.
+ *
  * A first word that is not one of these keys is read as an account instead.
  */
 export const COMMANDS = {
-  id: { args: '', needs: 'chat' },
-  ping: { args: '', needs: 'chat' },
-  health: { args: '', needs: 'chat' },
-  food: { args: '', needs: 'chat' },
-  uptime: { args: '', needs: 'chat' },
-  say: { args: '<message>', needs: 'chat' },
-  help: { args: '', needs: 'chat' },
-  run: { args: '<command>', needs: 'commands' },
-  disconnect: { args: '', needs: 'commands' },
-  reconnect: { args: '', needs: 'commands' },
-} as const
+  id: { args: '', needs: 'chat', disrupts: false },
+  ping: { args: '', needs: 'chat', disrupts: false },
+  health: { args: '', needs: 'chat', disrupts: false },
+  food: { args: '', needs: 'chat', disrupts: false },
+  uptime: { args: '', needs: 'chat', disrupts: false },
+  say: { args: '<message>', needs: 'chat', disrupts: false },
+  help: { args: '', needs: 'chat', disrupts: false },
+  run: { args: '<command>', needs: 'commands', disrupts: true },
+  disconnect: { args: '', needs: 'commands', disrupts: true },
+  reconnect: { args: '', needs: 'commands', disrupts: true },
+} as const satisfies Record<string, { args: string; needs: Trust; disrupts: boolean }>
 
 /** Minecraft refuses a chat message longer than this, and a server usually kicks for trying. */
 const SAY_MAX = 256
@@ -232,6 +238,11 @@ export function addressedTo(command: ChatCommand, account: string | undefined): 
 }
 
 /** Whether a word is a command this build answers. Exported for {@link allows}. */
+/** Whether a command must wait until the agent has finished the segment it is holding. */
+export function disruptsBuilding(command: string): boolean {
+  return COMMANDS[command as CommandName]?.disrupts === true
+}
+
 export function isCommand(word: string): word is CommandName {
   return Object.hasOwn(COMMANDS, word)
 }

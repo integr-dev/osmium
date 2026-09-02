@@ -522,7 +522,30 @@ class AgentService(
      * when it reports back, not when the command is accepted here.
      */
     private fun dispatch(agent: Agent, type: String, payload: Map<String, Any?> = emptyMap()) {
+        refuseIfBuilding(agent, type)
         if (!offer(agent, type, payload)) throw HostUnreachableException(agent.host.name)
+    }
+
+    /**
+     * Stops a command that would corrupt a build the agent is in the middle of.
+     *
+     * **Here, in the one funnel every command goes through**, rather than at each call site. A guard
+     * on the three verbs that need it today is a guard somebody forgets on the fourth, and the
+     * failure mode is silent: the command works, the build comes out wrong, and nothing connects
+     * the two. Put here, a new command is refused or allowed because [CommandType.DISRUPTS_BUILDING]
+     * says so, and a command that is in neither set fails a test rather than shipping unclassified.
+     *
+     * Holding a segment is the condition, not "the job is running": a job with work left but
+     * nothing assigned to this agent is a job this agent is not in the middle of.
+     */
+    private fun refuseIfBuilding(agent: Agent, type: String) {
+        if (type !in CommandType.DISRUPTS_BUILDING) return
+
+        val agentId = agent.id ?: return
+        val holding = buildJobs.segmentsHeldBy(agentId)
+        check(holding.isEmpty()) {
+            "'${agent.label}' is building ${holding.joinToString(", ")} and cannot be interrupted"
+        }
     }
 
     /**

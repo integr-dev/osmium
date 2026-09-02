@@ -324,6 +324,11 @@ the item not having moved, which is what happened.
 Fire and forget. Throw a square's contents on the ground. An **absent `count` means the whole
 stack**, which is the ordinary case. Same slot range as `inventory_move`.
 
+**Refuse all three while the agent is holding a segment.** What a builder is carrying is the build:
+it places out of a square, and moving a stack out of that square leaves it putting the wrong block
+somewhere. The backend refuses them too, so this is the second of two — which is the point, because
+the chat commands below have no first. Refuse silently; there is no result channel on these.
+
 **Use the game's own drop click — mode 4 on the named slot.** Button 1 throws the stack, button 0
 throws one, and neither picks anything up. There is no "drop N" click in the protocol, so a partial
 drop is that many button-0 clicks.
@@ -834,6 +839,15 @@ card would sit empty for as long as it stood there.
 
 The backend clears an inventory when the agent leaves the game and at no other time. There is no
 clock on it, deliberately — see the Charting section's neighbour in FLEET_CONNECTIVITY.md.
+
+### Commands wait for a build
+
+A host that is holding a segment refuses `run`, `disconnect` and `reconnect` from chat. `run` hands
+whoever typed it an arbitrary server command, so a `/tp` from a trusted player takes a builder off
+its box mid-segment; the other two end the session under it. Everything else only reads or talks.
+
+**Silently, like every other refusal here.** Answering would tell the room that the account is a bot
+with work queued, which is the thing §5.1 spends its length avoiding.
 
 ## 5. Chat scoping and the listener role
 

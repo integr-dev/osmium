@@ -1299,4 +1299,62 @@ class BuildJobControllerTest : AbstractRestTest() {
             jsonPath("$.length()") { value(1) }
         }
     }
+
+    /**
+     * An agent in the middle of a segment is not to be interrupted.
+     *
+     * What a builder is carrying *is* the build: it is placing out of a square, and moving a stack
+     * out of that square leaves it putting the wrong block somewhere - or nothing - and the damage
+     * shows up minutes later as a wall with holes in it, nowhere near the click that caused it.
+     *
+     * Refused in `AgentService.dispatch`, which every command passes through, so this is the whole
+     * class of them rather than these three verbs. See CommandSafetyTest for the classification.
+     */
+    @Test
+    fun `an agent holding a segment refuses what would disturb its inventory`() {
+        val host = reachableHost()
+        val build = placedBuild()
+        val mason = onlineAgent("Mason_01", host)
+        // Once, outside the loop: `authAs` creates the account, so asking three times asks for three
+        // accounts with one name.
+        val auth = authAs("ada", RoleNames.ORCHESTRATOR)
+
+        start(build.id!!, listOf(mason.id!!)).andExpect { status { isCreated() } }
+
+        for (body in listOf(
+            "inventory/move" to """{"from":36,"to":9}""",
+            "inventory/drop" to """{"slot":36}""",
+            "inventory/hold" to """{"slot":40}""",
+        )) {
+            mockMvc.post("/api/agents/${mason.id}/${body.first}") {
+                header(HttpHeaders.AUTHORIZATION, auth)
+                contentType = MediaType.APPLICATION_JSON
+                content = body.second
+            }.andExpect {
+                status { isConflict() }
+            }
+        }
+    }
+
+    @Test
+    fun `an agent holding a segment can still be talked to and watched`() {
+        // The line is *corrupts*, not *interrupts*. An operator watching a build is exactly who
+        // needs chat working while it runs, and neither of these touches what the agent is holding.
+        val host = reachableHost()
+        val build = placedBuild()
+        val mason = onlineAgent("Mason_01", host)
+
+        start(build.id!!, listOf(mason.id!!)).andExpect { status { isCreated() } }
+
+        // 503 rather than 409: the command is allowed and gets as far as delivery, where there is
+        // no host socket behind the row. Being refused for *building* would be a 409.
+        mockMvc.post("/api/agents/${mason.id}/chat") {
+            header(HttpHeaders.AUTHORIZATION, authAs("ada", RoleNames.ADMINISTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"on my way"}"""
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+    }
+
 }

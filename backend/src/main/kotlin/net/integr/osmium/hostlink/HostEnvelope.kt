@@ -164,6 +164,56 @@ object CommandType {
     const val INVENTORY_HOLD = "inventory_hold"
 
     /**
+     * Every command this backend can send.
+     *
+     * Written down for the same reason [net.integr.osmium.security.Nodes.ALL] is: something has to
+     * be able to ask "and what about all the others?". [DISRUPTS_BUILDING] is that question, and a
+     * test fails if a command is added here without answering it.
+     */
+    val ALL: Set<String> = setOf(
+        SETUP_AGENT,
+        CONNECT,
+        DISCONNECT,
+        CHAT,
+        SET_CHAT_LISTENER,
+        SET_VIEWER,
+        SETTINGS,
+        BUILD_SEGMENT,
+        CANCEL_SEGMENT,
+        INVENTORY_MOVE,
+        INVENTORY_DROP,
+        INVENTORY_HOLD,
+        DELETE_AGENT,
+    )
+
+    /**
+     * The commands refused while an agent is holding a segment.
+     *
+     * **What an agent is carrying is the build.** A builder is handed a box and the materials to
+     * fill it; moving an item out of the square it places from, dropping the stack it is placing,
+     * or changing which square is in hand all leave it putting the wrong block somewhere or nothing
+     * at all — and the failure surfaces minutes later as a wall with holes in it, nowhere near the
+     * click that caused it.
+     *
+     * **Everything else is allowed on purpose**, and the line is *corrupts* rather than
+     * *interrupts*:
+     *
+     * - `disconnect` stops the build, and cleanly: the segment goes back to the pool and somebody
+     *   else picks it up. An operator who presses it has decided to stop, with the state in front
+     *   of them, and refusing that would be refusing to let them stop.
+     * - `chat`, `set_chat_listener`, `set_viewer` and `settings` do not touch what the agent is
+     *   holding or where it is standing.
+     * - `build_segment` and `cancel_segment` *are* the build system.
+     * - `setup_agent` and `connect` cannot reach an agent that is in the game anyway, and
+     *   `delete_agent` is the operator taking the agent away entirely, which releases the segment.
+     */
+    val DISRUPTS_BUILDING: Set<String> = setOf(
+        INVENTORY_MOVE,
+        INVENTORY_DROP,
+        INVENTORY_HOLD,
+    )
+
+    /**
      * This agent is gone: `{}`, with the agent named on the envelope.
      *
      * A host binds each credential to the agent it was acquired for, so that a restart can rebuild

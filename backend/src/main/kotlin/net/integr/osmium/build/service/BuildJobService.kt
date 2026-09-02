@@ -507,6 +507,24 @@ class BuildJobService(
      * The block count is deliberately left alone. Those blocks are still standing, and the number
      * stays the last thing anybody observed until the next agent surveys the box itself.
      */
+    /**
+     * Which segments this agent is in the middle of, by their ordinal.
+     *
+     * The question "is it safe to interrupt this agent" reduces to this one. Reported as the
+     * ordinals rather than as a boolean so that a refusal can name what it is protecting - "is
+     * building" tells an operator nothing they can act on, and "is building segments 3, 4" tells
+     * them exactly which piece they would have broken.
+     *
+     * The same definition [releaseSegmentsOf] uses: a live segment on a job that has not finished.
+     * A job with work left but nothing assigned to this agent is a job this agent is not in the
+     * middle of, which is why membership is not the test.
+     */
+    fun segmentsHeldBy(agentId: Long): List<Int> =
+        jobs.findAllHoldingAgent(agentId)
+            .flatMap { job -> job.segments.filter { it.live && it.agent?.id == agentId } }
+            .map { it.ordinal }
+            .sorted()
+
     @Transactional
     fun releaseSegmentsOf(agent: Agent) {
         val agentId = agent.id ?: return
