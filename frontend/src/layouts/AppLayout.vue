@@ -14,6 +14,7 @@ import {
   MessagesSquare,
   Plus,
   RotateCw,
+  HardDrive,
   ScrollText,
   Search,
   Network,
@@ -304,53 +305,73 @@ async function logout() {
           No scrollbar gutter here any more: nothing on this element scrolls, so there is none to
           reserve room for.
         -->
-        <!-- Padding is the layout's, except where a screen has asked to own the whole frame. -->
+        <!--
+          Padding is the layout's, except where a screen has asked to own the whole frame, and there
+          are two ways of asking.
+
+          `full` is a window onto somewhere — the map, the viewer — where a margin is world nobody
+          can see. `scrolls` is a page that is simply taller than the frame: it keeps the margin,
+          but applies it *inside* its own scroller, so the scrollbar runs down the frame's right
+          edge instead of six units in from it with page either side of it.
+        -->
         <main
           class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-          :class="route.meta.full ? '' : 'px-6 py-8'"
+          :class="route.meta.full || route.meta.scrolls ? '' : 'px-6 py-8'"
         >
           <!--
-            On every page rather than tucked into My account. It is the only way the person it
-            happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
-            administrator and not them — and somebody who has just been signed out with no
-            explanation should not have to go looking.
+            The two notices below are the layout's own, not the page's, so they keep the layout's
+            margin whoever owns the rest of it — a warning hard against the window edge reads as
+            broken. Wrapped rather than padded one by one so either alone gets the same gap, and
+            absent entirely when neither is up, since a padded empty box is a stripe of nothing.
           -->
           <div
-            v-if="auth.sessionAlertAt"
-            role="alert"
-            class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+            v-if="auth.sessionAlertAt || streamDown"
+            class="shrink-0"
+            :class="route.meta.scrolls ? 'px-6 pt-8' : ''"
           >
-            <ShieldAlert class="mt-0.5 size-5 shrink-0" />
-            <span class="min-w-0 flex-1">
-              <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
-              <span class="block text-sm opacity-80">
-                {{ t('sessions.alertBody', { when: atShort(auth.sessionAlertAt) }) }}
+            <!--
+              On every page rather than tucked into My account. It is the only way the person it
+              happened to hears about it at all — the audit trail needs `audit.read`, which reaches an
+              administrator and not them — and somebody who has just been signed out with no
+              explanation should not have to go looking.
+            -->
+            <div
+              v-if="auth.sessionAlertAt"
+              role="alert"
+              class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+            >
+              <ShieldAlert class="mt-0.5 size-5 shrink-0" />
+              <span class="min-w-0 flex-1">
+                <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
+                <span class="block text-sm opacity-80">
+                  {{ t('sessions.alertBody', { when: atShort(auth.sessionAlertAt) }) }}
+                </span>
               </span>
-            </span>
-            <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
-              {{ t('sessions.alertDismiss') }}
-            </button>
-          </div>
+              <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
+                {{ t('sessions.alertDismiss') }}
+              </button>
+            </div>
 
-          <!--
-            The one thing nothing on a page can say for itself: what is on screen is real but has
-            stopped moving. Every list here is fed by the stream and none of them poll, so without
-            this a frozen page and a quiet one are the same picture.
+            <!--
+              The one thing nothing on a page can say for itself: what is on screen is real but has
+              stopped moving. Every list here is fed by the stream and none of them poll, so without
+              this a frozen page and a quiet one are the same picture.
 
-            Not dismissible, unlike the notice above it. That one is about something that already
-            happened; this one is about the state of the screen right now, and it goes away by
-            being fixed.
-          -->
-          <div
-            v-if="streamDown"
-            role="status"
-            class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
-          >
-            <WifiOff class="mt-0.5 size-5 shrink-0" />
-            <span class="min-w-0 flex-1">
-              <span class="block font-medium">{{ t('connection.streamLost') }}</span>
-              <span class="block text-sm opacity-80">{{ t('connection.streamLostBody') }}</span>
-            </span>
+              Not dismissible, unlike the notice above it. That one is about something that already
+              happened; this one is about the state of the screen right now, and it goes away by
+              being fixed.
+            -->
+            <div
+              v-if="streamDown"
+              role="status"
+              class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+            >
+              <WifiOff class="mt-0.5 size-5 shrink-0" />
+              <span class="min-w-0 flex-1">
+                <span class="block font-medium">{{ t('connection.streamLost') }}</span>
+                <span class="block text-sm opacity-80">{{ t('connection.streamLostBody') }}</span>
+              </span>
+            </div>
           </div>
 
           <!--
@@ -780,6 +801,12 @@ async function logout() {
                 <RouterLink :to="{ name: 'audit' }" class="gap-3">
                   <ScrollText class="size-4 shrink-0" />
                   {{ t('nav.auditLog') }}
+                </RouterLink>
+              </li>
+              <li v-if="auth.can('storage.read')">
+                <RouterLink :to="{ name: 'storage' }" class="gap-3">
+                  <HardDrive class="size-4 shrink-0" />
+                  {{ t('nav.storage') }}
                 </RouterLink>
               </li>
               <li>

@@ -37,6 +37,9 @@ const routes: RouteRecordRaw[] = [
         path: 'agents/:id',
         name: 'agent',
         component: () => import('../views/AgentDetailView.vue'),
+        // A column of cards, several of them long enough that scrolling one is not an option. The
+        // page takes the whole frame and scrolls itself; see the scrolls note in AppLayout.
+        meta: { scrolls: true },
       },
       {
         // Its own node, and not `agent.read`: watching makes a host follow every block change and
@@ -79,6 +82,8 @@ const routes: RouteRecordRaw[] = [
         path: 'account',
         name: 'account',
         component: () => import('../views/MyAccountView.vue'),
+        // The same shape as an agent's page: cards down a column, taller than the frame.
+        meta: { scrolls: true },
       },
       {
         path: 'accounts',
@@ -91,6 +96,14 @@ const routes: RouteRecordRaw[] = [
         name: 'audit',
         component: () => import('../views/AuditView.vue'),
         meta: { node: 'audit.read' },
+      },
+      {
+        // Its own node rather than an administrator check: nothing in this app is gated on a role,
+        // and what this reads is a map of everything the deployment stores.
+        path: 'storage',
+        name: 'storage',
+        component: () => import('../views/StorageView.vue'),
+        meta: { node: 'storage.read', scrolls: true },
       },
     ],
   },

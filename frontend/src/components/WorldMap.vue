@@ -672,7 +672,12 @@ const scale = computed(() => {
 </script>
 
 <template>
-  <div class="relative min-h-0 flex-1 overflow-hidden rounded-lg">
+  <!--
+    Square corners, not rounded. This pane is full bleed - it runs to the edges of the frame - so a
+    radius here does not soften a card, it cuts four notches out of the corners of the window and
+    shows the page behind them. `overflow-hidden` stays: it is what keeps the canvas inside.
+  -->
+  <div class="relative min-h-0 flex-1 overflow-hidden">
     <canvas
       ref="canvas"
       class="size-full cursor-grab touch-none active:cursor-grabbing"

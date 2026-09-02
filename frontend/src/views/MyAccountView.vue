@@ -114,226 +114,234 @@ async function changePassword() {
 </script>
 
 <template>
-  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
-    <header>
-      <h1 class="text-2xl font-semibold tracking-tight">{{ t('account.title') }}</h1>
-      <p class="text-sm opacity-60">{{ t('account.subtitle') }}</p>
-    </header>
+  <!--
+    The frame scrolls; the column inside it is what is centred. The other way round puts the
+    scrollbar wherever that column happens to end, which on a wide screen is a bar down the middle
+    of the page with content either side of it. The layout hands this page its own margins for the
+    same reason - see `scrolls` in AppLayout.
+  -->
+  <div class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
+    <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
+      <header>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ t('account.title') }}</h1>
+        <p class="text-sm opacity-60">{{ t('account.subtitle') }}</p>
+      </header>
 
-    <div class="grid gap-6 lg:grid-cols-3">
-      <div class="card border-base-300 bg-base-200 border lg:col-span-1">
-        <div class="card-body gap-0">
-          <div class="flex flex-col items-center gap-3 pb-6 text-center">
-            <div class="avatar avatar-placeholder">
-              <div
-                class="bg-primary text-primary-content ring-primary/20 w-20 rounded-full ring-4 ring-offset-0"
-              >
-                <span class="text-2xl font-semibold">{{ initial }}</span>
+      <div class="grid gap-6 lg:grid-cols-3">
+        <div class="card border-base-300 bg-base-200 border lg:col-span-1">
+          <div class="card-body gap-0">
+            <div class="flex flex-col items-center gap-3 pb-6 text-center">
+              <div class="avatar avatar-placeholder">
+                <div
+                  class="bg-primary text-primary-content ring-primary/20 w-20 rounded-full ring-4 ring-offset-0"
+                >
+                  <span class="text-2xl font-semibold">{{ initial }}</span>
+                </div>
+              </div>
+              <div>
+                <div class="text-lg leading-tight font-semibold">{{ auth.user?.username }}</div>
+                <span
+                  v-if="auth.user?.role"
+                  class="badge badge-primary badge-soft badge-sm mt-2 gap-1 capitalize"
+                >
+                  <component :is="roleIcon(auth.user.role)" class="size-3" />
+                  {{ auth.user.role }}
+                </span>
+                <span v-else class="badge badge-ghost badge-sm mt-2">{{ t('account.noRole') }}</span>
               </div>
             </div>
-            <div>
-              <div class="text-lg leading-tight font-semibold">{{ auth.user?.username }}</div>
-              <span
-                v-if="auth.user?.role"
-                class="badge badge-primary badge-soft badge-sm mt-2 gap-1 capitalize"
+
+            <div class="border-base-300 flex flex-col gap-2 border-t pt-4">
+              <button
+                v-if="auth.can('user.edit.self')"
+                class="btn btn-soft btn-sm w-full justify-start gap-3"
+                @click="openRename"
               >
-                <component :is="roleIcon(auth.user.role)" class="size-3" />
-                {{ auth.user.role }}
-              </span>
-              <span v-else class="badge badge-ghost badge-sm mt-2">{{ t('account.noRole') }}</span>
+                <PencilLine class="size-4 opacity-70" />
+                {{ t('account.rename') }}
+              </button>
+              <button class="btn btn-soft btn-sm w-full justify-start gap-3" @click="openPassword">
+                <KeyRound class="size-4 opacity-70" />
+                {{ t('account.changePassword') }}
+              </button>
             </div>
           </div>
+        </div>
 
-          <div class="border-base-300 flex flex-col gap-2 border-t pt-4">
-            <button
-              v-if="auth.can('user.edit.self')"
-              class="btn btn-soft btn-sm w-full justify-start gap-3"
-              @click="openRename"
-            >
-              <PencilLine class="size-4 opacity-70" />
-              {{ t('account.rename') }}
-            </button>
-            <button class="btn btn-soft btn-sm w-full justify-start gap-3" @click="openPassword">
-              <KeyRound class="size-4 opacity-70" />
-              {{ t('account.changePassword') }}
-            </button>
+        <div class="card border-base-300 bg-base-200 border lg:col-span-2">
+          <div class="card-body gap-3">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <ShieldCheck class="text-primary size-4" />
+              {{ t('account.role') }}
+            </h2>
+            <p class="text-sm opacity-60">
+              {{ t('account.roleHint') }}
+            </p>
+
+            <ul v-if="auth.user?.role" class="flex flex-col gap-2">
+              <li
+                v-for="tier in tiers"
+                :key="tier.name"
+                class="rounded-box flex items-center gap-3 border p-3 transition-colors"
+                :class="
+                  tier.current
+                    ? 'border-primary/50 bg-primary/5'
+                    : tier.held
+                      ? 'border-base-300 bg-base-300/20'
+                      : 'border-base-300/50 opacity-40'
+                "
+              >
+                <div
+                  class="rounded-field flex size-9 shrink-0 items-center justify-center"
+                  :class="tier.held ? 'bg-primary/15 text-primary' : 'bg-base-300/40'"
+                >
+                  <component :is="roleIcon(tier.name)" class="size-4.5" />
+                </div>
+                <!--
+                  The tier and whether it is held, and nothing else. What the account can actually do
+                  is the Permissions card below, and repeating every node inside each tier said the
+                  same thing three times over — the administrator row alone listed twelve.
+                -->
+                <div class="flex min-w-0 flex-1 items-center gap-2">
+                  <span class="font-medium capitalize">{{ tier.name }}</span>
+                  <span v-if="tier.current" class="badge badge-primary badge-xs">{{ t('account.current') }}</span>
+                  <span v-else-if="tier.held" class="text-xs opacity-50">{{ t('account.included') }}</span>
+                </div>
+              </li>
+            </ul>
+
+            <div v-else class="flex items-center gap-2 py-6 text-sm opacity-60">
+              <TriangleAlert class="size-4" />
+              {{ t('account.noRoleAssigned') }}
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="card border-base-300 bg-base-200 border lg:col-span-2">
+      <AccountSessions />
+
+      <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <ShieldCheck class="text-primary size-4" />
-            {{ t('account.role') }}
+            <KeyRound class="text-primary size-4" />
+            {{ t('account.permissions') }}
+            <span class="badge badge-ghost badge-sm">{{ auth.user?.nodes?.length ?? 0 }}</span>
           </h2>
           <p class="text-sm opacity-60">
-            {{ t('account.roleHint') }}
+            {{ t('account.permissionsHint') }}
           </p>
-
-          <ul v-if="auth.user?.role" class="flex flex-col gap-2">
-            <li
-              v-for="tier in tiers"
-              :key="tier.name"
-              class="rounded-box flex items-center gap-3 border p-3 transition-colors"
-              :class="
-                tier.current
-                  ? 'border-primary/50 bg-primary/5'
-                  : tier.held
-                    ? 'border-base-300 bg-base-300/20'
-                    : 'border-base-300/50 opacity-40'
-              "
+          <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            <div
+              v-for="node in auth.user?.nodes ?? []"
+              :key="node"
+              class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2"
             >
-              <div
-                class="rounded-field flex size-9 shrink-0 items-center justify-center"
-                :class="tier.held ? 'bg-primary/15 text-primary' : 'bg-base-300/40'"
-              >
-                <component :is="roleIcon(tier.name)" class="size-4.5" />
-              </div>
-              <!--
-                The tier and whether it is held, and nothing else. What the account can actually do
-                is the Permissions card below, and repeating every node inside each tier said the
-                same thing three times over — the administrator row alone listed twelve.
-              -->
-              <div class="flex min-w-0 flex-1 items-center gap-2">
-                <span class="font-medium capitalize">{{ tier.name }}</span>
-                <span v-if="tier.current" class="badge badge-primary badge-xs">{{ t('account.current') }}</span>
-                <span v-else-if="tier.held" class="text-xs opacity-50">{{ t('account.included') }}</span>
-              </div>
-            </li>
-          </ul>
-
-          <div v-else class="flex items-center gap-2 py-6 text-sm opacity-60">
-            <TriangleAlert class="size-4" />
-            {{ t('account.noRoleAssigned') }}
+              <KeyRound class="text-primary size-3.5 shrink-0 opacity-70" />
+              <span class="min-w-0">
+                <span class="block truncate text-sm">{{ nodeLabel(node) }}</span>
+                <span class="block truncate font-mono text-[0.7rem] opacity-40">{{ node }}</span>
+              </span>
+            </div>
+            <span v-if="!auth.user?.nodes?.length" class="text-sm opacity-60">{{ t('account.noPermissions') }}</span>
           </div>
         </div>
       </div>
-    </div>
 
-    <AccountSessions />
+      <dialog ref="renameDialog" class="modal">
+        <div class="modal-box">
+          <h3 class="flex items-center gap-2 text-lg font-semibold">
+            <PencilLine class="text-primary size-5" />
+            {{ t('account.rename') }}
+          </h3>
+          <p class="mt-1 text-sm opacity-60">
+            {{ t('account.renameWarning') }}
+          </p>
+          <form class="mt-5 flex flex-col gap-4" @submit.prevent="rename">
+            <FormField
+              v-model="username"
+              :label="t('account.username')"
+              :icon="UserRound"
+              type="text"
+              maxlength="64"
+              required
+            />
 
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-3">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <KeyRound class="text-primary size-4" />
-          {{ t('account.permissions') }}
-          <span class="badge badge-ghost badge-sm">{{ auth.user?.nodes?.length ?? 0 }}</span>
-        </h2>
-        <p class="text-sm opacity-60">
-          {{ t('account.permissionsHint') }}
-        </p>
-        <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-          <div
-            v-for="node in auth.user?.nodes ?? []"
-            :key="node"
-            class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2"
-          >
-            <KeyRound class="text-primary size-3.5 shrink-0 opacity-70" />
-            <span class="min-w-0">
-              <span class="block truncate text-sm">{{ nodeLabel(node) }}</span>
-              <span class="block truncate font-mono text-[0.7rem] opacity-40">{{ node }}</span>
-            </span>
-          </div>
-          <span v-if="!auth.user?.nodes?.length" class="text-sm opacity-60">{{ t('account.noPermissions') }}</span>
+            <div v-if="renameState.error" role="alert" class="alert alert-error alert-soft">
+              <CircleAlert class="size-4" />
+              <span>{{ renameState.error }}</span>
+            </div>
+            <div v-else-if="renameState.done" role="alert" class="alert alert-warning alert-soft">
+              <TriangleAlert class="size-4" />
+              <span>{{ t('account.renamed') }}</span>
+            </div>
+
+            <div class="modal-action">
+              <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">
+                {{ t('common.close') }}
+              </button>
+              <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+            </div>
+          </form>
         </div>
-      </div>
+        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      </dialog>
+
+      <dialog ref="passwordDialog" class="modal">
+        <div class="modal-box">
+          <h3 class="flex items-center gap-2 text-lg font-semibold">
+            <KeyRound class="text-primary size-5" />
+            {{ t('account.changePassword') }}
+          </h3>
+          <p class="mt-1 text-sm opacity-60">{{ t('account.passwordHint') }}</p>
+          <form class="mt-5 flex flex-col gap-4" @submit.prevent="changePassword">
+            <FormField
+              v-model="currentPassword"
+              :label="t('account.currentPassword')"
+              :icon="KeyRound"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+            <FormField
+              v-model="newPassword"
+              :label="t('account.newPassword')"
+              :icon="KeyRound"
+              type="password"
+              autocomplete="new-password"
+              minlength="4"
+              maxlength="72"
+              required
+            />
+            <FormField
+              v-model="confirmPassword"
+              :label="t('account.confirmPassword')"
+              :placeholder="t('account.confirmPlaceholder')"
+              :icon="CheckCheck"
+              :invalid="Boolean(confirmPassword) && confirmPassword !== newPassword"
+              type="password"
+              autocomplete="new-password"
+              required
+            />
+
+            <div v-if="passwordState.error" role="alert" class="alert alert-error alert-soft">
+              <CircleAlert class="size-4" />
+              <span>{{ passwordState.error }}</span>
+            </div>
+            <div v-else-if="passwordState.done" role="alert" class="alert alert-success alert-soft">
+              <CircleCheck class="size-4" />
+              <span>{{ t('account.passwordChanged') }}</span>
+            </div>
+
+            <div class="modal-action">
+              <button class="btn btn-ghost btn-sm" type="button" @click="passwordDialog?.close()">
+                {{ t('common.close') }}
+              </button>
+              <button class="btn btn-primary btn-sm" type="submit">{{ t('account.changePassword') }}</button>
+            </div>
+          </form>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
+      </dialog>
     </div>
-
-    <dialog ref="renameDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <PencilLine class="text-primary size-5" />
-          {{ t('account.rename') }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">
-          {{ t('account.renameWarning') }}
-        </p>
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="rename">
-          <FormField
-            v-model="username"
-            :label="t('account.username')"
-            :icon="UserRound"
-            type="text"
-            maxlength="64"
-            required
-          />
-
-          <div v-if="renameState.error" role="alert" class="alert alert-error alert-soft">
-            <CircleAlert class="size-4" />
-            <span>{{ renameState.error }}</span>
-          </div>
-          <div v-else-if="renameState.done" role="alert" class="alert alert-warning alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ t('account.renamed') }}</span>
-          </div>
-
-          <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">
-              {{ t('common.close') }}
-            </button>
-            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
-          </div>
-        </form>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
-
-    <dialog ref="passwordDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <KeyRound class="text-primary size-5" />
-          {{ t('account.changePassword') }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">{{ t('account.passwordHint') }}</p>
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="changePassword">
-          <FormField
-            v-model="currentPassword"
-            :label="t('account.currentPassword')"
-            :icon="KeyRound"
-            type="password"
-            autocomplete="current-password"
-            required
-          />
-          <FormField
-            v-model="newPassword"
-            :label="t('account.newPassword')"
-            :icon="KeyRound"
-            type="password"
-            autocomplete="new-password"
-            minlength="4"
-            maxlength="72"
-            required
-          />
-          <FormField
-            v-model="confirmPassword"
-            :label="t('account.confirmPassword')"
-            :placeholder="t('account.confirmPlaceholder')"
-            :icon="CheckCheck"
-            :invalid="Boolean(confirmPassword) && confirmPassword !== newPassword"
-            type="password"
-            autocomplete="new-password"
-            required
-          />
-
-          <div v-if="passwordState.error" role="alert" class="alert alert-error alert-soft">
-            <CircleAlert class="size-4" />
-            <span>{{ passwordState.error }}</span>
-          </div>
-          <div v-else-if="passwordState.done" role="alert" class="alert alert-success alert-soft">
-            <CircleCheck class="size-4" />
-            <span>{{ t('account.passwordChanged') }}</span>
-          </div>
-
-          <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="passwordDialog?.close()">
-              {{ t('common.close') }}
-            </button>
-            <button class="btn btn-primary btn-sm" type="submit">{{ t('account.changePassword') }}</button>
-          </div>
-        </form>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
   </div>
 </template>

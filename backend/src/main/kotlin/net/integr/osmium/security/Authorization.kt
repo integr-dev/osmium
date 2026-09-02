@@ -128,6 +128,25 @@ object Nodes {
     const val SCHEMATIC_WRITE = "schematic.write"
     const val SCHEMATIC_DELETE = "schematic.delete"
 
+    /**
+     * What the database is holding, broken down by what it is holding it for.
+     *
+     * Its own node rather than `audit.read`, which is the nearest thing to an administrator's
+     * general-purpose key. What this reads is sizes and row counts, never content - but it is a map
+     * of everything the deployment stores, and a map is worth gating on its own.
+     */
+    const val STORAGE_READ = "storage.read"
+
+    /**
+     * Deleting stored data in bulk, and reclaiming what deleting it left behind.
+     *
+     * Split from [STORAGE_READ] because looking is safe and this is not: it removes months of chat
+     * in one press. Kept apart from the per-resource deletions too - `schematic.delete` is about one
+     * design somebody chose, while this is about a whole class of records at once, and the two are
+     * not the same trust.
+     */
+    const val STORAGE_PURGE = "storage.purge"
+
     val ALL: Set<String> = setOf(
         USER_READ_SELF,
         USER_EDIT_SELF,
@@ -156,6 +175,8 @@ object Nodes {
         SCHEMATIC_READ,
         SCHEMATIC_WRITE,
         SCHEMATIC_DELETE,
+        STORAGE_READ,
+        STORAGE_PURGE,
     )
 }
 
@@ -227,6 +248,8 @@ object RoleDefinitions {
         Nodes.USER_SESSIONS_REVOKE,
         Nodes.AUDIT_READ,
         Nodes.AUDIT_EXPORT,
+        Nodes.STORAGE_READ,
+        Nodes.STORAGE_PURGE,
     )
 
     val ALL: List<RoleDefinition> = listOf(
