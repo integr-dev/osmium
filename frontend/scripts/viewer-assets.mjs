@@ -118,7 +118,7 @@ async function stageWorker() {
     // one - chunks reach the renderer as JSON that the page has already inflated, so the compression
     // path is never taken. Upstream stubs it the same way.
     alias: { util: 'util/', assert: 'assert/' },
-    plugins: [onlyMeshingData(), stub('zlib'), sectionsBelowZero()],
+    plugins: [onlyMeshingData(), stub('zlib'), upstreamPatches()],
     logLevel: 'error',
   })
   console.log('viewer-assets: built worker.js')
@@ -291,9 +291,11 @@ function onlyMeshingData() {
  * whole file to change one expression would mean owning the rest of it too. The build fails if the
  * expression is not found, so this cannot rot into a silent no-op.
  */
-function sectionsBelowZero() {
+function upstreamPatches() {
   /**
-   * Two independent assumptions that a world starts at y=0, in two files.
+   * Three edits to upstream's mesher, each for a bug that renders as missing world.
+   *
+   * The first two are independent assumptions that a world starts at y=0, in two files.
    *
    * `worker.js` decides whether a section exists by reading the array as though index 0 were y=0.
    * Since 1.18 index 0 is the section at `chunk.minY`, so below zero the lookup is `undefined`, the
@@ -305,6 +307,13 @@ function sectionsBelowZero() {
    * faces are not cullable at all: grass, azalea, the odd bush. Removed outright rather than made
    * `minY`-aware, because what it now protects against is a face at the true bottom of the world
    * that no camera can reach.
+   *
+   * The third is a substring test standing in for an equality test. `getModelVariants` opens by
+   * refusing to model air, and asks `block.name.includes('air')` - which is true of every block in
+   * the game whose name ends in **st-air-s**. Every staircase is therefore treated as air and given
+   * no model at all, so none has ever been drawn. Narrowed to the three blocks that are actually
+   * air; `missing_texture` is deliberately not among them, since that one has a model and is the
+   * whole point of the fallback beneath it.
    */
   const edits = [
     {
@@ -319,26 +328,37 @@ function sectionsBelowZero() {
       to: '/* osmium: a world may start below zero */',
       expected: 2,
     },
+    {
+      file: path.join(viewerRoot, 'viewer', 'lib', 'models.js'),
+      from: "if (block.name.includes('air')) return []",
+      to: "if (block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air') return []",
+      expected: 1,
+    },
   ]
 
   return {
-    name: 'osmium:sections-below-zero',
+    name: 'osmium:upstream-patches',
     setup(build) {
       build.onLoad({ filter: /viewer[\\/]lib[\\/](worker|models)\.js$/ }, ({ path: file }) => {
-        const edit = edits.find((candidate) => path.resolve(candidate.file) === path.resolve(file))
-        if (!edit) return undefined
+        // More than one edit may land in the same file, so they are all applied in turn rather
+        // than the first one winning.
+        const mine = edits.filter((candidate) => path.resolve(candidate.file) === path.resolve(file))
+        if (mine.length === 0) return undefined
 
-        const source = readFileSync(file, 'utf8')
-        const found = source.split(edit.from).length - 1
-        if (found !== edit.expected) {
-          throw new Error(
-            `viewer-assets: expected ${edit.expected} occurrences of "${edit.from}" in ` +
-              `${path.basename(file)}, found ${found}. Upstream has changed; re-read it before ` +
-              'assuming this patch is still right.',
-          )
+        let contents = readFileSync(file, 'utf8')
+        for (const edit of mine) {
+          const found = contents.split(edit.from).length - 1
+          if (found !== edit.expected) {
+            throw new Error(
+              `viewer-assets: expected ${edit.expected} occurrences of "${edit.from}" in ` +
+                `${path.basename(file)}, found ${found}. Upstream has changed; re-read it before ` +
+                'assuming this patch is still right.',
+            )
+          }
+          contents = contents.split(edit.from).join(edit.to)
         }
 
-        return { contents: source.split(edit.from).join(edit.to), loader: 'js' }
+        return { contents, loader: 'js' }
       })
     },
   }
