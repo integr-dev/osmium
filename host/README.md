@@ -1231,8 +1231,12 @@ into something an operator has to come and look at.
    `build_progress` every ~5s with the running total; `done` when finished, `failed` only if you
    genuinely could not. Handle `cancel_segment` → stop, and treat an unknown segment as already
    satisfied.
-11. Reply `ok: false` to any command you do not recognise.
-12. Send `handshake` immediately on **every** connect, both halves:
+11. Report the agent's `inventory` when items move, and handle `inventory_move`, `inventory_drop`
+   and `inventory_hold` — all three fire and forget, answered by the next report rather than by a
+   result. Optional, like the map and the world stream: a host that reports none of it simply shows
+   an empty card. Slot numbers are Minecraft's own, in the player window.
+12. Reply `ok: false` to any command you do not recognise.
+13. Send `handshake` immediately on **every** connect, both halves:
     - `agents` — re-enumerate what is actually live. Not optional: it is the only thing that clears
       sessions the backend is still asserting from a previous process. An empty array is a real
       answer.

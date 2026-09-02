@@ -1353,7 +1353,7 @@ New nodes, following the existing convention of authorizing routes on nodes and 
 | `activity.read` | Read the incident feed | viewer |
 | `chat.read` | Read what was said in game | viewer |
 | `schematic.read` | View the schematic library, its materials and how it divides | viewer |
-| `agent.run` | Connect and disconnect agents | orchestrator |
+| `agent.run` | Connect and disconnect agents, and move, drop or hold what they carry | orchestrator |
 | `agent.write` | Create and rename agents, place them on a server | orchestrator |
 | `agent.setup` | Trigger `setup_agent` on a host | orchestrator |
 | `chat.speak` | **Speak in-game as an agent** | orchestrator |
@@ -1363,6 +1363,8 @@ New nodes, following the existing convention of authorizing routes on nodes and 
 | `agent.delete` | Delete an agent, and its history | administrator |
 | `host.delete` | Remove a host, and every agent on it | administrator |
 | `schematic.delete` | Delete a schematic and its file | administrator |
+| `storage.read` | See what the deployment is holding on disk, by area | administrator |
+| `storage.purge` | Delete stored data in bulk, and return the space to the disk | administrator |
 
 **`orchestrator` runs the fleet; it does not get to destroy part of it.** All three deletions sit
 with `administrator`, which already carries the irreversible operations, so the tiers divide along
@@ -1374,6 +1376,13 @@ measure of progress computed from it.
 Reading schematics is its own node rather than part of `agent.read`, because a schematic is a design
 rather than fleet state — it is what somebody means to build, and it exists before any agent has
 been pointed at it.
+
+The two storage nodes are administrator-only and split from each other on the same rule as
+everything else here: reading is a map of what the deployment stores, which is worth gating on its
+own, and purging removes months of records in one press. Moving an agent's items sits under
+`agent.run` rather than beside them — it is the agent doing what an agent does, and anybody trusted
+to put one in the game is already trusted with what it is holding. Chat keeps its own node for the
+reason it always did: saying something is impersonation, which is a different kind of act.
 
 `agent.view` is separate for a different reason again: not what it shows, but what it costs. Every
 other read answers from what the backend already holds, while this one makes a host follow every

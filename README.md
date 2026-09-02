@@ -17,15 +17,18 @@ what needs attention, and what is being said in game.
 > configuration is wired end to end — what an operator sets is stored, sent to the host, and replayed
 > on every reconnect — so nothing in the interface runs on mock data any more. An agent's world can
 > also be watched live: the host streams the blocks and entities around it, and the browser renders
-> them.
+> them. Alongside that, agents chart the ground they walk over into a shared top-down map, report
+> what they are carrying — which an operator can rearrange, drop or put in hand — and report
+> everyone in view with their health. An administrator can see what all of that costs on disk, and
+> free it.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 568 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer and the charted map. | Built, 455 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports and streams its world; does not build yet, 237 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 455 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 237 tests |
 
 ## The one idea worth knowing
 
