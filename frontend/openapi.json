@@ -3,7 +3,7 @@
   "info": {
     "title": "Osmium",
     "description": "Orchestration for a fleet of Minecraft agents that build a large schematic together.\n\nAn **agent** is one Minecraft session on one server. A **host** is a machine running the\nOsmium host software, which owns its agents and is the only component that ever performs\na Minecraft login — the backend holds no Minecraft credentials and has no code path that\ntouches one. Commands are relayed to the owning host and answer **503** when it has no\nlive connection; they are never queued.\n\nRoutes authorize against **permission nodes**, never against role names. Roles are named\nbundles of nodes arranged as nested tiers: `viewer`, `orchestrator`, `administrator`.\nThe node required by each route is listed on its 403 response.\n\nTwo channels sit outside this document. Hosts dial in over a WebSocket at `/ws/host`\nwith an enrolment token rather than a JWT. Browsers receive live updates as server-sent\nevents from `/api/stream/**`, which is receive-only — every command travels over the\nREST routes below, where it is node-gated and written to the audit log.\n\nSee FLEET_CONNECTIVITY.md in the repository for the wire protocol and the reasoning.",
-    "version": "0.15.0"
+    "version": "0.16.0"
   },
   "servers": [
     {
