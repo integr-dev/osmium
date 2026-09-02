@@ -392,10 +392,100 @@ function stageVersion(version) {
     copy(prebuilt, atlas)
     copy(path.join(shipped, 'blocksStates', `${version}.json`), states)
     console.log(`viewer-assets: copied prebuilt ${version}`)
-    return
+  } else {
+    generate(version, atlas, states)
   }
 
-  generate(version, atlas, states)
+  // After both paths, because a prebuilt state file needs it exactly as much as a generated one.
+  boxBlockEntities(version, states)
+}
+
+/**
+ * Blocks the renderer would otherwise draw as nothing at all.
+ *
+ * A chest and a shulker box are **block entities**: Minecraft draws them with a dedicated entity
+ * renderer from `entity/chest/*`, and their block model file is deliberately empty - a particle
+ * texture and no geometry. A mesher builds from model elements, so it emits nothing for them, and a
+ * wall of chests renders as thin air. That is upstream's shape, not a bug in it; rendering them
+ * properly means implementing a second renderer.
+ *
+ * So they are given a box of their own particle texture, at roughly the size the real thing
+ * occupies. A shulker box *is* a full cube, so that one is nearly exact; a chest is inset by a pixel
+ * either side and comes out a shade large and plank-coloured. Both are the right size, in the right
+ * place, and visible, which is the whole difference that matters when the point of the screen is
+ * seeing what is around an agent.
+ *
+ * **Only the ones a box describes.** Beds, signs, banners, conduits and decorated pots are block
+ * entities too and are left alone: a solid block where a flat wall sign should be reads as a wall
+ * somebody cannot walk through, which is worse than the gap it replaces.
+ */
+function boxBlockEntities(version, target) {
+  const states = JSON.parse(readFileSync(target, 'utf8'))
+  let boxed = 0
+
+  for (const [name, block] of Object.entries(states)) {
+    const box = boxOf(name)
+    if (!box) continue
+
+    for (const variant of Object.values(block?.variants ?? {})) {
+      for (const entry of Array.isArray(variant) ? variant : [variant]) {
+        const model = entry?.model
+        // Skip anything that already has geometry: a version where upstream has solved this
+        // properly must not be given a box on top of it.
+        if (!model || (model.elements ?? []).length) continue
+
+        const texture = model.textures?.particle
+        if (!texture) continue
+
+        model.elements = [
+          {
+            from: box[0],
+            to: box[1],
+            shade: true,
+            // No `cullface`. A chest does not fill its cell, so letting a neighbour cull the face
+            // between them would open a hole straight through it.
+            faces: Object.fromEntries(
+              ['down', 'up', 'north', 'south', 'west', 'east'].map((side) => [side, { texture }]),
+            ),
+          },
+        ]
+        boxed++
+      }
+    }
+  }
+
+  if (!boxed) throw new Error(`viewer-assets: ${version} has no chests or shulker boxes to draw`)
+
+  writeFileSync(target, JSON.stringify(states))
+  console.log(`viewer-assets: boxed ${boxed} block entities for ${version}`)
+}
+
+/**
+ * The box that stands in for one block entity, or null for one no box describes.
+ *
+ * Heads and skulls are here as well as the storage blocks, because they are cube-shaped: a head is
+ * an eighth of a block, sitting on the floor. **Their colour is the one thing this gets wrong** -
+ * the only texture a skull model declares is its particle, which is `soul_sand`, because what
+ * vanilla actually draws is an entity texture and for a player head that texture is a skin fetched
+ * per player. So a head comes out a soul-sand-coloured cube of the right size in the right cell.
+ * That is the whole choice on offer: a wrong colour, or nothing there at all.
+ *
+ * A wall head is centred in its cell rather than sat on the floor. Which way it faces is not in the
+ * block states at all - vanilla leaves skull rotation entirely to the block entity, so there is a
+ * single variant with no rotation on it - and the middle of the cell is the reading that is never
+ * badly wrong for any of the four facings.
+ *
+ * `piston_head` ends in `_head` and is not one of these. It has real geometry, and the caller
+ * skips anything that does.
+ */
+function boxOf(name) {
+  if (name.includes('chest') || name.endsWith('shulker_box')) return [[0, 0, 0], [16, 16, 16]]
+
+  if (name.endsWith('_skull') || name.endsWith('_head')) {
+    return name.includes('_wall_') ? [[4, 4, 4], [12, 12, 12]] : [[4, 0, 4], [12, 8, 12]]
+  }
+
+  return null
 }
 
 /**
@@ -737,6 +827,195 @@ function verifyMapColours(colours, modelled) {
   }
 }
 
+/**
+ * A sprite sheet of every item's icon, for drawing an agent's inventory.
+ *
+ * Two sources, because Minecraft has two kinds of item. Something you hold - a pickaxe, a carrot -
+ * has a flat sprite of its own under `items/`. Something you place has none: the game draws its
+ * icon by rendering the block, so what stands in for it here is the same face the map reads, copied
+ * out of the block atlas this build just wrote and tinted the same way. A cube drawn in perspective
+ * would be closer to the game, and is a renderer this project has no reason to own.
+ *
+ * One sheet rather than a file per item: an inventory is forty squares, and forty requests for two
+ * hundred bytes each is forty round trips to draw one card.
+ */
+function stageItemIcons(version) {
+  const target = staged('itemIcons', `${version}.png`)
+  const index = staged('itemIcons', `${version}.json`)
+  if (!needed(target) && !needed(index)) return
+
+  const { PNG } = require('pngjs')
+  const assets = require('minecraft-assets')(version)
+  const data = require('minecraft-data')(version)
+  if (!assets || !data) throw new Error(`viewer-assets: no item data for ${version}`)
+
+  const atlas = PNG.sync.read(readFileSync(staged('textures', `${version}.png`)))
+  const states = JSON.parse(readFileSync(staged('blocksStates', `${version}.json`), 'utf8'))
+  const tints = tintsAt(TINT_VERSION, MAP_BIOME)
+
+  const sprites = path.join(assets.directory, 'items')
+  const drawn = new Set(readdirSync(sprites).filter((file) => file.endsWith('.png')).map((file) => file.slice(0, -4)))
+  const named = texturesOfItems(assets)
+
+  const names = data.itemsArray.map((item) => item.name)
+  const across = nextPowerOfTwo(Math.ceil(Math.sqrt(names.length)))
+  const size = across * TILE
+  const sheet = new PNG({ width: size, height: size })
+
+  const items = {}
+  let at = 0
+  for (const name of names) {
+    const x = (at % across) * TILE
+    const y = Math.floor(at / across) * TILE
+
+    if (!draw(name)) {
+      // Nothing anywhere: air, and the handful of technical items that exist in the registry and
+      // never in anybody's hands. Left out, so a client can tell an icon that has not been
+      // generated from one that is a blank square on purpose.
+      continue
+    }
+
+    /**
+     * The item's own sprite, its own block, or whatever texture the assets say it is drawn from.
+     *
+     * The first two cover almost everything and are the better answers where they apply - an item
+     * sprite is the picture the game actually draws, and a block's own model gives grass a green
+     * top rather than the dirt its texture reference points at.
+     *
+     * The third is the catch-all, and it is where a hundred-odd items were being lost: the name of
+     * an item is not the name of its texture. An enchanted golden apple is drawn from
+     * `items/golden_apple`, a waxed copper block from `block/copper_block`, every stair and slab
+     * from the block it is cut out of. `items_textures.json` is the mapping, and a block texture
+     * is resolved by handing its name back to the same block lookup - which is how a slab picks up
+     * the tint and the face ordering its parent block already gets right.
+     */
+    function draw(item) {
+      if (drawn.has(item)) {
+        blit(PNG.sync.read(readFileSync(path.join(sprites, `${item}.png`))), sheet, x, y)
+        return true
+      }
+      if (copyFace(atlas, states[item], item, tints, sheet, x, y)) return true
+
+      const texture = named.get(item)
+      if (!texture) return false
+
+      const [kind, ...rest] = texture.split('/')
+      const basename = rest.join('/')
+      if (kind === 'items' && drawn.has(basename)) {
+        blit(PNG.sync.read(readFileSync(path.join(sprites, `${basename}.png`))), sheet, x, y)
+        return true
+      }
+
+      // A texture named for one face of a block - `composter_side`, `chiseled_bookshelf_top` -
+      // still identifies the block, which is what an icon wants.
+      const block = basename.replace(/_(top|bottom|side|front|end)$/, '')
+      return copyFace(atlas, states[basename] ?? states[block], item, tints, sheet, x, y)
+    }
+
+    items[name] = at
+    at++
+  }
+
+  verifyItemIcons(items, names.length)
+
+  mkdirSync(path.dirname(target), { recursive: true })
+  writeFileSync(target, PNG.sync.write(sheet))
+  writeFileSync(index, JSON.stringify({ across, tile: TILE, items }))
+  console.log(`viewer-assets: drew ${Object.keys(items).length} item icons for ${version}`)
+}
+
+/**
+ * Copies one block's face out of the block atlas, tinted as the mesher would tint it.
+ *
+ * The same face the map reads, through the same {@link facesOf} - so a block's icon and its pixel
+ * on the map are the same colour by construction. The tint matters more here than it looks: without
+ * it a stack of grass blocks is a stack of grey squares, because the texture is greyscale and the
+ * colour is a biome multiply applied at draw time.
+ *
+ * **The whole tile, not the face's rectangle.** A face carries the crop the model samples, which
+ * for a torch is the two pixels by two its top happens to be - copied as an icon that is four
+ * yellow pixels of flame. Snapping back out to the tile the crop sits in recovers the texture
+ * itself, which is what an icon is. The map wants the opposite and reads the crop, because there
+ * the question is what that face looks like.
+ */
+function copyFace(atlas, block, name, tints, sheet, atX, atY) {
+  for (const face of facesOf(block)) {
+    const u = Math.floor((face.texture.u * atlas.width) / TILE) * TILE
+    const v = Math.floor((face.texture.v * atlas.height) / TILE) * TILE
+
+    let painted = false
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        const from = (atlas.width * (v + y) + (u + x)) << 2
+        const alpha = atlas.data[from + 3]
+        if (!alpha) continue
+
+        const [r, g, b] = tint(
+          [atlas.data[from], atlas.data[from + 1], atlas.data[from + 2]],
+          name,
+          face.tintindex,
+          tints,
+        )
+        const to = (sheet.width * (atY + y) + (atX + x)) << 2
+        sheet.data[to] = Math.round(Math.min(255, r))
+        sheet.data[to + 1] = Math.round(Math.min(255, g))
+        sheet.data[to + 2] = Math.round(Math.min(255, b))
+        sheet.data[to + 3] = alpha
+        painted = true
+      }
+    }
+
+    // A door's up face is a three-pixel sliver of empty texture. Same problem the map has, same
+    // answer: keep walking the list until a face has pixels in it.
+    if (painted) return true
+  }
+
+  return false
+}
+
+/**
+ * What the sheet has to get right for an inventory to be readable.
+ *
+ * The count is a floor rather than an exact number, unlike the map's: hundreds of registry entries
+ * are technical and have no icon in the game either, so demanding all of them would be demanding
+ * something wrong. The three names prove the three paths - a held item off its own sprite, a placed
+ * block off the atlas, and a tinted block that would otherwise come out grey.
+ */
+function verifyItemIcons(items, total) {
+  // One per path through `draw`: an item sprite, a block off its own model, a tinted block that
+  // would otherwise come out grey, an item drawn from another item's texture, and a block whose
+  // texture is named for something else entirely.
+  for (const name of ['diamond_pickaxe', 'stone', 'grass_block', 'enchanted_golden_apple', 'waxed_copper_block']) {
+    if (items[name] === undefined) throw new Error(`viewer-assets: no item icon for ${name}`)
+  }
+
+  // A floor rather than an exact count, and it is about catching a *resolver* regression: this sat
+  // at 87% while the mapping below was missing, and the five names above are what say the paths
+  // still work. It cannot be total, because `minecraft-assets` lags `minecraft-data` by a release
+  // or so - at 1.21.4 it carries no pale oak and no resin at all, which is 27 items no resolver can
+  // find a texture for.
+  const drawn = Object.keys(items).length
+  if (drawn < total * 0.97) {
+    throw new Error(`viewer-assets: only ${drawn} of ${total} items got an icon`)
+  }
+}
+
+/**
+ * What texture each item is drawn from, by name.
+ *
+ * Read out of the assets rather than guessed at from the item's own name, which is what the first
+ * cut of this did and what cost it a hundred items. Values look like `minecraft:items/golden_apple`
+ * or `minecraft:block/copper_block`; the namespace is dropped, since there is only ever one here.
+ */
+function texturesOfItems(assets) {
+  const listed = JSON.parse(readFileSync(path.join(assets.directory, 'items_textures.json'), 'utf8'))
+  return new Map(
+    listed
+      .filter((entry) => typeof entry?.name === 'string' && typeof entry.texture === 'string')
+      .map((entry) => [entry.name, entry.texture.replace(/^minecraft:/, '')]),
+  )
+}
+
 function nextPowerOfTwo(n) {
   if (n === 0) return 1
   n--
@@ -754,4 +1033,5 @@ stageEntityTextures()
 for (const version of VERSIONS) {
   stageVersion(version)
   stageMapColours(version)
+  stageItemIcons(version)
 }
