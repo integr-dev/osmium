@@ -1,4 +1,5 @@
 import type { Component } from '../agent/chat.ts'
+import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
 
@@ -126,6 +127,14 @@ export type Event =
       components?: Component
     }
   | { type: 'activity'; agentId: number; scope: ActivityScope; severity: Severity; text: string }
+  /** One chunk of the world as it looks from above, for the map.
+   *
+   * Sent for the whole session rather than on demand, which is what makes the map worth opening:
+   * it is already drawn by the time anybody does. Coordinates are the chunk's, not the block's.
+   *
+   * Carries block names and not colours - see `agent/map.ts`. The backend stores this verbatim and
+   * holds no opinion about what any of it looks like. */
+  | { type: 'map_tile'; agentId: number; tile: MapTile }
   /** How far through a segment we are. A total placed by *us* since being handed it, never a delta:
    * the backend reports the higher of this and what was standing when we took the piece. */
   | {

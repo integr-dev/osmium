@@ -18,6 +18,7 @@ import {
   WHISPER_SENT,
 } from './sender.ts'
 
+import { AgentMap } from './map.ts'
 import { AgentViewer } from './viewer.ts'
 
 import { log, reason } from '../log.ts'
@@ -113,12 +114,17 @@ export class Agent {
   private entry: Entry | undefined
   private identity: Identity | undefined
   private listening = false
+  /** Set the moment a disconnect arrives, so an attempt already under way can abandon itself. */
+  private cancelling = false
   /** Whether somebody has a viewer open on this agent. Survives a reconnect within one session so
    * a watcher does not go blank when the agent rejoins; cleared when the backend says nobody is
    * watching any more, or when this agent is finished with. */
   private watched = false
   /** Runs only while {@link watched} and in game. Rebuilt per session: it holds the bot. */
   private watcher: AgentViewer | undefined
+  /** Runs for every session, watched or not: the map is worth having drawn before anyone asks for
+   * it. Rebuilt per session, like the watcher, because it holds the bot. */
+  private mapper: AgentMap | undefined
   /** Whether this session ever got in. `spawn` fires again on every respawn and every dimension
    * change, and an agent that died has not rejoined the server. */
   private joined = false
@@ -209,6 +215,12 @@ export class Agent {
 
   /** Hands a command to this agent, after everything already queued for it. */
   handle(command: CommandBody): void {
+    // Noted now, before it takes its turn. A disconnect is usually cancelling the very command it
+    // is queued behind - an operator who has seen an agent banned is not waiting out a login and
+    // thirty seconds of watchdog to say stop - and `connect` reads this at every point it gives up
+    // the thread.
+    if (command.type === 'disconnect') this.cancelling = true
+
     this.queue = this.queue.then(() => this.run(command)).catch((err) => {
       log.warn(`Agent ${this.id} could not carry out ${command.type}: ${reason(err)}`)
     })
@@ -321,6 +333,8 @@ export class Agent {
     // Both settled before the session opens rather than by the library during it - see `locate` and
     // `negotiate`. The endpoint has to come first: the version check is a ping, and pinging the
     // wrong port answers about the wrong thing.
+    if (this.abandoned()) return
+
     let endpoint
     try {
       endpoint = await locate(address)
@@ -336,9 +350,33 @@ export class Agent {
     // A pinned version skips the ping entirely rather than checking the answer against it. That is
     // the point of pinning: the servers worth pinning for are the ones whose ping cannot be trusted
     // or cannot be had, so asking anyway would reintroduce exactly the failure being worked around.
+    if (this.abandoned()) return
     if (this.version) log.debug(`Agent ${this.id}: speaking ${this.version} to ${address}, as configured`)
 
-    this.open(address, endpoint, this.version ?? (await negotiate(endpoint, this.id)))
+    const version = this.version ?? (await negotiate(endpoint, this.id))
+    if (this.abandoned()) return
+
+    this.open(address, endpoint, version)
+  }
+
+  /**
+   * Whether to stop where we are, because a disconnect arrived while this attempt was in flight.
+   *
+   * Checked wherever the attempt gives up the thread. Looking a server up and asking it its version
+   * are both network round trips, and a session that has not opened cannot be quit - so without
+   * this the only way to stop an agent joining is to let it join first.
+   *
+   * Reports where the agent actually is. Nothing else will: the backend holds it in CONNECTING
+   * until something says otherwise, and an attempt that simply returned would leave it there until
+   * the ninety-second timeout.
+   */
+  private abandoned(): boolean {
+    if (!this.cancelling) return false
+
+    log.info(`Agent ${this.id} stopped connecting: it was asked to`)
+    this.activity(ActivityScope.Lifecycle, Severity.Info, 'Connection cancelled')
+    this.report({ state: LoginState.LinkedCredentials })
+    return true
   }
 
   /** Opens one session, on an endpoint and a version already decided. */
@@ -430,6 +468,11 @@ export class Agent {
         // it is rebuilt rather than left running.
         this.unwatch()
         if (this.watched) this.begin_watching()
+
+        // The same rebuild, for the same reason: a dimension change puts the agent under a
+        // different world, and a mapper that kept its "already sent this" memory across one would
+        // report the Nether's ceiling as the Overworld's ground.
+        this.begin_mapping()
 
         // Only the first one, and only one sampler. `spawn` fires again on every respawn and every
         // dimension change, and an agent that died has not rejoined the server.
@@ -564,6 +607,7 @@ export class Agent {
     // The stream goes, the subscription stays: a watcher whose agent is reconnecting is still
     // watching, and gets the world back when the agent spawns into it.
     this.unwatch()
+    this.unmap()
 
     // Torn down here, because we may have settled this before the protocol did - an attempt that
     // failed its version ping still holds an open socket nothing else will ever close.
@@ -627,7 +671,15 @@ export class Agent {
   }
 
   private disconnect(): void {
-    if (!this.bot) return
+    this.cancelling = false
+
+    // No session, so there is nothing to quit - but an attempt may have just abandoned itself on
+    // our account, and the backend is holding this agent in CONNECTING until somebody says
+    // otherwise. Saying where it actually is costs nothing when it was already there.
+    if (!this.bot) {
+      this.report({ state: LoginState.LinkedCredentials })
+      return
+    }
 
     this.leaving = true
     this.bot.quit()
@@ -1151,6 +1203,23 @@ export class Agent {
     this.watcher = undefined
   }
 
+  /** Starts mapping this session, replacing any mapper left over from the last one. */
+  private begin_mapping(): void {
+    const bot = this.bot
+    if (!bot?.entity) return
+
+    this.unmap()
+    this.mapper = new AgentMap(this.id, bot, (tile) =>
+      this.hooks.event({ type: 'map_tile', agentId: this.id, tile }),
+    )
+    this.mapper.start()
+  }
+
+  private unmap(): void {
+    this.mapper?.stop()
+    this.mapper = undefined
+  }
+
   private report(status: {
     state?: LoginState
     vitals?: Vitals
@@ -1297,7 +1366,19 @@ function nearby(bot: Bot, from: Vec3): Player[] {
     const position = point(player.entity.position)
     const distance = separation(from, position)
 
-    if (distance <= NEARBY) found.push({ name, distance, position })
+    // Everything the server actually told us about them. Health is deliberately absent: a client
+    // is only sent its own, and everyone else's lives in raw metadata at an index that moves
+    // between versions - a number that would be wrong without ever looking wrong.
+    if (distance <= NEARBY) {
+      found.push({
+        name,
+        distance,
+        position,
+        ...(player.uuid ? { uuid: player.uuid } : {}),
+        ...(typeof player.ping === 'number' ? { ping: player.ping } : {}),
+        ...(typeof player.gamemode === 'number' ? { gamemode: player.gamemode } : {}),
+      })
+    }
   }
 
   return found.sort((one, other) => one.distance - other.distance).slice(0, NEARBY_LIMIT)

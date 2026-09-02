@@ -45,13 +45,21 @@ const routes: RouteRecordRaw[] = [
         path: 'agents/:id/view',
         name: 'agent-viewer',
         component: () => import('../views/AgentViewerView.vue'),
-        meta: { node: 'agent.view' },
+        // Full bleed: this screen is a window into somewhere, and a margin around it is world
+        // nobody can see. The layout drops its padding here; the two controls float instead.
+        meta: { node: 'agent.view', full: true },
       },
       {
-        // Read-only, like the dashboard and hosts, so it carries no node of its own.
+        // Read-only, like the dashboard and hosts, so it carries no node of its own: what it draws
+        // is what agents have already reported in the course of their work, and nothing on it asks
+        // a host to do anything.
+        //
+        // Full bleed, for the reason the viewer is. This is a window onto somewhere, and a margin
+        // around it is world nobody can see; the controls float over the map instead.
         path: 'map',
         name: 'map',
         component: () => import('../views/MapView.vue'),
+        meta: { full: true },
       },
       {
         // Placeholder: whatever ends up here drives agents, which is the run node.

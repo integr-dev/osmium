@@ -87,6 +87,9 @@ export const en = {
    * Minecraft account, and everyone in game reads it as that player talking.
    */
   chat: {
+    searchPlaceholder: 'Search everything that was said…',
+    searchingEverywhere: 'Searching every server, not just this view.',
+    searchingHere: 'Searching this conversation only.',
     title: 'Chat',
     toggle: 'Toggle chat ({keys})',
     resize: 'Resize the chat rail',
@@ -330,6 +333,9 @@ export const en = {
     blockedUnlinked: 'Not set up yet: it has no Minecraft account to join with.',
     blockedNoServer: 'Assigned to no server, so there is nowhere to connect to.',
     blockedNotOnline: 'Not in game, so there is no session to end.',
+    blockedNotConnected: 'Not connected, and not trying to be.',
+    cancelConnect: 'Cancel',
+    stopRejoining: 'Stop trying',
     /**
      * SETUP_PENDING is open-ended by design, so the way out is the operator saying it is not coming.
      * The copy is careful: this stops Osmium waiting, it does not reach into the host.
@@ -352,7 +358,10 @@ export const en = {
     notBuilding: 'Not building',
     /** The tooltip behind the substituted badge — which piece of which build. */
     buildingOn: "Segment {ordinal} of '{build}'",
-    setServer: 'Server',
+    setServer: 'Change server',
+    actionsSession: 'Session',
+    actionsPlacement: 'Placement',
+    actionsOpen: 'Open',
     setServerTitle: 'Where should {name} play?',
     setServerHint: 'The account is the same account wherever it joins, so this changes nothing about its credentials.',
     unassignHint: 'Leave blank to take it off its server. It stays set up and can be assigned again later.',
@@ -397,6 +406,8 @@ export const en = {
     title: 'View',
     subtitle: "What this agent can see, as it sees it.",
     orbit: 'Free camera',
+    outdated: 'This agent has left the game. What you are seeing is the world as it last was.',
+    ours: 'ours',
     firstPerson: 'First person',
     connecting: 'Waiting for the world…',
     refused: 'You are not allowed to watch this agent.',
@@ -411,6 +422,20 @@ export const en = {
     title: 'Map',
     subtitle: 'Where the fleet is working.',
     empty: 'Nothing here yet.',
+    /** Drawn from what agents have walked over, so an empty map means nobody has been there. */
+    unmapped: 'No agent has charted a server yet. The map fills in as they move.',
+    failed: 'The map could not be drawn: {reason}',
+    server: 'Server',
+    charted: '{count} chunks charted',
+    lastSeen: 'Last seen {when}',
+    /** Under the pointer, in the coordinates F3 shows. */
+    at: '{x}, {z}',
+    scale: '{n} px per block',
+    recentre: 'Centre on the fleet',
+    agents: 'Agents',
+    strangers: 'Other players',
+    /** Said of the picture, not of any one tile: parts of it may be hours old. */
+    stale: 'Terrain is as it was last seen, not as it is now.',
   },
 
   /** A placeholder screen. Nothing is built behind it yet. */

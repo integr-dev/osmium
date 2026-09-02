@@ -89,6 +89,23 @@ function event(body: Event): Json {
         payload: { scope: body.scope, severity: body.severity, text: body.text },
       }
 
+    case 'map_tile':
+      return {
+        kind: 'event',
+        type: 'map_tile',
+        agentId: body.agentId,
+        // Flat rather than nested under `tile`: the payload of an envelope is already the body of
+        // one event, and a second wrapper inside it says nothing the type has not said.
+        payload: {
+          dimension: body.tile.dimension,
+          x: body.tile.x,
+          z: body.tile.z,
+          palette: body.tile.palette,
+          blocks: body.tile.blocks,
+          heights: body.tile.heights,
+        },
+      }
+
     case 'build_progress': {
       const payload: Json = { segmentId: body.segmentId }
 

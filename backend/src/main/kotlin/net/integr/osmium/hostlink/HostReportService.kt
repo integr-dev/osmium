@@ -20,6 +20,8 @@ import net.integr.osmium.chat.service.ChatService
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
+import net.integr.osmium.map.model.MapTile
+import net.integr.osmium.map.service.MapService
 import net.integr.osmium.hostlink.HostEnvelope
 import net.integr.osmium.hostlink.EventType
 import net.integr.osmium.hostlink.MessageKind
@@ -27,6 +29,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 import net.integr.osmium.host.model.Host
 import net.integr.osmium.host.service.HostService
@@ -45,6 +48,7 @@ class HostReportService(
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val broker: LiveUpdateBroker,
+    private val mapService: MapService,
     private val registry: HostConnections,
     private val objectMapper: ObjectMapper,
 ) {
@@ -82,6 +86,8 @@ class HostReportService(
             EventType.ACTIVITY -> recordActivity(hostId, envelope)
 
             EventType.BUILD_PROGRESS -> recordProgress(hostId, envelope)
+
+            EventType.MAP_TILE -> recordMapTile(hostId, envelope)
 
             // Forward compatible by design: a newer host reporting something this backend has not
             // learned about yet is normal, so it is logged and dropped rather than fatal.
@@ -365,6 +371,11 @@ class HostReportService(
                 name = name,
                 distance = entry.get("distance")?.asDouble() ?: 0.0,
                 position = positionFrom(entry.get("position")),
+                // Absent rather than defaulted: a host that did not report a ping is not a player
+                // with a ping of zero, and the interface can say which.
+                uuid = entry.get("uuid")?.asString(),
+                ping = entry.get("ping")?.takeIf { it.isNumber }?.asInt(),
+                gamemode = entry.get("gamemode")?.takeIf { it.isNumber }?.asInt(),
                 isAgent = name.lowercase() in ours,
             )
         }
@@ -455,6 +466,64 @@ class HostReportService(
                 ?: ActivitySeverity.INFO,
             text = text,
         )
+    }
+
+    /**
+     * One chunk of the world as an agent saw it from above.
+     *
+     * Decoded but not interpreted: the palette is block names this backend holds no opinion about,
+     * and the two byte arrays are pixels it never looks at. What it does check is the shape, over in
+     * [net.integr.osmium.map.model.MapTile.wellFormed] - a tile of the wrong length is a row every
+     * later reader would have to defend against, and a browser drawing it would run off the end of
+     * the array.
+     */
+    private fun recordMapTile(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val payload = envelope.payload ?: return
+
+        val x = payload.get("x")?.takeIf { it.isNumber }?.asInt()
+        val z = payload.get("z")?.takeIf { it.isNumber }?.asInt()
+        val palette = payload.get("palette")?.takeIf { it.isArray }
+            ?.mapNotNull { entry -> entry.asString()?.takeIf { name -> name.isNotBlank() } }
+        val blocks = payload.get("blocks")?.asString()?.let { decodeBase64(it) }
+        val heights = payload.get("heights")?.asString()?.let { decodeBase64(it) }
+
+        if (x == null || z == null || palette == null || blocks == null || heights == null) {
+            log.debug("Ignoring malformed map tile from host {}", hostId)
+            return
+        }
+
+        mapService.record(
+            agent = agent,
+            tile = MapTile(
+                // A host too old to say which world it is in is reporting from an agent that is
+                // nonetheless somewhere, and the ordinary world is the only guess that is right
+                // most of the time. Trimmed to the column's width rather than refused: a modded
+                // namespace longer than this is still better placed under a truncated name than
+                // dropped.
+                dimension = (payload.get("dimension")?.asString()?.takeIf { it.isNotBlank() }
+                    ?: MapTile.DEFAULT_DIMENSION).take(MapTile.DIMENSION_MAX),
+                x = x,
+                z = z,
+                palette = palette,
+                blocks = blocks,
+                heights = heights,
+                agentId = agent.id,
+                agentLabel = agent.label,
+                // Received, not observed - the rule chat follows, for the same reason. Host clocks
+                // are not synchronised with each other, and a skewed one would date its tiles into
+                // the future, where they would outrank every later correction to the same chunk.
+                at = Instant.now(),
+            ),
+        )
+    }
+
+    /** Base64 as sent, or null for anything that is not. */
+    private fun decodeBase64(raw: String): ByteArray? = try {
+        Base64.getDecoder().decode(raw)
+    } catch (invalid: IllegalArgumentException) {
+        log.debug("A map tile carried something that is not base64: {}", invalid.message)
+        null
     }
 
     /** Wire values are lower case; an unknown one is null rather than an exception. */

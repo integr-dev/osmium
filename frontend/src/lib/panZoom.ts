@@ -17,14 +17,26 @@ export interface View {
 /**
  * Below the minimum a fleet is unreadable dots; above the maximum a node fills the box. Both are
  * generous rather than tight, because the useful range depends on how many hosts there are.
+ *
+ * The defaults, rather than the only values. A world map is drawn at one pixel per block and is
+ * read at both ends of a far wider range - a build at four pixels a block, a continent at an
+ * eighth - so the limits travel with the call. See {@link Limits}.
  */
 export const MIN_SCALE = 0.4
 export const MAX_SCALE = 4
 
+/** How far a particular picture may be zoomed. */
+export interface Limits {
+  min: number
+  max: number
+}
+
+const DEFAULT_LIMITS: Limits = { min: MIN_SCALE, max: MAX_SCALE }
+
 export const IDENTITY: View = { x: 0, y: 0, k: 1 }
 
-export function clampScale(k: number): number {
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, k))
+export function clampScale(k: number, limits: Limits = DEFAULT_LIMITS): number {
+  return Math.min(limits.max, Math.max(limits.min, k))
 }
 
 /**
@@ -37,8 +49,8 @@ export function clampScale(k: number): number {
  * The ratio is taken from the *clamped* scale, so a wheel turn at either end of the range moves
  * nothing at all rather than sliding the picture while refusing to resize it.
  */
-export function zoomAt(view: View, px: number, py: number, factor: number): View {
-  const k = clampScale(view.k * factor)
+export function zoomAt(view: View, px: number, py: number, factor: number, limits?: Limits): View {
+  const k = clampScale(view.k * factor, limits)
   const ratio = k / view.k
 
   return {
@@ -64,10 +76,11 @@ export function fit(
   height: number,
   boxWidth: number,
   boxHeight: number,
+  limits?: Limits,
 ): View {
   if (width <= 0 || height <= 0) return IDENTITY
 
-  const k = clampScale(Math.min(1, boxWidth / width, boxHeight / height))
+  const k = clampScale(Math.min(1, boxWidth / width, boxHeight / height), limits)
 
   return { k, x: (boxWidth - width * k) / 2, y: (boxHeight - height * k) / 2 }
 }

@@ -71,6 +71,12 @@ export const de: Copy = {
   },
 
   chat: {
+
+    searchPlaceholder: 'Alles Gesagte durchsuchen…',
+
+    searchingEverywhere: 'Durchsucht alle Server, nicht nur diese Ansicht.',
+
+    searchingHere: 'Durchsucht nur diese Unterhaltung.',
     title: 'Chat',
     toggle: 'Chat ein-/ausblenden ({keys})',
     resize: 'Chat-Leiste in der Breite ändern',
@@ -286,6 +292,9 @@ export const de: Copy = {
     blockedUnlinked: 'Noch nicht eingerichtet: kein Minecraft-Konto zum Beitreten.',
     blockedNoServer: 'Keinem Server zugewiesen, es gibt also kein Ziel.',
     blockedNotOnline: 'Nicht im Spiel, es gibt also keine Sitzung zu beenden.',
+    blockedNotConnected: 'Nicht verbunden und versucht es auch nicht.',
+    cancelConnect: 'Abbrechen',
+    stopRejoining: 'Nicht mehr versuchen',
     pendingTitle: 'Wartet auf eine Anmeldung auf {host}',
     pendingBody: 'Osmium kann nicht sehen, wie weit sie ist, und wartet deshalb unbegrenzt. Wurde die Anmeldung an einem Ort begonnen, an den Sie nicht zurückkommen, beenden Sie das Warten und richten Sie den Agenten neu ein — an den Host geht nichts, und falls sie doch abgeschlossen wird, verknüpft sich der Agent trotzdem.',
     stopWaiting: 'Nicht weiter warten',
@@ -298,7 +307,10 @@ export const de: Copy = {
     notLinked: 'Nicht eingerichtet',
     notBuilding: 'Baut nicht',
     buildingOn: "Segment {ordinal} von '{build}'",
-    setServer: 'Server',
+    setServer: 'Server ändern',
+    actionsSession: 'Sitzung',
+    actionsPlacement: 'Zuordnung',
+    actionsOpen: 'Öffnen',
     setServerTitle: 'Wo soll {name} spielen?',
     setServerHint: 'Das Konto bleibt dasselbe, egal welchem Server es beitritt — an den Zugangsdaten ändert sich dadurch nichts.',
     unassignHint: 'Leer lassen, um den Agenten von seinem Server zu nehmen. Er bleibt eingerichtet und kann später wieder zugewiesen werden.',
@@ -333,6 +345,8 @@ export const de: Copy = {
     title: 'Ansicht',
     subtitle: 'Was dieser Agent sieht, so wie er es sieht.',
     orbit: 'Freie Kamera',
+    outdated: 'Dieser Agent ist nicht mehr im Spiel. Zu sehen ist die Welt, wie sie zuletzt war.',
+    ours: 'eigener',
     firstPerson: 'Egoperspektive',
     connecting: 'Warte auf die Welt…',
     refused: 'Du darfst diesen Agenten nicht beobachten.',
@@ -347,6 +361,17 @@ export const de: Copy = {
     title: 'Karte',
     subtitle: 'Wo die Flotte arbeitet.',
     empty: 'Hier ist noch nichts.',
+    unmapped: 'Noch kein Agent hat einen Server kartiert. Die Karte füllt sich, während sie sich bewegen.',
+    failed: 'Die Karte konnte nicht gezeichnet werden: {reason}',
+    server: 'Server',
+    charted: '{count} Chunks kartiert',
+    lastSeen: 'Zuletzt gesehen {when}',
+    at: '{x}, {z}',
+    scale: '{n} px pro Block',
+    recentre: 'Auf die Flotte zentrieren',
+    agents: 'Agenten',
+    strangers: 'Andere Spieler',
+    stale: 'Das Gelände ist so, wie es zuletzt gesehen wurde, nicht wie es jetzt ist.',
   },
 
   jobs: {

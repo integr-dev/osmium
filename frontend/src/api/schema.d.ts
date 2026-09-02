@@ -760,6 +760,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/map/tiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tiles inside a rectangle of chunks.
+         * @description Coordinates are **chunks, not blocks** - divide a block coordinate by 16, rounding down.
+         *                 Both corners are included.
+         *
+         *                 `dimension` is required and is not a filter but part of the address: the worlds are
+         *                 separate places that share a coordinate system, so `0,0` in the Nether and `0,0` in the
+         *                 Overworld are different ground. Ask `/api/map/servers` for the ones that exist.
+         *
+         *                 Bounded rather than paged, because a map is drawn as an area rather than read as a list.
+         *                 At most 4096 chunks in one request, which is a kilometre square - past that, ask for a
+         *                 smaller window and draw at a coarser zoom.
+         *
+         *                 Tiles carry block *names*. What colour a block is, is a question about textures, and
+         *                 Osmium stores none: the caller holds the palette. Missing chunks are simply absent -
+         *                 nowhere in the response says a chunk has never been charted, because it is the same
+         *                 answer as one nobody has walked over yet.
+         */
+        get: operations["tiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/map/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Which servers and worlds have a map, and how much of one.
+         * @description One row per server **and dimension**, newest activity first: they are separate maps at
+         *                 the same coordinates, so a server that has been walked in the Overworld and the Nether
+         *                 appears twice.
+         *
+         *                 The extent is in chunk coordinates and is what a screen needs to decide where to point
+         *                 itself before it asks for any tiles.
+         */
+        get: operations["servers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -827,6 +886,11 @@ export interface paths {
          *                 elected listener, plus whispers, proximity chat and the agents' own outbound lines. Not
          *                 the mirror of the above: a whisper to one agent is still something that happened on that
          *                 server.
+         *
+         *                 `query` searches the message text and the sender, case-insensitively, and narrows
+         *                 whichever of the two filters was given. With neither, it searches every server the fleet
+         *                 was listening to - a phrase somebody half-remembers rarely comes with the server it was
+         *                 said on.
          *
          *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
          *                 from the previous response to continue. Kept for 3 days.
@@ -1123,6 +1187,8 @@ export interface components {
             telemetry?: components["schemas"]["AgentTelemetryResponse"] | null;
             /** @description True when this agent forwards its server's global chat. One per server, elected by the backend - a server with none has no global feed. */
             chatListener?: boolean;
+            /** @description True while Osmium still intends to put this agent back in the game: it was connected on purpose and is not online. Covers the wait between attempts as well as an attempt in flight, so an interface can offer to stop trying. Cleared by a disconnect. */
+            rejoining?: boolean;
         };
         /** @description An agent's latest reported vitals. Never stored - if an agent has not reported recently this is null, rather than showing something an hour old as though it were now. */
         AgentTelemetryResponse: {
@@ -1160,6 +1226,20 @@ export interface components {
             distance?: number;
             /** @description Where the player is, when the host reported it. */
             position?: components["schemas"]["PositionResponse"] | null;
+            /** @description Their account, for drawing the right head. Null when unreported. */
+            uuid?: string | null;
+            /**
+             * Format: int32
+             * @description Round trip as the server measures it, in ms.
+             * @example 84
+             */
+            ping?: number | null;
+            /**
+             * Format: int32
+             * @description 0 survival, 1 creative, 2 adventure, 3 spectator.
+             * @example 0
+             */
+            gamemode?: number | null;
             isAgent?: boolean;
         };
         /** @description A position in the world. */
@@ -1543,6 +1623,44 @@ export interface components {
             id?: number;
             name?: string;
             nodes?: string[];
+        };
+        /** @description The tiles inside the requested area. */
+        MapAreaResponse: {
+            serverAddress?: string;
+            dimension?: string;
+            tiles?: components["schemas"]["MapTileResponse"][];
+        };
+        /** @description One chunk of the world seen from above: 16x16 pixels, one per block column, at the resolution of an in-game map at full zoom. */
+        MapTileResponse: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            z?: number;
+            palette?: string[];
+            blocks?: string;
+            heights?: string;
+            /** Format: int64 */
+            agentId?: number | null;
+            agentLabel?: string;
+            /** Format: date-time */
+            at?: string;
+        };
+        /** @description What one world of one server's map covers, in chunk coordinates. */
+        MapExtentResponse: {
+            serverAddress?: string;
+            dimension?: string;
+            /** Format: int64 */
+            tiles?: number;
+            /** Format: int32 */
+            minX?: number;
+            /** Format: int32 */
+            maxX?: number;
+            /** Format: int32 */
+            minZ?: number;
+            /** Format: int32 */
+            maxZ?: number;
+            /** Format: date-time */
+            at?: string;
         };
         /** @description One line of Minecraft chat, as the agent that observed it reported it. */
         ChatMessageResponse: {
@@ -3629,6 +3747,92 @@ export interface operations {
             };
         };
     };
+    tiles: {
+        parameters: {
+            query: {
+                /**
+                 * @description The server whose map to read.
+                 * @example mc.example.com
+                 */
+                server: string;
+                /**
+                 * @description Which world, without its `minecraft:` prefix.
+                 * @example overworld
+                 */
+                dimension: string;
+                /** @description West edge, in chunks. */
+                minX: number;
+                /** @description North edge, in chunks. */
+                minZ: number;
+                /** @description East edge, in chunks. Included. */
+                maxX: number;
+                /** @description South edge, in chunks. Included. */
+                maxZ: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every charted chunk in the area. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MapAreaResponse"];
+                };
+            };
+            /** @description An inside-out area, or one larger than 4096 chunks. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MapAreaResponse"];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MapAreaResponse"];
+                };
+            };
+        };
+    };
+    servers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every server with at least one charted chunk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MapExtentResponse"][];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MapExtentResponse"][];
+                };
+            };
+        };
+    };
     list_6: {
         parameters: {
             query?: {
@@ -3760,6 +3964,8 @@ export interface operations {
                  * @example mc.example.com
                  */
                 server?: string;
+                /** @description Search the text and the sender, case-insensitively. With neither `agentId` nor `server`, searches every server the fleet was listening to. */
+                query?: string;
                 /** @description How many lines to return. Clamped to 1..500. */
                 limit?: number;
                 /** @description `nextCursor` from the previous page. Omit for the newest lines. */
@@ -3780,7 +3986,7 @@ export interface operations {
                     "*/*": components["schemas"]["ChatPageResponse"];
                 };
             };
-            /** @description Neither or both filters given, or a malformed `cursor`. */
+            /** @description Both filters given, neither given without a `query`, or a malformed `cursor`. */
             400: {
                 headers: {
                     [name: string]: unknown;

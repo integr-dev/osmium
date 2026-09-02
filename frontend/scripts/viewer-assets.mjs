@@ -471,6 +471,252 @@ function blit(source, sheet, atX, atY) {
   }
 }
 
+
+/**
+ * The one colour each block reads as, seen from above, for the top-down map.
+ *
+ * Derived from what the renderer already draws rather than from a table: for every block, the top
+ * face's texture is looked up in the atlas this build just wrote, and its pixels averaged. That
+ * means a block added in a future version gets a colour the day `minecraft-assets` carries it, and
+ * that the map and the 3D view can never disagree about what something looks like.
+ *
+ * Averaged with alpha as the weight, so the transparent margin around a sapling or a pane of glass
+ * does not wash it out towards black.
+ *
+ * Blocks that resolve to nothing are left out on purpose, and that absence is the map's rule for
+ * what counts as a surface: air, cave air, void air, light and barrier all carry no model, so the
+ * host walking down a column steps straight past them without needing a list of what to skip.
+ */
+function stageMapColours(version) {
+  const target = staged('mapColours', `${version}.json`)
+  if (!needed(target)) return
+
+  const { PNG } = require('pngjs')
+  const atlas = PNG.sync.read(readFileSync(staged('textures', `${version}.png`)))
+  const states = JSON.parse(readFileSync(staged('blocksStates', `${version}.json`), 'utf8'))
+  const tints = tintsAt(TINT_VERSION, MAP_BIOME)
+
+  const colours = {}
+  let modelled = 0
+  for (const [name, block] of Object.entries(states)) {
+    const faces = facesOf(block)
+    if (faces.length) modelled++
+    for (const face of faces) {
+      const averaged = averageOf(atlas, face.texture)
+      if (!averaged) continue
+      colours[name] = hex(tint(averaged, name, face.tintindex, tints))
+      break
+    }
+  }
+
+  verifyMapColours(colours, modelled)
+
+  mkdirSync(path.dirname(target), { recursive: true })
+  writeFileSync(target, JSON.stringify(colours))
+  console.log(`viewer-assets: coloured ${Object.keys(colours).length} blocks for ${version}`)
+}
+
+/**
+ * The biome the map is coloured as if everything were in it.
+ *
+ * Grass, foliage and water are greyscale textures multiplied by a biome tint at draw time, so
+ * without one they come out the colour of wet cement. The map has no biome to work from - the host
+ * sends which block is on top, not what is around it - so one stands in for all of them. Plains is
+ * the middle of the range rather than an extreme of it: swamp green and badlands orange both read
+ * as broken when they turn up somewhere they do not belong.
+ */
+const MAP_BIOME = 'plains'
+
+/**
+ * The release the tint tables are read from, which is not the version being staged.
+ *
+ * From 1.20 on, `minecraft-data` reports the grass and foliage tint of an ordinary biome as `0` -
+ * a sentinel meaning *derive it from the biome's temperature and rainfall through the colormap*,
+ * not the colour black. Taken at face value it multiplies every plant on the map down to nothing,
+ * which is exactly what it did here first time round.
+ *
+ * The mesher has the same problem and answers it by pinning one release that still carries real
+ * numbers, so the map reads from whichever release that is. Pinning it twice, independently, is how
+ * the map and the 3D view would come to disagree about the colour of grass.
+ */
+const TINT_VERSION = versionOfTintsInRenderer()
+
+/** The release named on `viewer/lib/models.js`'s `tints` line. Throws if that line is gone. */
+function versionOfTintsInRenderer() {
+  const source = readFileSync(path.join(viewerRoot, 'viewer', 'lib', 'models.js'), 'utf8')
+  const match = source.match(/require\(['"]minecraft-data['"]\)\(['"]([^'"]+)['"]\)\.tints/)
+  if (!match) {
+    throw new Error(
+      'viewer-assets: models.js no longer reads its tints from a fixed release. Find where the ' +
+        'mesher gets them now and point the map at the same place, or the two will disagree.',
+    )
+  }
+  return match[1]
+}
+
+/** The tint tables for one biome, flattened to `{ grass, foliage, water, redstone, constant }`. */
+function tintsAt(version, biome) {
+  const tables = require('minecraft-data')(version)?.tints
+  if (!tables) throw new Error(`viewer-assets: minecraft-data has no tints for ${version}`)
+
+  // Listed biome first, then the table's own fallback - the same order the mesher resolves in,
+  // where an unlisted biome reaches `default` through a Proxy. Most biomes are unlisted on purpose:
+  // vanilla's plain blue water is the default, and the table only names the five that differ.
+  const pick = (table, key) => {
+    const entry = table.data.find((row) => row.keys.includes(key))
+    const colour = entry ? entry.color : table.default
+    return colour === undefined ? null : colour & 0xffffff
+  }
+
+  const constant = {}
+  for (const row of tables.constant.data) for (const key of row.keys) constant[key] = row.color & 0xffffff
+
+  const biomes = {}
+  for (const key of ['grass', 'foliage', 'water']) {
+    const colour = pick(tables[key], biome)
+    // Zero is the colormap sentinel, not black. See TINT_VERSION.
+    if (!colour) throw new Error(`viewer-assets: ${version} has no usable ${key} tint for ${biome}`)
+    biomes[key] = colour
+  }
+
+  // Full power, which is the colour redstone dust is drawn as when it is carrying a signal. A map
+  // showing every wire dark is showing the less useful of the two states.
+  return { ...biomes, constant, redstone: pick(tables.redstone, '15') ?? 0xff0000 }
+}
+
+/**
+ * What a map might see of a block, best first: up faces from the top down, then everything else,
+ * then the particle texture.
+ *
+ * A list rather than one face, because the obvious answer is often blank. The up face of a door or
+ * a trapdoor is a three-pixel sliver that samples empty space in the texture, and a chain's is
+ * empty outright - taking it and stopping left thirty-odd real blocks with no colour at all. So the
+ * caller walks the list and keeps the first face that has any pixels in it.
+ *
+ * The tail covers two shapes with no up face to find. A cross model - grass, flowers, saplings - is
+ * two crossed quads and nothing else. A fluid has no faces whatsoever, because the mesher builds
+ * water and lava from its own geometry rather than from the model; those still name a particle
+ * texture, and water's is `water_still`, which is exactly the one wanted.
+ */
+function facesOf(block) {
+  const first = Object.values(block?.variants ?? {})[0]
+  const model = (Array.isArray(first) ? first[0] : first)?.model
+  if (!model) return []
+
+  const up = []
+  const rest = []
+  for (const element of model.elements ?? []) {
+    for (const [side, face] of Object.entries(element.faces ?? {})) {
+      if (!face?.texture) continue
+      if (side === 'up') up.push({ face, top: element.to?.[1] ?? 0 })
+      else rest.push(face)
+    }
+  }
+
+  up.sort((a, b) => b.top - a.top)
+  const found = [...up.map((entry) => entry.face), ...rest]
+  if (found.length) return found
+  return model.textures?.particle ? [{ texture: model.textures.particle }] : []
+}
+
+/**
+ * The average colour of one atlas tile, weighted by alpha, or null if the tile is fully transparent.
+ *
+ * The UV rectangle is the same one the renderer samples, so this reads the very pixels that end up
+ * on the block - including the first frame of an animated texture, which is all the atlas holds.
+ */
+function averageOf(atlas, uv) {
+  const x0 = Math.round(uv.u * atlas.width)
+  const y0 = Math.round(uv.v * atlas.height)
+  const width = Math.round(uv.su * atlas.width)
+  const height = Math.round(uv.sv * atlas.height)
+
+  let r = 0
+  let g = 0
+  let b = 0
+  let weight = 0
+  for (let y = y0; y < y0 + height; y++) {
+    for (let x = x0; x < x0 + width; x++) {
+      const at = (atlas.width * y + x) << 2
+      const alpha = atlas.data[at + 3] / 255
+      if (!alpha) continue
+      r += atlas.data[at] * alpha
+      g += atlas.data[at + 1] * alpha
+      b += atlas.data[at + 2] * alpha
+      weight += alpha
+    }
+  }
+
+  return weight ? [r / weight, g / weight, b / weight] : null
+}
+
+/**
+ * Applies the biome tint a face asks for, by the same rules the mesher uses.
+ *
+ * Mirrors `viewer/lib/models.js`: tint index 0 means grass unless the block is one of the handful
+ * that overrides it. Water is the one addition - it is a fluid, so it has no face to carry a tint
+ * index, and its texture is the same near-white grey grass has.
+ */
+function tint(rgb, name, index, tints) {
+  const table =
+    name === 'water' ? tints.water
+      : index === undefined ? null
+        : name === 'redstone_wire' ? tints.redstone
+          : tints.constant[name] !== undefined ? tints.constant[name]
+            : name.includes('leaves') || name === 'vine' ? tints.foliage
+              : tints.grass
+
+  if (table === null) return rgb
+  return [
+    (rgb[0] * ((table >> 16) & 0xff)) / 255,
+    (rgb[1] * ((table >> 8) & 0xff)) / 255,
+    (rgb[2] * (table & 0xff)) / 255,
+  ]
+}
+
+function hex(rgb) {
+  return rgb.map((channel) => Math.round(Math.min(255, channel)).toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * What the table has to get right for the map to be readable at a glance.
+ *
+ * Not a spot check of exact values - a texture change upstream would break those and change nothing
+ * that matters. These are the relations a person reads the map by: grass is green, water is blue,
+ * stone is grey, wood is warm. Each also proves a different part of the path above: grass and water
+ * prove the biome tints are applied at all, stone proves an ordinary top face resolves, and planks
+ * prove a block whose top and side differ is not being read off its side.
+ */
+function verifyMapColours(colours, modelled) {
+  const rgb = (name) => {
+    const value = colours[name]
+    if (!value) throw new Error(`viewer-assets: no map colour for ${name}`)
+    return [0, 2, 4].map((at) => parseInt(value.slice(at, at + 2), 16))
+  }
+
+  const [gr, gg, gb] = rgb('grass_block')
+  if (gg <= gr || gg <= gb) throw new Error(`viewer-assets: grass_block is not green (#${colours['grass_block']})`)
+
+  const [wr, wg, wb] = rgb('water')
+  if (wb <= wr || wb <= wg) throw new Error(`viewer-assets: water is not blue (#${colours['water']})`)
+
+  const stone = rgb('stone')
+  if (Math.max(...stone) - Math.min(...stone) > 24) {
+    throw new Error(`viewer-assets: stone is not grey (#${colours['stone']})`)
+  }
+
+  const [pr, pg, pb] = rgb('oak_planks')
+  if (!(pr > pg && pg > pb)) throw new Error(`viewer-assets: oak_planks is not warm (#${colours['oak_planks']})`)
+
+  // A block with a model but no colour is a hole in the map, and it would look like terrain that
+  // had not loaded rather than like a bug. Every block that resolves to a face has to resolve to a
+  // colour, so this is exact rather than a ratio.
+  const coloured = Object.keys(colours).length
+  if (coloured !== modelled) {
+    throw new Error(`viewer-assets: ${modelled - coloured} of ${modelled} modelled blocks got no colour`)
+  }
+}
+
 function nextPowerOfTwo(n) {
   if (n === 0) return 1
   n--
@@ -485,4 +731,7 @@ function nextPowerOfTwo(n) {
 mkdirSync(out, { recursive: true })
 await stageWorker()
 stageEntityTextures()
-for (const version of VERSIONS) stageVersion(version)
+for (const version of VERSIONS) {
+  stageVersion(version)
+  stageMapColours(version)
+}

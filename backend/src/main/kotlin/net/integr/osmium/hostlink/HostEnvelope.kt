@@ -221,4 +221,33 @@ object EventType {
      * picked up next.
      */
     const val BUILD_PROGRESS = "build_progress"
+
+    /**
+     * One chunk of the world as an agent sees it from above:
+     *
+     * ```jsonc
+     * { "x": 24, "z": -7, "dimension": "overworld",
+     *   "palette": ["grass_block", "water"],
+     *   "blocks":  "AAAAAQ…",   // base64, 256 bytes, one index into palette per block column
+     *   "heights": "RgBGAA…" }  // base64, 256 signed 16-bit little-endian, -32768 for nothing
+     * ```
+     *
+     * Coordinates are the **chunk's**, not the block's. Pixels are laid out row-major from the
+     * north-west corner - west to east, then north to south - which is how a chunk is indexed
+     * everywhere else in Minecraft.
+     *
+     * **Names, not colours.** Which colour a block reads as is a question about textures, and this
+     * backend holds none: the interface drawing the map owns the palette, derived from the block
+     * atlas the 3D view is already rendered from. Storing names is what keeps the two views
+     * agreeing, and what lets a map be re-coloured without agents re-walking the world.
+     *
+     * `dimension` is the world without its `minecraft:` prefix, and is part of what identifies a
+     * tile rather than a label on it - the dimensions are separate places sharing one coordinate
+     * system. A host that omits it is taken to mean the overworld.
+     *
+     * Sent for the whole session rather than on demand, unlike the viewer stream - the map is worth
+     * having drawn before anybody opens it. Filed against the agent's *server* and world, because a
+     * map is about a place: every agent standing in one fills in the same map.
+     */
+    const val MAP_TILE = "map_tile"
 }
