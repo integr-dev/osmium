@@ -66,6 +66,14 @@ const feed = useFeed<ChatMessageResponse>((cursor) =>
   ),
 )
 const { items, loading, error, exhausted } = feed
+
+/**
+ * Past this many lines, the feed stops animating movement. See the note on the list itself.
+ *
+ * Chosen as "more than fills the panel": below it the animation is worth its cost and visible;
+ * above it the lines that would slide are off screen, and measuring them is pure waste.
+ */
+const SETTLED_LINES = 150
 const scroll = useInfiniteScroll(sentinel, () => void loadMore(), scrollBox)
 
 // `start()` only after the box exists — the observer takes its root at construction, and a null one
@@ -121,10 +129,21 @@ const catchingUp = ref(false)
 
 /** Enough lines at once to be a flush rather than a conversation. */
 const BURST = 3
+/**
+ * ...and going on long enough to be worth saying anything about.
+ *
+ * The count alone is not the question. Three lines land inside a second all the time on a busy
+ * server - that is a conversation, and a spinner over it says something is wrong when nothing is.
+ * What deserves a word is a flush that is still arriving after somebody has had time to notice it,
+ * so the burst has to still be producing lines this long after it began.
+ */
+const BURST_SHOWS_AFTER_MS = 700
 /** How long the stream has to go quiet before the burst is over. */
 const BURST_QUIET_MS = 600
 
 let arrived = 0
+/** When the current burst began, for the delay above. */
+let burstSince = 0
 let settle: number | undefined
 
 /**
@@ -150,7 +169,10 @@ const stopListening = agentStore.onFeedEvent((name, data) => {
   feed.prepend(line)
 
   arrived += 1
-  if (arrived >= BURST) catchingUp.value = true
+  if (arrived === 1) burstSince = Date.now()
+  // Read on arrival rather than on a timer: if nothing more comes, the flush was over before it was
+  // worth mentioning, and a pill that appears once the screen has already settled is noise.
+  if (arrived >= BURST && Date.now() - burstSince >= BURST_SHOWS_AFTER_MS) catchingUp.value = true
 
   window.clearTimeout(settle)
   settle = window.setTimeout(() => {
@@ -289,101 +311,122 @@ function involvesAgent(line: ChatMessageResponse): boolean {
     </div>
 
     <!--
-      Over the transcript rather than in it, so a flush of thirty lines does not also move the
-      conversation down by a row. Announced politely: it is reassurance about motion on screen, not
-      something to interrupt a screen reader mid-line for.
+      The transcript, and the one thing that floats over it.
     -->
-    <Transition name="fade">
-      <p
-        v-if="catchingUp"
-        role="status"
-        aria-live="polite"
-        class="bg-base-300/80 text-base-content/70 pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-fit items-center gap-2 rounded-b-lg px-3 py-1 text-xs backdrop-blur"
-      >
-        <span class="loading loading-spinner loading-xs"></span>
-        {{ t('chat.catchingUp') }}
-      </p>
-    </Transition>
-
-    <div ref="scrollBox" class="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
+    <div class="relative flex min-h-0 flex-1 flex-col">
       <!--
-        Reversed a second time inside, so the newest line is the first one the eye meets coming up
-        off the send box. Insertions animate and the first render does not; see the dashboard for
-        the full note.
+        At the bottom, because that is where a new line arrives: the transcript is reversed, so the
+        newest is the one nearest the composer. Over the transcript rather than in it, so a flush of
+        thirty lines does not also move the conversation down by a row - and at this end rather than
+        the top, where it sat over the search box and covered the very control somebody uses while
+        catching up. Announced politely: it is reassurance about motion on screen, not something to
+        interrupt a screen reader mid-line for.
       -->
-      <TransitionGroup name="feed" tag="div" class="flex flex-col-reverse gap-1">
-        <p v-for="line in items" :key="line.id" class="flex items-start gap-2 px-1 text-sm">
-          <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
-          <!--
-            Global chat is where strangers show up, so a head is not decoration — it is how a player
-            nobody recognises is told apart from an agent at a glance. A line the host could not
-            attribute to anybody gets a server mark instead of a face nobody owns.
-          -->
-          <Server v-if="fromServer(line)" class="mt-1 size-3.5 shrink-0 opacity-40" />
-          <PlayerHead v-else :id="line.from" :name="line.from" size="xs" class="mt-0.5 shrink-0" />
-          <!--
-            The agent behind the account, when the account is one of ours. Chat names a Minecraft
-            account and an operator thinks in agents, so a line from the fleet says which one — and
-            it comes first, because that is the name the operator gave it and the one they are
-            looking for.
-          -->
-          <span v-if="nameBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
-            {{ nameBehind(line) }}
-          </span>
-          <!--
-            The account name, but only when the line does not already carry one. A server-rendered
-            line comes with its own prefix — rank, colours, the speaker — so printing `from` beside it
-            would say the name twice, once ours and once theirs.
-          -->
-          <span
-            v-if="!line.components"
-            class="shrink-0 font-medium"
-            :class="[line.scope === 'OUTBOUND' ? 'text-primary' : '', fromServer(line) ? 'italic opacity-60' : '']"
-          >
-            {{ fromServer(line) ? t('chat.fromServer') : line.from }}
-          </span>
-          <!--
-            Which agent a line involves, on a server feed only. Everything said on the server is
-            here, so a whisper to one agent would otherwise be indistinguishable from public chat -
-            and "who was this to" is the whole question a private line raises. On an agent feed it
-            would be the same name on every row.
-          -->
-          <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
-            {{ line.agentLabel }}
-          </span>
-          <!--
-            Styled as the server sent it, falling back to the plain line. A host may send no tree at
-            all - anything an agent said itself has none - so the plain text is what is always there.
-          -->
-          <McText :components="line.components" :text="line.text" class="min-w-0 flex-1 break-words opacity-80" />
+      <Transition name="fade">
+        <p
+          v-if="catchingUp"
+          role="status"
+          aria-live="polite"
+          class="bg-base-300/80 text-base-content/70 pointer-events-none absolute inset-x-0 bottom-0 z-10 mx-auto flex w-fit items-center gap-2 rounded-t-lg px-3 py-1 text-xs backdrop-blur"
+        >
+          <span class="loading loading-spinner loading-xs"></span>
+          {{ t('chat.catchingUp') }}
         </p>
-      </TransitionGroup>
+      </Transition>
 
-      <!--
-        A first page and an older one are different waits and read differently. Switching servers
-        empties the panel and fetches a whole transcript, which takes long enough that a single
-        centred word looked like a blank panel — so it stands in for the lines it is about to
-        replace. Paging older keeps the one line, because the conversation is still on screen and
-        the wait happens off the top edge.
-      -->
-      <div v-if="loading && !items.length" class="flex flex-col-reverse gap-2 py-2" aria-busy="true">
-        <div v-for="row in 8" :key="row" class="flex items-start gap-2 px-1">
-          <div class="skeleton h-3 w-10 shrink-0"></div>
-          <div class="skeleton size-4 shrink-0 rounded"></div>
-          <div class="skeleton h-3 shrink-0" :style="{ width: `${3 + ((row * 7) % 5)}rem` }"></div>
-          <div class="skeleton h-3 flex-1" :style="{ maxWidth: `${8 + ((row * 11) % 13)}rem` }"></div>
+      <div ref="scrollBox" class="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
+        <!--
+          Reversed a second time inside, so the newest line is the first one the eye meets coming up
+          off the send box. Insertions animate and the first render does not; see the dashboard for
+          the full note.
+        -->
+        <!--
+          The move transition is dropped once the feed is long, which is why `name` is bound.
+
+          `TransitionGroup` animates reordering with FLIP: on every change it measures the position of
+          **every** child, applies the update, measures them all again, and transforms the difference.
+          That is a forced synchronous layout over the whole list, per line received - so a panel left
+          open on a busy server spends longer blocking the main thread with each message that arrives,
+          which is felt everywhere, including as a stutter in the 3D viewer on another screen.
+
+          Vue only takes that path when a `-move` class actually exists, so an empty name skips it
+          outright. A line still fades in; what it stops doing is sliding the thousand lines beneath
+          it, which nobody can see in a scrolling panel anyway.
+        -->
+        <TransitionGroup :name="items.length > SETTLED_LINES ? '' : 'feed'" tag="div" class="flex flex-col-reverse gap-1">
+          <p v-for="line in items" :key="line.id" class="flex items-start gap-2 px-1 text-sm">
+            <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
+            <!--
+              Global chat is where strangers show up, so a head is not decoration — it is how a player
+              nobody recognises is told apart from an agent at a glance. A line the host could not
+              attribute to anybody gets a server mark instead of a face nobody owns.
+            -->
+            <Server v-if="fromServer(line)" class="mt-1 size-3.5 shrink-0 opacity-40" />
+            <PlayerHead v-else :id="line.from" :name="line.from" size="xs" class="mt-0.5 shrink-0" />
+            <!--
+              The agent behind the account, when the account is one of ours. Chat names a Minecraft
+              account and an operator thinks in agents, so a line from the fleet says which one — and
+              it comes first, because that is the name the operator gave it and the one they are
+              looking for.
+            -->
+            <span v-if="nameBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
+              {{ nameBehind(line) }}
+            </span>
+            <!--
+              The account name, but only when the line does not already carry one. A server-rendered
+              line comes with its own prefix — rank, colours, the speaker — so printing `from` beside it
+              would say the name twice, once ours and once theirs.
+            -->
+            <span
+              v-if="!line.components"
+              class="shrink-0 font-medium"
+              :class="[line.scope === 'OUTBOUND' ? 'text-primary' : '', fromServer(line) ? 'italic opacity-60' : '']"
+            >
+              {{ fromServer(line) ? t('chat.fromServer') : line.from }}
+            </span>
+            <!--
+              Which agent a line involves, on a server feed only. Everything said on the server is
+              here, so a whisper to one agent would otherwise be indistinguishable from public chat -
+              and "who was this to" is the whole question a private line raises. On an agent feed it
+              would be the same name on every row.
+            -->
+            <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
+              {{ line.agentLabel }}
+            </span>
+            <!--
+              Styled as the server sent it, falling back to the plain line. A host may send no tree at
+              all - anything an agent said itself has none - so the plain text is what is always there.
+            -->
+            <McText :components="line.components" :text="line.text" class="min-w-0 flex-1 break-words opacity-80" />
+          </p>
+        </TransitionGroup>
+
+        <!--
+          A first page and an older one are different waits and read differently. Switching servers
+          empties the panel and fetches a whole transcript, which takes long enough that a single
+          centred word looked like a blank panel — so it stands in for the lines it is about to
+          replace. Paging older keeps the one line, because the conversation is still on screen and
+          the wait happens off the top edge.
+        -->
+        <div v-if="loading && !items.length" class="flex flex-col-reverse gap-2 py-2" aria-busy="true">
+          <div v-for="row in 8" :key="row" class="flex items-start gap-2 px-1">
+            <div class="skeleton h-3 w-10 shrink-0"></div>
+            <div class="skeleton size-4 shrink-0 rounded"></div>
+            <div class="skeleton h-3 shrink-0" :style="{ width: `${3 + ((row * 7) % 5)}rem` }"></div>
+            <div class="skeleton h-3 flex-1" :style="{ maxWidth: `${8 + ((row * 11) % 13)}rem` }"></div>
+          </div>
         </div>
-      </div>
-      <p v-else-if="loading" class="flex items-center justify-center gap-2 py-6 text-sm opacity-50">
-        <span class="loading loading-spinner loading-xs"></span>
-        {{ t('common.loading') }}
-      </p>
-      <p v-else-if="!items.length" class="py-10 text-center text-sm opacity-50">
-        {{ t('dashboard.noChat') }}
-      </p>
+        <p v-else-if="loading" class="flex items-center justify-center gap-2 py-6 text-sm opacity-50">
+          <span class="loading loading-spinner loading-xs"></span>
+          {{ t('common.loading') }}
+        </p>
+        <p v-else-if="!items.length" class="py-10 text-center text-sm opacity-50">
+          {{ t('dashboard.noChat') }}
+        </p>
 
-      <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
-      <div ref="sentinel" aria-hidden="true" class="h-px shrink-0"></div>
+        <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
+        <div ref="sentinel" aria-hidden="true" class="h-px shrink-0"></div>
+      </div>
     </div>
 
     <div v-if="auth.can('chat.speak')" class="flex flex-col gap-1">
