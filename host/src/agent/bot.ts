@@ -28,7 +28,7 @@ import {
   WHISPER_SENT,
 } from './sender.ts'
 
-import { AgentMap } from './map.ts'
+import { AgentMap, worldOf } from './map.ts'
 import { AgentViewer } from './viewer.ts'
 
 import { log, reason } from '../log.ts'
@@ -534,8 +534,9 @@ export class Agent {
     // Both packets carry it, and both change which world the agent is in: `login` for the world it
     // joins, `respawn` for every one it moves to afterwards. Registered here, before either can
     // arrive, because the first is the only announcement the joining world ever gets.
-    const named = (packet: { worldName?: unknown }) => {
-      if (this.bot === bot && typeof packet.worldName === 'string') this.level = packet.worldName
+    const named = (packet: unknown) => {
+      const name = levelNameOf(packet)
+      if (this.bot === bot && name) this.level = name
     }
     bot._client.on('login', named)
     bot._client.on('respawn', named)
@@ -1159,7 +1160,7 @@ export class Agent {
     //
     // Omitted rather than sent as undefined when the server has not said. Absent is what the wire
     // means by "nothing to report", and the backend's own default is then the honest answer.
-    const dimension = dimensionOf(bot)
+    const dimension = worldOf(bot, this.level) || undefined
 
     this.report({ vitals, nearby: nearby(bot, position), ...(dimension ? { dimension } : {}) })
   }
@@ -1730,12 +1731,11 @@ export function placeOf(bot: Bot): string | undefined {
 }
 
 /**
- * Which dimension an agent is in, as the canonical id: `overworld`, `the_nether`, `the_end`.
+ * Which dimension an agent is in, for a sentence somebody reads.
  *
- * **Namespaced or not is the server's choice, and it must not be ours.** The interface groups agents
- * by server *and* dimension to work out how spread out a fleet is, so `minecraft:the_end` and
- * `the_end` arriving from two servers would split one dimension into two groups. Stripping the
- * namespace also matches the value the backend falls back to when a host sends none.
+ * The *type* rather than the level name, deliberately: "at 12, 64, 30 in the nether" is what a
+ * person means, and a world called `pvp_arena` reads as itself rather than as a dimension. What the
+ * agent reports as its world - the thing the map files terrain under - is `worldOf` instead.
  */
 function dimensionOf(bot: Bot): string | undefined {
   return bot.game?.dimension?.replace(/^minecraft:/, '') || undefined
@@ -1750,6 +1750,22 @@ function dimensionOf(bot: Bot): string | undefined {
  */
 function halves(value: number | undefined): string {
   return value === undefined ? 'an unknown' : `${Math.max(0, Math.round(value))}/20`
+}
+
+/**
+ * The name the server gives the world in a `login` or `respawn` packet.
+ *
+ * **Two places, because it moved.** Up to 1.20.4 it is `worldName` on the packet itself; from
+ * 1.20.5 the packet carries a `SpawnInfo` container instead and the name sits inside it, beside the
+ * dimension *type* it must not be confused with. Reading only the old field is how every Multiverse
+ * world quietly ended up filed under `overworld`.
+ */
+function levelNameOf(packet: unknown): string | undefined {
+  const held = packet as { worldName?: unknown; worldState?: { name?: unknown } }
+
+  if (typeof held.worldName === 'string') return held.worldName
+  if (typeof held.worldState?.name === 'string') return held.worldState.name
+  return undefined
 }
 
 /** A duration an operator reads rather than counts: `3 seconds`, `12 minutes`, `2 hours`.
