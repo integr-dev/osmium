@@ -2,12 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 // Aliased: `Map` is a JavaScript built-in, and shadowing it is a trap for whoever needs one here.
-import { Crosshair, Map as MapIcon } from 'lucide-vue-next'
+import { Crosshair, Map as MapIcon, Navigation } from 'lucide-vue-next'
 
 import WorldMap, { type Mark } from '../components/WorldMap.vue'
 import { listMappedServers, type MapExtentResponse } from '../api/map'
 import { useAgentStore } from '../stores/agents'
 import { atShort } from '../lib/time'
+import { parsePlace } from '../lib/mapCoords'
 
 /**
  * Where the fleet is working, on the ground it has charted.
@@ -16,8 +17,8 @@ import { atShort } from '../lib/time'
  * telemetry already arriving every second. Nothing here asks a host to do anything - unlike the 3D
  * viewer, this is only what has already been reported.
  *
- * Full bleed, with everything floating over the map. A map is read by looking at a lot of it at
- * once, and a card with a header above it spends a third of the screen saying what the screen is.
+ * Full bleed, with the controls floating over it as one panel. A map is read by looking at a lot of
+ * it at once, and a header band above it spends a third of the screen saying what the screen is.
  *
  * A player who is not one of ours is drawn in the error colour, which is the one thing here worth
  * interrupting somebody for: a stranger walking onto a build is the question an operator opens a
@@ -28,9 +29,11 @@ const agentStore = useAgentStore()
 
 const extents = ref<MapExtentResponse[]>([])
 const server = ref<string | null>(null)
-const dimension = ref<string | null>(null)
+const world = ref<string | null>(null)
 const map = ref<InstanceType<typeof WorldMap> | null>(null)
-const panelOpen = ref(true)
+
+const typed = ref('')
+const rejected = ref(false)
 
 /**
  * How many positions of an agent to remember.
@@ -50,7 +53,7 @@ onMounted(async () => {
   // Whichever world was charted most recently, which is where something is happening.
   const newest = extents.value[0]
   server.value ??= newest?.serverAddress ?? agentStore.servers[0] ?? null
-  dimension.value ??= newest?.dimension ?? null
+  world.value ??= newest?.dimension ?? null
 })
 
 /** The servers that have a map, each once, newest first - `extents` has a row per world. */
@@ -59,14 +62,12 @@ const servers = computed(() => [...new Set(extents.value.map((it) => it.serverAd
 /**
  * The worlds charted on the chosen server.
  *
- * Offered rather than assumed: the dimensions a server has are whatever agents have walked in, and
- * a modded server's are not a list anything here could know in advance.
+ * Offered rather than assumed. What a server has is whatever agents have walked in, and on anything
+ * running Multiverse that is not a list of three - it is however many worlds the operators made.
  */
 const worlds = computed(() => extents.value.filter((it) => it.serverAddress === server.value))
 
-const extent = computed(
-  () => worlds.value.find((it) => it.dimension === dimension.value) ?? null,
-)
+const extent = computed(() => worlds.value.find((it) => it.dimension === world.value) ?? null)
 
 /** The agents on the chosen server that have reported a position. */
 const here = computed(() =>
@@ -76,12 +77,12 @@ const here = computed(() =>
 /**
  * Which agents are standing in the world being drawn.
  *
- * An agent in the Nether is not on the Overworld map, and drawing its dot there puts it on ground
- * it has never seen. The dimension an agent reports is the same string a tile carries, so they
- * compare directly.
+ * An agent in the Nether is not on the Overworld map, and drawing its dot there puts it on ground it
+ * has never seen. An agent whose host is too old to report a world is shown rather than hidden: a
+ * dot in the wrong place is a smaller lie than a fleet that appears to be nowhere.
  */
 const shown = computed(() =>
-  here.value.filter((agent) => !agent.telemetry?.dimension || agent.telemetry.dimension === dimension.value),
+  here.value.filter((agent) => !agent.telemetry?.dimension || agent.telemetry.dimension === world.value),
 )
 
 /**
@@ -165,6 +166,21 @@ function recentre(): void {
   map.value?.centreOn(x, z)
 }
 
+/**
+ * Goes to whatever was typed, or says it could not read it.
+ *
+ * The refusal is shown on the field rather than as a message, because there is only one thing it
+ * can mean and the field is where the fix goes.
+ */
+function goToTyped(): void {
+  const place = parsePlace(typed.value)
+  rejected.value = !place
+  if (!place) return
+
+  map.value?.centreOn(place.x, place.z)
+  typed.value = ''
+}
+
 // The first time the fleet reports where it is, go there - an operator opening the map wants the
 // agents, not the origin. Only once: after that the view is theirs to move.
 const placed = ref(false)
@@ -175,31 +191,44 @@ watch(shown, (agents) => {
 })
 
 // A different world is somewhere else entirely, so the view earns the right to jump again.
-watch([server, dimension], () => {
+watch([server, world], () => {
   placed.value = false
 })
 
 // Changing server may leave the chosen world naming one that server has never had.
 watch(worlds, (available) => {
   if (available.length === 0) return
-  if (!available.some((it) => it.dimension === dimension.value)) {
-    dimension.value = available[0]!.dimension
+  if (!available.some((it) => it.dimension === world.value)) {
+    world.value = available[0]!.dimension
   }
 })
 
-/** `the_nether` reads as a database value; this is what the game calls it. */
+/**
+ * What to call a world.
+ *
+ * The three vanilla ones get the names the game uses; everything else keeps the name the server
+ * gave it. A Multiverse world is called whatever its operators called it, and that string is what
+ * they type into `/mvtp` - rewriting it into something prettier would only make it harder to match
+ * up with the server they are looking at.
+ */
+const VANILLA: Record<string, string> = {
+  overworld: 'Overworld',
+  the_nether: 'Nether',
+  the_end: 'End',
+}
+
 function worldName(raw: string): string {
-  return raw.replace(/^the_/, '').replaceAll('_', ' ')
+  return VANILLA[raw] ?? raw
 }
 </script>
 
 <template>
   <div class="relative flex min-h-0 w-full flex-1 flex-col">
     <WorldMap
-      v-if="server && dimension"
+      v-if="server && world"
       ref="map"
       :server="server"
-      :dimension="dimension"
+      :dimension="world"
       :marks="marks"
     />
 
@@ -209,41 +238,69 @@ function worldName(raw: string): string {
     </div>
 
     <!--
-      Over the map, not above it. Solid rather than ghost: a transparent control on terrain is
-      whatever colour the terrain happens to be behind it, which is not readable.
+      One panel, over the map rather than above it, built from the same card the rest of the app
+      uses. Solid rather than ghost: a translucent control on terrain is whatever colour the terrain
+      happens to be behind it, which is not readable.
     -->
-    <div v-if="server" class="absolute top-3 left-3 z-10 flex max-w-[min(22rem,calc(100%-1.5rem))] flex-col gap-2">
-      <div class="bg-base-200 flex items-center gap-2 rounded-lg p-2 shadow-md">
-        <MapIcon class="size-4 shrink-0 opacity-40" />
-        <select v-model="server" class="select select-xs select-ghost min-w-0 grow font-medium">
-          <option v-for="option in servers" :key="option" :value="option">{{ option }}</option>
-        </select>
-      </div>
+    <div
+      v-if="server"
+      class="border-base-300 bg-base-200 absolute top-3 left-3 z-10 w-64 max-w-[calc(100%-1.5rem)] rounded-lg border shadow-md"
+    >
+      <div class="flex flex-col gap-3 p-3">
+        <label class="flex flex-col gap-1">
+          <span class="text-xs font-medium opacity-60">{{ t('map.server') }}</span>
+          <select v-model="server" class="select select-sm select-bordered w-full">
+            <option v-for="option in servers" :key="option" :value="option">{{ option }}</option>
+          </select>
+        </label>
 
-      <!-- One button per world rather than a second dropdown: there are three, and which one is
-           being drawn is the single most misreadable thing on this screen. -->
-      <div v-if="worlds.length > 1" class="bg-base-200 flex gap-1 rounded-lg p-1 shadow-md">
-        <button
-          v-for="world in worlds"
-          :key="world.dimension"
-          class="btn btn-xs grow capitalize"
-          :class="world.dimension === dimension ? 'btn-primary' : 'btn-ghost'"
-          @click="dimension = world.dimension"
-        >
-          {{ worldName(world.dimension) }}
-        </button>
-      </div>
-
-      <div v-if="extent" class="bg-base-200/90 rounded-lg px-2 py-1.5 text-[0.7rem] leading-relaxed shadow-md">
-        <div class="opacity-60">
-          {{ t('map.charted', { count: extent.tiles }) }} · {{ t('map.lastSeen', { when: atShort(extent.at) }) }}
-        </div>
         <!--
-          Said once, about the whole picture. Terrain is what an agent last walked past, which on a
-          server people are building on may be hours old - and a map that does not say so reads as
-          live.
+          A dropdown rather than a row of buttons: a vanilla server has three worlds and anything
+          running Multiverse has as many as its operators made, which is not a number a row of
+          buttons can hold.
         -->
-        <div class="opacity-50">{{ t('map.stale') }}</div>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs font-medium opacity-60">{{ t('map.world') }}</span>
+          <select v-model="world" class="select select-sm select-bordered w-full">
+            <option v-for="option in worlds" :key="option.dimension" :value="option.dimension">
+              {{ worldName(option.dimension) }}
+            </option>
+          </select>
+        </label>
+
+        <label class="flex flex-col gap-1">
+          <span class="text-xs font-medium opacity-60">{{ t('map.goto') }}</span>
+          <div class="join w-full">
+            <input
+              v-model="typed"
+              type="text"
+              class="input input-sm input-bordered join-item w-full font-mono"
+              :class="rejected ? 'input-error' : ''"
+              :placeholder="t('map.gotoHint')"
+              @input="rejected = false"
+              @keyup.enter="goToTyped"
+            />
+            <button
+              class="btn btn-sm btn-neutral join-item"
+              :disabled="!typed.trim()"
+              :aria-label="t('map.goto')"
+              @click="goToTyped"
+            >
+              <Navigation class="size-3.5" />
+            </button>
+          </div>
+        </label>
+
+        <div v-if="extent" class="border-base-300 flex flex-col gap-0.5 border-t pt-2 text-xs opacity-60">
+          <span>{{ t('map.charted', { count: extent.tiles }) }}</span>
+          <span>{{ t('map.lastSeen', { when: atShort(extent.at) }) }}</span>
+          <!--
+            Said once, about the whole picture. Terrain is what an agent last walked past, which on
+            a server people are building on may be hours old - and a map that does not say so reads
+            as live.
+          -->
+          <span class="opacity-80">{{ t('map.stale') }}</span>
+        </div>
       </div>
     </div>
 
@@ -253,33 +310,36 @@ function worldName(raw: string): string {
     -->
     <div
       v-if="shown.length"
-      class="bg-base-200 absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-52 flex-col rounded-lg shadow-md"
+      class="border-base-300 bg-base-200 absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-56 flex-col rounded-lg border shadow-md"
     >
-      <button
-        class="hover:bg-base-300 flex items-center justify-between gap-2 rounded-t-lg px-3 py-2 text-xs font-medium"
-        @click="panelOpen = !panelOpen"
-      >
-        <span>{{ t('map.agents') }} · {{ shown.length }}</span>
-        <Crosshair class="size-3.5 opacity-40" />
-      </button>
+      <div class="border-base-300 flex items-center justify-between gap-2 border-b px-3 py-2">
+        <span class="text-xs font-medium">{{ t('map.agents') }}</span>
+        <span class="badge badge-sm badge-ghost tabular-nums">{{ shown.length }}</span>
+      </div>
 
-      <div v-if="panelOpen" class="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1 pt-0">
-        <button class="btn btn-xs btn-ghost justify-start gap-2" @click="recentre">
-          <span class="bg-primary size-2 shrink-0 rounded-full" />
-          <span class="truncate">{{ t('map.recentre') }}</span>
+      <div class="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-2">
+        <button class="btn btn-sm btn-ghost justify-start gap-2" @click="recentre">
+          <Crosshair class="size-3.5 shrink-0 opacity-60" />
+          <span class="truncate font-normal">{{ t('map.recentre') }}</span>
         </button>
 
         <button
           v-for="agent in shown"
           :key="agent.id"
-          class="btn btn-xs btn-ghost justify-start gap-2 font-normal"
+          class="btn btn-sm btn-ghost justify-start gap-2 font-normal"
           @click="jumpTo(agent.id)"
         >
+          <span class="bg-primary size-2 shrink-0 rounded-full" />
           <span class="truncate">{{ agent.label }}</span>
           <span class="ml-auto shrink-0 font-mono text-[0.65rem] tabular-nums opacity-50">
             {{ Math.round(agent.telemetry!.position.x) }}, {{ Math.round(agent.telemetry!.position.z) }}
           </span>
         </button>
+      </div>
+
+      <div class="border-base-300 flex items-center gap-3 border-t px-3 py-1.5 text-[0.7rem] opacity-60">
+        <span class="flex items-center gap-1"><span class="bg-primary size-2 rounded-full" />{{ t('map.agents') }}</span>
+        <span class="flex items-center gap-1"><span class="bg-error size-2 rounded-full" />{{ t('map.strangers') }}</span>
       </div>
     </div>
   </div>

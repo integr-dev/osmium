@@ -426,6 +426,11 @@ export const en = {
     unmapped: 'No agent has charted a server yet. The map fills in as they move.',
     failed: 'The map could not be drawn: {reason}',
     server: 'Server',
+    /** "World", not "Dimension": a server running Multiverse has many, and they are not dimensions. */
+    world: 'World',
+    goto: 'Go to',
+    /** Three numbers is what F3 gives, and pasting it should work; the height is dropped. */
+    gotoHint: 'x, z  or  x y z',
     charted: '{count} chunks charted',
     lastSeen: 'Last seen {when}',
     /** Under the pointer, in the coordinates F3 shows. */
