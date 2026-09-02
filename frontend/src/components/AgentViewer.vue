@@ -77,6 +77,13 @@ interface Scene {
   filters: { linear: number; clamp: number }
   /** Where the agent was last seen, so a jump can be told from a walk. See {@link frameCamera}. */
   lastAt?: { x: number; y: number; z: number }
+  /**
+   * The world's vertical range, as the current stream stated it.
+   *
+   * Mutable and shared with {@link extendMeshedHeight}, so a new stream can correct it without
+   * re-wrapping the renderer - wrapping twice would mark every section dirty twice over.
+   */
+  bounds: { minY: number; maxY: number }
   /** How many columns the host has sent, for {@link reportCoverage}. */
   received: number
   /** Entity ids seen on the wire, and the types they arrived as. */
@@ -147,6 +154,8 @@ interface WorkerLike {
 }
 
 interface WorldLike {
+  /** Drops every column and mesh and tells the workers to forget the world. See {@link restream}. */
+  resetWorld(): void
   texturesDataUrl?: string
   blockStatesData?: unknown
   scene: { remove(object: unknown): void }
@@ -259,6 +268,21 @@ function reportCoverage(current: Scene): void {
     const undrawn = columns.filter((column) => !meshed.has(column)).sort((a, b) => away(a) - away(b))
     const near = undrawn.filter((column) => away(column) <= 2)
 
+    // Which vertical band the geometry actually landed in. Upstream meshes y 0..255 on its own and
+    // `extendMeshedHeight` is what covers the rest, so a world that is whole in the middle and gone
+    // at both ends says that wrapper stopped being reached - a different fault from a column that
+    // never arrived, and indistinguishable from one without counting the sections.
+    let below = 0
+    let band = 0
+    let above = 0
+    for (const key of Object.keys(current.viewer.world.sectionMeshs ?? {})) {
+      const y = Number(key.split(',')[1])
+      if (Number.isNaN(y)) continue
+      if (y < UPSTREAM_MIN_Y) below++
+      else if (y >= UPSTREAM_MAX_Y) above++
+      else band++
+    }
+
     // `info`, not `debug`: the browser hides debug behind a verbosity setting that is off by
     // default, so a line nobody sees is a line that does not exist.
     const drawn = Object.keys(current.viewer.entities?.entities ?? {}).length
@@ -271,7 +295,10 @@ function reportCoverage(current: Scene): void {
     console.info(
       `[osmium] viewer @ ${home.x},${home.z}: host sent ${current.received} columns, ` +
         `renderer holds ${columns.length}, ${columns.length - undrawn.length} have geometry. ` +
-        `${undrawn.length} blank, ${near.length} of them within 2 columns of the agent` +
+        `${undrawn.length} blank, ${near.length} of them within 2 columns of the agent. ` +
+        `Sections: ${below} below y0, ${band} in 0..255, ${above} above y255. ` +
+        `Extension: ${extended.levels} levels outside the band, ` +
+        `${extended.marks} marks over ${extended.columns} columns` +
         (undrawn.length ? ` — nearest blank: ${undrawn.slice(0, 8).map((c) => `${c}(${away(c)})`).join(' ')}` : ''),
     )
   }, SETTLED)
@@ -298,11 +325,14 @@ const SECTION = 16
  * The neighbour marking mirrors upstream's, because a section's mesh depends on the blocks facing it
  * across each border.
  */
-function extendMeshedHeight(world: WorldLike, minY: number, maxY: number): void {
+/** What the wrapper below has actually done, for {@link reportCoverage}. Development only. */
+const extended = { levels: 0, marks: 0, columns: 0 }
+
+function extendMeshedHeight(world: WorldLike, bounds: { minY: number; maxY: number }): void {
   const outside = (): number[] => {
     const levels: number[] = []
-    const from = Math.floor(minY / SECTION) * SECTION
-    for (let y = from; y < maxY; y += SECTION) {
+    const from = Math.floor(bounds.minY / SECTION) * SECTION
+    for (let y = from; y < bounds.maxY; y += SECTION) {
       if (y < UPSTREAM_MIN_Y || y >= UPSTREAM_MAX_Y) levels.push(y)
     }
     return levels
@@ -311,8 +341,18 @@ function extendMeshedHeight(world: WorldLike, minY: number, maxY: number): void 
   const added = world.addColumn.bind(world)
   world.addColumn = (x: number, z: number, chunk: unknown) => {
     added(x, z, chunk)
-    for (const y of outside()) {
-      for (const [dx, dz] of NEIGHBOURS) world.setSectionDirty({ x: x + dx, y, z: z + dz })
+
+    // Read per column rather than once, because the bounds are the stream's and a new stream may
+    // state different ones - a different dimension has a different floor and ceiling.
+    const levels = outside()
+    extended.levels = levels.length
+    extended.columns++
+
+    for (const y of levels) {
+      for (const [dx, dz] of NEIGHBOURS) {
+        world.setSectionDirty({ x: x + dx, y, z: z + dz })
+        extended.marks++
+      }
     }
   }
 
@@ -735,6 +775,49 @@ function apply(current: Scene, event: ViewerEvent): void {
   }
 }
 
+/**
+ * Starts the scene over on a world the host has begun streaming afresh.
+ *
+ * A `version` event is the first thing any stream sends, so a second one means the last stream
+ * ended and another has taken its place - a respawn, a dimension change, or an agent that rejoined.
+ * The host's new stream keeps no memory of what the old one sent, so it never says `unloadChunk`
+ * for any of it: without this every column of every previous life stays in the scene, drawn over
+ * whatever is actually there and never freed. An agent that dies a few times drags its old worlds
+ * around for the life of the page.
+ *
+ * Upstream's `resetWorld` is most of the work but leaks in two ways this has to make good: it takes
+ * the meshes out of the scene without disposing any of them, and it leaves `loadedChunks` asserting
+ * columns that are gone - which then makes it discard the geometry for their replacements, because
+ * it checks that map before accepting a mesh.
+ */
+function restream(current: Scene, world: { version: string; minY?: number; height?: number }): void {
+  const renderer = current.viewer.world
+
+  for (const mesh of Object.values(renderer.sectionMeshs ?? {})) mesh?.geometry?.dispose()
+  const loaded = renderer.loadedChunks
+  if (loaded) for (const key of Object.keys(loaded)) delete loaded[key]
+
+  // In place, because the meshing wrapper holds this very object - see {@link extendMeshedHeight}.
+  current.bounds.minY = world.minY ?? 0
+  current.bounds.maxY = (world.minY ?? 0) + (world.height ?? 256)
+
+  // Resets the world, re-posts the version and block states to the workers, and clears the
+  // entities, which the new stream announces again from scratch.
+  current.viewer.setVersion(world.version)
+
+  // Everything remembered about entities describes ids the last stream issued, and ids are reused.
+  current.undrawable.clear()
+  current.seen.clear()
+  current.names.clear()
+  current.at.clear()
+  current.sizes.clear()
+  current.received = 0
+
+  console.info(
+    `[osmium] viewer restreamed: ${world.version} y ${current.bounds.minY}..${current.bounds.maxY}`,
+  )
+}
+
 /** Feeds the scene everything it missed while it was being built. */
 function replay(): void {
   const current = scene.value
@@ -761,6 +844,14 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
     // built - and rebuilt, if the agent rejoined on a different one.
     if (event.name === 'version') {
       const world = event.data as { version: string; minY?: number; height?: number }
+
+      // A stream that has already been built and is being announced again is a new stream over the
+      // same socket. Everything the last one drew is somewhere the agent no longer is.
+      if (scene.value) {
+        restream(scene.value, world)
+        continue
+      }
+
       if (!scene.value && !building) {
         building = true
         try {
@@ -956,7 +1047,11 @@ async function mount(world: { version: string; minY?: number; height?: number },
 
   // Before anything is listened for, so the very first column is meshed over its whole height.
   // Defaults are the pre-1.18 range, which is what a server that does not state its bounds is.
-  extendMeshedHeight(viewer.world, world.minY ?? 0, (world.minY ?? 0) + (world.height ?? 256))
+  const bounds = {
+    minY: world.minY ?? 0,
+    maxY: (world.minY ?? 0) + (world.height ?? 256),
+  }
+  extendMeshedHeight(viewer.world, bounds)
 
   const emitter = new Emitter()
   viewer.listen(emitter)
@@ -1010,6 +1105,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       return outline
     },
     filters: { linear: THREE.LinearFilter, clamp: THREE.ClampToEdgeWrapping },
+    bounds,
     received: 0,
     outlineMaterial,
     seen: new Map(),
