@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { UserPlus, X } from 'lucide-vue-next'
+import { SlidersHorizontal, UserPlus, X } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
-import { playersFrom, playersTo, TRUST, type Trust, USERNAME } from '../lib/configuration'
+import CommandPickerModal from './CommandPickerModal.vue'
+import {
+  CHAT_COMMANDS,
+  elevated,
+  playersFrom,
+  playersTo,
+  type TrustedPlayer,
+  USERNAME,
+} from '../lib/configuration'
 
 /**
  * A list of Minecraft players, kept in the one string a setting can hold.
@@ -22,8 +30,14 @@ const { t } = useI18n()
 
 const draft = ref('')
 
-/** Ordered lowest first, so the options read as a scale rather than as two unrelated choices. */
-const TIERS: Trust[] = [TRUST.chat, TRUST.commands]
+/** Whose commands the dialog is editing, or null while it is shut. */
+const editing = ref<TrustedPlayer | null>(null)
+const picking = ref(false)
+
+function edit(player: TrustedPlayer): void {
+  editing.value = player
+  picking.value = true
+}
 
 const players = computed(() => playersFrom(model.value))
 
@@ -53,7 +67,7 @@ function add(): void {
   // rearranges itself under the hand editing it is one nobody can keep their place in; the tier is
   // the safe one because granting the other has to be something somebody chose, not something that
   // happened by typing a name.
-  model.value = playersTo([...players.value, { name: draft.value.trim(), trust: TRUST.chat }])
+  model.value = playersTo([...players.value, { name: draft.value.trim(), commands: [...CHAT_COMMANDS] }])
   draft.value = ''
 }
 
@@ -61,8 +75,19 @@ function remove(name: string): void {
   model.value = playersTo(players.value.filter((other) => other.name !== name))
 }
 
-function trust(name: string, to: Trust): void {
-  model.value = playersTo(players.value.map((other) => (other.name === name ? { ...other, trust: to } : other)))
+/** Applies what the dialog picked, for whichever player it was opened on. */
+function applyPicked(commands: string[]): void {
+  const name = editing.value?.name
+  if (!name) return
+
+  model.value = playersTo(
+    players.value.map((other) => (other.name === name ? { ...other, commands } : other)),
+  )
+}
+
+/** Whether any of what a player holds is one of the powerful commands, which the row colours. */
+function anyElevated(player: TrustedPlayer): boolean {
+  return player.commands.some(elevated)
 }
 
 /**
@@ -123,13 +148,10 @@ function paste(event: ClipboardEvent): void {
     -->
     <div class="border-base-300 bg-base-100/40 overflow-hidden rounded-box border">
       <ul v-if="players.length" class="divide-base-300 max-h-64 divide-y overflow-y-auto">
-        <li
-          v-for="player in players"
-          :key="player.name"
-          class="flex items-center gap-2.5 py-1.5 pr-1.5 pl-2.5"
-        >
-          <PlayerHead :id="player.name" :name="player.name" size="sm" class="shrink-0" />
-          <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ player.name }}</span>
+        <li v-for="player in players" :key="player.name" class="flex flex-col">
+          <div class="flex items-center gap-2.5 py-1.5 pr-1.5 pl-2.5">
+            <PlayerHead :id="player.name" :name="player.name" size="sm" class="shrink-0" />
+            <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ player.name }}</span>
 
           <!--
             A select rather than a pair of buttons. Two buttons meant one was always drawn dimmed
@@ -140,31 +162,50 @@ function paste(event: ClipboardEvent): void {
             Coloured only at the elevated tier, so what stands out in the column is the entry worth
             looking at twice.
           -->
-          <select
-            :value="player.trust"
-            class="select select-xs w-36 shrink-0"
-            :class="player.trust === TRUST.commands ? 'select-warning text-warning' : ''"
-            :aria-label="t('configuration.players.trust')"
-            @change="trust(player.name, ($event.target as HTMLSelectElement).value as Trust)"
-          >
-            <option v-for="tier in TIERS" :key="tier" :value="tier">
-              {{ t(`configuration.players.${tier}`) }}
-            </option>
-          </select>
+            <!--
+              What they hold, as a count, and the way in to change it. A count rather than the names:
+              ten commands do not fit beside a username, and the question a list is scanned for is
+              "does anybody here have more than they should", which a number and a colour answer.
+            -->
+            <button
+              type="button"
+              class="btn btn-xs w-32 shrink-0 justify-between font-normal"
+              :class="anyElevated(player) ? 'btn-warning btn-outline' : 'btn-ghost border-base-300 border'"
+              :aria-label="t('configuration.players.trust')"
+              @click="edit(player)"
+            >
+              <span>
+                {{ t('configuration.players.count_commands', { count: player.commands.length }, player.commands.length) }}
+              </span>
+              <SlidersHorizontal class="size-3 shrink-0 opacity-60" />
+            </button>
 
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100"
-            :aria-label="t('configuration.players.remove', { name: player.name })"
-            @click="remove(player.name)"
-          >
-            <X class="size-3.5" />
-          </button>
-        </li>
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100"
+              :aria-label="t('configuration.players.remove', { name: player.name })"
+              @click="remove(player.name)"
+            >
+              <X class="size-3.5" />
+            </button>
+          </div>
+</li>
       </ul>
 
       <p v-else class="px-2.5 py-3 text-xs opacity-50">{{ t('configuration.players.empty') }}</p>
     </div>
+
+    <!--
+      Mounted always, not behind `v-if`. The dialog opens from a watch on `open`, and a watch only
+      fires on a *change* - a component created with it already true never sees one, so the dialog
+      was built and never shown.
+    -->
+    <CommandPickerModal
+      v-model:open="picking"
+      :name="editing?.name ?? ''"
+      :commands="editing?.commands ?? []"
+      @apply="applyPicked"
+    />
 
     <!-- Counted, because "is everybody on here" is the question a list like this is opened to answer. -->
     <p v-if="players.length" class="text-xs opacity-50">

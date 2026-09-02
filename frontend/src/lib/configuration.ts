@@ -179,9 +179,55 @@ export const TRUST = { chat: 'chat', commands: 'commands' } as const
 
 export type Trust = (typeof TRUST)[keyof typeof TRUST]
 
+/**
+ * Every command an agent answers in game, and which tier reaches it.
+ *
+ * **A copy of the host's table**, which is the authority - a host is a separate program and may be
+ * older or newer than this interface. What that costs is a command list that can go stale; what it
+ * buys is a picker that can show names at all. A command this build has never heard of survives a
+ * round trip untouched rather than being dropped, so an older interface cannot silently revoke what
+ * a newer one granted.
+ */
+export const COMMANDS = {
+  id: TRUST.chat,
+  ping: TRUST.chat,
+  health: TRUST.chat,
+  food: TRUST.chat,
+  uptime: TRUST.chat,
+  say: TRUST.chat,
+  help: TRUST.chat,
+  run: TRUST.commands,
+  disconnect: TRUST.commands,
+  reconnect: TRUST.commands,
+} as const satisfies Record<string, Trust>
+
+export type CommandName = keyof typeof COMMANDS
+
+export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
+
+/**
+ * What a player on the list may do: exactly these commands, and nothing else.
+ *
+ * **One shape, not a tier and a list.** The host still reads the two tiers, because settings
+ * written before this existed hold them - but nothing here writes one. A tier is a name for a set
+ * somebody has to learn, and every question an operator actually asks of this list ("can they use
+ * `run`?") is a question about the set. So the set is the whole model, and a tier read from an
+ * older setting is expanded into it on the way in.
+ */
 export interface TrustedPlayer {
   name: string
-  trust: Trust
+  commands: string[]
+}
+
+/** The written form of a grant that names no commands at all, which is a real thing to mean. */
+export const NOTHING = 'none'
+
+/** The commands the old `chat` tier reached, which is what a bare name in a stored setting means. */
+export const CHAT_COMMANDS: CommandName[] = COMMAND_NAMES.filter((name) => COMMANDS[name] === TRUST.chat)
+
+/** Whether a command is one of the powerful ones, which is what an interface colours. */
+export function elevated(command: string): boolean {
+  return COMMANDS[command as CommandName] === TRUST.commands
 }
 
 /**
@@ -196,9 +242,9 @@ export function playersFrom(value: string | undefined): TrustedPlayer[] {
   const players: TrustedPlayer[] = []
 
   for (const entry of (value ?? '').split(/[\s,]+/)) {
-    // `name` or `name:commands`. A username cannot contain a colon, so the split is unambiguous —
-    // and a tier this build does not recognise falls back to `chat` rather than to the powerful one.
-    const [name, tier] = entry.split(':')
+    // `name`, `name:tier` or `name:one+two`. A username cannot contain a colon, so the first split
+    // is unambiguous; `+` joins the commands because the entries themselves are comma-separated.
+    const [name, granted] = entry.split(':')
     if (!name || !USERNAME.test(name)) continue
 
     // Minecraft compares names case-insensitively, so two spellings are one entry — and the first
@@ -206,10 +252,34 @@ export function playersFrom(value: string | undefined): TrustedPlayer[] {
     if (seen.has(name.toLowerCase())) continue
 
     seen.add(name.toLowerCase())
-    players.push({ name, trust: tier === TRUST.commands ? TRUST.commands : TRUST.chat })
+    players.push({ name, commands: commandsFrom(granted) })
   }
 
   return players
+}
+
+/**
+ * What was written after the colon, as the set of commands it means.
+ *
+ * The two tiers are read and expanded, because that is what a setting written before this existed
+ * holds - and an entry that says `commands` genuinely did mean all of them. Nothing writes a tier
+ * back, so a list normalises to its commands the first time the form is saved.
+ *
+ * Unknown words are kept rather than dropped, which is the one decision here worth stating. A list
+ * is written by whichever Osmium the operator happened to be using, and this build may be the older
+ * one; discarding a name it does not recognise would quietly revoke a grant every time an older
+ * interface saved the form. Nothing is granted by keeping it - the host decides, and it refuses
+ * what it cannot name.
+ */
+export function commandsFrom(written: string | undefined): string[] {
+  if (written === undefined || written === '' || written === TRUST.chat) return [...CHAT_COMMANDS]
+  if (written === TRUST.commands) return [...COMMAND_NAMES]
+  if (written === NOTHING) return []
+
+  // Only a tier is a tier; anything else is a list, even of one. A word this build cannot name is
+  // still a list of one thing, and falling back to a tier here would grant the chat commands the
+  // operator did not ask for.
+  return [...new Set(written.split('+').filter((word) => word.length > 0))]
 }
 
 /** The inverse. Empty stays empty, which is what {@link saveSettings} strips as "never set".
@@ -217,7 +287,21 @@ export function playersFrom(value: string | undefined): TrustedPlayer[] {
  * The tier is written only when it is the elevated one, so the ordinary case stays a plain list of
  * names — readable in the database, and unchanged from before the tiers existed. */
 export function playersTo(players: TrustedPlayer[]): string {
-  return players.map(({ name, trust }) => (trust === TRUST.commands ? `${name}:${trust}` : name)).join(',')
+  return players.map(({ name, commands }) => `${name}:${commandsTo(commands)}`).join(',')
+}
+
+/**
+ * The inverse of {@link commandsFrom}.
+ *
+ * Always explicit, never a tier. An entry read as `commands` is written back as the ten commands it
+ * meant - longer, and worth it: what is stored then says what is granted, and adding a command to
+ * this build cannot widen a grant somebody already made.
+ *
+ * Granting nothing is spelled out rather than written as an empty suffix, which would read back as
+ * the chat tier and hand back the seven commands that were just taken away.
+ */
+export function commandsTo(commands: string[]): string {
+  return commands.length ? commands.join('+') : NOTHING
 }
 
 /** Every key this build knows, for telling a stored setting from one left by an older Osmium. */

@@ -28,11 +28,56 @@ export const TRUST = { chat: 'chat', commands: 'commands' } as const
 
 export type Trust = (typeof TRUST)[keyof typeof TRUST]
 
-/** Whether somebody trusted at [held] may use a command needing [needed]. */
-export function allows(held: Trust | undefined, needed: Trust): boolean {
-  if (held === undefined) return false
+/**
+ * What a player on the list may do.
+ *
+ * Two shapes, because there are two ways to answer and both earn their place. A **tier** is the
+ * broad answer - "chat things" or "everything" - and is what most entries are: it reads at a glance
+ * and it does not need revisiting when a command is added here. A **list** is the exact answer, for
+ * the player who should have one command out of the powerful tier and none of the others.
+ *
+ * A list is exact in both directions: it grants what it names and refuses everything else, the chat
+ * commands included. Anything less would make "only `run`" quietly mean "`run` and the seven
+ * harmless ones", which is not what somebody naming commands one at a time asked for.
+ */
+export type Grant =
+  | { kind: 'tier'; tier: Trust }
+  | { kind: 'only'; commands: ReadonlySet<string> }
 
-  return needed === TRUST.chat || held === TRUST.commands
+/** Written after the colon when a grant names no commands at all, which is a real thing to mean. */
+export const NOTHING = 'none'
+
+/** Whether [grant] reaches [command]. The whole of the trust check, and the only place it is made. */
+export function allows(grant: Grant | undefined, command: string): boolean {
+  if (grant === undefined) return false
+  if (grant.kind === 'only') return grant.commands.has(command)
+  if (grant.tier === TRUST.commands) return isCommand(command)
+
+  // A command this build cannot name is refused on the chat tier rather than assumed harmless.
+  return COMMANDS[command as CommandName]?.needs === TRUST.chat
+}
+
+/**
+ * What was written after the colon, read into a grant.
+ *
+ * A word that is not a tier is a **list of one**, not a tier this build guessed at. Falling back to
+ * `chat` there would grant the seven harmless commands to an entry that plainly asked for something
+ * else - and since a command that cannot be named is refused, a list of nonsense grants nothing.
+ */
+export function grantFrom(written: string | undefined): Grant {
+  if (written === undefined || written === '') return { kind: 'tier', tier: TRUST.chat }
+  if (written === TRUST.commands) return { kind: 'tier', tier: TRUST.commands }
+  if (written === TRUST.chat) return { kind: 'tier', tier: TRUST.chat }
+  if (written === NOTHING) return { kind: 'only', commands: new Set() }
+
+  return { kind: 'only', commands: new Set(written.split('+').filter((word) => word.length > 0)) }
+}
+
+/** How a grant reads in a log line, which is the only place an operator sees this spelled out. */
+export function grantLabel(grant: Grant | undefined): string {
+  if (grant === undefined) return 'nothing'
+  if (grant.kind === 'tier') return grant.tier
+  return grant.commands.size ? [...grant.commands].join('+') : NOTHING
 }
 
 /**
@@ -70,11 +115,11 @@ export type CommandName = keyof typeof COMMANDS
  * across four agents would be twelve messages and a spam kick. Usage only, no descriptions - chat is
  * 256 characters and a name plus its arguments is what somebody needs to type the next thing.
  */
-export function helpLine(held: Trust | undefined): string {
+export function helpLine(held: Grant | undefined): string {
   const usages = Object.entries(COMMANDS)
     // Only what the asker could actually use. A chat-only player shown `run` would be reading about
     // a power they will be silently refused, and it advertises the escalated command to the room.
-    .filter(([, { needs }]) => allows(held, needs))
+    .filter(([name]) => allows(held, name))
     .map(([name, { args }]) => (args ? `${name} ${args}` : name))
 
   return `${PREFIX} [account] ${usages.join(' | ')}`
@@ -186,6 +231,7 @@ export function addressedTo(command: ChatCommand, account: string | undefined): 
   return command.account.toLowerCase() === account.toLowerCase()
 }
 
-function isCommand(word: string): word is CommandName {
+/** Whether a word is a command this build answers. Exported for {@link allows}. */
+export function isCommand(word: string): word is CommandName {
   return Object.hasOwn(COMMANDS, word)
 }

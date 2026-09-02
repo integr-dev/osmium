@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest'
 
 import { trustedFrom } from '../src/agent/bot.ts'
-import { addressedTo, allows, COMMANDS, commandIn, helpLine, PREFIX, runnable, sayable, TRUST } from '../src/agent/command.ts'
+import {
+  addressedTo,
+  allows,
+  COMMANDS,
+  commandIn,
+  grantFrom,
+  helpLine,
+  PREFIX,
+  runnable,
+  sayable,
+  TRUST,
+  type Grant,
+} from '../src/agent/command.ts'
+
+/** A broad grant, which most entries are. */
+const tier = (which: typeof TRUST.chat | typeof TRUST.commands): Grant => ({ kind: 'tier', tier: which })
+
+/** An exact one, which is the point of granting commands individually. */
+const only = (...commands: string[]): Grant => ({ kind: 'only', commands: new Set(commands) })
 import { compile, spokenIn, VANILLA, WHISPER_COMMAND, whisperWith } from '../src/agent/sender.ts'
 
 /**
@@ -165,20 +183,20 @@ describe('what an agent may be made to say', () => {
  */
 describe('help', () => {
   it('names every command this build has', () => {
-    for (const name of Object.keys(COMMANDS)) expect(helpLine(TRUST.commands)).toContain(name)
+    for (const name of Object.keys(COMMANDS)) expect(helpLine(tier(TRUST.commands))).toContain(name)
   })
 
   it('shows what each one takes', () => {
-    expect(helpLine(TRUST.commands)).toContain('say <message>')
+    expect(helpLine(tier(TRUST.commands))).toContain('say <message>')
   })
 
   it('reads as something somebody could type back', () => {
-    expect(helpLine(TRUST.commands).startsWith(PREFIX)).toBe(true)
+    expect(helpLine(tier(TRUST.commands)).startsWith(PREFIX)).toBe(true)
   })
 
   /** One line per agent per `help`, so a fleet answering must not add up to a spam kick. */
   it('fits in one Minecraft message', () => {
-    expect(helpLine(TRUST.commands).length).toBeLessThanOrEqual(256)
+    expect(helpLine(tier(TRUST.commands)).length).toBeLessThanOrEqual(256)
   })
 
   it('is a command like any other', () => {
@@ -192,7 +210,7 @@ describe('help', () => {
    * parse as a command, or one `help` would set the whole fleet off answering each other.
    */
   it('is not itself a command, so a fleet cannot set itself off', () => {
-    expect(commandIn(helpLine(TRUST.commands))).toBeUndefined()
+    expect(commandIn(helpLine(tier(TRUST.commands)))).toBeUndefined()
   })
 })
 
@@ -204,40 +222,45 @@ describe('help', () => {
  */
 describe('how far a player is trusted', () => {
   it('lets a chat-trusted player use the chat commands', () => {
-    expect(allows(TRUST.chat, COMMANDS.id.needs)).toBe(true)
-    expect(allows(TRUST.chat, COMMANDS.say.needs)).toBe(true)
-    expect(allows(TRUST.chat, COMMANDS.help.needs)).toBe(true)
+    expect(allows(tier(TRUST.chat), 'id')).toBe(true)
+    expect(allows(tier(TRUST.chat), 'say')).toBe(true)
+    expect(allows(tier(TRUST.chat), 'help')).toBe(true)
   })
 
   it('does not let a chat-trusted player run server commands', () => {
-    expect(allows(TRUST.chat, COMMANDS.run.needs)).toBe(false)
+    expect(allows(tier(TRUST.chat), 'run')).toBe(false)
   })
 
   it('lets a command-trusted player do everything', () => {
-    for (const { needs } of Object.values(COMMANDS)) expect(allows(TRUST.commands, needs)).toBe(true)
+    for (const name of Object.keys(COMMANDS)) expect(allows(tier(TRUST.commands), name)).toBe(true)
   })
 
   it('lets somebody who is not on the list do nothing at all', () => {
-    for (const { needs } of Object.values(COMMANDS)) expect(allows(undefined, needs)).toBe(false)
+    for (const name of Object.keys(COMMANDS)) expect(allows(undefined, name)).toBe(false)
   })
 
   it('reads the tier off an entry, and falls back to the safe one', () => {
-    expect(trustedFrom('integr:commands').get('integr')).toBe(TRUST.commands)
-    expect(trustedFrom('integr').get('integr')).toBe(TRUST.chat)
+    expect(trustedFrom('integr:commands').get('integr')).toEqual(tier(TRUST.commands))
+    expect(trustedFrom('integr').get('integr')).toEqual(tier(TRUST.chat))
     // A tier a newer Osmium wrote must not grant more than this build understands.
-    expect(trustedFrom('integr:everything').get('integr')).toBe(TRUST.chat)
-    expect(trustedFrom('integr:COMMANDS').get('integr')).toBe(TRUST.chat)
+    // Not a tier, so it is a list of one - and a command that cannot be named is refused, so this
+    // grants nothing at all. Falling back to `chat` here would grant the seven harmless commands
+    // to an entry that plainly asked for something else.
+    expect(trustedFrom('integr:everything').get('integr')).toEqual(only('everything'))
+    expect(trustedFrom('integr:COMMANDS').get('integr')).toEqual(only('COMMANDS'))
+    expect(allows(trustedFrom('integr:everything').get('integr'), 'say')).toBe(false)
+    expect(allows(trustedFrom('integr:COMMANDS').get('integr'), 'run')).toBe(false)
   })
 
   it('only offers help for what the asker could actually use', () => {
     for (const elevated of ['run', 'disconnect', 'reconnect']) {
-      expect(helpLine(TRUST.chat)).not.toContain(elevated)
-      expect(helpLine(TRUST.commands)).toContain(elevated)
+      expect(helpLine(tier(TRUST.chat))).not.toContain(elevated)
+      expect(helpLine(tier(TRUST.commands))).toContain(elevated)
     }
 
     // And still offers the ones they can use.
     for (const plain of ['id', 'ping', 'health', 'food', 'uptime', 'say', 'help']) {
-      expect(helpLine(TRUST.chat)).toContain(plain)
+      expect(helpLine(tier(TRUST.chat))).toContain(plain)
     }
   })
 })
@@ -338,5 +361,56 @@ describe('who is trusted', () => {
     const trusted = trustedFrom('integr, [MEMBER], ʙʟᴏᴏᴍ, ThisNameIsFarTooLong')
 
     expect([...trusted.keys()]).toEqual(['integr'])
+  })
+})
+
+/**
+ * Granting commands one at a time.
+ *
+ * The reason this exists is the player who should have one command out of the powerful tier and
+ * none of the others, so what matters is that a list means *exactly* what it names.
+ */
+describe('granting commands one at a time', () => {
+  it('reads a list joined by plus', () => {
+    expect(trustedFrom('integr:run+say').get('integr')).toEqual(only('run', 'say'))
+  })
+
+  it('grants what the list names', () => {
+    expect(allows(only('run'), 'run')).toBe(true)
+  })
+
+  /** Exact in both directions: "only `run`" must not quietly mean "`run` and the harmless ones". */
+  it('refuses everything the list does not name, chat commands included', () => {
+    expect(allows(only('run'), 'say')).toBe(false)
+    expect(allows(only('run'), 'help')).toBe(false)
+    expect(allows(only('run'), 'id')).toBe(false)
+    expect(allows(only('run'), 'disconnect')).toBe(false)
+  })
+
+  it('grants nothing when the list names nothing', () => {
+    expect(grantFrom('none')).toEqual(only())
+    for (const name of Object.keys(COMMANDS)) expect(allows(only(), name)).toBe(false)
+  })
+
+  /** A command a newer Osmium wrote is kept, and refused, rather than silently widening the grant. */
+  it('refuses a command it cannot name', () => {
+    expect(allows(only('selfDestruct'), 'selfDestruct')).toBe(true)
+    expect(allows(tier(TRUST.chat), 'selfDestruct')).toBe(false)
+    expect(allows(tier(TRUST.commands), 'selfDestruct')).toBe(false)
+  })
+
+  it('offers help only for what an exact grant reaches', () => {
+    const line = helpLine(only('run'))
+
+    expect(line).toContain('run')
+    expect(line).not.toContain('say')
+    expect(line).not.toContain('help')
+  })
+
+  it('reads a bare tier as a tier, not as a list of one', () => {
+    expect(grantFrom('commands')).toEqual(tier(TRUST.commands))
+    expect(grantFrom('chat')).toEqual(tier(TRUST.chat))
+    expect(grantFrom(undefined)).toEqual(tier(TRUST.chat))
+    expect(grantFrom('')).toEqual(tier(TRUST.chat))
   })
 })

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { playersFrom, playersTo, settingsOf, KNOWN_KEYS, TRUST } from './configuration'
+import {
+  CHAT_COMMANDS,
+  COMMAND_NAMES,
+  elevated,
+  playersFrom,
+  playersTo,
+  settingsOf,
+  KNOWN_KEYS,
+} from './configuration'
 import type { FleetAgent } from '../stores/agents'
 
 /**
@@ -8,12 +16,13 @@ import type { FleetAgent } from '../stores/agents'
  * it lets through reaches a host, and anything it drops silently matches nobody.
  */
 describe('reading a player list', () => {
-  const chat = (...names: string[]) => names.map((name) => ({ name, trust: TRUST.chat }))
+  const chat = (...names: string[]) => names.map((name) => ({ name, commands: [...CHAT_COMMANDS] }))
 
   it('reads a list back exactly as it was written', () => {
     const written = [
-      { name: 'Notch', trust: TRUST.chat },
-      { name: 'jeb_', trust: TRUST.commands },
+      { name: 'Notch', commands: [...CHAT_COMMANDS] },
+      { name: 'jeb_', commands: [...COMMAND_NAMES] },
+      { name: 'Dinnerbone', commands: ['say', 'run'] },
     ]
 
     expect(playersFrom(playersTo(written))).toEqual(written)
@@ -49,37 +58,91 @@ describe('reading a player list', () => {
   it('writes an empty list as an empty string', () => {
     expect(playersTo([])).toBe('')
   })
-})
-
-/**
- * The tier is the whole difference between making an agent talk and handing somebody its Minecraft
- * account, so what it does when it is unsure has to be the safe answer every time.
- */
-describe('how far a player is trusted', () => {
-  it('writes the tier only when it is the elevated one', () => {
-    expect(playersTo([{ name: 'Notch', trust: TRUST.chat }])).toBe('Notch')
-    expect(playersTo([{ name: 'Notch', trust: TRUST.commands }])).toBe('Notch:commands')
-  })
-
-  /** A plain list of names is what the setting held before tiers existed, and it still reads. */
-  it('reads a bare name as chat', () => {
-    expect(playersFrom('Notch')).toEqual([{ name: 'Notch', trust: TRUST.chat }])
-  })
-
-  it('reads the elevated tier when it is written', () => {
-    expect(playersFrom('Notch:commands')).toEqual([{ name: 'Notch', trust: TRUST.commands }])
-  })
-
-  /** A tier from a newer Osmium must not quietly grant more than this build understands. */
-  it('falls back to chat for a tier it does not know', () => {
-    expect(playersFrom('Notch:everything')).toEqual([{ name: 'Notch', trust: TRUST.chat }])
-    expect(playersFrom('Notch:')).toEqual([{ name: 'Notch', trust: TRUST.chat }])
-    expect(playersFrom('Notch:COMMANDS')).toEqual([{ name: 'Notch', trust: TRUST.chat }])
-  })
 
   it('is not fooled by a colon where a name should be', () => {
     expect(playersFrom(':commands')).toEqual([])
     expect(playersFrom('[MEMBER]:commands')).toEqual([])
+  })
+})
+
+/**
+ * Which commands one player may use.
+ *
+ * The difference between making an agent talk and handing somebody its Minecraft account is one
+ * entry in this list, so what it does when it is unsure has to be the safe answer every time.
+ */
+describe('granting commands one at a time', () => {
+  it('writes a list joined by plus, because the entries are separated by commas', () => {
+    expect(playersTo([{ name: 'Notch', commands: ['say', 'run'] }])).toBe('Notch:say+run')
+  })
+
+  it('reads a list back as the same commands', () => {
+    expect(playersFrom('Notch:say+run')).toEqual([{ name: 'Notch', commands: ['say', 'run'] }])
+  })
+
+  it('drops a command named twice', () => {
+    expect(playersFrom('Notch:run+run+say')).toEqual([{ name: 'Notch', commands: ['run', 'say'] }])
+  })
+
+  /** Granting nothing is a real thing to mean, and it must not read back as the old chat tier. */
+  it('writes an empty grant as something, not as an empty suffix', () => {
+    const written = playersTo([{ name: 'Notch', commands: [] }])
+
+    expect(written).toBe('Notch:none')
+    expect(playersFrom(written)).toEqual([{ name: 'Notch', commands: [] }])
+  })
+
+  /**
+   * The tiers are what settings written before this held, so they are still read - and expanded,
+   * because a set is the only thing the interface deals in now.
+   */
+  it('expands a stored tier into the commands it meant', () => {
+    expect(playersFrom('Notch')).toEqual([{ name: 'Notch', commands: [...CHAT_COMMANDS] }])
+    expect(playersFrom('Notch:chat')).toEqual([{ name: 'Notch', commands: [...CHAT_COMMANDS] }])
+    expect(playersFrom('Notch:')).toEqual([{ name: 'Notch', commands: [...CHAT_COMMANDS] }])
+    expect(playersFrom('Notch:commands')).toEqual([{ name: 'Notch', commands: [...COMMAND_NAMES] }])
+  })
+
+  /** The chat tier never reached the powerful three, and expanding it must not start. */
+  it('expands the chat tier to the harmless commands only', () => {
+    expect(CHAT_COMMANDS).toContain('say')
+    expect(CHAT_COMMANDS).not.toContain('run')
+    expect(CHAT_COMMANDS).not.toContain('disconnect')
+    expect(CHAT_COMMANDS).not.toContain('reconnect')
+  })
+
+  /** Nothing writes a tier back, so what is stored says what is granted. */
+  it('never writes a tier, even for a set that matches one exactly', () => {
+    expect(playersTo([{ name: 'Notch', commands: [...COMMAND_NAMES] }])).not.toBe('Notch:commands')
+    expect(playersTo([{ name: 'Notch', commands: [...CHAT_COMMANDS] }])).not.toBe('Notch')
+  })
+
+  /**
+   * A word after the colon that is not a tier is a list of one, not a tier this build guessed at.
+   * Falling back to the chat tier would grant seven commands to an entry that asked for something
+   * else - and the host refuses a command it cannot name, so a list of nonsense grants nothing.
+   */
+  it('reads an unknown word as a list of one rather than as a tier', () => {
+    expect(playersFrom('Notch:everything')).toEqual([{ name: 'Notch', commands: ['everything'] }])
+    expect(playersFrom('Notch:COMMANDS')).toEqual([{ name: 'Notch', commands: ['COMMANDS'] }])
+  })
+
+  /**
+   * A command written by a newer Osmium survives a round trip untouched. Dropping it would revoke a
+   * grant every time an older interface saved this form.
+   */
+  it('carries a command it cannot name through unchanged', () => {
+    expect(playersFrom(playersTo([{ name: 'Notch', commands: ['run', 'selfDestruct'] }]))).toEqual([
+      { name: 'Notch', commands: ['run', 'selfDestruct'] },
+    ])
+  })
+
+  it('knows which commands are the powerful ones', () => {
+    expect(elevated('run')).toBe(true)
+    expect(elevated('disconnect')).toBe(true)
+    expect(elevated('reconnect')).toBe(true)
+    expect(elevated('say')).toBe(false)
+    expect(elevated('selfDestruct')).toBe(false)
   })
 })
 

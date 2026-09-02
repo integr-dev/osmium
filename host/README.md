@@ -293,7 +293,7 @@ one would otherwise run on defaults with nothing saying so.
 | `mc.version` | The version to speak, skipping the status ping entirely. Unset means ask the server, which is right almost always — set it for one that refuses a version check or answers dishonestly. A version this build has no protocol for is refused and the ping happens anyway. Read when a session opens. |
 | `mc.takeKnockback` | `false` to ignore knockback entirely — the agent is not pushed by hits, explosions or anything else. Unset means take it, like a player. With it off `mc.knockback` does not apply, since nothing is applied either way. Read per packet, so it takes effect at once rather than on the next connect. |
 | `mc.knockback` | `true`, `false`, or unset. Whether to undo the client library's velocity scaling. Unset decides it from the version; three states rather than two because a proxy can forward a version it does not advertise, and the packet's shape follows what is on the wire rather than what the handshake claimed. Read when a session opens. |
-| `players.whitelist` | Who may command this agent from inside the game, comma-separated. `name` for chat, `name:commands` for chat and server commands. **Empty means nobody.** See §5.1. |
+| `players.whitelist` | Who may command this agent from inside the game, comma-separated. `name` for chat, `name:commands` for chat and server commands, `name:run+say` for exactly those. **Empty means nobody.** See §5.1. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
 
 ### `delete_agent`
@@ -761,12 +761,18 @@ heard the line. `help` is generated from the command table and **filtered to the
 command added there lists itself, and somebody who cannot use `run` is not told it exists.
 
 **Two tiers, because talking and acting are different powers.** `players.whitelist` holds `name` for
-chat and `name:commands` for both; an entry with no tier written on it, or one written with a tier
-this build does not know, is chat. A setting from a newer Osmium must never quietly grant more than
-it says.
+chat and `name:commands` for both; an entry with nothing written after the colon is chat. A setting
+from a newer Osmium must never quietly grant more than it says.
 
 - **chat** — `id`, `ping`, `health`, `food`, `uptime`, `say`, `help`. Makes the agent talk and
   report about itself.
+- **an exact list** — `name:run+say` grants precisely those and refuses everything else, the chat
+  commands included. **This is what the interface writes**, always: the tiers are read for settings
+  saved before it existed, and normalised into a list the first time the form is saved. This is for the player who should have one command out of the powerful tier and
+  none of the others; `name:none` grants nothing at all. **A word after the colon that is not a tier
+  is read as a list of one**, never as a tier guessed at — so `name:everything` from some future
+  Osmium grants nothing here rather than silently falling back to chat. A command a host cannot name
+  is refused, on any grant, which is what makes that safe.
 - **commands** — also `run`, `disconnect` and `reconnect`. `run` sends a server command under
   whatever permissions the agent's Minecraft account holds; on an operator account this is close to
   handing the account over, since whoever holds it can `/op` themselves and nothing here can tell

@@ -4,7 +4,17 @@ import mineflayer, { type Bot, type BotOptions } from 'mineflayer'
 
 import { type Endpoint, locate } from './address.ts'
 import { type Component, componentsOf } from './chat.ts'
-import { addressedTo, allows, commandIn, COMMANDS, helpLine, runnable, sayable, TRUST, type Trust } from './command.ts'
+import {
+  addressedTo,
+  allows,
+  commandIn,
+  grantFrom,
+  grantLabel,
+  helpLine,
+  runnable,
+  sayable,
+  type Grant,
+} from './command.ts'
 import {
   compile,
   SERVER,
@@ -190,7 +200,7 @@ export class Agent {
    * A map rather than a set, because being in the list is not one power: see {@link Trust}. An entry
    * with no tier written on it is trusted for chat only.
    */
-  private trusted = new Map<string, Trust>()
+  private trusted = new Map<string, Grant>()
   /**
    * What this session is, for the sentences written about it after it ends.
    *
@@ -748,7 +758,7 @@ export class Agent {
 
     // Each entry with the tier it was given, because which of the two somebody holds is the whole
     // question when a command is refused - and a Map joined plainly reads as `integr,commands`.
-    const who = [...this.trusted].map(([name, tier]) => `${name} (${tier})`).join(', ')
+    const who = [...this.trusted].map(([name, grant]) => `${name} (${grantLabel(grant)})`).join(', ')
 
     log.info(
       who
@@ -962,10 +972,10 @@ export class Agent {
 
     const held = speaker ? this.trusted.get(speaker.toLowerCase()) : undefined
 
-    if (!allows(held, COMMANDS[command.name].needs)) {
+    if (!allows(held, command.name)) {
       log.debug(
         `Agent ${this.id} ignored ${command.name} from ${speaker ?? 'somebody it could not name'}` +
-          ` (trusted for ${held ?? 'nothing'})`,
+          ` (trusted for ${grantLabel(held)})`,
       )
       return
     }
@@ -1595,17 +1605,18 @@ export function playable(source: string | undefined, why: string): string | unde
  * An unset or unusable setting yields an empty set, which is the safe answer: no player is trusted,
  * so no chat command is obeyed.
  */
-export function trustedFrom(source: string | undefined): Map<string, Trust> {
-  const trusted = new Map<string, Trust>()
+export function trustedFrom(source: string | undefined): Map<string, Grant> {
+  const trusted = new Map<string, Grant>()
 
   for (const entry of (source ?? '').split(/[\s,]+/)) {
-    // `name` or `name:commands`. A username cannot contain a colon, so the split is unambiguous -
-    // and an entry written with a tier this build does not know falls back to `chat` rather than to
-    // the powerful one. A setting from a newer Osmium must not quietly grant more than it says.
-    const [name, tier] = entry.split(':')
+    // `name`, `name:tier` or `name:one+two`. A username cannot contain a colon, so the first split
+    // is unambiguous; `+` joins the commands because the entries themselves are comma-separated.
+    // A setting from a newer Osmium must not quietly grant more than it says, which is why an
+    // unrecognised word becomes a list of one - and a command that cannot be named is refused.
+    const [name, granted] = entry.split(':')
     if (!name || !USERNAME.test(name)) continue
 
-    trusted.set(name.toLowerCase(), tier === TRUST.commands ? TRUST.commands : TRUST.chat)
+    trusted.set(name.toLowerCase(), grantFrom(granted))
   }
 
   return trusted
