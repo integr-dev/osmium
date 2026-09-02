@@ -64,6 +64,7 @@ function agent(
     // Unconfigured, which is every agent nobody has opened the configuration page for.
     settings: {},
     chatListener: false,
+    rejoining: false,
     onlineSince: null,
     telemetry: null,
     ...fields,

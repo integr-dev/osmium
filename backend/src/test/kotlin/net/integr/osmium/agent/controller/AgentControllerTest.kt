@@ -7,6 +7,9 @@ import net.integr.osmium.audit.repository.AuditEntryRepository
 import net.integr.osmium.agent.service.AgentService
 import net.integr.osmium.chat.service.ChatRateLimiter
 import net.integr.osmium.security.RoleNames
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
@@ -698,4 +701,74 @@ class AgentControllerTest : AbstractRestTest() {
             status { isUnauthorized() }
         }
     }
+
+    @Test
+    fun `disconnect reaches delivery for an agent still on its way in`() {
+        val auth = authAs("ada", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_09", host = reachableHost(), state = AgentState.CONNECTING)
+        agent.wanted = true
+        agentRepository.saveAndFlush(agent)
+
+        // 503, not 409: the state check now admits CONNECTING, and what stops it here is that no
+        // host is behind this one. Before, an attempt in flight could not be cancelled at all.
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+    }
+
+    @Test
+    fun `disconnect stops an agent that is waiting to try again`() {
+        val auth = authAs("ada", RoleNames.ORCHESTRATOR)
+        // The banned-agent case: not online, not connecting, and due to dial again shortly.
+        val agent = createAgent(label = "Mason_10", host = reachableHost(), state = AgentState.CONNECT_FAILED)
+        agent.wanted = true
+        agent.rejoinAttempts = 3
+        agent.rejoinAt = Instant.now().plusSeconds(60)
+        agentRepository.saveAndFlush(agent)
+
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.rejoining") { value(false) }
+        }
+
+        val stored = agentRepository.findById(agent.id!!).orElseThrow()
+        assertFalse(stored.wanted)
+        assertEquals(0, stored.rejoinAttempts)
+        assertNull(stored.rejoinAt)
+    }
+
+    @Test
+    fun `disconnect refuses an agent that is neither connected nor trying`() {
+        val auth = authAs("ada", RoleNames.ORCHESTRATOR)
+        val agent = createAgent(label = "Mason_11", host = reachableHost(), state = AgentState.LINKED)
+
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isConflict() }
+        }
+    }
+
+    @Test
+    fun `an agent waiting to rejoin can be stopped even though its host is unreachable`() {
+        val auth = authAs("ada", RoleNames.ORCHESTRATOR)
+        // Nothing is dispatched in this case, so there is nothing an unreachable host can refuse -
+        // and stranding the intent is the one outcome an operator cannot work around.
+        val agent = createAgent(label = "Mason_12", host = unreachableHost(), state = AgentState.CONNECT_FAILED)
+        agent.wanted = true
+        agentRepository.saveAndFlush(agent)
+
+        mockMvc.post("/api/agents/${agent.id}/disconnect") {
+            header(HttpHeaders.AUTHORIZATION, auth)
+        }.andExpect {
+            status { isOk() }
+        }
+
+        assertFalse(agentRepository.findById(agent.id!!).orElseThrow().wanted)
+    }
+
 }

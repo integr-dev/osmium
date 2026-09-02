@@ -255,11 +255,26 @@ const connectBlocked = computed<string | null>(() => {
   return null
 })
 
+/**
+ * Disconnect stops three different things, and is offered for all of them: an agent in the game, one
+ * on its way in, and one waiting out a backoff before trying again. The last is the reason it is not
+ * gated on the host being reachable - cancelling a rejoin is a decision on Osmium's side, and an
+ * operator who has just watched an agent be banned should not have to wait out its attempts.
+ */
 const disconnectBlocked = computed<string | null>(() => {
   if (!agent.value) return null
-  if (!hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
-  if (!isOnline(agent.value)) return t('agents.blockedNotOnline')
+
+  const live = isOnline(agent.value) || agent.value.state === 'CONNECTING'
+  if (!live && !agent.value.rejoining) return t('agents.blockedNotConnected')
+  if (live && !hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
   return null
+})
+
+/** What the button is about to do, which is not the same in all three cases. */
+const disconnectLabel = computed(() => {
+  if (agent.value?.state === 'CONNECTING') return t('agents.cancelConnect')
+  if (agent.value && !isOnline(agent.value) && agent.value.rejoining) return t('agents.stopRejoining')
+  return t('agents.disconnect')
 })
 
 /**
@@ -443,34 +458,17 @@ async function confirmRemove() {
           </div>
         </div>
         <!--
-          Watching is its own authority, and a read rather than an act on the fleet - so it sits
-          apart from the buttons that reshape or destroy, and is offered while an agent is in game
-          because there is no world to watch otherwise.
+          The record, not the agent: renaming this page's subject and removing it. Everything that
+          operates the agent is one card below, so a button's place says which of the two it is.
         -->
-        <RouterLink
-          v-if="auth.can('agent.view') && isOnline(agent)"
-          :to="{ name: 'agent-viewer', params: { id: agent.id } }"
-          class="btn btn-ghost btn-sm gap-1"
-        >
-          <Eye class="size-4" />
-          {{ t('viewer.title') }}
-        </RouterLink>
-
-        <!-- Reshaping and destroying are separate authorities, so they are separate checks. -->
         <div
           v-if="auth.can('agent.write') || auth.can('agent.delete')"
-          class="flex gap-1"
+          class="flex items-center gap-1"
         >
-          <template v-if="auth.can('agent.write')">
-            <button class="btn btn-ghost btn-sm gap-1" @click="openServer">
-              <Server class="size-4" />
-              {{ t('agents.setServer') }}
-            </button>
-            <button class="btn btn-ghost btn-sm gap-1" @click="openEdit">
-              <SquarePen class="size-4" />
-              {{ t('common.edit') }}
-            </button>
-          </template>
+          <button v-if="auth.can('agent.write')" class="btn btn-ghost btn-sm gap-1" @click="openEdit">
+            <SquarePen class="size-4" />
+            {{ t('common.edit') }}
+          </button>
           <button
             v-if="auth.can('agent.delete')"
             class="btn btn-ghost btn-sm text-error gap-1"
@@ -482,6 +480,146 @@ async function confirmRemove() {
         </div>
       </div>
     </header>
+
+    <!--
+      Everything that operates this agent, directly under its name.
+
+      One place, and grouped rather than piled: the three that decide whether it is in the game, the
+      one that decides where, and the two that open a view onto it. An operator arriving at this
+      page is almost always here to do one of those, so it comes before the readings rather than
+      after them.
+    -->
+    <div class="card border-base-300 bg-base-200 border">
+      <div class="card-body gap-4">
+        <h2 class="card-title flex items-center gap-2 text-base">
+          <Power class="text-primary size-4" />
+          {{ t('common.actions') }}
+        </h2>
+
+        <!--
+          The way out of a setup that is never going to finish.
+
+          SETUP_PENDING is open-ended on purpose — the backend cannot see how far along a login is,
+          so nothing can honestly time it out — and that made it a dead end: a sign-in started on the
+          wrong machine, or one whose device code expired, left the agent pending forever with the
+          Set-up button disabled *because a setup was in progress*.
+
+          The copy is careful about what this does. It stops Osmium waiting; it does not reach into
+          the host and cancel anything, and a login finished afterwards still links the agent.
+        -->
+        <div
+          v-if="agent.state === 'SETUP_PENDING' && auth.can('agent.setup')"
+          role="status"
+          class="alert alert-info alert-soft items-start"
+        >
+          <KeyRound class="mt-0.5 size-4 shrink-0" />
+          <span class="min-w-0 flex-1">
+            <span class="block font-medium">{{ t('agents.pendingTitle', { host: agent.hostName }) }}</span>
+            <span class="block text-sm opacity-80">{{ t('agents.pendingBody') }}</span>
+          </span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs"
+            :disabled="busy"
+            @click="run(() => agentStore.cancelSetup(agent!.id))"
+          >
+            {{ t('agents.stopWaiting') }}
+          </button>
+        </div>
+
+        <div class="flex flex-wrap gap-x-8 gap-y-4">
+          <!--
+            Whether it is in the game. Each carries its reason on the title as well as in the line
+            under the card, so hovering a grey button answers the question where it was asked.
+          -->
+          <div v-if="auth.can('agent.setup') || auth.can('agent.run')" class="flex flex-col gap-2">
+            <div class="text-xs uppercase opacity-50">{{ t('agents.actionsSession') }}</div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-if="auth.can('agent.setup')"
+                class="btn btn-soft btn-sm gap-2"
+                :disabled="busy || setupBlocked !== null"
+                :title="setupBlocked ?? ''"
+                @click="openSetup"
+              >
+                <KeyRound class="size-4" />
+                {{ t('agents.setUp') }}
+              </button>
+              <button
+                v-if="auth.can('agent.run')"
+                class="btn btn-soft btn-sm gap-2"
+                :disabled="busy || connectBlocked !== null"
+                :title="connectBlocked ?? ''"
+                @click="run(() => agentStore.connect(agent!.id))"
+              >
+                <RotateCw class="size-4" :class="agent.state === 'CONNECTING' ? 'animate-spin' : ''" />
+                {{ agent.state === 'CONNECTING' ? t('agents.connecting') : t('agents.connect') }}
+              </button>
+              <button
+                v-if="auth.can('agent.run')"
+                class="btn btn-soft btn-sm gap-2"
+                :disabled="busy || disconnectBlocked !== null"
+                :title="disconnectBlocked ?? ''"
+                @click="run(() => agentStore.disconnect(agent!.id))"
+              >
+                <Power class="size-4" />
+                {{ disconnectLabel }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Where it plays. Its own group because it is the one thing here that is not a session. -->
+          <div v-if="auth.can('agent.write')" class="flex flex-col gap-2">
+            <div class="text-xs uppercase opacity-50">{{ t('agents.actionsPlacement') }}</div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn btn-soft btn-sm gap-2" @click="openServer">
+                <Server class="size-4" />
+                {{ t('agents.setServer') }}
+              </button>
+            </div>
+          </div>
+
+          <!--
+            Ways of looking at it, neither of which changes anything. The conversation itself is the
+            rail's, not this page's — one panel, wherever it is pointed. This aims it here, so the
+            page still leads to the chat without carrying a second copy of it.
+          -->
+          <div v-if="auth.can('chat.read') || auth.can('agent.view')" class="flex flex-col gap-2">
+            <div class="text-xs uppercase opacity-50">{{ t('agents.actionsOpen') }}</div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-if="auth.can('chat.read')"
+                class="btn btn-soft btn-sm gap-2"
+                @click="chat.show({ kind: 'agent', id: agent.id })"
+              >
+                <MessageSquare class="size-4" />
+                {{ t('agents.chat') }}
+              </button>
+              <!-- Offered while the agent is in game, because there is no world to watch otherwise. -->
+              <RouterLink
+                v-if="auth.can('agent.view') && isOnline(agent)"
+                :to="{ name: 'agent-viewer', params: { id: agent.id } }"
+                class="btn btn-soft btn-sm gap-2"
+              >
+                <Eye class="size-4" />
+                {{ t('viewer.title') }}
+              </RouterLink>
+            </div>
+          </div>
+        </div>
+
+        <!--
+          Why the grey buttons are grey. Deduplicated, so an unreachable host — which blocks all
+          three — is stated once rather than three times.
+        -->
+        <ul v-if="blockedReasons.length" class="flex flex-col gap-1">
+          <li v-for="reason in blockedReasons" :key="reason" class="text-xs opacity-50">
+            {{ reason }}
+          </li>
+        </ul>
+      </div>
+    </div>
+
 
     <div v-if="error" role="alert" class="alert alert-error alert-soft">
       <TriangleAlert class="size-4" />
@@ -683,108 +821,6 @@ async function confirmRemove() {
           <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
           <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
         </div>
-      </div>
-    </div>
-
-    <!-- Actions -->
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-4">
-        <h2 class="card-title flex items-center gap-2 text-base">
-          <Power class="text-primary size-4" />
-          {{ t('common.actions') }}
-        </h2>
-
-        <!--
-          The way out of a setup that is never going to finish.
-
-          SETUP_PENDING is open-ended on purpose — the backend cannot see how far along a login is,
-          so nothing can honestly time it out — and that made it a dead end: a sign-in started on the
-          wrong machine, or one whose device code expired, left the agent pending forever with the
-          Set-up button disabled *because a setup was in progress*.
-
-          The copy is careful about what this does. It stops Osmium waiting; it does not reach into
-          the host and cancel anything, and a login finished afterwards still links the agent.
-        -->
-        <div
-          v-if="agent.state === 'SETUP_PENDING' && auth.can('agent.setup')"
-          role="status"
-          class="alert alert-info alert-soft items-start"
-        >
-          <KeyRound class="mt-0.5 size-4 shrink-0" />
-          <span class="min-w-0 flex-1">
-            <span class="block font-medium">{{ t('agents.pendingTitle', { host: agent.hostName }) }}</span>
-            <span class="block text-sm opacity-80">{{ t('agents.pendingBody') }}</span>
-          </span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs"
-            :disabled="busy"
-            @click="run(() => agentStore.cancelSetup(agent!.id))"
-          >
-            {{ t('agents.stopWaiting') }}
-          </button>
-        </div>
-
-        <div class="flex flex-wrap gap-2">
-          <!--
-            Each carries its reason on the title as well as in the line under the row, so hovering a
-            grey button answers the question where it was asked.
-          -->
-          <button
-            v-if="auth.can('agent.setup')"
-            class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || setupBlocked !== null"
-            :title="setupBlocked ?? ''"
-            @click="openSetup"
-          >
-            <KeyRound class="size-4" />
-            {{ t('agents.setUp') }}
-          </button>
-          <button
-            v-if="auth.can('agent.run')"
-            class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || connectBlocked !== null"
-            :title="connectBlocked ?? ''"
-            @click="run(() => agentStore.connect(agent!.id))"
-          >
-            <RotateCw class="size-4" :class="agent.state === 'CONNECTING' ? 'animate-spin' : ''" />
-            {{ agent.state === 'CONNECTING' ? t('agents.connecting') : t('agents.connect') }}
-          </button>
-          <button
-            v-if="auth.can('agent.run')"
-            class="btn btn-soft btn-sm gap-2"
-            :disabled="busy || disconnectBlocked !== null"
-            :title="disconnectBlocked ?? ''"
-            @click="run(() => agentStore.disconnect(agent!.id))"
-          >
-            <Power class="size-4" />
-            {{ t('agents.disconnect') }}
-          </button>
-
-          <!--
-            The conversation itself is the rail's, not this page's — one panel, wherever it is
-            pointed. This aims it here, so the page still leads to the chat without carrying a
-            second copy of it.
-          -->
-          <button
-            v-if="auth.can('chat.read')"
-            class="btn btn-soft btn-sm gap-2"
-            @click="chat.show({ kind: 'agent', id: agent.id })"
-          >
-            <MessageSquare class="size-4" />
-            {{ t('agents.chat') }}
-          </button>
-        </div>
-
-        <!--
-          Why the grey buttons are grey. Deduplicated, so an unreachable host — which blocks all
-          three — is stated once rather than three times.
-        -->
-        <ul v-if="blockedReasons.length" class="flex flex-col gap-1">
-          <li v-for="reason in blockedReasons" :key="reason" class="text-xs opacity-50">
-            {{ reason }}
-          </li>
-        </ul>
       </div>
     </div>
 

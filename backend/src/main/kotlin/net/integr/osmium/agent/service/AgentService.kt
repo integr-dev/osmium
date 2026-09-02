@@ -329,11 +329,29 @@ class AgentService(
         return agent.toResponse(telemetryStore.find(agent.id))
     }
 
+    /**
+     * Stops an agent going to, or staying at, its server.
+     *
+     * **Three situations, one button.** It can be in the game, on its way in, or sitting out a
+     * backoff before the next attempt - and an operator who has just watched an agent be banned
+     * wants the same thing in all three: stop. Allowing only ONLINE left the other two with no way
+     * out except waiting for the attempts to run down.
+     */
     @Transactional
     fun disconnect(id: Long): AgentResponse {
         val agent = require(id)
-        check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
-        dispatch(agent, CommandType.DISCONNECT)
+
+        val inGame = agent.state == AgentState.ONLINE
+        val arriving = agent.state == AgentState.CONNECTING
+        check(inGame || arriving || agent.wanted) {
+            "'${agent.label}' is not connected and is not trying to be"
+        }
+
+        // Only when there is a session to end or an attempt in flight. A rejoin waiting out a
+        // backoff is bookkeeping on this side alone, and refusing to cancel it because the host is
+        // unreachable would strand the intent at the moment an operator most wants it gone.
+        if (inGame || arriving) dispatch(agent, CommandType.DISCONNECT)
+
         // An operator taking an agent out of the game means it, so it stays out. Without this the
         // rejoin sweep would read the resulting LINKED as a drop and put it straight back in, and
         // the Disconnect button would appear not to work.
