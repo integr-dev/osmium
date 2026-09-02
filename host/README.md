@@ -396,6 +396,13 @@ ever at. Omitting it costs only the coordinates; the player is still listed, and
 there at all is the fact that matters most. Send it whenever you can: it is what lets an operator
 tell a player walking past from one standing on the build.
 
+**"Nearby" means everyone the client can see**, not a radius. The tab list is everyone on the
+server, including whoever is in another world; what narrows it is whether the client is tracking
+that player's *entity*, which is exactly the render distance the server granted. Measuring a radius
+on top of that only hides people the agent can genuinely see — and the one worth reporting is
+whoever just walked into view, not whoever is standing closest. Sort by distance and cap the list if
+you must; the cap is a ceiling for a spawn lobby, not a range.
+
 **Do not send `isAgent` on nearby players.** Osmium decides that, because a host sees only its own
 agents and a server's fleet can span several hosts — no host can tell one of ours from a stranger.
 

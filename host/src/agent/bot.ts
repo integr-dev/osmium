@@ -61,17 +61,15 @@ const OBITUARY = 250
  * is what a fixed-version client would have used. */
 const ASSUMED = mineflayer.latestSupportedVersion
 
-/** How far away somebody still counts as nearby, in blocks.
+/**
+ * The most to report at once.
  *
- * About a render distance. The question this answers is who is around the build, and a player on
- * the other side of the world is not an answer to it. */
-const NEARBY = 64
-
-/** The most to report at once.
- *
- * A spawn area can hold hundreds, and this goes out every five seconds. The list is sorted by
- * distance, so the ones that are cut are the ones that matter least. */
-const NEARBY_LIMIT = 20
+ * Everyone the client can see is reported - see {@link nearby} - so this is not a range but a
+ * ceiling, and one nothing reasonable reaches: a server that fits two hundred players inside one
+ * agent's render distance is a spawn lobby, not a build site. The list is sorted by distance, so if
+ * it ever does bite, what it cuts is what matters least.
+ */
+const NEARBY_LIMIT = 200
 
 /** How an agent reaches the rest of the host. */
 export interface AgentHooks {
@@ -1381,24 +1379,25 @@ function nearby(bot: Bot, from: Vec3): Player[] {
     // Ourselves. We are a player entity like any other and would otherwise be reported as standing
     // zero blocks from ourselves.
     if (name === bot.username) continue
+    // **This is the range test.** `bot.players` is the tab list, which is everyone on the server
+    // including whoever is in another world entirely; `entity` is set only for those the client is
+    // actually tracking, which is exactly what is inside the render distance the server granted us.
+    // Measuring a radius on top of it only ever hid people the agent could genuinely see.
     if (!player?.entity || !isAUsername(name)) continue
 
     const position = point(player.entity.position)
-    const distance = separation(from, position)
 
     // Everything the server actually told us about them. Health is deliberately absent: a client
     // is only sent its own, and everyone else's lives in raw metadata at an index that moves
     // between versions - a number that would be wrong without ever looking wrong.
-    if (distance <= NEARBY) {
-      found.push({
-        name,
-        distance,
-        position,
-        ...(player.uuid ? { uuid: player.uuid } : {}),
-        ...(typeof player.ping === 'number' ? { ping: player.ping } : {}),
-        ...(typeof player.gamemode === 'number' ? { gamemode: player.gamemode } : {}),
-      })
-    }
+    found.push({
+      name,
+      distance: separation(from, position),
+      position,
+      ...(player.uuid ? { uuid: player.uuid } : {}),
+      ...(typeof player.ping === 'number' ? { ping: player.ping } : {}),
+      ...(typeof player.gamemode === 'number' ? { gamemode: player.gamemode } : {}),
+    })
   }
 
   return found.sort((one, other) => one.distance - other.distance).slice(0, NEARBY_LIMIT)
