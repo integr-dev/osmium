@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { areaAround, fetchTiles, withinCap } from '../api/map'
+import { fetchTiles } from '../api/map'
 import { loadPalette } from '../lib/mapPalette'
 import { TILE, paintTile, tileKey, type DecodedTile, type Palette } from '../lib/mapTiles'
 import { IDENTITY, panBy, zoomAt, type Limits, type View } from '../lib/panZoom'
@@ -35,8 +35,26 @@ export interface Mark {
   z: number
   /** Fleet or not. A player who is not one of ours is the thing this screen exists to show. */
   ours: boolean
+  /**
+   * A second line under the name: health, ping, whatever is known about them.
+   *
+   * Drawn smaller and dimmer, and only above a certain zoom - see {@link DETAIL_FROM}. A map at a
+   * sixteenth of a pixel per block is being read for where things are, and a paragraph over every
+   * dot is what stops that being answerable.
+   */
+  detail?: string
   /** Recent positions, oldest first, for the trail. Only the fleet keeps one. */
   trail?: Array<{ x: number; z: number }>
+  /** Their head, already fetched by the caller. Absent until it arrives, or if there is none. */
+  avatar?: string | null
+  /**
+   * The state class the sidebar puts on its dot, drawn in the same corner here.
+   *
+   * A class rather than a colour, because half of them are Osmium's own rather than daisyUI's, and
+   * resolving one is a question for the stylesheet - see {@link dotColour}. Agents only: a player
+   * who is not ours has no state we know.
+   */
+  dot?: string
 }
 
 const { t } = useI18n()
@@ -76,10 +94,28 @@ function regionKey(x: number, z: number): string {
   return `${Math.floor(x / REGION)},${Math.floor(z / REGION)}`
 }
 
-/** The last area asked for, so panning inside it asks for nothing. */
-let asked: string | null = null
-let inflight = 0
+/**
+ * Regions already fetched, and those being fetched, so nothing is asked for twice.
+ *
+ * A region that came back empty counts as fetched: most of any world has never been walked, and
+ * asking again on every pan would be a request per frame for ground nobody has charted.
+ */
+const have = new Set<string>()
+const pending = new Set<string>()
+
+/** Regions still wanted, nearest the middle of the screen first. */
+let queue: Array<{ x: number; z: number; key: string }> = []
+let active = 0
 let frame = 0
+
+/**
+ * How many region requests are in the air at once.
+ *
+ * Three rather than one, because a screenful is a dozen regions and they are mostly waiting on the
+ * network; and three rather than all of them, because a browser would open six connections and
+ * spend them on the far corners while the middle of the screen is still blank.
+ */
+const CONCURRENCY = 3
 
 // ---- geometry ---------------------------------------------------------------------------------
 
@@ -197,8 +233,79 @@ function draw(): void {
 
 /** Big enough to find on a map, and the same size at every zoom - it is a label, not a thing. */
 const DOT = 4
-const TRAIL_WIDTH = 1.5
+const TRAIL_WIDTH = 2
+
+/**
+ * How solid the freshest end of a trail is drawn.
+ *
+ * Near enough to opaque. Where an agent has just been is the part worth seeing, and terrain under a
+ * two-pixel line is terrain still visible either side of it - so the trail is drawn to be followed
+ * rather than to be searched for. Older segments still fade away from this, which is what makes the
+ * direction of travel readable without a marker on either end.
+ */
+const TRAIL_ALPHA = 0.95
 const LABEL_HALO = 3
+
+/** A head, square as Minecraft draws one, and the state pip in its corner. */
+const HEAD = 18
+const PIP = 3.5
+
+/**
+ * Heads, by the url they were fetched from.
+ *
+ * The caller resolves the url - it is an authenticated request against Osmium's own avatar
+ * endpoint - and this turns it into something a canvas can draw. Kept for the life of the screen:
+ * a fleet is a dozen images and they are the same dozen on every frame.
+ */
+const faces = new Map<string, HTMLImageElement>()
+
+/**
+ * What colour the stylesheet paints a state dot.
+ *
+ * Measured rather than tabulated. Half of these classes are Osmium's own and half are daisyUI's,
+ * and both change with the theme; asking the document what a class looks like is the only way the
+ * map and the sidebar cannot come to disagree.
+ */
+const dots = new Map<string, string>()
+
+function dotColour(className: string): string {
+  const held = dots.get(className)
+  if (held) return held
+
+  const probe = document.createElement('span')
+  probe.className = className
+  probe.style.position = 'absolute'
+  probe.style.visibility = 'hidden'
+  document.body.append(probe)
+  const colour = getComputedStyle(probe).backgroundColor
+  probe.remove()
+
+  dots.set(className, colour)
+  return colour
+}
+
+/** The image for a url, once it has loaded. Requests it the first time it is asked for. */
+function faceFor(url: string): HTMLImageElement | undefined {
+  const held = faces.get(url)
+  if (held) return held.complete && held.naturalWidth > 0 ? held : undefined
+
+  const image = new Image()
+  // Drawn to a canvas that is never read back, so this only needs to not taint anything.
+  image.decoding = 'async'
+  image.onload = () => schedule()
+  image.src = url
+  faces.set(url, image)
+  return undefined
+}
+
+/**
+ * Below this many pixels per block, only names are drawn.
+ *
+ * Zoomed out far enough, the dots are close enough together that two lines of text under each one
+ * overlap into a grey band. The name is what identifies somebody; the vitals are what somebody
+ * reads once they have found them, by which point they have zoomed in.
+ */
+const DETAIL_FROM = 0.5
 
 /**
  * The theme's colours, read once.
@@ -246,7 +353,7 @@ function drawMarks(context: CanvasRenderingContext2D): void {
       for (let at = 1; at < trail.length; at++) {
         const from = trail[at - 1]!
         const to = trail[at]!
-        context.globalAlpha = (at / trail.length) * 0.7
+        context.globalAlpha = (at / trail.length) * TRAIL_ALPHA
         context.strokeStyle = colour
         context.beginPath()
         context.moveTo(view.value.x + from.x * view.value.k, view.value.y + from.z * view.value.k)
@@ -259,53 +366,168 @@ function drawMarks(context: CanvasRenderingContext2D): void {
     const atX = view.value.x + mark.x * view.value.k
     const atY = view.value.y + mark.z * view.value.k
 
-    // Ringed in the page's own ink rather than in white or black: a dot the colour of the terrain
-    // it is standing on is a dot nobody can find, and grass and sand are both light.
-    context.beginPath()
-    context.arc(atX, atY, DOT, 0, Math.PI * 2)
-    context.fillStyle = colour
-    context.fill()
-    context.lineWidth = 1.5
-    context.strokeStyle = ink
-    context.stroke()
+    const face = mark.avatar ? faceFor(mark.avatar) : undefined
+
+    if (face) {
+      // Square, as Minecraft draws a head, and pixelated - these are 8 by 8 images and smoothing
+      // them turns a face into a smudge. Bordered in the marker's own colour so ours and theirs are
+      // still told apart at a glance, which the head alone does not do.
+      const left = atX - HEAD / 2
+      const top = atY - HEAD / 2
+
+      context.imageSmoothingEnabled = false
+      context.drawImage(face, left, top, HEAD, HEAD)
+      context.imageSmoothingEnabled = false
+
+      // The same halo the names get, for the same reason: a head is eight pixels of whatever the
+      // skin happens to be, and against terrain of a similar tone it has no edge at all. The
+      // marker's own colour is laid down the middle of that halo rather than replacing it, so
+      // ours and theirs still tell apart without giving the head a second ring.
+      context.lineJoin = 'round'
+      context.lineWidth = LABEL_HALO
+      context.strokeStyle = ground
+      context.strokeRect(left - 1, top - 1, HEAD + 2, HEAD + 2)
+      context.lineWidth = 1
+      context.strokeStyle = colour
+      context.strokeRect(left - 1, top - 1, HEAD + 2, HEAD + 2)
+
+      // The sidebar's dot, in the sidebar's corner. Ringed in the page's ground the way the sidebar
+      // rings it in the panel's, so it reads as a pip on the head rather than as a hole in it.
+      if (mark.dot) {
+        context.beginPath()
+        context.arc(left + HEAD, top + HEAD, PIP, 0, Math.PI * 2)
+        context.fillStyle = dotColour(mark.dot)
+        context.fill()
+        context.lineWidth = 2
+        context.strokeStyle = ground
+        context.stroke()
+      }
+    } else {
+      // Until the head arrives, and for anyone who has none. Ringed in the page's own ink rather
+      // than in white or black: a dot the colour of the terrain it stands on is one nobody can
+      // find, and grass and sand are both light.
+      context.beginPath()
+      context.arc(atX, atY, DOT, 0, Math.PI * 2)
+      context.fillStyle = colour
+      context.fill()
+      context.lineWidth = 1.5
+      context.strokeStyle = ink
+      context.stroke()
+    }
 
     // Outlined in the page's ground and filled with its ink. Both were `ink` before, left over from
     // the ring above - a halo the same colour as the letters it surrounds, which is a smudge.
-    context.font = '600 11px ui-sans-serif, system-ui, sans-serif'
+    // Outlined in the page's ground and filled with its ink. Both were `ink` before, left over from
+    // the ring above - a halo the same colour as the letters it surrounds, which is a smudge.
+    const detail = view.value.k >= DETAIL_FROM ? mark.detail : undefined
+    // Clear of whichever was drawn, so a name does not sit on a face.
+    const above = mark.avatar && faces.get(mark.avatar)?.complete ? HEAD / 2 + 2 : DOT
+    const nameAt = atY - above - (detail ? 14 : 4)
+
     context.textAlign = 'center'
     context.lineJoin = 'round'
     context.lineWidth = LABEL_HALO
     context.strokeStyle = ground
-    context.strokeText(mark.label, atX, atY - DOT - 4)
+
+    context.font = '600 11px ui-sans-serif, system-ui, sans-serif'
+    context.strokeText(mark.label, atX, nameAt)
     context.fillStyle = ink
-    context.fillText(mark.label, atX, atY - DOT - 4)
+    context.fillText(mark.label, atX, nameAt)
+
+    if (detail) {
+      context.font = '10px ui-sans-serif, system-ui, sans-serif'
+      context.strokeStyle = ground
+      context.strokeText(detail, atX, atY - above - 4)
+      context.globalAlpha = 0.75
+      context.fillStyle = ink
+      context.fillText(detail, atX, atY - above - 4)
+      context.globalAlpha = 1
+    }
   }
 }
 
 // ---- loading ------------------------------------------------------------------------------------
 
 /**
+ * The regions the screen is showing, nearest its middle first.
+ *
+ * Ordered, because they arrive one at a time and the middle is where somebody is looking. Filling
+ * outwards reads as the map resolving; filling in whatever order the network answered reads as
+ * something being wrong with it.
+ */
+function wantedRegions(): Array<{ x: number; z: number; key: string }> {
+  const { west, north, east, south } = visible()
+  const span = REGION * TILE
+
+  const midX = (west + east) / 2
+  const midZ = (north + south) / 2
+
+  const found: Array<{ x: number; z: number; key: string; away: number }> = []
+  for (let z = Math.floor(north / span); z <= Math.floor(south / span); z++) {
+    for (let x = Math.floor(west / span); x <= Math.floor(east / span); x++) {
+      const away = Math.hypot((x + 0.5) * span - midX, (z + 0.5) * span - midZ)
+      found.push({ x, z, key: `${x},${z}`, away })
+    }
+  }
+
+  return found.sort((one, other) => one.away - other.away).map(({ x, z, key }) => ({ x, z, key }))
+}
+
+/**
  * Asks for whatever part of the map is on screen and is not already held.
  *
- * Keyed on the area rather than debounced on time: panning within what has already been asked for
- * asks for nothing, and a pan that crosses into new ground asks once.
+ * **A region at a time, not the whole window.** One request for everything visible had to be capped
+ * - the backend answers at most 4096 chunks - and a screen at one pixel per block wants twice that,
+ * so the cap quietly trimmed the request to the middle and the edges were never asked for at all.
+ * Per region there is no cap to hit, a pan asks only for ground it has not seen, and each piece is
+ * drawn the moment it lands rather than the screen staying blank until the last of it arrives.
  */
-async function load(): Promise<void> {
-  if (!props.server) return
+function load(): void {
+  if (!props.server || !props.dimension) return
 
-  const { west, north, east, south } = visible()
-  const area = withinCap(areaAround(west, north, east, south))
-  const key = `${area.minX},${area.minZ},${area.maxX},${area.maxZ}`
-  if (key === asked) return
-  asked = key
+  const wanted = wantedRegions()
+  const onScreen = new Set(wanted.map((region) => region.key))
 
-  const generation = ++inflight
+  // Anything queued that has since been panned away from is dropped rather than fetched: it is no
+  // longer what anybody is looking at, and it would be ahead of what is.
+  queue = queue.filter((region) => onScreen.has(region.key))
+
+  const queued = new Set(queue.map((region) => region.key))
+  for (const region of wanted) {
+    if (have.has(region.key) || pending.has(region.key) || queued.has(region.key)) continue
+    queue.push(region)
+  }
+
+  pump()
+}
+
+/** Starts as many queued regions as the budget allows. */
+function pump(): void {
+  while (active < CONCURRENCY && queue.length > 0) {
+    const region = queue.shift()
+    if (region) void fetchRegion(region)
+  }
+}
+
+async function fetchRegion(region: { x: number; z: number; key: string }): Promise<void> {
+  pending.add(region.key)
+  active++
+
+  const server = props.server
+  const dimension = props.dimension
+
   try {
     palette ??= await loadPalette()
-    const found = await fetchTiles(props.server, props.dimension, area)
-    // A slower request for an area that has since been panned away from must not overwrite what the
-    // newer one brought back.
-    if (generation !== inflight) return
+    const found = await fetchTiles(server, dimension, {
+      minX: region.x * REGION,
+      minZ: region.z * REGION,
+      maxX: region.x * REGION + REGION - 1,
+      maxZ: region.z * REGION + REGION - 1,
+    })
+
+    // The world may have been changed under this request - a different server, or a different
+    // dimension of the same one - in which case these tiles belong to somewhere else entirely.
+    if (server !== props.server || dimension !== props.dimension) return
 
     const next = new Map(tiles.value)
     for (const tile of found) {
@@ -315,14 +537,17 @@ async function load(): Promise<void> {
       painted.delete(regionKey(tile.x, tile.z + 1))
     }
     tiles.value = next
+    have.add(region.key)
     failure.value = null
     schedule()
   } catch (err) {
-    if (generation !== inflight) return
-    // Re-askable: the area is forgotten, so a pan back here tries again rather than showing a hole
-    // for as long as the screen is open.
-    asked = null
+    // Not marked as held, so panning back here tries again rather than leaving a hole for as long
+    // as the screen is open.
     failure.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    pending.delete(region.key)
+    active--
+    pump()
   }
 }
 
@@ -355,7 +580,7 @@ function onPointerMove(event: PointerEvent): void {
   view.value = panBy(view.value, event.clientX - dragging.x, event.clientY - dragging.y)
   dragging = { x: event.clientX, y: event.clientY }
   schedule()
-  void load()
+  load()
 }
 
 function onPointerUp(event: PointerEvent): void {
@@ -373,7 +598,7 @@ function onWheel(event: WheelEvent): void {
   const factor = Math.exp(-event.deltaY * 0.002)
   view.value = zoomAt(view.value, event.clientX - box.left, event.clientY - box.top, factor, LIMITS)
   schedule()
-  void load()
+  load()
 }
 
 /** Puts the middle of the canvas on a block coordinate. */
@@ -381,7 +606,7 @@ function centreOn(x: number, z: number, k = view.value.k): void {
   const { width, height } = size()
   view.value = { k, x: width / 2 - x * k, y: height / 2 - z * k }
   schedule()
-  void load()
+  load()
 }
 
 defineExpose({ centreOn })
@@ -399,7 +624,7 @@ onMounted(() => {
   // watching the window misses every resize that is not the window's.
   observer = new ResizeObserver(() => {
     schedule()
-    void load()
+    load()
   })
   observer.observe(element)
 
@@ -407,6 +632,8 @@ onMounted(() => {
   // which no stylesheet reaches. Dropped rather than recomputed, so the next frame reads them.
   themes = new MutationObserver(() => {
     inks = null
+    // The state dots are theme colours too, and they were measured against the old one.
+    dots.clear()
     schedule()
   })
   themes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
@@ -429,9 +656,10 @@ watch(
   () => {
     tiles.value = new Map()
     painted.clear()
-    asked = null
+    have.clear()
+    queue = []
     failure.value = null
-    void load()
+    load()
   },
 )
 

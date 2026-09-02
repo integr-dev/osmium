@@ -374,6 +374,10 @@ export const de: Copy = {
     recentre: 'Auf die Flotte zentrieren',
     agents: 'Agenten',
     strangers: 'Andere Spieler',
+    blocksAway: '{count} Blöcke von der Flotte',
+    hearts: '{n}/20 LP',
+    food: '{n}/20 Hunger',
+    seenBy: 'Am nächsten bei {agent}',
     stale: 'Das Gelände ist so, wie es zuletzt gesehen wurde, nicht wie es jetzt ist.',
   },
 

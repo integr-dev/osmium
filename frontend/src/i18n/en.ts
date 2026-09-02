@@ -439,6 +439,12 @@ export const en = {
     recentre: 'Centre on the fleet',
     agents: 'Agents',
     strangers: 'Other players',
+    /** Distance to the closest agent, which is the reading somebody acts on. */
+    blocksAway: '{count} blocks from the fleet',
+    /** On the scale the game draws them, which is what an operator is comparing against. */
+    hearts: '{n}/20 hp',
+    food: '{n}/20 food',
+    seenBy: 'Nearest to {agent}',
     /** Said of the picture, not of any one tile: parts of it may be hours old. */
     stale: 'Terrain is as it was last seen, not as it is now.',
   },

@@ -6,6 +6,7 @@ import { Eye, Orbit, TriangleAlert } from 'lucide-vue-next'
 import { api } from '../api/client'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerStream'
+import { gamemodeLabel } from '../lib/vitals'
 
 /**
  * An agent's world, rendered live.
@@ -628,7 +629,7 @@ function statsFor(name: string | undefined): string | null {
 
   const parts: string[] = []
   if (player.ping !== null && player.ping !== undefined) parts.push(`${player.ping}ms`)
-  const mode = GAMEMODES[player.gamemode ?? -1]
+  const mode = gamemodeLabel(player.gamemode)
   if (mode) parts.push(mode)
   if (player.isAgent) parts.push(t('viewer.ours'))
 
@@ -636,8 +637,6 @@ function statsFor(name: string | undefined): string | null {
 }
 
 /** The protocol's own numbering. Survival is the default and says nothing, so it is left unnamed. */
-const GAMEMODES: Record<number, string | undefined> = { 1: 'creative', 2: 'adventure', 3: 'spectator' }
-
 function redrawNametag(
   canvas: HTMLCanvasElement | undefined,
   name: string | undefined,

@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 // Aliased: `Map` is a JavaScript built-in, and shadowing it is a trap for whoever needs one here.
 import { Crosshair, Map as MapIcon, Navigation } from 'lucide-vue-next'
 
+import PlayerHead from '../components/PlayerHead.vue'
 import WorldMap, { type Mark } from '../components/WorldMap.vue'
 import { listMappedServers, type MapExtentResponse } from '../api/map'
 import { useAgentStore } from '../stores/agents'
 import { atShort } from '../lib/time'
 import { parsePlace } from '../lib/mapCoords'
+import { agentDot, agentStateLabel } from '../lib/agentState'
+import { avatarUrl } from '../lib/avatars'
+import { gamemodeLabel } from '../lib/vitals'
 
 /**
  * Where the fleet is working, on the ground it has charted.
@@ -25,7 +30,21 @@ import { parsePlace } from '../lib/mapCoords'
  * map to answer.
  */
 const { t } = useI18n()
+const route = useRoute()
 const agentStore = useAgentStore()
+
+/**
+ * The agent the map was opened on, from `?agent=`.
+ *
+ * Its id rather than its coordinates: a link carrying a position is out of date the moment the
+ * agent walks, and this one is followed from a page that was already watching it move. What the
+ * link means is "show me where this is", which is a question only answerable when it is opened.
+ */
+const asked = computed(() => {
+  const raw = route.query['agent']
+  const id = Number(Array.isArray(raw) ? raw[0] : raw)
+  return Number.isFinite(id) ? agentStore.byId(id) : undefined
+})
 
 const extents = ref<MapExtentResponse[]>([])
 const server = ref<string | null>(null)
@@ -50,14 +69,32 @@ const trails = ref(new Map<number, Array<{ x: number; z: number }>>())
 onMounted(async () => {
   extents.value = await listMappedServers()
 
-  // Whichever world was charted most recently, which is where something is happening.
+  // Where the link pointed, if it pointed anywhere. An agent names both the server and the world,
+  // so following one lands on the map that actually holds it rather than on the busiest one.
+  const wanted = asked.value
+  if (wanted?.serverAddress) {
+    server.value = wanted.serverAddress
+    world.value = wanted.telemetry?.dimension ?? world.value
+  }
+
+  // Otherwise whichever world was charted most recently, which is where something is happening.
   const newest = extents.value[0]
   server.value ??= newest?.serverAddress ?? agentStore.servers[0] ?? null
   world.value ??= newest?.dimension ?? null
 })
 
-/** The servers that have a map, each once, newest first - `extents` has a row per world. */
-const servers = computed(() => [...new Set(extents.value.map((it) => it.serverAddress))])
+/**
+ * The servers worth offering: any with a map, and any the fleet is standing on.
+ *
+ * A server nobody has charted yet still belongs here - an agent that just connected has a position
+ * to show long before it has walked far enough to draw anything.
+ */
+const servers = computed(() => [
+  ...new Set([
+    ...extents.value.map((it) => it.serverAddress),
+    ...agentStore.agents.flatMap((agent) => (agent.serverAddress ? [agent.serverAddress] : [])),
+  ]),
+])
 
 /**
  * The worlds charted on the chosen server.
@@ -65,7 +102,33 @@ const servers = computed(() => [...new Set(extents.value.map((it) => it.serverAd
  * Offered rather than assumed. What a server has is whatever agents have walked in, and on anything
  * running Multiverse that is not a list of three - it is however many worlds the operators made.
  */
-const worlds = computed(() => extents.value.filter((it) => it.serverAddress === server.value))
+const worlds = computed(() => {
+  const charted = extents.value.filter((it) => it.serverAddress === server.value)
+  const named = new Set(charted.map((it) => it.dimension))
+
+  // Worlds the fleet is in but has not charted. Without these, following an agent into a world
+  // nobody has walked yet lands on a picker that cannot name where it is - which is what a fresh
+  // Multiverse world looks like the moment somebody teleports into it.
+  const standing = agentStore.agents.flatMap((agent) =>
+    agent.serverAddress === server.value && agent.telemetry?.dimension && !named.has(agent.telemetry.dimension)
+      ? [agent.telemetry.dimension]
+      : [],
+  )
+
+  return [
+    ...charted,
+    ...[...new Set(standing)].map((dimension) => ({
+      serverAddress: server.value!,
+      dimension,
+      tiles: 0,
+      minX: 0,
+      maxX: 0,
+      minZ: 0,
+      maxZ: 0,
+      at: new Date(0).toISOString(),
+    })),
+  ]
+})
 
 const extent = computed(() => worlds.value.find((it) => it.dimension === world.value) ?? null)
 
@@ -85,44 +148,172 @@ const shown = computed(() =>
   here.value.filter((agent) => !agent.telemetry?.dimension || agent.telemetry.dimension === world.value),
 )
 
+/** Somebody who is not one of ours, as the fleet between them can see them. */
+interface Stranger {
+  name: string
+  x: number
+  z: number
+  /** How far the closest agent is, in blocks. */
+  distance: number
+  /** Which agent that is - the one to ask, and the one whose view this came from. */
+  nearest: string
+  /** Their account, which is what a head is actually drawn from. Null when unreported. */
+  uuid: string | null
+  /** Everything else the server said about them. Each is absent when it was not reported. */
+  ping: number | null
+  gamemode: number | null
+}
+
 /**
- * Everything drawn over the terrain: the fleet, and the people standing near it.
+ * Everyone in view who is not one of ours, gathered from every agent at once.
  *
- * A stranger is reported once per agent that can see them, so they are collapsed by name - two
- * agents watching the same person is one person. Ours are keyed by id, because two agents may
- * legitimately share a Minecraft name.
+ * **Collapsed by name, keeping the closest sighting.** A player standing between two agents is
+ * reported by both, and listing them twice would make a crowd out of one person - while the useful
+ * reading, how near they are to anything of ours, is the smaller of the two distances.
+ *
+ * Sorted by that distance, because the order is the answer: whoever is closest to the fleet is
+ * whoever an operator opened this screen about.
  */
-const marks = computed<Mark[]>(() => {
-  const found: Mark[] = []
-  const strangers = new Map<string, Mark>()
+const strangers = computed<Stranger[]>(() => {
+  const found = new Map<string, Stranger>()
 
   for (const agent of shown.value) {
-    const telemetry = agent.telemetry
-    if (!telemetry) continue
-
-    found.push({
-      id: `agent-${agent.id}`,
-      label: agent.label,
-      x: telemetry.position.x,
-      z: telemetry.position.z,
-      ours: true,
-      trail: trails.value.get(agent.id) ?? [],
-    })
-
-    for (const player of telemetry.nearby) {
+    for (const player of agent.telemetry?.nearby ?? []) {
       if (player.isAgent || !player.position) continue
-      strangers.set(player.name, {
-        id: `player-${player.name}`,
-        label: player.name,
+
+      const held = found.get(player.name)
+      if (held && held.distance <= player.distance) continue
+
+      found.set(player.name, {
+        name: player.name,
         x: player.position.x,
         z: player.position.z,
-        ours: false,
+        distance: player.distance,
+        nearest: agent.label,
+        uuid: player.uuid,
+        ping: player.ping,
+        gamemode: player.gamemode,
       })
     }
   }
 
-  return [...found, ...strangers.values()]
+  return [...found.values()].sort((one, other) => one.distance - other.distance)
 })
+
+/**
+ * What is worth saying about an agent besides its name.
+ *
+ * Health and food on the scale the game draws them, then the round trip. Each is dropped when it
+ * was not reported rather than shown as a zero, which is a reading somebody would act on: an agent
+ * that has not said how it is doing is not an agent on nought hearts.
+ */
+function agentVitals(agent: (typeof shown.value)[number]): string {
+  const telemetry = agent.telemetry
+  const parts: string[] = []
+
+  if (typeof telemetry?.health === 'number') parts.push(t('map.hearts', { n: Math.round(telemetry.health) }))
+  if (typeof telemetry?.food === 'number') parts.push(t('map.food', { n: Math.round(telemetry.food) }))
+  if (typeof telemetry?.pingMs === 'number') parts.push(`${telemetry.pingMs}ms`)
+
+  return parts.join(' · ')
+}
+
+/** The same for somebody who is not ours, which is less: a client is only told its own health. */
+function strangerVitals(player: Stranger): string {
+  const parts: string[] = []
+
+  if (player.ping !== null) parts.push(`${player.ping}ms`)
+  const mode = gamemodeLabel(player.gamemode)
+  if (mode) parts.push(mode)
+
+  return parts.join(' · ')
+}
+
+/**
+ * What an agent is called in game, which is not what Osmium calls it.
+ *
+ * The label is the operator's name for it and the account is who other players see standing there,
+ * so both belong on a screen about where things are: somebody reading chat, or looking at the
+ * player list on the server, has only ever seen the second one.
+ */
+function agentDetail(agent: (typeof shown.value)[number]): string {
+  return [agent.mcUsername, agentVitals(agent)].filter(Boolean).join(' · ')
+}
+
+/** Where something is, as F3 writes it and the coordinate box reads it back. */
+function at(x: number, z: number): string {
+  return `${Math.round(x)}, ${Math.round(z)}`
+}
+
+/**
+ * Heads, by the account they belong to, for drawing onto the map.
+ *
+ * Fetched here rather than in the canvas because the request is Osmium's own avatar endpoint and
+ * `avatarUrl` already holds the cache, the deduplication and the "this account has no head" answer.
+ * What the canvas gets is a url it can hand to an `Image`.
+ *
+ * A face that has not arrived yet is simply absent, and the marker falls back to a plain dot until
+ * it does - nothing waits on it.
+ */
+const faces = ref(new Map<string, string>())
+
+function rememberFace(identifier: string | null | undefined): void {
+  if (!identifier || faces.value.has(identifier)) return
+
+  // Claimed before the request, so a second pass over the same marks does not ask twice while the
+  // first is still in flight. Replaced with the real url, or dropped if there is no head.
+  faces.value.set(identifier, '')
+  void avatarUrl(identifier).then((url) => {
+    if (!url) return
+    faces.value = new Map(faces.value).set(identifier, url)
+  })
+}
+
+/** The head for somebody, once it is there. */
+function faceOf(identifier: string | null | undefined): string | undefined {
+  const url = identifier ? faces.value.get(identifier) : undefined
+  return url || undefined
+}
+
+// The two lists these come from, not the marks built out of them: the marks are declared below,
+// and a watch is evaluated where it is written.
+watch(
+  [shown, strangers],
+  ([agents, players]) => {
+    for (const agent of agents) rememberFace(agent.mcUuid ?? agent.mcUsername)
+    for (const player of players) rememberFace(player.uuid ?? player.name)
+  },
+  { immediate: true },
+)
+
+/**
+ * Everything drawn over the terrain: the fleet, and the people standing near it.
+ *
+ * Ours are keyed by id, because two agents may legitimately share a Minecraft name.
+ */
+const marks = computed<Mark[]>(() => [
+  ...shown.value.map((agent) => ({
+    id: `agent-${agent.id}`,
+    label: agent.label,
+    x: agent.telemetry!.position.x,
+    z: agent.telemetry!.position.z,
+    ours: true,
+    detail: agentDetail(agent),
+    avatar: faceOf(agent.mcUuid ?? agent.mcUsername),
+    // The same dot the sidebar puts on the same head, so one agent looks like one thing.
+    dot: agentDot(agent.state, agentStore.isBuilding(agent.id)),
+    trail: trails.value.get(agent.id) ?? [],
+  })),
+  ...strangers.value.map((player) => ({
+    id: `player-${player.name}`,
+    label: player.name,
+    x: player.x,
+    z: player.z,
+    ours: false,
+    detail: strangerVitals(player),
+    avatar: faceOf(player.uuid ?? player.name),
+  })),
+])
 
 /**
  * Appends to each trail as positions arrive.
@@ -156,6 +347,11 @@ function jumpTo(agentId: number): void {
   if (at) map.value?.centreOn(at.x, at.z)
 }
 
+/** The same, for somebody who is not one of ours. */
+function jumpToPlace(x: number, z: number): void {
+  map.value?.centreOn(x, z)
+}
+
 /** Puts the middle of the map on the middle of the fleet. */
 function recentre(): void {
   const positions = shown.value.map((agent) => agent.telemetry!.position)
@@ -181,14 +377,32 @@ function goToTyped(): void {
   typed.value = ''
 }
 
-// The first time the fleet reports where it is, go there - an operator opening the map wants the
-// agents, not the origin. Only once: after that the view is theirs to move.
+/**
+ * Where to point the map when it opens.
+ *
+ * On the agent the link named, if it named one; otherwise on the middle of the fleet. Either way
+ * only once - after that the view is the operator's to move, and a map that keeps pulling itself
+ * back to where it started is one nobody can look away from.
+ */
 const placed = ref(false)
-watch(shown, (agents) => {
-  if (placed.value || agents.length === 0) return
-  placed.value = true
-  recentre()
-})
+watch(
+  [shown, asked],
+  ([agents, wanted]) => {
+    if (placed.value) return
+
+    const at = wanted?.telemetry?.position
+    if (at) {
+      placed.value = true
+      map.value?.centreOn(at.x, at.z)
+      return
+    }
+
+    if (agents.length === 0) return
+    placed.value = true
+    recentre()
+  },
+  { immediate: true },
+)
 
 // A different world is somewhere else entirely, so the view earns the right to jump again.
 watch([server, world], () => {
@@ -310,36 +524,109 @@ function worldName(raw: string): string {
     -->
     <div
       v-if="shown.length"
-      class="border-base-300 bg-base-200 absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-56 flex-col rounded-lg border shadow-md"
+      class="border-base-300 bg-base-200 absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-1.5rem)] flex-col rounded-lg border shadow-md"
     >
-      <div class="border-base-300 flex items-center justify-between gap-2 border-b px-3 py-2">
-        <span class="text-xs font-medium">{{ t('map.agents') }}</span>
-        <span class="badge badge-sm badge-ghost tabular-nums">{{ shown.length }}</span>
-      </div>
-
-      <div class="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-2">
-        <button class="btn btn-sm btn-ghost justify-start gap-2" @click="recentre">
-          <Crosshair class="size-3.5 shrink-0 opacity-60" />
-          <span class="truncate font-normal">{{ t('map.recentre') }}</span>
-        </button>
-
-        <button
-          v-for="agent in shown"
-          :key="agent.id"
-          class="btn btn-sm btn-ghost justify-start gap-2 font-normal"
-          @click="jumpTo(agent.id)"
-        >
-          <span class="bg-primary size-2 shrink-0 rounded-full" />
-          <span class="truncate">{{ agent.label }}</span>
-          <span class="ml-auto shrink-0 font-mono text-[0.65rem] tabular-nums opacity-50">
-            {{ Math.round(agent.telemetry!.position.x) }}, {{ Math.round(agent.telemetry!.position.z) }}
+      <!-- One scroller over both lists: a crowded server makes the second one long, and a panel
+           with two scrollbars in it is one nobody can find their place in. -->
+      <div class="flex min-h-0 flex-col overflow-y-auto">
+        <div class="bg-base-200 sticky top-0 flex items-center justify-between gap-2 px-3 pt-2 pb-1">
+          <span class="flex items-center gap-1.5 text-xs font-medium">
+            <span class="bg-primary size-2 rounded-full" />{{ t('map.agents') }}
           </span>
-        </button>
-      </div>
+          <span class="badge badge-xs badge-ghost tabular-nums">{{ shown.length }}</span>
+        </div>
 
-      <div class="border-base-300 flex items-center gap-3 border-t px-3 py-1.5 text-[0.7rem] opacity-60">
-        <span class="flex items-center gap-1"><span class="bg-primary size-2 rounded-full" />{{ t('map.agents') }}</span>
-        <span class="flex items-center gap-1"><span class="bg-error size-2 rounded-full" />{{ t('map.strangers') }}</span>
+        <div class="flex flex-col gap-0.5 px-2 pb-2">
+          <button class="btn btn-sm btn-ghost justify-start gap-2" @click="recentre">
+            <Crosshair class="size-3.5 shrink-0 opacity-60" />
+            <span class="truncate font-normal">{{ t('map.recentre') }}</span>
+          </button>
+
+          <!--
+            The row the sidebar and the agent picker both use: a head with its state on it, the name,
+            and one muted line underneath. Three lists showing the same fleet in three shapes is
+            three things to learn about one thing.
+          -->
+          <button
+            v-for="agent in shown"
+            :key="agent.id"
+            class="btn btn-sm btn-ghost h-auto min-h-0 justify-start gap-2.5 py-1 font-normal"
+            @click="jumpTo(agent.id)"
+          >
+            <span
+              class="relative shrink-0"
+              :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))"
+            >
+              <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
+              <span
+                class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
+                :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+              />
+            </span>
+            <span class="min-w-0 flex-1 text-left">
+              <!--
+                Osmium's name for it, then Minecraft's. Both, because they are answers to different
+                questions: the label is how an operator refers to this agent, and the account is who
+                anybody reading chat or the server's player list has actually seen.
+              -->
+              <span class="block truncate text-xs">
+                {{ agent.label }}
+                <span v-if="agent.mcUsername" class="font-mono opacity-50">{{ agent.mcUsername }}</span>
+                <span v-else class="italic opacity-50">{{ t('agents.notLinked') }}</span>
+              </span>
+              <span class="block truncate text-[0.65rem] tabular-nums opacity-50">
+                <span class="font-mono">{{ at(agent.telemetry!.position.x, agent.telemetry!.position.z) }}</span>
+                <template v-if="agentVitals(agent)">
+                  <span class="opacity-60"> · </span>{{ agentVitals(agent) }}
+                </template>
+              </span>
+            </span>
+          </button>
+        </div>
+
+        <!--
+          Below the fleet, because it is read against it: the question is who is near *ours*. Absent
+          rather than empty when there is nobody - a heading over nothing reads as a list that failed
+          to load, and "nobody is about" is better said by the map having no red on it.
+        -->
+        <template v-if="strangers.length">
+          <div
+            class="border-base-300 bg-base-200 sticky top-0 flex items-center justify-between gap-2 border-t px-3 pt-2 pb-1"
+          >
+            <span class="flex items-center gap-1.5 text-xs font-medium">
+              <span class="bg-error size-2 rounded-full" />{{ t('map.strangers') }}
+            </span>
+            <span class="badge badge-xs badge-ghost tabular-nums">{{ strangers.length }}</span>
+          </div>
+
+          <div class="flex flex-col gap-0.5 px-2 pb-2">
+            <button
+              v-for="player in strangers"
+              :key="player.name"
+              class="btn btn-sm btn-ghost h-auto min-h-0 justify-start gap-2 py-1 font-normal"
+              :title="t('map.seenBy', { agent: player.nearest })"
+              @click="jumpToPlace(player.x, player.z)"
+            >
+              <PlayerHead :id="player.uuid ?? player.name" :name="player.name" size="sm" class="shrink-0" />
+              <span class="min-w-0 flex-1 text-left">
+                <span class="block truncate text-xs">{{ player.name }}</span>
+                <!--
+                  Where they are, then how far from the *nearest agent* - not from the middle of the
+                  screen. That is the reading somebody acts on, and it is why the list is sorted by
+                  it. Health is deliberately absent: a client is only ever told its own.
+                -->
+                <span class="block truncate text-[0.65rem] tabular-nums opacity-50">
+                  <span class="font-mono">{{ at(player.x, player.z) }}</span>
+                  <span class="opacity-60"> · </span>
+                  {{ t('map.blocksAway', { count: Math.round(player.distance) }) }}
+                  <template v-if="strangerVitals(player)">
+                    <span class="opacity-60"> · </span>{{ strangerVitals(player) }}
+                  </template>
+                </span>
+              </span>
+            </button>
+          </div>
+        </template>
       </div>
     </div>
   </div>

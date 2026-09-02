@@ -8,6 +8,8 @@ import {
   Bot as Agent,
   Clock,
   Eye,
+  // Aliased: `Map` is a JavaScript built-in, and shadowing it is a trap for whoever needs one here.
+  Map as MapIcon,
   Hammer,
   Heart,
   ChevronLeft,
@@ -603,6 +605,19 @@ async function confirmRemove() {
               >
                 <Eye class="size-4" />
                 {{ t('viewer.title') }}
+              </RouterLink>
+              <!--
+                Offered whenever the agent has reported a position, in game or not. Unlike the live
+                view there is nothing to stream: the map is ground already charted, and where an
+                agent was last seen is worth looking at precisely when it is no longer there.
+              -->
+              <RouterLink
+                v-if="agent.telemetry"
+                :to="{ name: 'map', query: { agent: agent.id } }"
+                class="btn btn-soft btn-sm gap-2"
+              >
+                <MapIcon class="size-4" />
+                {{ t('map.title') }}
               </RouterLink>
             </div>
           </div>

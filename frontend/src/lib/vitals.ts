@@ -14,6 +14,17 @@ import { isOnline } from './agentState'
  * A dimension nobody has a name for is humanised rather than dropped. Servers run custom worlds, and
  * "Mining World" beats both `mining_world` and an empty field.
  */
+/**
+ * What the server says somebody is playing as.
+ *
+ * Survival is deliberately unnamed: it is the ordinary case, and writing it beside every player on
+ * a survival server is a column of one repeated word. What is worth saying is that somebody is
+ * *not* in it - a creative player near a build is a different thing to notice.
+ */
+export function gamemodeLabel(mode: number | null | undefined): string | null {
+  return { 1: 'creative', 2: 'adventure', 3: 'spectator' }[mode ?? -1] ?? null
+}
+
 export function dimensionLabel(id: string): string {
   const known = `agents.dimensions.${id}`
   if (i18n.global.te(known)) return i18n.global.t(known)
