@@ -125,6 +125,14 @@ export class Agent {
   /** Runs for every session, watched or not: the map is worth having drawn before anyone asks for
    * it. Rebuilt per session, like the watcher, because it holds the bot. */
   private mapper: AgentMap | undefined
+  /**
+   * The name of the world this session is standing in, as the server calls it.
+   *
+   * Read off the raw packets because mineflayer deliberately does not keep it: `bot.game.dimension`
+   * is the dimension *type*, which it needs for its own codec lookups. A server running Multiverse
+   * has many worlds of type `overworld`, and the map has to tell them apart - see `worldOf`.
+   */
+  private level: string | undefined
   /** Whether this session ever got in. `spawn` fires again on every respawn and every dimension
    * change, and an agent that died has not rejoined the server. */
   private joined = false
@@ -514,6 +522,15 @@ export class Agent {
     bot._client.on('death_combat_event', (packet: { message?: unknown }) => {
       if (this.bot === bot) this.obituary = this.readable(packet.message)
     })
+
+    // Both packets carry it, and both change which world the agent is in: `login` for the world it
+    // joins, `respawn` for every one it moves to afterwards. Registered here, before either can
+    // arrive, because the first is the only announcement the joining world ever gets.
+    const named = (packet: { worldName?: unknown }) => {
+      if (this.bot === bot && typeof packet.worldName === 'string') this.level = packet.worldName
+    }
+    bot._client.on('login', named)
+    bot._client.on('respawn', named)
 
     bot.on(
       'death',
@@ -1209,8 +1226,11 @@ export class Agent {
     if (!bot?.entity) return
 
     this.unmap()
-    this.mapper = new AgentMap(this.id, bot, (tile) =>
-      this.hooks.event({ type: 'map_tile', agentId: this.id, tile }),
+    this.mapper = new AgentMap(
+      this.id,
+      bot,
+      (tile) => this.hooks.event({ type: 'map_tile', agentId: this.id, tile }),
+      () => this.level,
     )
     this.mapper.start()
   }

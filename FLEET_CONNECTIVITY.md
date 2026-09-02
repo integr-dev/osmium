@@ -868,6 +868,19 @@ tints the mesher applies. Two traps found building it, both worth knowing before
   face and stopping leaves several dozen real blocks with no colour, so the resolver walks up-faces
   from the top down, then any other face, then the particle texture.
 
+### A world is a level name, not a dimension type
+
+`dimension` carries the **level name** the server gave the world, not the dimension type. The two
+are the same thing on vanilla — a level called `minecraft:overworld` strips to `overworld`, which is
+what the type would have said — and they part company the moment a server runs Multiverse or sits
+behind a proxy. There, a survival world, a creative world and a plot world are all of *type*
+`overworld`, and filing them under the type puts every one of them on top of the last.
+
+mineflayer reports the type in `bot.game.dimension` and says in its own source that the level name
+may differ; the host reads the name off the `login` and `respawn` packets instead, and falls back to
+the type for a version that sends no name. The vertical bounds still come from the type, which is
+what the codec describes.
+
 ### The dimensions are separate maps
 
 `dimension` is part of what **identifies** a tile, not a label on one. The worlds are different

@@ -76,20 +76,6 @@ export interface Column {
  * The frontend applies the real rule on top - a name it has no colour for is skipped the same way -
  * so this list being short is a performance measure rather than the only line of defence.
  */
-/**
- * What a world is called when the bot has not been told yet.
- *
- * Every session starts here and leaves it on the first packet that names a dimension. Sending it
- * would file real terrain under a world that does not exist, so a tile read in this state is held
- * back rather than guessed at.
- */
-export const UNKNOWN_DIMENSION = ''
-
-/** The world this bot is in, without its `minecraft:` prefix, or {@link UNKNOWN_DIMENSION}. */
-export function worldOf(bot: { game?: { dimension?: string } }): string {
-  return bot.game?.dimension?.replace(/^minecraft:/, '') || UNKNOWN_DIMENSION
-}
-
 const INVISIBLE: ReadonlySet<string> = new Set([
   'air',
   'cave_air',
@@ -99,6 +85,38 @@ const INVISIBLE: ReadonlySet<string> = new Set([
   'structure_void',
   'moving_piston',
 ])
+
+/**
+ * What a world is called when the bot has not been told yet.
+ *
+ * Every session starts here and leaves it on the first packet that names a world. Sending it would
+ * file real terrain under a world that does not exist, so a tile read in this state is held back
+ * rather than guessed at.
+ */
+export const UNKNOWN_DIMENSION = ''
+
+/**
+ * Which world this bot is standing in.
+ *
+ * **The level name, not the dimension type.** mineflayer reports the type in `bot.game.dimension`,
+ * and says so in its own source: on a proxy or a modded server the level name may differ from the
+ * type, and it needs the type for its codec lookup. That is the wrong identity for a map. A server
+ * running Multiverse has any number of worlds that are all of type `overworld` - a survival world,
+ * a creative one, a plot world - and filing them under the type puts every one of them on top of
+ * the last, chunk for chunk.
+ *
+ * So the level name wins where the host could read one, and the type is the fallback for a version
+ * that sends no name. Vanilla names its levels `minecraft:overworld` and the like, which strips to
+ * exactly what the type would have given - so nothing already charted moves.
+ */
+export function worldOf(bot: { game?: { dimension?: string } }, level?: string): string {
+  return strip(level) || strip(bot.game?.dimension) || UNKNOWN_DIMENSION
+}
+
+/** A resource id without its default namespace, which is noise in a world's name. */
+function strip(name: string | undefined): string {
+  return name?.replace(/^minecraft:/, '').trim() ?? ''
+}
 
 /**
  * The topmost visible block of every column in a chunk, as a tile.
@@ -225,6 +243,8 @@ export class AgentMap {
     private readonly agentId: number,
     private readonly bot: Bot,
     private readonly send: (tile: MapTile) => void,
+    /** The level name the session last saw, read afresh each tile - see {@link worldOf}. */
+    private readonly level: () => string | undefined = () => undefined,
   ) {}
 
   start(): void {
@@ -284,7 +304,7 @@ export class AgentMap {
     // Read per tile rather than once per session: a dimension change is a new world under the
     // same agent, and a tile read after one and filed under the old name is terrain in the wrong
     // place. Cheap - it is a string off the bot.
-    const world = worldOf(this.bot)
+    const world = worldOf(this.bot, this.level())
     // Held back rather than guessed at. A tile filed under a world that does not exist is terrain
     // nobody can find again, and the chunk stays dirty - the next pass reads it once the server has
     // said where we are.

@@ -206,6 +206,31 @@ describe('worldOf', () => {
     expect(worldOf({ game: { dimension: 'minecraft:the_nether' } })).toBe('the_nether')
   })
 
+  /**
+   * The reason this takes a level name at all. mineflayer reports the dimension *type*, and a
+   * server running Multiverse has any number of worlds that are all of type `overworld`. Filing
+   * them under the type puts every one of them on top of the last, chunk for chunk.
+   */
+  it('prefers the level name over the dimension type', () => {
+    expect(worldOf({ game: { dimension: 'overworld' } }, 'world_creative')).toBe('world_creative')
+    expect(worldOf({ game: { dimension: 'overworld' } }, 'plotworld')).toBe('plotworld')
+  })
+
+  it('falls back to the type when the server named no level', () => {
+    expect(worldOf({ game: { dimension: 'the_end' } }, undefined)).toBe('the_end')
+    expect(worldOf({ game: { dimension: 'the_end' } }, '')).toBe('the_end')
+    expect(worldOf({ game: { dimension: 'the_end' } }, '   ')).toBe('the_end')
+  })
+
+  /**
+   * Vanilla names its levels `minecraft:overworld` and the like, which strips to exactly what the
+   * type would have given - so nothing already charted moves when the level name starts arriving.
+   */
+  it('reads a vanilla level name as the same world the type named', () => {
+    expect(worldOf({ game: { dimension: 'overworld' } }, 'minecraft:overworld')).toBe('overworld')
+    expect(worldOf({ game: { dimension: 'the_nether' } }, 'minecraft:the_nether')).toBe('the_nether')
+  })
+
   it('leaves a modded dimension that carries its own namespace alone', () => {
     expect(worldOf({ game: { dimension: 'twilightforest:twilight_forest' } }))
       .toBe('twilightforest:twilight_forest')

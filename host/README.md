@@ -689,6 +689,10 @@ Six rules, each of which has already been got wrong once:
 - **The dimension identifies the tile, it does not label it.** The worlds are separate places sharing
   one coordinate system, so filed together an agent through a portal overwrites the map rather than
   adding to it.
+- **Send the level name, not the dimension type.** They agree on vanilla and part company on
+  anything running Multiverse or behind a proxy, where several worlds share the type `overworld`.
+  It is on the `login` and `respawn` packets; mineflayer's `bot.game.dimension` is the type, which
+  is the right thing for its own codec lookups and the wrong identity for a map.
 - **Clear your already-sent digests on a dimension change.** They say *this chunk already looks like
   this*, which is a statement about a world the agent has left, and would suppress the first look at
   the new one wherever coordinates coincide.
