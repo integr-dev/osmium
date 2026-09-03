@@ -63,6 +63,42 @@ export function playerVitals(player: {
     .join(' · ')
 }
 
+/**
+ * The fleet's own one-line reading, as the map draws it under an agent.
+ *
+ * Different fields from {@link playerVitals}, and deliberately: an agent is ours, so its food and
+ * its ping are known, while what is worth saying about a stranger is the gamemode nobody can ask
+ * them for. Shared for the reason the rest of this file is - the map and the 3D viewer both label
+ * agents, and two copies is two chances to describe one agent differently on two screens at once.
+ */
+export function agentVitals(agent: {
+  telemetry?: { health?: number | null; food?: number | null; pingMs?: number | null } | null
+}): string {
+  const telemetry = agent.telemetry
+  const parts: string[] = []
+
+  const hearts = heartsLabel(telemetry?.health)
+  if (hearts) parts.push(hearts)
+  if (typeof telemetry?.food === 'number') parts.push(i18n.global.t('map.food', { n: Math.round(telemetry.food) }))
+  if (typeof telemetry?.pingMs === 'number') parts.push(`${telemetry.pingMs}ms`)
+
+  return parts.join(' · ')
+}
+
+/**
+ * The whole line the map writes under an agent: who it is in game, then how it is doing.
+ *
+ * Shared so the 3D nametags can say the same thing. The name above a head is the agent's Osmium
+ * label — what an operator called it — and its Minecraft username belongs here, because the two are
+ * frequently not the same word and the one you can shout at in chat is this one.
+ */
+export function agentDetail(agent: {
+  mcUsername?: string | null
+  telemetry?: { health?: number | null; food?: number | null; pingMs?: number | null } | null
+}): string {
+  return [agent.mcUsername, agentVitals(agent)].filter(Boolean).join(' · ')
+}
+
 export function dimensionLabel(id: string): string {
   const known = `agents.dimensions.${id}`
   if (i18n.global.te(known)) return i18n.global.t(known)

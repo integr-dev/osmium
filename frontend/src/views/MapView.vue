@@ -13,7 +13,7 @@ import { atShort } from '../lib/time'
 import { parsePlace } from '../lib/mapCoords'
 import { agentDot, agentStateLabel } from '../lib/agentState'
 import { avatarUrl } from '../lib/avatars'
-import { dimensionLabel, heartsLabel, playerVitals } from '../lib/vitals'
+import { agentDetail, agentVitals, dimensionLabel, playerVitals } from '../lib/vitals'
 
 /**
  * Where the fleet is working, on the ground it has charted.
@@ -209,18 +209,6 @@ const strangers = computed<Stranger[]>(() => {
  * was not reported rather than shown as a zero, which is a reading somebody would act on: an agent
  * that has not said how it is doing is not an agent on nought hearts.
  */
-function agentVitals(agent: (typeof shown.value)[number]): string {
-  const telemetry = agent.telemetry
-  const parts: string[] = []
-
-  const hearts = heartsLabel(telemetry?.health)
-  if (hearts) parts.push(hearts)
-  if (typeof telemetry?.food === 'number') parts.push(t('map.food', { n: Math.round(telemetry.food) }))
-  if (typeof telemetry?.pingMs === 'number') parts.push(`${telemetry.pingMs}ms`)
-
-  return parts.join(' · ')
-}
-
 /** The same for somebody who is not ours, which is now the same fields. See `playerVitals`. */
 function strangerVitals(player: Stranger): string {
   return playerVitals(player)
@@ -233,10 +221,6 @@ function strangerVitals(player: Stranger): string {
  * so both belong on a screen about where things are: somebody reading chat, or looking at the
  * player list on the server, has only ever seen the second one.
  */
-function agentDetail(agent: (typeof shown.value)[number]): string {
-  return [agent.mcUsername, agentVitals(agent)].filter(Boolean).join(' · ')
-}
-
 /** Where something is, as F3 writes it and the coordinate box reads it back. */
 function at(x: number, z: number): string {
   return `${Math.round(x)}, ${Math.round(z)}`
