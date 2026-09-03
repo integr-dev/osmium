@@ -85,6 +85,14 @@ function event(body: Event): Json {
       return { kind: 'event', type: 'chat', agentId: body.agentId, payload }
     }
 
+    case 'stand_down':
+      return {
+        kind: 'event',
+        type: 'stand_down',
+        agentId: body.agentId,
+        payload: { reason: body.reason },
+      }
+
     case 'activity':
       return {
         kind: 'event',

@@ -42,6 +42,14 @@ import {
   movable,
 } from './inventory.ts'
 import { AgentMap, worldOf } from './map.ts'
+import {
+  AgentUtilities,
+  antiHungerFrom,
+  distanceFrom,
+  modeFrom,
+  type AntiHunger,
+  type Mode,
+} from './utility.ts'
 import { AgentViewer } from './viewer.ts'
 
 import { log, reason } from '../log.ts'
@@ -209,6 +217,16 @@ export class Agent {
   /** Whether to be pushed around at all. Undefined means yes, which is what a Minecraft client does.
    * Turning it off makes the correction above irrelevant, since nothing is applied either way. */
   private takeKnockback: boolean | undefined
+
+  /** The utility modules, as configured. Read live by [utilities], never captured. */
+  private noFall = false
+  private antiHunger: AntiHunger = 'off'
+  private autoEat: Mode = 'off'
+  private autoTotem: Mode = 'off'
+  private fleeDistance = 0
+
+  /** Attached per session, like the mapper and the inventory reporter. */
+  private utilities: AgentUtilities | undefined
   /** The server's own command for sending a private message, as a template. Undefined means `/msg`,
    * which is what vanilla and most plugin suites answer to - see `WHISPER_COMMAND`. */
   private whisperCommand: string | undefined
@@ -548,6 +566,7 @@ export class Agent {
         // report the Nether's ceiling as the Overworld's ground.
         this.begin_mapping()
         this.begin_carrying()
+        this.begin_utilities()
 
         // Only the first one, and only one sampler. `spawn` fires again on every respawn and every
         // dimension change, and an agent that died has not rejoined the server.
@@ -694,6 +713,7 @@ export class Agent {
     this.unwatch()
     this.unmap()
     this.uncarry()
+    this.unutilities()
     // Whatever it was holding is the backend's again: leaving the game releases every segment, and
     // a set that outlived the session would refuse commands on behalf of work nobody is doing.
     this.segments.clear()
@@ -795,6 +815,11 @@ export class Agent {
       'mc.knockback',
       'mc.takeKnockback',
       'players.whitelist',
+      'util.noFall',
+      'util.antiHunger',
+      'util.autoEat',
+      'util.autoTotem',
+      'util.fleeDistance',
     ])
     const unknown = Object.keys(values).filter((key) => !known.has(key))
 
@@ -817,6 +842,29 @@ export class Agent {
     this.version = playable(values['mc.version'], `Agent ${this.id}'s Minecraft version`)
     this.knockback = switched(values['mc.knockback'], `Agent ${this.id}'s knockback correction`)
     this.takeKnockback = switched(values['mc.takeKnockback'], `Agent ${this.id}'s knockback`)
+
+    // Read per pass by the modules themselves, so a toggle applies to an agent already in game.
+    this.noFall = switched(values['util.noFall'], `Agent ${this.id}'s no-fall`) === true
+    this.antiHunger = antiHungerFrom(values['util.antiHunger'])
+    this.autoEat = modeFrom(values['util.autoEat'])
+    this.autoTotem = modeFrom(values['util.autoTotem'])
+    this.fleeDistance = distanceFrom(values['util.fleeDistance'])
+
+    // Named rather than counted, because "3 modules" answers nothing an operator asked. The two that
+    // tell the server something untrue are worth seeing in a log beside the two that do not.
+    const running = [
+      this.noFall ? 'no-fall' : undefined,
+      this.antiHunger !== 'off' ? `anti-hunger (${this.antiHunger})` : undefined,
+      this.autoEat !== 'off' ? `auto-eat (${this.autoEat})` : undefined,
+      this.autoTotem !== 'off' ? `auto-totem (${this.autoTotem})` : undefined,
+      this.fleeDistance ? `flee within ${this.fleeDistance}m` : undefined,
+    ].filter((name) => name !== undefined)
+
+    log.info(
+      running.length
+        ? `Agent ${this.id} runs ${running.join(', ')}`
+        : `Agent ${this.id} runs no utility modules`,
+    )
 
     this.trusted = trustedFrom(values['players.whitelist'])
 
@@ -1316,6 +1364,74 @@ export class Agent {
   private unwatch(): void {
     this.watcher?.stop()
     this.watcher = undefined
+  }
+
+  /**
+   * Starts the utility modules for this session.
+   *
+   * Per session because every one of them holds a listener or a timer against this bot, and a
+   * session that ended takes them with it. What they are told to do is read live, so an operator
+   * toggling one while an agent stands in the game does not have to reconnect it.
+   */
+  private begin_utilities(): void {
+    const bot = this.bot
+    if (!bot?.entity) return
+
+    this.unutilities()
+    this.utilities = new AgentUtilities(
+      this.id,
+      bot,
+      () => ({
+        noFall: this.noFall,
+        antiHunger: this.antiHunger,
+        autoEat: this.autoEat,
+        autoTotem: this.autoTotem,
+        fleeDistance: this.fleeDistance,
+      }),
+      {
+        // The same list that says who may command it. Somebody the operator vouched for is somebody
+        // the agent will stand next to, and keeping one list means there is one thing to get right.
+        trusted: (name) => this.trusted.has(name.toLowerCase()),
+        flee: (who, distance) => this.retreat(who, distance),
+      },
+    )
+    this.utilities.start()
+  }
+
+  /**
+   * Leaves, and asks not to be sent back.
+   *
+   * **The disconnect alone would not hold.** `connect.rejoin` is the backend's, and the rejoin sweep
+   * reads the agent going offline as a drop and dials it straight back into the server it just
+   * fled - so the two would take turns for as long as the stranger stood there. `stand_down` is the
+   * host saying this was a decision rather than a failure, and the backend answers by wanting the
+   * agent where it is.
+   *
+   * Raised as an incident, not as chat. An agent that left on its own at three in the morning is
+   * exactly the thing an operator needs on the dashboard rather than scrolled past in a feed.
+   */
+  private retreat(who: string, distance: number): void {
+    const away = Math.round(distance)
+
+    log.warn(`Agent ${this.id} is leaving: ${who} came within ${away}m`)
+    this.activity(
+      ActivityScope.System,
+      Severity.Error,
+      `Left the server: ${who} came within ${away} blocks and is not on the trust list`,
+    )
+
+    this.hooks.event({
+      type: 'stand_down',
+      agentId: this.id,
+      reason: `${who} came within ${away} blocks`,
+    })
+
+    this.handle({ type: 'disconnect' })
+  }
+
+  private unutilities(): void {
+    this.utilities?.stop()
+    this.utilities = undefined
   }
 
   /** Starts mapping this session, replacing any mapper left over from the last one. */

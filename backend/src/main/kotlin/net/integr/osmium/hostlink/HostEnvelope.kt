@@ -285,6 +285,19 @@ object EventType {
     const val ACTIVITY = "activity"
 
     /**
+     * The agent left on its own account and asks not to be sent back: `{ "reason": "…" }`.
+     *
+     * **Not the same as going offline**, which the backend already sees and reads as a drop worth
+     * undoing. A host raises this when the absence is the decision - today, when a player nobody
+     * vouched for walks up to an unattended agent. The backend answers by clearing the wish to be
+     * in the game, so the rejoin sweep leaves it alone until an operator says otherwise.
+     *
+     * The reason is for the log. What an operator reads is the activity entry the host raises
+     * beside it, which is an incident rather than a state change.
+     */
+    const val STAND_DOWN = "stand_down"
+
+    /**
      * How far through a segment an agent is:
      * `{ "segmentId": 31, "blocksPlaced": 12480, "state": "building" }`.
      *

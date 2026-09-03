@@ -336,6 +336,37 @@ class AgentService(
     }
 
     /**
+     * Records that an agent took itself out of the game and is to be left there.
+     *
+     * **The one thing a host may decide about where an agent belongs.** Everywhere else that rule
+     * holds absolutely - a host reports, the backend decides - and it is bent here for a reason the
+     * rule cannot serve: the agent is the only thing that can see who is standing next to it, and
+     * the sweep would put it straight back beside them.
+     *
+     * No audit entry. The audit trail is who did what, and nobody did this; the host raises an
+     * activity entry, which is where something that happened *to* an agent belongs.
+     */
+    @Transactional
+    fun standDown(agent: Agent, reason: String?) {
+        log.info("Agent {} stood itself down: {}", agent.label, reason ?: "no reason given")
+
+        if (!agent.wanted && agent.rejoinAt == null && agent.rejoinAttempts == 0) return
+
+        agent.wanted = false
+        agent.rejoinAttempts = 0
+        agent.rejoinAt = null
+        agentRepository.save(agent)
+
+        broker.publish(
+            LiveUpdateEvent(
+                type = LiveUpdateType.AGENT_CHANGED,
+                data = agent.toResponse(telemetryStore.find(agent.id)),
+                agentId = agent.id,
+            ),
+        )
+    }
+
+    /**
      * Stops an agent going to, or staying at, its server.
      *
      * **Three situations, one button.** It can be in the game, on its way in, or sitting out a

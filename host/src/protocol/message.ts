@@ -153,6 +153,11 @@ export type Event =
       typed?: string
     }
   | { type: 'activity'; agentId: number; scope: ActivityScope; severity: Severity; text: string }
+  /** The agent decided to leave and asks not to be sent back — see `retreat` in `bot.ts`.
+   *
+   * Separate from going offline, which the backend already sees and reads as a drop worth undoing.
+   * This says the absence is the point. */
+  | { type: 'stand_down'; agentId: number; reason: string }
   /** What the agent is carrying, whenever it changes.
    *
    * Whole rather than per slot: an inventory is forty squares of a few bytes each, and a client

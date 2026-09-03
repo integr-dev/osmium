@@ -294,7 +294,176 @@ one would otherwise run on defaults with nothing saying so.
 | `mc.takeKnockback` | `false` to ignore knockback entirely — the agent is not pushed by hits, explosions or anything else. Unset means take it, like a player. With it off `mc.knockback` does not apply, since nothing is applied either way. Read per packet, so it takes effect at once rather than on the next connect. |
 | `mc.knockback` | `true`, `false`, or unset. Whether to undo the client library's velocity scaling. Unset decides it from the version; three states rather than two because a proxy can forward a version it does not advertise, and the packet's shape follows what is on the wire rather than what the handshake claimed. Read when a session opens. |
 | `players.whitelist` | Who may command this agent from inside the game, comma-separated. `name` for chat, `name:commands` for chat and server commands, `name:run+say` for exactly those. **Empty means nobody.** See §5.1. |
+| `util.autoEat` | `on` to eat before hunger stops health regenerating — under 18 food, or under 14 health, since being fed is what buys the regeneration. A golden apple only under 8 health, because it is worth more than the hunger it fills. The agent clears its control states for the meal and puts back both the states and the hotbar slot it had. Read per pass, so it takes effect at once. `dupe` additionally tops the food back up with the server's own `/dupe` when it runs low. |
+| `util.autoTotem` | `on` to keep a totem of undying in the off hand whenever there is a spare one to move there. `dupe` tops the supply back up the same way, at half the target — so it holds between four and eight while nothing is happening. The target **follows the fight**: every three pops inside twenty seconds doubles it, to a ceiling of thirty-two, and it falls back on its own once the window empties. Refilled **on the event that emptied the hand** — the server's entity status for a totem being used, and the window update that follows it — rather than on the sweep, because half a second between a pop and a refill is a death. The sweep is the net behind both. |
+| `util.antiHunger` | `careful`, `spoof`, or unset for off. Exhaustion is charged by distance at a rate that depends on whether the server believes the agent is sprinting. `careful` gives up the sprint. `spoof` keeps the speed and drops the packet that declares it. Read per packet and per tick. |
+| `util.noFall` | `true` to report standing on the ground on every movement packet that says otherwise, which resets the fall distance the server accumulates. Read per packet. |
+| `util.fleeDistance` | Blocks. A player who is not on `players.whitelist` coming this close makes the agent raise a `system`/`error` activity entry, send `stand_down`, and leave. Blank or anything that is not a positive number is off. The agent's own account is not a stranger to it; **every other agent in the fleet is**, so agents sharing a server go on each other's lists. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
+
+**Count the off hand.** mineflayer's `items()` covers slots 9 to 44 and stops there, so a totem in
+the off hand is invisible to it — which is exactly where auto-totem has just put one. Counting stock
+that way reports one fewer than the agent has, and on the **last** totem reports none, so the
+restock that exists to prevent running out finds nothing to multiply and quietly does nothing.
+Armour and the crafting grid stay out of the count: a chestplate is not stock, and half a recipe is
+not either.
+
+**One pass at a time.** Eating takes longer than the interval between passes, so the timer would
+otherwise start a second pass inside the first — and that one skips the restock, because the first
+is still holding the flag that says the hand is busy. An agent that kept getting hurt therefore
+never got round to topping anything up: the module keeping it alive starved the one keeping it
+stocked.
+
+**Watch the movement packet's shape when touching NoFall.** Up to 1.21.2 it carried
+`onGround: bool`; from 1.21.4 it carries `flags`, a `MovementFlags` bitfield whose first bit is
+`onGround`. Code that looks only for the boolean finds nothing to change on any current server and
+passes every packet through honest — and it fails silently, because there is nothing to throw.
+
+**Set every field, not the first one that matches.** mineflayer fills in both from one shared object,
+unconditionally:
+
+```js
+lastSent.onGround = onGround
+lastSent.flags = { onGround, hasHorizontalCollision: undefined } // 1.21.3+
+```
+
+So the legacy boolean is always present whether or not this version writes it out. Stopping at the
+first match set the field the protocol ignores and left the one it reads untouched — the lie went
+into a field nobody opens, which looks identical to the module working. Test it with the object
+`physics.js` actually sends; separate cases for each field is how this got through twice.
+
+It claims ground on **every** airborne packet, which is what Meteor's packet mode does. There was a
+velocity threshold here on the theory that only a real fall is worth lying about; both halves were
+wrong. The server only resets the distance when it is told, so a late lie has already let the damage
+accumulate — and the threshold meant the module did nothing on a jump, which is where most fall
+damage comes from in a fight.
+
+**Top up at half the target, because multiplication leaves no other choice.** There is no separate
+"low" mark: at twelve of sixteen the multiplier rounds to one and the command is a no-op, so the only
+counts worth acting on are the ones at or under half. Half the target is therefore both the low mark
+and the earliest point at which topping up is possible, which is what makes it early rather than
+late — stock swings between the target and half of it and never falls below half.
+
+**The multiplier applies to the stack in hand, not to everything the agent owns.** A totem does not
+stack, so the hand holds one and `/dupe 2` adds exactly **one** totem. Working the multiplier out of
+the total — four totems, target eight, so double it — asked for `/dupe 2` and gained one, over and
+over, while the fight spent one each time. Break-even, with the command apparently working: the live
+log read `Duped item 2 times` eleven times in a row before the agent died. It is the shortfall
+divided by what one copy carries, plus the one already in hand: four short with one in hand is
+`/dupe 5`.
+
+**The low-water mark is its own rule.** It used to be implied by the multiplier, which could only
+act at or under half the target — so correcting the multiplier took the mark with it and would have
+meant a command per pop. Written down instead: top up when half of what is wanted is gone, and top
+up all the way.
+
+**Never await mineflayer's inventory without a deadline.** `clickWindow` ends in
+`waitForWindowUpdate`, which waits for the server to echo the slot and has no timeout of its own —
+so a click the server treats as a no-op leaves a promise that never settles. A module that guards
+itself with "an operation is in flight" is then in flight forever. That is not theoretical: staging
+a totem onto the hotbar hung, the flag stayed set, and the agent stopped refilling its off hand
+entirely — dying on the next pop with a backpack full of totems. Every window call here now has two
+seconds, after which it is abandoned and the next pass tries again.
+
+**Refill the off hand with `equip`, and resist improving on it.** `bot.equip(item, 'off-hand')`
+moves the item with two window clicks and holds it on the cursor in between, so there is a real
+window in which the agent has a totem in neither hand. Two attempts to close that window both made
+things worse and are recorded here so the third one is thought about harder:
+
+- **Staging a spare on the hotbar** so it could be moved with the F-key swap. The staging click hung
+  on a server that did not echo the slot, the in-flight flag never cleared, and the module stopped
+  refilling entirely.
+- **The swap itself**, `block_dig` status 6. A packet the server ignores raises nothing, so the code
+  took it as done and never fell back to `equip`. Both modes stopped refilling, including the one
+  that does no duping at all.
+
+The cursor window is smaller than the window left by not equipping. Anything replacing `equip` has to
+**verify the off hand afterwards** rather than assume a sent packet worked.
+
+**The refill is the oldest code in this module and the least touched, deliberately.** Restocking was
+built on top of it rather than through it: the dupe reads the inventory and sends a chat command, and
+the only thing it asks of the refill is to have run first. Every attempt to make the refill itself
+cleverer — retry loops, staging, the swap — has cost an agent its life in testing and been reverted.
+
+The order in a pass is refill, then eat, then restock, and the refill also runs on its own from the
+pop event rather than waiting for a pass. Nothing in the restocking path moves a totem.
+
+**Staying alive outranks the rest of the module.** Eating takes the main hand for a second and a
+half, duping needs it empty, and both are worth nothing to an agent that dies in the middle of them.
+A pass that ends with no totem in the off hand and a spare available does nothing else: something is
+in flight, and the next pass is half a second away.
+
+**Never take a totem out of the off hand.** The held item is what pops first, so a totem moved into
+the main hand to be copied is the very one the next hit spends — the command then arrives at a
+player holding nothing, and the off hand it was taken from is empty too. That is a lost fight, not
+just a lost command. If the hotbar has no empty square to select, the dupe is skipped rather than
+made room for: a click mid-fight is the thing this path exists to avoid. **Leave one hotbar square
+empty on an agent running this.**
+
+**Let the fight set the target.** Eight totems is right for standing around and demonstrably wrong
+under end crystals — a test spent eleven in under a minute and died at the target it had been given.
+Every three pops inside twenty seconds doubles what the agent aims for, capped at thirty-two, which
+is also a promise about how much of the backpack this may take since a totem does not stack.
+
+Ramping sends **fewer** commands, not more, which is the part worth understanding: a bigger target
+means each dupe brings back far more, so it asks less often. Simulated over a minute of a totem every
+400ms — 45 commands at a fixed eight, 11 while ramping, and the ramping run held a higher floor.
+
+**Copy the last of the biggest pile, not the first.** The off hand is refilled from the first totem
+in the backpack, so duping that one aims the command and the refill at the same square — and in a
+fight fast enough to need the dupe, the totem is gone from under the command before it lands. The
+last one is the one nothing else is about to take. Biggest still wins, because one command should
+move as much as it can; last only breaks the tie, which for totems is every time.
+
+**Dupe the off hand where it stands.** The plugin copies the main hand, and the off hand when the
+main hand is empty — so what is already in the off hand is duped by *selecting an empty hotbar
+square*, not by picking the item up. Equipping it first is both unnecessary and wrong: the
+inventory click has to reach the server before the command does, and it does not. The two arrive
+together, the server sees a player holding nothing in either hand, and answers **"You must be
+holding an item in your hand"** — which is what an agent looks like when it dies beside a totem it
+never copied.
+
+Selecting a square is one packet and moves nothing, which is what makes it safe mid-fight when
+shuffling items is not. It also leaves the totem doing its job while it is being copied.
+
+**Confirm something is actually in a hand before spending the command.** `equip` resolves when this
+side is satisfied; what `/dupe` needs is the server to agree.
+
+**One question at a time, rather than a cooldown between dupes.** Waiting between dupes is what made
+this useless, so there is no gap: the guard is that a `/dupe` already sent is given three quarters of
+a second to be answered before another goes out. Under end crystals the count keeps falling while the
+last command is still in flight, and "still only four" is not evidence it was missed — without this
+the module asks three or four times over for one lot of totems.
+
+Do not reach for "has the count gone up" as the test for whether it landed. A dupe sent at four can
+land while the agent is down to two, and four is not more than four; the obvious version of this
+guard deadlocks exactly during the fight it exists for.
+
+Measured against a totem every 400ms it sends about one command every 1.3 seconds and holds the stock
+at three rather than letting it reach zero. Against a quiet fight it sends three in five minutes.
+**A server that stops honouring `/dupe` will be asked at that rate for as long as the stock is low**,
+which is the accepted cost of having no cooldown.
+
+**`dupe` mode is the server's own plugin, not a protocol trick.** It equips the biggest pile of
+what is short and sends `/dupe <multiplier>` in chat, where the multiplier is the largest one that
+does not overshoot the target — the plugin multiplies the held stack, so eleven totems become
+twenty-two rather than sixteen unless the count happens to divide the target. It is rate limited to
+**not** raised as activity: a command the agent runs for itself
+every few minutes would be a feed with nothing else in it, and the debug log is where somebody
+looking for it will look. On a server without such a plugin the command is a line of chat that does
+nothing, so the mode is opt-in per agent.
+
+**Two of the utility modules lie to the server and two do not**, and that is the line to hold when
+adding another. Auto-eat and auto-totem do what a player does, only without being asked; nothing
+about them is untrue. `util.noFall` and `util.antiHunger: spoof` report something that is not so —
+they work, and they are exactly the shape an anticheat plugin looks for. `spoof` in particular keeps
+sprinting speed while denying the sprint, which the server can measure for itself. Both are off
+unless somebody turns them on, and both say as much in the interface. A ban is the one consequence
+in this project that cannot be undone.
+
+**All four read their setting per pass rather than capturing it.** These are toggles an operator
+flips while watching an agent, so a module that needed a reconnect to notice would look broken at
+exactly the moment it was being tried — the same reason `mc.takeKnockback` is read per packet.
 
 ### `inventory_move`
 
@@ -614,7 +783,29 @@ the guess is ever visible.
 
 ---
 
-### 4.5 `handshake` — once, immediately after connecting
+### 4.5 `stand_down` — the agent decided to leave
+
+```jsonc
+{ "kind": "event", "type": "stand_down", "agentId": 42,
+  "payload": { "reason": "Notch came within 14 blocks" } }
+```
+
+**The only report that changes what the backend wants rather than what it believes.** Everywhere else
+the rule is absolute — a host reports, the backend decides where an agent belongs — and this bends it
+for the one case the rule cannot serve: the agent is the only thing that can see who is standing next
+to it, and the rejoin sweep would read the absence as a drop and dial straight back into whoever it
+just left.
+
+So this is the host saying *the absence is the point*. The backend answers by clearing the wish to be
+in the game; the agent stays out until an operator reconnects it deliberately. Send the ordinary
+`agent_status` for leaving as well — this says why it will not be coming back on its own, not that it
+has gone.
+
+Raise an **activity** entry beside it. `reason` here is for the log; what an operator reads is the
+incident, and an agent that left on its own at three in the morning belongs on the dashboard rather
+than scrolled past in a feed.
+
+### 4.6 `handshake` — once, immediately after connecting
 
 ```jsonc
 { "kind": "event", "type": "handshake",

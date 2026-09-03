@@ -11,6 +11,7 @@ import net.integr.osmium.agent.dto.toResponse
 import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.agent.service.AgentInventoryStore
 import net.integr.osmium.agent.service.AgentTelemetryPublisher
+import net.integr.osmium.agent.service.AgentService
 import net.integr.osmium.agent.service.AgentTelemetryStore
 import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.activity.model.ActivityScope
@@ -45,6 +46,7 @@ import net.integr.osmium.host.service.HostService
 @Service
 class HostReportService(
     private val agentRepository: AgentRepository,
+    private val agentService: AgentService,
     private val hostService: HostService,
     private val chatService: ChatService,
     private val chatSpamFilter: ChatSpamFilter,
@@ -90,6 +92,8 @@ class HostReportService(
             EventType.CHAT -> recordChat(hostId, envelope)
 
             EventType.ACTIVITY -> recordActivity(hostId, envelope)
+
+            EventType.STAND_DOWN -> standDown(hostId, envelope)
 
             EventType.BUILD_PROGRESS -> recordProgress(hostId, envelope)
 
@@ -488,6 +492,21 @@ class HostReportService(
             // what guarantees the stored string is valid JSON.
             components = payload.get("components")?.takeIf { it.isObject }?.toString(),
         )
+    }
+
+    /**
+     * An agent that took itself out of the game, and means to stay out.
+     *
+     * The only report that changes what the backend *wants* rather than what it believes. Everything
+     * else here records what happened; this one is the host declining a decision the backend would
+     * otherwise keep making - the rejoin sweep reading the absence as a drop and dialling straight
+     * back into whatever the agent left.
+     */
+    private fun standDown(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val reason = envelope.payload?.get("reason")?.asString()
+
+        agentService.standDown(agent, reason)
     }
 
     private fun recordActivity(hostId: Long, envelope: HostEnvelope) {
