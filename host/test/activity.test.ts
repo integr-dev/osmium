@@ -62,6 +62,30 @@ describe('placeOf', () => {
   it('says nothing when there is no entity yet', () => {
     expect(placeOf(standing(undefined, 'overworld'))).toBeUndefined()
   })
+
+  /**
+   * The level name wins over the dimension type, and is the same one the agent reports as its world,
+   * so the feed and the agent's own page agree. They did not: a server with custom worlds runs
+   * nearly all of them as type `overworld`, which made every line say "in the overworld" while the
+   * page said "Pvp Arena".
+   */
+  it('names the world the agent is actually in', () => {
+    expect(placeOf(standing({ x: 250, y: 320, z: 249 }, 'overworld'), 'pvp_arena')).toBe(
+      '250, 320, 249 in pvp arena',
+    )
+  })
+
+  /** `the` belongs to the three the game ships, not to a name somebody chose. */
+  it('says "the" only for a world everybody knows', () => {
+    expect(placeOf(standing({ x: 0, y: 0, z: 0 }, 'overworld'), 'the_nether')).toBe('0, 0, 0 in the nether')
+    expect(placeOf(standing({ x: 0, y: 0, z: 0 }, 'overworld'), 'minecraft:the_end')).toBe('0, 0, 0 in the end')
+    expect(placeOf(standing({ x: 0, y: 0, z: 0 }, 'overworld'), 'world_nether')).toBe('0, 0, 0 in world nether')
+  })
+
+  /** No level name is the ordinary case on a vanilla server, and the type is right there. */
+  it('falls back to the dimension type when there is no level name', () => {
+    expect(placeOf(standing({ x: 1, y: 2, z: 3 }, 'the_nether'))).toBe('1, 2, 3 in the nether')
+  })
 })
 
 describe('lasted', () => {

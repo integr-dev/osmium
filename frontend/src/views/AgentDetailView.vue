@@ -264,6 +264,18 @@ const connectBlocked = computed<string | null>(() => {
  * gated on the host being reachable - cancelling a rejoin is a decision on Osmium's side, and an
  * operator who has just watched an agent be banned should not have to wait out its attempts.
  */
+/**
+ * Moving an agent is a decision about an agent that is not playing. The modal enforces it too -
+ * an agent can connect while the modal is open, and the field disables itself under the operator -
+ * but a button that opens a dialog with nothing usable in it is a dead end that explains nothing
+ * until you have already clicked it.
+ */
+const serverBlocked = computed<string | null>(() => {
+  if (!agent.value) return null
+  if (isOnline(agent.value)) return t('agents.blockedOnlineServer')
+  return null
+})
+
 const disconnectBlocked = computed<string | null>(() => {
   if (!agent.value) return null
 
@@ -582,7 +594,12 @@ async function confirmRemove() {
             <div v-if="auth.can('agent.write')" class="flex flex-col gap-2">
               <div class="text-xs uppercase opacity-50">{{ t('agents.actionsPlacement') }}</div>
               <div class="flex flex-wrap gap-2">
-                <button class="btn btn-soft btn-sm gap-2" @click="openServer">
+                <button
+                  class="btn btn-soft btn-sm gap-2"
+                  :disabled="serverBlocked !== null"
+                  :title="serverBlocked ?? ''"
+                  @click="openServer"
+                >
                   <Server class="size-4" />
                   {{ t('agents.setServer') }}
                 </button>
