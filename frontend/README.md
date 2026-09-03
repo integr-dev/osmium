@@ -1172,7 +1172,7 @@ Upstream's build does things Vite does not, and each gap is a different failure:
   handed over directly; entity textures are rewritten through three's loading manager.
 - **the global `THREE`** — its entity models read one rather than importing it.
 
-### Three patches to upstream sources, at build time
+### Three patches to the mesher, at build time
 
 Two are the assumption that a world starts at y=0: the section lookup reads the array as though
 index 0 were y=0, and a face whose neighbour lies below y=0 is culled as though it faced the void.
@@ -1201,12 +1201,100 @@ callers deep, so there is nothing to wrap from outside, and vendoring the files 
 expressions would mean owning the rest of them. Each patch asserts how many occurrences it expects,
 so an upstream change fails the build rather than quietly reverting.
 
+### Every mob came out in pieces
+
+Upstream's entity builder, `Entity.js`, has five defects between it and the model format, and
+together they accounted for every mob that looked wrong. All five are corrected by
+`viewer-assets.mjs`, in the package, for the same reason the mesher patches are: the code runs two
+callers deep inside the renderer with nothing to wrap from outside.
+
+**A bone's ancestors are never applied.** A cube is placed using its own bone's rotation and no
+other. The skeleton would normally supply the rest of the chain, and cannot: `bind()` calculates each
+bone's inverse *after* the bones are already in their bind pose, so every bone matrix comes out equal
+to the mesh's own world matrix and the chain cancels itself exactly — measured on a cow, to zero. A
+head parented to a rotated body is then drawn where an unrotated body would have put it: 1.3 blocks
+out on a cow, 2.8 on a polar bear. 97 cubes, 18 entities.
+
+**A cube's own rotation turns about the model origin.** `cube.rotation` is applied before the pivot
+is subtracted, so a rotated cube swings around the entity's feet rather than spinning where it
+stands. The chicken's body is the clearest: laid flat about the origin it lands below the ground and
+behind the bird. 33 cubes, including every minecart.
+
+**`mirror` is ignored**, on 14 cubes, and **per-face UVs are read as a pair**, on 13. The format
+allows `uv` to be an object of faces rather than one origin for the whole unwrap, and `cube.uv[0]` on
+an object is `undefined` — which makes every coordinate on that cube `NaN`, and takes the bounding
+sphere and the mesh with it.
+
+**A missing parent throws.** Six entries name a bone that is not in their own list — five only in the
+wrong case, `rightItem` hanging off `rightarm` where the bone is `rightArm`, and the witch naming a
+`head` it does not have. Upstream indexes the parent unconditionally, so the whole model threw while
+being built and the renderer fell back to a magenta box. Six entities never drew at all.
+
+The fix is checked by re-deriving every cube's vertices from the model JSON, independently of the
+renderer, and comparing against what was emitted: 81 entities, no disagreement.
+
+### Two entries are simply wrong, and no renderer can fix them
+
+Separate from the five above: a few entries carry a bone at a coordinate the rest of their own model
+disagrees with. The renderer draws exactly what it is given, so these are corrected in the table.
+
+The **enderman** is a biped derivative stretched to 2.9 blocks. Its legs reach y 26, its body runs 26
+to 38 and its arms end at 38 — but its head was still at 24, the height a *player's* head sits at,
+leaving it buried in the torso with nothing on top. Two independent things in the same entry say
+where it belongs: the body's pivot, and the head's own child `hat`, which is the piece drawn at the
+top of the model. Both sit at 38.
+
+The **enderman**'s and the **drowned**'s own-left arms sit inside their torsos while the other arm
+hangs clear. Those are derived from the opposite limb rather than written out, because that is the
+statement being made — the two are meant to be mirror images and one of them is right. Which one is
+not a guess: in both entries the other limb sits flush against the edge of the torso, which is what a
+shoulder does. Only x moves.
+
+Both are found by measurement rather than by eye, and the searches are worth keeping: one asks which
+left/right pairs are not mirror images, the other which limbs intersect their own torso while their
+partner does not. The first alone is too noisy to act on — a wolf's legs are genuinely off-centre in
+vanilla, and a blaze's twelve rods are not six pairs.
+
+### Names and boxes over what matters
+
+Every player carries a nametag and a box, and the agent's own body carries both too — it is not one
+of the streamed entities, because the host omits the agent from its own view, so nothing in the
+renderer's entity list describes it and the pass that decorates everybody else never sees it.
+
+The box takes **the map's colours**, `--color-primary` for the fleet and `--color-error` for everyone
+else, so the two screens never disagree about who is ours. Whether somebody is ours arrives with the
+telemetry, which can land after the entity does, so the box is rebuilt when the answer changes rather
+than left the colour it was first drawn.
+
+The label says exactly what the map says, from the same function: an agent's Osmium label above its
+Minecraft name and vitals, a stranger's name above theirs. It is drawn onto a fixed 500-pixel canvas,
+so a long line is scaled to fit rather than run off both ends.
+
+### Entities leave the skinning path
+
+Upstream builds every entity as a `SkinnedMesh` and then never moves a bone: it tweens the whole
+thing's position and yaw and nothing below. Every bone matrix stays equal to the mesh's own world
+matrix, so the skinning the shader performs reduces to `inverse(matrixWorld) * matrixWorld * v`.
+
+That identity is not free. The shader evaluates it in float32 where the CPU would have folded the
+world out in float64, and `bindMatrixInverse` carries the entity's position scaled by sixteen. Past
+about x = 8,000,000 consecutive float32 values there are a whole block apart, every x within a body
+rounds to the same number, and the model collapses to a sheet that shifts to the next cell as the
+entity walks — flat, and flickering. The other axes survive or not depending on their own magnitude,
+which is why it reads as corruption rather than as an obvious failure.
+
+Switching skinning off leaves `projectionMatrix * modelViewMatrix * position`, and three builds that
+model-view on the CPU relative to the camera, so nothing large reaches the GPU at all.
+
 ### What it does not draw
 
 Block entities — chests, heads, signs, beds — have deliberately empty block models, because vanilla
-draws them with dedicated renderers. They appear as holes. Players wear the default skin, and a few
-of upstream's entity models cannot be assembled at all; those are filtered out rather than shown as
-the magenta box upstream substitutes.
+draws them with dedicated renderers. They appear as holes.
+
+An entity type the streaming library does not recognise arrives without a name, and upstream then
+falls through to a box sized from a width and height that a movement update does not carry either.
+Those are filtered out rather than shown as the magenta box upstream substitutes. Entity *models*
+are no longer among them: the six that could not be assembled now build — see above.
 
 ## The map
 

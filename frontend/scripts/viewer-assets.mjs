@@ -960,6 +960,366 @@ const LIMB_UV = {
   leftPants: [0, 32],
 }
 
+/**
+ * Builds an entity's cubes the way its model format says to.
+ *
+ * Upstream's `addCube` gets four things wrong, and between them they account for every mob that
+ * comes out in pieces. All four are corrected here rather than in a fork, beside the other things
+ * this file does to the package.
+ *
+ * **A bone's ancestors are never applied.** A cube is placed using only its own bone's rotation,
+ * about its own pivot. The skeleton would normally supply the rest of the chain, but it cannot:
+ * `bind()` calculates each bone's inverse *after* the bones are already in their bind pose, so every
+ * bone matrix comes out equal to the mesh's own world matrix and the chain cancels itself exactly -
+ * measured on a cow, to zero. A head parented to a rotated body is then drawn where an unrotated
+ * body would have put it: 1.3 blocks out on a cow, 2.8 on a polar bear. 97 cubes, 18 entities.
+ *
+ * **A cube's own rotation turns about the model origin.** `cube.rotation` is applied before the
+ * pivot is subtracted, so a rotated cube swings around the entity's feet instead of spinning where
+ * it stands. The chicken's body is the clearest case: laid flat about the origin, it lands below the
+ * ground and behind the bird. 33 cubes, including every minecart.
+ *
+ * **`mirror` is ignored.** A mirrored cube is the box reflected in x: its two side faces trade
+ * places and each face reads its slot backwards. 14 cubes.
+ *
+ * **Per-face UVs are read as a pair.** The format allows `uv` to be an object of faces rather than
+ * one origin for the whole unwrap, and `cube.uv[0]` on an object is `undefined` - which makes every
+ * coordinate on that cube `NaN`, and takes the bounding sphere and the mesh with it. 13 cubes, all
+ * projectiles.
+ *
+ * **A missing parent throws.** Six entries name a bone that is not in their own list - five of them
+ * only in the wrong case, `rightItem` hanging off `rightarm` where the bone is `rightArm`, and the
+ * witch naming a `head` it does not have. Upstream indexes the parent unconditionally, so the whole
+ * model throws while being built and `getEntityMesh` falls back to a magenta box. Resolved without
+ * regard to case, and a parent that still cannot be found leaves the bone a root rather than taking
+ * the entity down with it.
+ */
+function correctEntityBuilder() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'Entity.js')
+  const source = readFileSync(file, 'utf8')
+
+  const patched = resolveParents(cubesFromTheirBones(source))
+  if (patched === source) return
+
+  writeFileSync(file, patched)
+  dropDepCache()
+  console.log('viewer-assets: entity cubes follow their bones, and a bad parent no longer voids a model')
+}
+
+/** The four geometry corrections, all inside `addCube` and its call. */
+function cubesFromTheirBones(source) {
+  if (source.includes(GEOMETRY_FIXED)) return source
+
+  const call = '        addCube(geoData, i, bone, cube, jsonModel.texturewidth, jsonModel.textureheight)'
+  const opening = 'function getMesh (texture, jsonModel) {\n  const bones = {}'
+
+  for (const [what, text] of [['addCube', ADDCUBE_BEFORE], ['its call', call], ['getMesh', opening]]) {
+    if (source.split(text).length !== 2) {
+      throw new Error(`viewer-assets: cannot find upstream ${what} - Entity.js has changed`)
+    }
+  }
+
+  return source
+    .replace(ADDCUBE_BEFORE, ADDCUBE_AFTER)
+    .replace(call, call.replace(')', ', ancestorsOf(jsonBone, jsonBones))'))
+    .replace(
+      opening,
+      opening +
+        '\n  // osmium: resolved up front, because bones are only parented after every cube is emitted.' +
+        '\n  const jsonBones = {}' +
+        '\n  for (const jsonBone of jsonModel.bones) jsonBones[jsonBone.name] = jsonBone',
+    )
+}
+
+/** The fifth: a bone whose parent is missing or differently cased must not void the whole model. */
+function resolveParents(source) {
+  if (source.includes(PARENTS_FIXED)) return source
+
+  const before = PARENTING_BEFORE
+  if (source.split(before).length !== 2) {
+    throw new Error('viewer-assets: cannot find upstream bone parenting - Entity.js has changed')
+  }
+
+  return source.replace(before, PARENTING_AFTER)
+}
+
+/** Markers, so a second run is a no-op. */
+const GEOMETRY_FIXED = 'osmium: a cube turns about its own pivot'
+const PARENTS_FIXED = 'osmium: a bone whose parent is missing stays a root'
+
+const PARENTING_BEFORE = `  const rootBones = []
+  for (const jsonBone of jsonModel.bones) {
+    if (jsonBone.parent) bones[jsonBone.parent].add(bones[jsonBone.name])
+    else rootBones.push(bones[jsonBone.name])
+  }`
+
+const PARENTING_AFTER = `  const rootBones = []
+
+  // osmium: a bone whose parent is missing stays a root, and a parent is matched without regard to
+  // case. Kept out of \`bones\` itself, which is what the skeleton is built from in order.
+  const bonesByLowerName = {}
+  for (const boneName of Object.keys(bones)) bonesByLowerName[boneName.toLowerCase()] = bones[boneName]
+
+  for (const jsonBone of jsonModel.bones) {
+    const parent = jsonBone.parent
+      ? bones[jsonBone.parent] || bonesByLowerName[jsonBone.parent.toLowerCase()]
+      : null
+
+    if (parent) parent.add(bones[jsonBone.name])
+    else rootBones.push(bones[jsonBone.name])
+  }`
+
+const ADDCUBE_BEFORE = `function addCube (attr, boneId, bone, cube, texWidth = 64, texHeight = 64) {
+  const cubeRotation = new THREE.Euler(0, 0, 0)
+  if (cube.rotation) {
+    cubeRotation.x = -cube.rotation[0] * Math.PI / 180
+    cubeRotation.y = -cube.rotation[1] * Math.PI / 180
+    cubeRotation.z = -cube.rotation[2] * Math.PI / 180
+  }
+  for (const { dir, corners, u0, v0, u1, v1 } of Object.values(elemFaces)) {
+    const ndx = Math.floor(attr.positions.length / 3)
+
+    for (const pos of corners) {
+      const u = (cube.uv[0] + dot(pos[3] ? u1 : u0, cube.size)) / texWidth
+      const v = (cube.uv[1] + dot(pos[4] ? v1 : v0, cube.size)) / texHeight
+
+      const inflate = cube.inflate ? cube.inflate : 0
+      let vecPos = new THREE.Vector3(
+        cube.origin[0] + pos[0] * cube.size[0] + (pos[0] ? inflate : -inflate),
+        cube.origin[1] + pos[1] * cube.size[1] + (pos[1] ? inflate : -inflate),
+        cube.origin[2] + pos[2] * cube.size[2] + (pos[2] ? inflate : -inflate)
+      )
+
+      vecPos = vecPos.applyEuler(cubeRotation)
+      vecPos = vecPos.sub(bone.position)
+      vecPos = vecPos.applyEuler(bone.rotation)
+      vecPos = vecPos.add(bone.position)
+
+      attr.positions.push(vecPos.x, vecPos.y, vecPos.z)
+      attr.normals.push(...dir)
+      attr.uvs.push(u, v)
+      attr.skinIndices.push(boneId, 0, 0, 0)
+      attr.skinWeights.push(1, 0, 0, 0)
+    }
+
+    attr.indices.push(
+      ndx, ndx + 1, ndx + 2,
+      ndx + 2, ndx + 1, ndx + 3
+    )
+  }
+}`
+
+const ADDCUBE_AFTER = `// osmium: every rotation a cube hangs under, innermost first.
+function ancestorsOf (jsonBone, jsonBones) {
+  const chain = []
+  let name = jsonBone.parent
+  let guard = 0
+
+  while (name && jsonBones[name] && guard++ < 16) {
+    const ancestor = jsonBones[name]
+    const angles = ancestor.bind_pose_rotation || ancestor.rotation
+
+    if (angles && angles.some(angle => angle !== 0)) {
+      const pivot = ancestor.pivot || [0, 0, 0]
+      chain.push({
+        pivot: new THREE.Vector3(pivot[0], pivot[1], pivot[2]),
+        rotation: new THREE.Euler(
+          -angles[0] * Math.PI / 180,
+          -angles[1] * Math.PI / 180,
+          -angles[2] * Math.PI / 180
+        )
+      })
+    }
+
+    name = ancestor.parent
+  }
+
+  return chain
+}
+
+function addCube (attr, boneId, bone, cube, texWidth = 64, texHeight = 64, chain = []) {
+  const cubeRotation = new THREE.Euler(0, 0, 0)
+  if (cube.rotation) {
+    cubeRotation.x = -cube.rotation[0] * Math.PI / 180
+    cubeRotation.y = -cube.rotation[1] * Math.PI / 180
+    cubeRotation.z = -cube.rotation[2] * Math.PI / 180
+  }
+
+  // osmium: a cube turns about its own pivot, and about the bone's when it names none of its own.
+  const cubePivot = cube.pivot
+    ? new THREE.Vector3(cube.pivot[0], cube.pivot[1], cube.pivot[2])
+    : bone.position
+
+  // osmium: a mirrored cube is the box reflected in x - the side faces trade slots, and every face
+  // reads its own slot backwards.
+  const mirror = Boolean(cube.mirror)
+
+  // osmium: uv is either one origin for the whole unwrap, or a rectangle per face.
+  const perFace = Array.isArray(cube.uv) ? null : (cube.uv || {})
+
+  for (const [name, face] of Object.entries(elemFaces)) {
+    const { dir, corners, v0, v1 } = face
+    const slot = mirror && name === 'east' ? elemFaces.west : mirror && name === 'west' ? elemFaces.east : face
+    const ndx = Math.floor(attr.positions.length / 3)
+
+    // osmium: a face the model does not describe is collapsed onto one texel rather than left NaN.
+    const rect = perFace ? (perFace[name] || { uv: [0, 0], uv_size: [0, 0] }) : null
+    const rectSize = rect ? (rect.uv_size || [0, 0]) : null
+
+    for (const pos of corners) {
+      const across = mirror ? !pos[3] : pos[3]
+
+      const u = rect
+        ? (rect.uv[0] + (pos[3] ? rectSize[0] : 0)) / texWidth
+        : (cube.uv[0] + dot(across ? slot.u1 : slot.u0, cube.size)) / texWidth
+      const v = rect
+        ? (rect.uv[1] + (pos[4] ? rectSize[1] : 0)) / texHeight
+        : (cube.uv[1] + dot(pos[4] ? v1 : v0, cube.size)) / texHeight
+
+      const inflate = cube.inflate ? cube.inflate : 0
+      let vecPos = new THREE.Vector3(
+        cube.origin[0] + pos[0] * cube.size[0] + (pos[0] ? inflate : -inflate),
+        cube.origin[1] + pos[1] * cube.size[1] + (pos[1] ? inflate : -inflate),
+        cube.origin[2] + pos[2] * cube.size[2] + (pos[2] ? inflate : -inflate)
+      )
+
+      vecPos = vecPos.sub(cubePivot)
+      vecPos = vecPos.applyEuler(cubeRotation)
+      vecPos = vecPos.add(cubePivot)
+
+      vecPos = vecPos.sub(bone.position)
+      vecPos = vecPos.applyEuler(bone.rotation)
+      vecPos = vecPos.add(bone.position)
+
+      // osmium: and every rotation the bone hangs under, which the skeleton never supplies.
+      for (const ancestor of chain) {
+        vecPos = vecPos.sub(ancestor.pivot)
+        vecPos = vecPos.applyEuler(ancestor.rotation)
+        vecPos = vecPos.add(ancestor.pivot)
+      }
+
+      attr.positions.push(vecPos.x, vecPos.y, vecPos.z)
+      attr.normals.push(...dir)
+      attr.uvs.push(u, v)
+      attr.skinIndices.push(boneId, 0, 0, 0)
+      attr.skinWeights.push(1, 0, 0, 0)
+    }
+
+    attr.indices.push(
+      ndx, ndx + 1, ndx + 2,
+      ndx + 2, ndx + 1, ndx + 3
+    )
+  }
+}`
+
+/**
+ * Puts a bone back where the rest of its model says it belongs.
+ *
+ * Not a renderer bug like the five above: a handful of entries carry a bone at a coordinate left
+ * over from the model they were derived from. The renderer draws exactly what it is given, so no
+ * correction to `Entity.js` can help.
+ *
+ * The enderman is the one that shows. It is a biped derivative stretched to 2.9 blocks: its legs
+ * reach y 26, its body runs 26 to 38, and its arms end at 38 - but its head is still at 24 to 32,
+ * the height a **player's** head sits at, which leaves it buried inside the torso with nothing on
+ * top. Two independent things in the same entry say where it should be: the body's pivot and the
+ * head's own child `hat`, which is the piece drawn at the top of the model, both sit at y 38.
+ *
+ * Written as the coordinate rather than as an offset, so running this twice lands where running it
+ * once did.
+ */
+function placeStrandedBones() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+  const before = JSON.stringify(entities)
+
+  for (const [model, bones] of Object.entries(STRANDED)) {
+    const entry = entities[model]
+    if (!entry) continue
+
+    for (const geometry of Object.values(entry.geometry ?? {})) {
+      for (const bone of geometry?.bones ?? []) {
+        const put = bones[bone.name]
+        if (!put) continue
+
+        const from = bone.pivot?.[1]
+        if (from === undefined || from === put.pivotY) continue
+
+        bone.pivot[1] = put.pivotY
+        for (const cube of bone.cubes ?? []) cube.origin[1] += put.pivotY - from
+      }
+    }
+  }
+
+  if (JSON.stringify(entities) === before) return
+
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log('viewer-assets: stranded bones moved to where their own model puts them')
+}
+
+/**
+ * Puts a limb back where its opposite number says it belongs.
+ *
+ * The same class of thing as [placeStrandedBones] and, like it, not something the renderer can fix:
+ * one of a pair carries an x its partner disagrees with, and the limb ends up sunk into the torso
+ * while the other hangs clear of it. The enderman's left arm - its own left, the bone upstream calls
+ * `rightArm` - sits entirely inside its body; the drowned's is a pixel in, and so is its sleeve.
+ *
+ * Derived from the partner rather than written out, because that is the actual statement being made:
+ * these two are meant to be mirror images, and one of them is right. Which one is not a guess - in
+ * both entries the other limb sits flush against the edge of the torso, which is what a shoulder
+ * does. Only x moves; heights, depths and sizes are already equal and are left alone.
+ */
+function mirrorOpposingLimbs() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+  const before = JSON.stringify(entities)
+
+  for (const [model, pairs] of Object.entries(LOPSIDED)) {
+    const entry = entities[model]
+    if (!entry) continue
+
+    for (const geometry of Object.values(entry.geometry ?? {})) {
+      const byName = {}
+      for (const bone of geometry?.bones ?? []) byName[bone.name] = bone
+
+      for (const [crooked, straight] of Object.entries(pairs)) {
+        const bone = byName[crooked]
+        const partner = byName[straight]
+        if (!bone || !partner) continue
+
+        if (bone.pivot && partner.pivot) bone.pivot[0] = -partner.pivot[0]
+
+        for (const [at, cube] of (bone.cubes ?? []).entries()) {
+          const from = partner.cubes?.[at]
+          if (!from) continue
+          // The far edge of the partner, reflected: a mirrored box starts where the other one ends.
+          cube.origin[0] = -(from.origin[0] + from.size[0])
+        }
+      }
+    }
+  }
+
+  if (JSON.stringify(entities) === before) return
+
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log('viewer-assets: lopsided limbs mirrored onto their partners')
+}
+
+/** The limb that is out of place, and the one it should be the mirror of. */
+const LOPSIDED = {
+  enderman: { rightArm: 'leftArm' },
+  drowned: { rightArm: 'leftArm', rightSleeve: 'leftSleeve' },
+}
+
+/** Bone by bone, the height the rest of the entry agrees on. */
+const STRANDED = {
+  // Its body's pivot and its own `hat` both sit here; the head was left at a player's height.
+  enderman: { head: { pivotY: 38 } },
+}
+
 /** The model upstream ships, which the slim one is derived from. */
 const PLAYER = 'player'
 
@@ -1170,6 +1530,9 @@ function nextPowerOfTwo(n) {
 }
 
 mkdirSync(out, { recursive: true })
+correctEntityBuilder()
+placeStrandedBones()
+mirrorOpposingLimbs()
 stageSlimPlayer()
 pairLimbTextures()
 await stageWorker()
