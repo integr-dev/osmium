@@ -629,6 +629,7 @@ export const de: Copy = {
     groups: {
       chat: 'Chat',
       mc: 'Minecraft',
+      util: 'Hilfsmodule',
       connect: 'Verbindung',
       players: 'Spieler',
     },
@@ -686,12 +687,47 @@ export const de: Copy = {
         label: 'Minecraft-Version',
         hint: 'Leer lassen, um den Server zu fragen – das ist fast immer richtig. Nur für Server setzen, die keine Versionsabfrage beantworten oder unehrlich antworten: hinter einem Proxy oder mit Bot-Schutz davor. Gilt ab dem nächsten Verbinden.',
       },
-      mc_takeKnockback: {
-        label: 'Rückstoß',
-        hint: 'Ob der Agent von Schlägen, Explosionen und allem anderen bewegt wird. Aus bedeutet, er bleibt stehen — nützlich für einen Bauer, der nicht vom Gerüst gestoßen werden darf, und auf einem Server, der darauf achtet, auffällig.',
+      util_autoEat: {
+        label: 'Automatisch essen',
+        hint: 'Isst, bevor der Hunger die Heilung stoppt, und greift bei schwerer Verletzung zum goldenen Apfel statt zu einem Snack. Der Agent bleibt für die Mahlzeit stehen und nimmt danach wieder auf, was er hielt und tat.',
         options: {
-          auto: 'Wie ein Spieler',
-          false: 'Ignorieren',
+          auto: 'Aus',
+          on: 'An – isst, was er dabei hat',
+          dupe: 'Nachfüllen – /dupe, wenn es knapp wird',
+        },
+      },
+      util_autoTotem: {
+        label: 'Automatisch Totem',
+        hint: 'Hält ein Totem der Unsterblichkeit in der Nebenhand und füllt es in dem Moment nach, in dem eines verbraucht wird – nicht erst beim nächsten Durchlauf.',
+        options: {
+          auto: 'Aus',
+          on: 'An – nutzt, was er dabei hat',
+          dupe: 'Nachfüllen – /dupe, wenn es knapp wird',
+        },
+      },
+      util_fleeDistance: {
+        label: 'Vor Fremden fliehen',
+        hint: 'Verlässt den Server und meldet einen Vorfall, wenn ein Spieler, der nicht auf der Vertrauensliste steht, so nah kommt. Leer bedeutet aus. Der Agent bleibt danach draußen. Ihre anderen Agenten gelten als fremd, solange sie nicht gelistet sind.',
+      },
+      util_antiHunger: {
+        label: 'Anti-Hunger',
+        hint: 'Hunger richtet sich danach, wie weit und wie schnell sich der Agent bewegt. Vorsichtig verzichtet auf das Sprinten – ehrlich und einfach langsamer. Täuschen behält das Tempo und meldet den Sprint nicht, was der Server selbst sehen kann.',
+        options: {
+          auto: 'Aus',
+          careful: 'Vorsichtig – nie sprinten',
+          spoof: 'Täuschen – Sprint nicht melden',
+        },
+      },
+      util_noFall: {
+        label: 'Kein Fallschaden',
+        hint: 'Meldet während des Fallens Bodenkontakt, sodass die Landung nichts kostet – nur wenn ein Sturz weit genug ist, um zu schaden. Das meldet dem Server etwas Unwahres und ist genau das, wonach Anticheat-Plugins suchen.',
+      },
+      mc_takeKnockback: {
+        label: 'Anti-Rückstoß',
+        hint: 'Schläge, Explosionen und alles andere, was schubst, bewegen einen Spieler. An bleibt der Agent exakt stehen — nützlich für einen Bauer, der nicht vom Gerüst gestoßen werden darf, und auf einem Server, der darauf achtet, auffällig.',
+        options: {
+          auto: 'Aus – wie ein Spieler geschoben',
+          false: 'An – nie bewegt',
         },
       },
       mc_knockback: {

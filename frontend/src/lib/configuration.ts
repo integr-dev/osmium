@@ -82,9 +82,9 @@ export const VANILLA_WHISPER_COMMAND = '/msg {name} {message}'
 /**
  * The order is the order of the tabs, and the first group is what an operator lands on.
  *
- * Roughly how early a setting matters to an agent: what it speaks, then whether it stays in the
- * game, then how it reads the room once it is there. Chat last because it is the one an operator
- * comes back to and tunes, rather than the one they set on the way in.
+ * Roughly how early a setting matters to an agent: what it speaks, then how it behaves once it is
+ * in the world, then whether it stays there, then who may talk to it. Chat last because it is the
+ * one an operator comes back to and tunes, rather than the one they set on the way in.
  */
 export const SETTING_GROUPS: SettingGroup[] = [
   {
@@ -94,6 +94,40 @@ export const SETTING_GROUPS: SettingGroup[] = [
         key: 'mc.version',
         type: 'text',
         placeholder: '1.21.4',
+      },
+    ],
+  },
+  {
+    /*
+     * What an agent does for itself while nobody is watching it.
+     *
+     * Knockback lives here rather than under Minecraft, where it started. It is not a fact about the
+     * protocol like a version is; it is a module in the same sense as the rest of these - something
+     * switched on to change how the agent behaves in the world - and an operator looking for "stop
+     * it being pushed off the scaffold" looks here.
+     *
+     * Ordered by how much they claim. The first three do what a player does; the last two tell the
+     * server something untrue, and sit at the bottom where a scroll to reach them is a small pause
+     * for thought.
+     */
+    key: 'util',
+    fields: [
+      {
+        // Three states rather than a switch: a server with a `/dupe` plugin makes "never run out" a
+        // real answer, and one without makes it a bannable one. The operator says which they are on.
+        key: 'util.autoEat',
+        type: 'choice',
+        options: ['', 'on', 'dupe'],
+      },
+      {
+        key: 'util.autoTotem',
+        type: 'choice',
+        options: ['', 'on', 'dupe'],
+      },
+      {
+        key: 'util.fleeDistance',
+        type: 'text',
+        placeholder: '32',
       },
       {
         key: 'mc.takeKnockback',
@@ -108,6 +142,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
         options: ['', 'true', 'false'],
         showWhen: (settings) => settings['mc.takeKnockback'] !== 'false',
       },
+      {
+        key: 'util.antiHunger',
+        type: 'choice',
+        options: ['', 'careful', 'spoof'],
+      },
+      { key: 'util.noFall', type: 'switch' },
     ],
   },
   {

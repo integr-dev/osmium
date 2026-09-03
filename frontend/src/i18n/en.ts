@@ -774,6 +774,7 @@ export const en = {
     groups: {
       chat: 'Chat',
       mc: 'Minecraft',
+      util: 'Utility modules',
       connect: 'Connection',
       players: 'Players',
     },
@@ -843,16 +844,51 @@ export const en = {
         label: 'Minecraft version',
         hint: 'Leave empty to ask the server, which is right almost always. Set it for a server that refuses a version check or answers one dishonestly — behind a proxy, or with bot protection in front. Applies from the next connect.',
       },
-      mc_takeKnockback: {
-        label: 'Knockback',
-        hint: 'Whether the agent is pushed by hits, explosions and anything else that shoves. Off means it stands where it is — useful for a builder that must not be nudged off a scaffold, and conspicuous on a server that watches for it.',
+      util_autoEat: {
+        label: 'Auto eat',
+        hint: 'Eats before hunger stops health regenerating, and reaches for a golden apple when badly hurt rather than for a snack. The agent stands still for the meal and goes back to what it was holding and doing.',
         options: {
-          auto: 'Take it, like a player',
-          false: 'Ignore it',
+          auto: 'Off',
+          on: 'On — eat what it carries',
+          dupe: 'Restock — /dupe when it runs low',
+        },
+      },
+      util_autoTotem: {
+        label: 'Auto totem',
+        hint: 'Keeps a totem of undying in the off hand, refilled the moment one pops rather than on a timer.',
+        options: {
+          auto: 'Off',
+          on: 'On — use what it carries',
+          dupe: 'Restock — /dupe when it runs low',
+        },
+      },
+      util_fleeDistance: {
+        label: 'Flee from strangers',
+        hint: 'Leaves the server, and raises an alert, when a player who is not on the trust list comes within this many blocks. Blank is off. The agent stays out afterwards rather than reconnecting into whoever it just left. Your other agents are strangers unless you list them.',
+      },
+      util_antiHunger: {
+        label: 'Anti hunger',
+        hint: 'Hunger is charged by how far the agent moves and how fast. Careful gives up sprinting, which is honest and simply slower. Spoof keeps the speed and does not declare the sprint, which the server can see for itself — an anticheat that compares movement against declared state has everything it needs.',
+        options: {
+          auto: 'Off',
+          careful: 'Careful — never sprint',
+          spoof: 'Spoof — sprint undeclared',
+        },
+      },
+      util_noFall: {
+        label: 'No fall',
+        hint: 'Claims to be standing on the ground while falling, so the landing costs nothing. Only while a fall is far enough along to hurt. This tells the server something untrue and is what anticheat plugins look for — a ban is the one thing here that cannot be undone.',
+      },
+      mc_takeKnockback: {
+        label: 'Anti knockback',
+        hint: 'Hits, explosions and anything else that shoves move a player. On, the agent stands exactly where it is — useful for a builder that must not be nudged off a scaffold, and conspicuous on a server that watches for it.',
+        options: {
+          auto: 'Off — pushed like a player',
+          false: 'On — never moved',
         },
       },
       mc_knockback: {
-        label: 'Correct knockback',
+        label: 'Knockback correction',
         hint: 'Recent versions send velocity in a unit the library still scales as if it were the old one, so agents cannot be pushed by hits, explosions or boats. Decided from the version unless the version is not the whole story — a proxy can forward a different one than it advertises.',
         options: {
           auto: 'When the version needs it',

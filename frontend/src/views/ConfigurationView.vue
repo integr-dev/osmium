@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, type Component, type WritableComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Blocks, Check, MessageSquare, Plug, RotateCcw, SlidersHorizontal, Users } from 'lucide-vue-next'
+import { Blocks, Check, MessageSquare, Plug, RotateCcw, SlidersHorizontal, Users, Wrench } from 'lucide-vue-next'
 import {
   groupLabel,
   optionLabel,
@@ -51,6 +51,7 @@ const agentStore = useAgentStore()
 const ICONS: Record<string, Component> = {
   chat: MessageSquare,
   mc: Blocks,
+  util: Wrench,
   connect: Plug,
   players: Users,
 }
@@ -294,34 +295,51 @@ async function update() {
             -->
             <SwapBox class="-mx-1.5">
               <Transition :name="slide">
-                <div :key="tab" class="flex flex-col gap-3 px-1.5">
+                <div
+                  :key="tab"
+                  class="divide-base-300/60 flex flex-col divide-y px-1.5"
+                >
                   <!--
-                    Stacked rather than in a row: a pattern is a line of code, and it needs the width of
-                    the panel plus room underneath for what it reads out of a sample line.
+                    Every field is a label and its explanation in one left column, with the control
+                    either beside it or under it. It used to depend on the type: a switch put its
+                    label after the toggle and everything else put it against the panel edge, so the
+                    two started at different places and a tab holding both read as two lists that had
+                    been stapled together.
+
+                    A rule between fields rather than more space. The hints run to three lines, and at
+                    that length the eye needs something that says where one setting ends rather than
+                    a gap it has to judge against the gap inside a field.
                   -->
-                  <div v-for="field in showing" :key="field.key" class="flex flex-col gap-1.5">
+                  <div v-for="field in showing" :key="field.key" class="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
                     <!--
-                      A switch sits beside its label rather than under it: the control is the width of a
-                      thumb, and a whole row of empty space between the two reads as a missing field.
+                      The control goes to the right of the row rather than in front of the label,
+                      which is what puts every label on the same line as every other. A switch is the
+                      width of a thumb, so it takes the end of the row and the words take the rest.
                     -->
                     <label
                       v-if="field.type === 'switch'"
-                      class="flex cursor-pointer items-start gap-3"
+                      class="flex cursor-pointer items-start justify-between gap-4"
                     >
-                      <input
-                        v-model="switches[field.key].value"
-                        type="checkbox"
-                        class="toggle toggle-primary toggle-sm mt-0.5"
-                      />
-                      <span class="flex flex-col gap-1.5">
+                      <span class="flex min-w-0 flex-col gap-1">
                         <span class="text-sm">{{ t(settingLabel(field.key)) }}</span>
                         <span class="text-xs opacity-60">{{ t(settingHint(field.key)) }}</span>
                       </span>
+                      <input
+                        v-model="switches[field.key].value"
+                        type="checkbox"
+                        class="toggle toggle-primary toggle-sm mt-0.5 shrink-0"
+                      />
                     </label>
 
                     <template v-else>
-                      <span class="text-sm">{{ t(settingLabel(field.key)) }}</span>
-                      <span class="text-xs opacity-60">{{ t(settingHint(field.key)) }}</span>
+                      <!--
+                        Stacked rather than in a row: a pattern is a line of code, and it needs the
+                        width of the panel plus room underneath for what it reads out of a sample.
+                      -->
+                      <span class="flex flex-col gap-1">
+                        <span class="text-sm">{{ t(settingLabel(field.key)) }}</span>
+                        <span class="text-xs opacity-60">{{ t(settingHint(field.key)) }}</span>
+                      </span>
 
                       <RegexField
                         v-if="field.type === 'regex'"
