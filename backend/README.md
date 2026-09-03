@@ -226,6 +226,7 @@ fails `CommandSafetyTest` rather than quietly going through. Stopping is not dis
 `disconnect` is allowed, because it releases the segment cleanly and an operator pressing it has
 decided to stop.
 | `GET` | `/api/avatars/{name-or-uuid}` | `agent.read` (a player's head, as an image) |
+| `GET` | `/api/avatars/{name-or-uuid}/skin` | `agent.view` (the whole 64x64 sheet, for the 3D view) |
 | `GET` | `/api/schematics`, `/api/schematics/{id}` | `schematic.read` |
 | `GET` | `/api/schematics/{id}/materials` | `schematic.read` (by block, heaviest first) |
 | `GET` | `/api/schematics/{id}/shape` | `schematic.read` (a voxel model; `detail` bounds what comes back) |
@@ -1016,6 +1017,22 @@ It exists so the browser never talks to the skin service. The SPA's CSP is
 `img-src 'self' data: blob:`, and widening it to a third-party image host would punch a hole in the
 layer that actually contains an XSS. Proxying keeps every image same-origin, and it also keeps which
 agents exist, and how often somebody is looking at them, inside the deployment.
+
+`GET /api/avatars/{name-or-uuid}/skin` serves the **whole 64x64 sheet** for the 3D view, which wraps
+it around a player model. A different image of the same player rather than a larger head: what the
+route above returns is a crop with the hat composited on, which is exactly right beside a name and
+unusable as a texture.
+
+It has its own upstream and its own switch — a deployment can keep the 2D heads and skip a fetch per
+player standing in view — and its own node, `agent.view`, which is what watching an agent's world
+already costs. The cache is shared, keyed by kind as well as by name: a head and a skin are two
+images of one player, and keying on the name alone would serve whichever was asked for first as
+both.
+
+**The proxy does not normalise, and deliberately.** Minotar returns legacy 64x32 skins as they are,
+and converting one means decoding and re-encoding an untrusted PNG in a service that is otherwise a
+byte proxy. The browser is decoding it to render it anyway, so the conversion lives there — see
+`frontend/src/lib/skins.ts`.
 
 It is gated on `agent.read`, like every other route — a head only ever appears beside agents, chat
 or hosts, all of which already need that node. That costs the frontend the obvious implementation:

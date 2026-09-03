@@ -59,14 +59,34 @@ class AvatarService(private val properties: AvatarProperties) {
     }
 
     /** Null when there is no head to show: unknown identifier, upstream miss, or avatars disabled. */
-    fun head(identifier: String): Avatar? {
-        if (!properties.enabled) return null
+    fun head(identifier: String): Avatar? =
+        proxied(identifier, properties.enabled, "head") { properties.urlFor(it) }
+
+    /**
+     * The whole skin sheet, for the 3D view.
+     *
+     * A different image of the same player rather than a bigger one: the head route serves a crop
+     * with the hat composited on, which is right for a 32-pixel avatar and useless for wrapping
+     * around a model. Its own upstream and its own switch, so a deployment can keep the 2D heads
+     * and skip a fetch per player standing in view.
+     */
+    fun skin(identifier: String): Avatar? =
+        proxied(identifier, properties.skinsEnabled, "skin") { properties.skinUrlFor(it) }
+
+    /**
+     * One fetch-and-cache path for both.
+     *
+     * The [kind] is part of the cache key, not decoration: a head and a skin are two images of one
+     * player, and keying on the name alone would serve whichever was asked for first as both.
+     */
+    private fun proxied(identifier: String, enabled: Boolean, kind: String, url: (String) -> String): Avatar? {
+        if (!enabled) return null
         if (!isPlayerIdentifier(identifier)) return null
 
-        val key = identifier.lowercase()
+        val key = "$kind:${identifier.lowercase()}"
         cached(key)?.let { return it.avatar }
 
-        val fetched = fetch(identifier)
+        val fetched = fetch(identifier, url(identifier))
         synchronized(cache) {
             cache[key] = Cached(fetched, Instant.now())
         }
@@ -86,13 +106,13 @@ class AvatarService(private val properties: AvatarProperties) {
         return entry
     }
 
-    private fun fetch(identifier: String): Avatar? {
+    private fun fetch(identifier: String, url: String): Avatar? {
         if (!inFlight.tryAcquire()) {
             log.warn("Avatar fetch for {} skipped: {} already in flight", identifier, MAX_IN_FLIGHT)
             return null
         }
         try {
-            val request = HttpRequest.newBuilder(URI.create(properties.urlFor(identifier)))
+            val request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(properties.timeout)
                 .header("Accept", "image/png,image/*")
                 .GET()

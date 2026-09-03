@@ -22,6 +22,11 @@ import java.time.Duration
  *   The default is minotar's `helm`, which composites the skin's second layer — the hat — over the
  *   head. Its `avatar` endpoint returns the bare one, so anybody whose face is drawn on that overlay
  *   comes back looking like a different player rather than like a head missing a detail.
+ * @param skinUpstream where the **whole skin sheet** is fetched from, for the 3D view, which
+ *   wraps it around a player model rather than showing a crop of it. `{id}` is substituted the same
+ *   way; there is no `{size}`, because a skin is 64x64 and rescaling one is how you get a body made
+ *   of blurred squares. **Blank disables skins** while leaving heads working, which is the right
+ *   default for an operator who wants the 2D screens and not the extra fetch per player in view.
  * @param size pixel size requested upstream. One size for the whole app: the head is rendered at a
  *   handful of small sizes and caching one image per size per player buys nothing.
  * @param timeout how long to wait on the upstream. Short on purpose — a head is decoration, and a
@@ -34,12 +39,16 @@ import java.time.Duration
 @ConfigurationProperties(prefix = "osmium.avatar")
 data class AvatarProperties(
     val upstream: String = "https://minotar.net/helm/{id}/{size}.png",
+    val skinUpstream: String = "https://minotar.net/skin/{id}.png",
     val size: Int = 64,
     val timeout: Duration = Duration.ofSeconds(5),
     val ttl: Duration = Duration.ofHours(12),
     val cacheEntries: Int = 512,
 ) {
     val enabled: Boolean get() = upstream.isNotBlank()
+
+    /** Skins are their own switch: a deployment can want heads and not the 3D view's extra traffic. */
+    val skinsEnabled: Boolean get() = skinUpstream.isNotBlank()
 
     init {
         if (enabled) {
@@ -48,6 +57,14 @@ data class AvatarProperties(
             }
             require(upstream.contains(ID_PLACEHOLDER)) {
                 "osmium.avatar.upstream must contain $ID_PLACEHOLDER, or every player gets the same head"
+            }
+        }
+        if (skinsEnabled) {
+            require(skinUpstream.startsWith("http://") || skinUpstream.startsWith("https://")) {
+                "osmium.avatar.skinUpstream must be an http(s) URL, or blank to disable skins"
+            }
+            require(skinUpstream.contains(ID_PLACEHOLDER)) {
+                "osmium.avatar.skinUpstream must contain $ID_PLACEHOLDER, or every player wears one skin"
             }
         }
         require(size in MIN_SIZE..MAX_SIZE) { "osmium.avatar.size must be between $MIN_SIZE and $MAX_SIZE" }
@@ -59,6 +76,9 @@ data class AvatarProperties(
     /** The upstream URL for one player. [id] is assumed already validated by the service. */
     fun urlFor(id: String): String =
         upstream.replace(ID_PLACEHOLDER, id).replace(SIZE_PLACEHOLDER, size.toString())
+
+    /** The same for the whole sheet. No size: a skin is the size it is. */
+    fun skinUrlFor(id: String): String = skinUpstream.replace(ID_PLACEHOLDER, id)
 
     private companion object {
         const val ID_PLACEHOLDER = "{id}"

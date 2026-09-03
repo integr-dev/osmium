@@ -3494,6 +3494,61 @@
         }
       }
     },
+    "/api/avatars/{identifier}/skin": {
+      "get": {
+        "tags": [
+          "Avatars"
+        ],
+        "summary": "A player's whole skin.",
+        "description": "The 64x64 sheet, for texturing a model. Accepts a username or UUID. Fetched from a skin service and cached, like the head.",
+        "operationId": "skin",
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The skin, as an image.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `agent.view`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No skin: unknown player, malformed identifier, upstream unavailable, or skins disabled. The viewer falls back to the default model texture.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/sessions": {
       "get": {
         "tags": [

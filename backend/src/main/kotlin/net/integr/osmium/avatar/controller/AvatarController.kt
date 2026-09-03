@@ -54,11 +54,40 @@ class AvatarController(
                 "avatars disabled. The caller renders its own fallback either way.",
         ),
     )
-    fun head(@PathVariable identifier: String): ResponseEntity<ByteArray> {
-        val avatar = avatarService.head(identifier) ?: return ResponseEntity.notFound().build()
+    fun head(@PathVariable identifier: String): ResponseEntity<ByteArray> = served(avatarService.head(identifier))
 
-        // Cached by the browser for the same span the backend holds it, so a page that renders one
-        // head thirty times makes one request rather than thirty.
+    /**
+     * The whole skin, for the 3D view, which wraps it around a player model.
+     *
+     * A different image of the same player rather than a larger head: what `/{identifier}` returns
+     * is a crop with the hat layer composited on, which is exactly right at 32 pixels beside a name
+     * and unusable as a texture. Its own upstream and its own switch — see [AvatarProperties].
+     */
+    @GetMapping("/{identifier}/skin")
+    @PreAuthorize("hasAuthority('agent.view')")
+    @Operation(
+        summary = "A player's whole skin.",
+        description = "The 64x64 sheet, for texturing a model. Accepts a username or UUID. " +
+            "Fetched from a skin service and cached, like the head.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "The skin, as an image."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.view`."),
+        ApiResponse(
+            responseCode = "404",
+            description = "No skin: unknown player, malformed identifier, upstream unavailable, or " +
+                "skins disabled. The viewer falls back to the default model texture.",
+        ),
+    )
+    fun skin(@PathVariable identifier: String): ResponseEntity<ByteArray> = served(avatarService.skin(identifier))
+
+    /**
+     * Cached by the browser for the same span the backend holds it, so a page that renders one
+     * player thirty times makes one request rather than thirty.
+     */
+    private fun served(avatar: net.integr.osmium.avatar.service.Avatar?): ResponseEntity<ByteArray> {
+        if (avatar == null) return ResponseEntity.notFound().build()
+
         return ResponseEntity.ok()
             .contentType(MediaType.parseMediaType(avatar.contentType))
             .cacheControl(CacheControl.maxAge(properties.ttl.seconds, TimeUnit.SECONDS).cachePublic())

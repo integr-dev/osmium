@@ -1044,6 +1044,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/avatars/{identifier}/skin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A player's whole skin.
+         * @description The 64x64 sheet, for texturing a model. Accepts a username or UUID. Fetched from a skin service and cached, like the head.
+         */
+        get: operations["skin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/sessions": {
         parameters: {
             query?: never;
@@ -4649,6 +4669,46 @@ export interface operations {
                 };
             };
             /** @description No head: unknown player, malformed identifier, upstream unavailable, or avatars disabled. The caller renders its own fallback either way. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    skin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identifier: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skin, as an image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Missing node `agent.view`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description No skin: unknown player, malformed identifier, upstream unavailable, or skins disabled. The viewer falls back to the default model texture. */
             404: {
                 headers: {
                     [name: string]: unknown;
