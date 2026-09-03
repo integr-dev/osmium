@@ -8,6 +8,7 @@ import {
   edible,
   grounded,
   modeFrom,
+  stocked,
   within,
   type Carried,
 } from '../src/agent/utility.ts'
@@ -63,6 +64,24 @@ describe('what to eat', () => {
     expect(edible([GAPPLE], 20, 10)).toBe(GAPPLE)
   })
 
+  /**
+   * One at a time, on **both** roads to an apple. Guarding only the "badly hurt" branch left the
+   * fallback wide open - with no ordinary food in the bag that branch is the one that always runs,
+   * and the live log showed six enchanted apples in three seconds while the first was still working.
+   */
+  it('does not stack a second golden apple on the first', () => {
+    // Badly hurt, which is the branch that reaches for one deliberately.
+    expect(edible([STEAK, GAPPLE], 7, 10, true)).toBe(STEAK)
+    expect(edible([GAPPLE], 7, 10, true)).toBeUndefined()
+
+    // And the fallback, which is the one that was getting through.
+    expect(edible([GAPPLE], 20, 10, true)).toBeUndefined()
+  })
+
+  it('still eats one when nothing is working yet', () => {
+    expect(edible([GAPPLE], 7, 10, false)).toBe(GAPPLE)
+  })
+
   it('does not try to eat what is not food', () => {
     expect(edible([thing('cobblestone'), thing('totem_of_undying')], 5, 5)).toBeUndefined()
     expect(edible([], 5, 5)).toBeUndefined()
@@ -75,6 +94,33 @@ describe('what to eat', () => {
  * code looked only for the boolean, so on any current server it found nothing to change and every
  * packet went out honest.
  */
+/**
+ * The restocking counts food, and a golden apple is not food for this purpose - it is medicine.
+ * Counting it alike sent the dupe after the valuables, because a gapple stacks to sixty-four and the
+ * biggest pile is what gets copied.
+ */
+describe('what counts as food to keep in stock', () => {
+  it('counts ordinary food', () => {
+    expect(stocked('cooked_beef', 8)).toBe(true)
+    expect(stocked('carrot', 3)).toBe(true)
+  })
+
+  it('does not count either golden apple', () => {
+    expect(stocked('golden_apple', 4)).toBe(false)
+    expect(stocked('enchanted_golden_apple', 4)).toBe(false)
+  })
+
+  it('does not count what is not food at all', () => {
+    expect(stocked('cobblestone', undefined)).toBe(false)
+    expect(stocked('totem_of_undying', undefined)).toBe(false)
+  })
+
+  /** Eating one is still allowed; this is only about counting and copying. */
+  it('leaves eating a golden apple alone', () => {
+    expect(edible([GAPPLE], 7, 10)).toBe(GAPPLE)
+  })
+})
+
 describe('claiming solid ground', () => {
   it('sets the old boolean field', () => {
     expect(grounded({ x: 1, y: 2, z: 3, onGround: false })).toEqual({ x: 1, y: 2, z: 3, onGround: true })
@@ -398,22 +444,35 @@ describe('how many totems a fight calls for', () => {
  */
 describe('giving an inventory call a deadline', () => {
   it('answers with the result when the call finishes', async () => {
-    await expect(within(Promise.resolve('done'))).resolves.toBe('done')
+    await expect(within(Promise.resolve('done'))).resolves.toEqual({ ok: true, value: 'done' })
   })
 
-  /** An abandoned click is expected here, not exceptional, so it must not surface as a rejection. */
-  it('answers with nothing when the call fails', async () => {
-    await expect(within(Promise.reject(new Error('server rejected the click')))).resolves.toBeUndefined()
+  /**
+   * **The reason comes back with the failure.** It used to answer `undefined` for both "it failed"
+   * and "it returned nothing" - and `consume()` succeeds by returning nothing, so a rejected eat was
+   * indistinguishable from a meal. The live log showed an agent eating eight enchanted golden apples
+   * in four seconds, which is impossible at 1.6 seconds each; the impossibility was the only clue.
+   */
+  it('answers with the reason when the call fails', async () => {
+    const answer = await within(Promise.reject(new Error('server rejected the click')))
+
+    expect(answer.ok).toBe(false)
+    expect(answer.ok === false && answer.why).toContain('server rejected the click')
   })
 
-  it('answers with nothing when the call never settles', async () => {
+  /** Success that carries no value still reads as success, which is the whole point. */
+  it('tells a void success apart from a failure', async () => {
+    await expect(within(Promise.resolve(undefined))).resolves.toEqual({ ok: true, value: undefined })
+  })
+
+  it('answers with a reason when the call never settles', async () => {
     vi.useFakeTimers()
 
     try {
-      const answer = within(new Promise<string>(() => {}))
+      const pending = within(new Promise<string>(() => {}))
       await vi.advanceTimersByTimeAsync(2_000)
 
-      await expect(answer).resolves.toBeUndefined()
+      await expect(pending).resolves.toEqual({ ok: false, why: 'no answer in time' })
     } finally {
       vi.useRealTimers()
     }

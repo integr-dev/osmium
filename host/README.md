@@ -380,6 +380,36 @@ things worse and are recorded here so the third one is thought about harder:
 The cursor window is smaller than the window left by not equipping. Anything replacing `equip` has to
 **verify the off hand afterwards** rather than assume a sent packet worked.
 
+**Check the hand, do not assume it.** The plugin copies the main hand whenever there is anything in
+it and only falls back to the off hand when there is not — so an empty main hand is the entire
+precondition for duping a totem, and selecting an empty square is not the same as still holding
+nothing when the command arrives. Auto-eat put a golden apple in the selected slot between the two,
+and `/dupe` copied the apple with the multiplier worked out for totems: `Duped item 31 times`, a
+stack of apples, and an agent that still had two totems and died. Getting this wrong does not fail
+loudly; it copies the wrong item.
+
+Selecting the square, checking both hands and sending the command are therefore one uninterrupted
+section under the same lock as eating — and eating puts the hotbar back **inside** its own lock,
+because releasing first is what left the apple sitting in the selected slot.
+
+**A golden apple is medicine, not stock.** Auto-eat already draws that line — a gapple is spent on
+being badly hurt, never on being hungry — and the restocking has to draw it in the same place.
+Counting every food alike sent the dupe after the valuables, because a gapple stacks to sixty-four
+where steak rarely does, and the biggest pile is what gets copied. Eating one is still allowed; this
+is only about what is counted and what is copied.
+
+**One window operation at a time, because there is one cursor.** `window.selectedItem` holds
+whatever a click picked up, and every inventory move in mineflayer is pick-up-then-put-down against
+it. Two at once — a totem going into the off hand while a golden apple is moved into the main hand —
+interleave their clicks and leave items where neither meant. With food in the inventory that is not
+a rare race: eating takes over a second, pops arrive whenever they arrive, and the refill runs off
+the pop rather than off the sweep, so the two overlap by default.
+
+A refill that cannot have the window is **remembered and run the moment it is free**, never dropped.
+Everything under the lock is bounded, because a lock that a hung click never releases would stop the
+agent eating, refilling and restocking for the rest of the session — a worse failure than the
+interleaving it prevents.
+
 **The refill is the oldest code in this module and the least touched, deliberately.** Restocking was
 built on top of it rather than through it: the dupe reads the inventory and sends a chat command, and
 the only thing it asks of the refill is to have run first. Every attempt to make the refill itself
@@ -397,8 +427,19 @@ in flight, and the next pass is half a second away.
 the main hand to be copied is the very one the next hit spends — the command then arrives at a
 player holding nothing, and the off hand it was taken from is empty too. That is a lost fight, not
 just a lost command. If the hotbar has no empty square to select, the dupe is skipped rather than
-made room for: a click mid-fight is the thing this path exists to avoid. **Leave one hotbar square
-empty on an agent running this.**
+made room for.
+
+**A full hotbar is the normal case, not the edge case.** That path found no empty square and returned
+without duping, so the totem restock had never once run under the conditions it exists for — an agent
+in a fight has nine full squares. There is now a second way: hold a spare totem from the backpack and
+copy that. It costs a click and it displaces one hotbar item into the backpack, which is why the
+empty-square path is still preferred whenever there is one.
+
+Holding a **spare** is safe in a way that holding the off-hand totem is not. The held item pops
+first, so what a hit spends is the copy that was about to be made, while the off hand goes on
+guarding the agent. The spare is found by walking the squares up to the hotbar rather than by reading
+`item.slot` — if that field were ever missing, a name comparison would happily return the off-hand
+totem, the one thing this must never take.
 
 **Let the fight set the target.** Eight totems is right for standing around and demonstrably wrong
 under end crystals — a test spent eleven in under a minute and died at the target it had been given.

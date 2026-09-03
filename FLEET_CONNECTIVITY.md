@@ -639,6 +639,48 @@ nothing on the backend could tell that apart from an operator's own `connect`. S
 the socket with the rest, the host ignores it like any other it does not recognise, and the backend
 sends an ordinary `connect` when it decides one is due.
 
+The other exception is **`stand_down`**, which travels the other way — see below. Between them they
+are the whole of what crosses this boundary in either direction about where an agent belongs.
+
+### Utility modules, and the line they must not cross
+
+Five settings say what an agent does for itself while nobody is watching: `util.autoEat`,
+`util.autoTotem`, `util.antiHunger`, `util.noFall` and `util.fleeDistance`. They are ordinary
+settings by the rule above — declared by the interface, read by the host, meaningless to the backend
+— and they are listed here only because of what two of them do.
+
+**Two of the five lie to the server.** Auto-eat and auto-totem do what a player does, only without
+being asked; nothing about them is untrue. `util.noFall` reports standing on solid ground while
+falling, and `util.antiHunger: spoof` sprints without declaring the sprint. Both work, and both are
+exactly the shape an anticheat plugin looks for. They are off unless somebody turns them on, they sit
+at the bottom of their tab, and the interface says so where they are turned on — because a ban is the
+one consequence in this project that cannot be undone.
+
+Auto-eat and auto-totem can also **restock** with a server's own `/dupe` plugin, which is a third
+mode rather than a default for the same reason: it is a feature on some servers and an offence on
+others, and only the operator knows which they are standing on.
+
+### `stand_down` — the one report that changes what the backend wants
+
+Everywhere else the rule is absolute: a host reports what happened, the backend decides where an
+agent belongs. `stand_down` bends it, for the one case the rule cannot serve.
+
+```jsonc
+{ "kind": "event", "type": "stand_down", "agentId": 42,
+  "payload": { "reason": "Notch came within 14 blocks" } }
+```
+
+An agent set to flee from strangers is the only thing that can see who is standing next to it. If it
+simply left, the rejoin sweep would read the absence as a drop and dial it straight back into
+whoever it just fled — the two would take turns for as long as the stranger stood there. So the host
+says *the absence is the point*, and the backend answers by clearing `wanted`. The agent stays out
+until an operator reconnects it deliberately.
+
+It is a report, not a command: the ordinary `agent_status` for leaving still goes with it, and the
+host raises an activity entry beside it. `reason` is for the log; what an operator reads is the
+incident, because an agent that left on its own at three in the morning belongs on the dashboard
+rather than scrolled past in a feed.
+
 ### Version handshake
 
 The host sends `hostVersion` in its hello and the backend records it — there is already a column for

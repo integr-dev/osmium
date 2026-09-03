@@ -90,6 +90,26 @@ const GOLDEN = new Set(['golden_apple', 'enchanted_golden_apple'])
 const TOTEM = 'totem_of_undying'
 
 /**
+ * The effects a golden apple grants, by the id the protocol uses.
+ *
+ * An agent that has these has already eaten one. Without checking, [edible] answers "under eight
+ * health, eat a golden apple" on every pass while the health bar takes its time coming back, and the
+ * agent works through the stack in the time the first one was still doing its job.
+ */
+const ABSORPTION = 22
+const REGENERATION = 10
+
+/**
+ * How long to leave between meals.
+ *
+ * Eating takes 1.6 seconds in game, so anything faster than this is the module starting a meal that
+ * the last one has not finished. The effects a golden apple grants are the better signal and this is
+ * the backstop for when they have not arrived yet - the server sends them a tick or two later, and
+ * every pass in between reads "still hurt, eat another".
+ */
+const MEAL_EVERY = 2_000
+
+/**
  * How much of each kind to keep, in items rather than stacks because items are what `/dupe`
  * multiplies. Eight totems rather than sixteen: they do not stack, so each one is a square of the
  * backpack, and eight is enough to survive anything that is not going to kill the agent anyway.
@@ -218,7 +238,13 @@ export interface Carried {
  * Ordinary food is chosen by what it restores, largest first, because the alternative is an agent
  * eating forty carrots to do what two steaks would.
  */
-export function edible(carried: readonly Carried[], health: number, food: number): Carried | undefined {
+export function edible(
+  carried: readonly Carried[],
+  health: number,
+  food: number,
+  /** Whether a golden apple is already working. One at a time is the whole of the rule. */
+  medicated = false,
+): Carried | undefined {
   const hurt = health < HEALTH_LOW
   if (food >= FOOD_LOW && !hurt) return undefined
 
@@ -226,14 +252,18 @@ export function edible(carried: readonly Carried[], health: number, food: number
   const plain = foods.filter((item) => !GOLDEN.has(item.name))
   const golden = foods.filter((item) => GOLDEN.has(item.name))
 
-  // Dire first: the apple is the answer to the health, and the hunger is beside the point.
-  if (health < HEALTH_DIRE && golden.length) return golden[0]
+  // Dire first: the apple is the answer to the health, and the hunger is beside the point. Once,
+  // and not again until it has worn off.
+  if (health < HEALTH_DIRE && golden.length && !medicated) return golden[0]
 
   const best = [...plain].sort((left, right) => (right.foodPoints ?? 0) - (left.foodPoints ?? 0))[0]
   if (best) return best
 
-  // Nothing else to eat. An agent starving with a gapple in its pocket should eat the gapple.
-  return golden[0]
+  // Nothing else to eat. An agent starving with a gapple in its pocket should eat the gapple - but
+  // only one at a time, the same rule as above. This fallback was the way round the guard: with no
+  // ordinary food in the bag it is the branch that always runs, and it ate six enchanted apples in
+  // three seconds while the first was still working.
+  return medicated ? undefined : golden[0]
 }
 
 /**
@@ -255,6 +285,20 @@ export function edible(carried: readonly Carried[], health: number, food: number
  * slightly early rather than a problem. Under two is not worth sending: multiplying by one copies
  * nothing.
  */
+/**
+ * Whether an item counts as the food an agent keeps in stock.
+ *
+ * **A golden apple is not stock.** [edible] already draws that line - it is medicine, spent on being
+ * badly hurt rather than on being hungry - and the restocking has to draw it in the same place. It
+ * did not: it counted every food alike and copied the biggest pile, and a gapple stacks to sixty-four
+ * where steak rarely does. So the command meant to top up dinner went after the valuables instead.
+ *
+ * Nothing here refuses to *eat* one. This is only about what is counted and what is copied.
+ */
+export function stocked(name: string, foodPoints: number | undefined): boolean {
+  return foodPoints !== undefined && !GOLDEN.has(name)
+}
+
 export function duplication(count: number, held: number, target: number): number | undefined {
   if (count < 1 || held < 1 || count >= target) return undefined
 
@@ -301,20 +345,32 @@ export function carriedIn<T>(slots: readonly (T | null | undefined)[]): T[] {
 const CLICK_TIMEOUT = 2_000
 
 
+/** What came of one attempt at something that talks to the server. */
+export type Attempt<T> = { ok: true; value: T } | { ok: false; why: string }
+
 /**
- * Runs [work] with a deadline, answering nothing if it misses it.
+ * Runs [work] with a deadline, and says plainly whether it worked.
  *
- * The rejection is swallowed rather than left to surface later as an unhandled one - an abandoned
- * click is expected here, not exceptional, and what the caller does about it is look again.
+ * **An answer of "nothing" used to mean both "it failed" and "it returned nothing"**, which for
+ * `consume()` - whose success *is* nothing - made the two indistinguishable. So a rejected eat was
+ * logged as a meal: the live log showed an agent eating eight enchanted golden apples in four
+ * seconds, which is impossible at 1.6 seconds each, and the impossibility was the only clue that any
+ * of them had failed. A swallowed error is worse than a loud one; it costs an evening.
+ *
+ * The rejection is still caught rather than left to surface later as an unhandled one - an abandoned
+ * click is expected here - but the reason comes back with it.
  */
-export async function within<T>(work: Promise<T>): Promise<T | undefined> {
+export async function within<T>(work: Promise<T>): Promise<Attempt<T>> {
   let timer: ReturnType<typeof setTimeout> | undefined
 
   try {
     return await Promise.race([
-      work.catch(() => undefined),
-      new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), CLICK_TIMEOUT)
+      work.then(
+        (value): Attempt<T> => ({ ok: true, value }),
+        (failure): Attempt<T> => ({ ok: false, why: String(failure) }),
+      ),
+      new Promise<Attempt<T>>((resolve) => {
+        timer = setTimeout(() => resolve({ ok: false, why: 'no answer in time' }), CLICK_TIMEOUT)
       }),
     ])
   } finally {
@@ -344,6 +400,27 @@ export class AgentUtilities {
   get eating(): boolean {
     return this.busy
   }
+
+  /**
+   * True while anything is clicking the inventory window.
+   *
+   * **There is one cursor, and it is shared.** `window.selectedItem` holds whatever a click picked
+   * up, and every window operation in mineflayer is pick-up-then-put-down against it. Two of them at
+   * once - a totem going into the off hand while a golden apple is being moved into the main hand -
+   * interleave their clicks and put items where neither meant. With food in the inventory that is
+   * not a rare race: eating takes over a second, pops arrive whenever they arrive, and the refill is
+   * driven by the pop rather than by the sweep.
+   *
+   * So one at a time. A refill that cannot have the window now is remembered rather than dropped -
+   * see [owed] - because the whole point of it is that it happens immediately.
+   */
+  private clicking = false
+
+  /** A refill asked for while the window was busy, to run the moment it is free. */
+  private owed = false
+
+  /** When the last meal actually went down, so another cannot start on top of it. */
+  private fed = 0
 
   /** True while an off-hand refill is in flight, so a burst of slot updates sends one click. */
   private filling = false
@@ -521,10 +598,19 @@ export class AgentUtilities {
     const spare = this.bot.inventory?.items()?.find((item) => item.name === TOTEM)
     if (!spare) return
 
+    // Somebody else is mid-click. Ask again the moment they are done rather than clicking over them.
+    if (this.clicking) {
+      this.owed = true
+      return
+    }
+
     this.filling = true
     try {
-      await this.bot.equip(spare, 'off-hand' satisfies Hand)
-      log.debug(`Agent ${this.agentId} moved a totem into its off hand`)
+      const moved = await this.claim(() => within(this.bot.equip(spare, 'off-hand' satisfies Hand)))
+
+      if (moved === undefined) log.debug(`Agent ${this.agentId} could not fill its off hand: the window was busy`)
+      else if (moved.ok) log.debug(`Agent ${this.agentId} moved a totem into its off hand`)
+      else log.debug(`Agent ${this.agentId} could not fill its off hand: ${moved.why}`)
     } finally {
       this.filling = false
     }
@@ -583,11 +669,22 @@ export class AgentUtilities {
    * looking for it will look.
    */
   private async restock(name: string | undefined, target: number): Promise<void> {
-    if (this.busy || this.filling) return
+    /*
+     * **No `busy` or `filling` check here.** Those were meant to keep the restock out of the way of
+     * eating and refilling, and in a fight they kept it out of the way of everything: eating sets one
+     * and its own slot updates drive refills that set the other, so between the two there was never
+     * an instant when the restock was allowed to look. It duped once before the fight and not again
+     * during it - which is the opposite of when it is needed.
+     *
+     * The window lock already does this job properly, and does it for the few milliseconds a click
+     * actually takes rather than for the second and a half a meal does.
+     */
 
     const items = carriedIn(this.bot.inventory?.slots ?? [])
     const mine = items.filter((item) =>
-      name === undefined ? this.bot.registry?.foods?.[item.type] !== undefined : item.name === name,
+      name === undefined
+        ? stocked(item.name, this.bot.registry?.foods?.[item.type]?.foodPoints)
+        : item.name === name,
     )
 
     const count = mine.reduce((total, item) => total + item.count, 0)
@@ -621,9 +718,21 @@ export class AgentUtilities {
     const times = duplication(count, holding.count, target)
     if (times === undefined) return
 
+    // Before the hands are claimed, because this refills the off hand and needs them itself.
+    if (name === TOTEM) await this.totem()
+
     const held = this.bot.quickBarSlot
 
-    try {
+    /*
+     * The whole sequence, under the same lock as eating.
+     *
+     * Selecting a square, checking what is in the hands and sending the command have to be one
+     * uninterrupted thing. They were not, and auto-eat put a golden apple into the selected slot
+     * between the check and the command - so `/dupe` copied the apple with the multiplier worked out
+     * for totems. `Duped item 31 times`, a stack of apples, and an agent that still had two totems.
+     */
+    const ran = await this.claim(async () => {
+      try {
       /*
        * **A totem is copied out of the off hand, and never out of the main hand.**
        *
@@ -648,16 +757,77 @@ export class AgentUtilities {
           return
         }
 
-        const spare = this.emptyHand()
-        if (spare === undefined) {
-          // Never by making room: a click mid-fight is the thing this whole path exists to avoid.
-          log.debug(`Agent ${this.agentId} did not dupe a totem: the hotbar has no empty square`)
+        /*
+         * Two ways to put a totem where the plugin will copy it, and the hotbar decides which.
+         *
+         * **An empty square, when there is one.** Selecting it empties the main hand, the plugin
+         * falls back to the off hand, and nothing has been picked up or moved - which is what makes
+         * this the one to prefer in the middle of a fight.
+         *
+         * **A spare held in the main hand, when there is not.** An agent in a fight has a full
+         * hotbar, and the empty-square path then found nothing and quietly did nothing at all: the
+         * totem restock had never once run under the conditions it exists for. Holding a spare costs
+         * a click and is safe in a way that holding the *off-hand* totem is not - the held item pops
+         * first, so what a hit spends is the copy about to be made while the off hand goes on
+         * guarding the agent.
+         */
+        const square = this.emptyHand()
+
+        if (square !== undefined) {
+          this.bot.setQuickBarSlot(square)
+
+          /*
+           * The main hand has to be **empty**, not merely expected to be. The plugin copies it
+           * whenever there is anything in it, so selecting a square that was empty a moment ago is
+           * not the same as holding nothing now - and getting that wrong does not fail, it copies
+           * the wrong item.
+           */
+          if (this.bot.heldItem) {
+            log.debug(
+              `Agent ${this.agentId} did not dupe a totem: holding ${this.bot.heldItem.name} in the main hand`,
+            )
+            return
+          }
+        } else {
+          /*
+           * Found by walking the squares rather than by reading `item.slot`.
+           *
+           * If that field were ever missing the comparison would pass and the search would happily
+           * return the off-hand totem - the one thing this must never take. A loop that stops before
+           * the off hand cannot make that mistake however the items are shaped.
+           */
+          const slots = this.bot.inventory?.slots ?? []
+          let held: (typeof slots)[number] | undefined
+
+          for (let slot = BACKPACK_FIRST; slot <= HOTBAR_LAST; slot += 1) {
+            if (slots[slot]?.name === TOTEM) {
+              held = slots[slot]
+              break
+            }
+          }
+
+          if (!held) {
+            log.debug(`Agent ${this.agentId} did not dupe a totem: the hotbar is full and no spare to hold`)
+            return
+          }
+
+          const inHand = await within(this.bot.equip(held, 'hand' satisfies Hand))
+          if (!inHand.ok) {
+            log.debug(`Agent ${this.agentId} could not hold a spare totem: ${inHand.why}`)
+            return
+          }
+
+          if (this.bot.heldItem?.name !== TOTEM) {
+            log.debug(`Agent ${this.agentId} did not dupe a totem: could not get a spare into the main hand`)
+            return
+          }
+        }
+      } else {
+        const inHand = await within(this.bot.equip(holding, 'hand' satisfies Hand))
+        if (!inHand.ok) {
+          log.debug(`Agent ${this.agentId} could not hold ${holding.name}: ${inHand.why}`)
           return
         }
-
-        this.bot.setQuickBarSlot(spare)
-      } else {
-        await within(this.bot.equip(holding, 'hand' satisfies Hand))
 
         /*
          * Checked rather than assumed. `equip` resolves when this side is satisfied, and what the
@@ -676,9 +846,25 @@ export class AgentUtilities {
 
       // Marked once the command has actually gone out, so the next pass waits for its answer.
       this.sent = Date.now()
-      log.debug(`Agent ${this.agentId} duped ${holding.name} x${times}, holding ${count}`)
-    } finally {
-      this.bot.setQuickBarSlot(held)
+      // Both hands and the selected square. What the plugin copies is decided by those, not by what
+      // this code meant to copy - and when the two disagree, this line is the only thing that says so.
+      log.debug(
+        `Agent ${this.agentId} duped ${holding.name} x${times}, holding ${count}` +
+          `, main=${this.bot.heldItem?.name ?? 'empty'}` +
+          `, off=${this.bot.inventory?.slots?.[OFFHAND_SLOT]?.name ?? 'empty'}` +
+          `, slot=${this.bot.quickBarSlot}`,
+      )
+      } finally {
+        this.bot.setQuickBarSlot(held)
+      }
+
+      return true
+    })
+
+    // Said out loud, because a restock that never gets the window looks exactly like one that had
+    // nothing to do - and telling those apart from the outside took three fights.
+    if (ran === undefined) {
+      log.debug(`Agent ${this.agentId} could not restock ${name ?? 'food'}: the window was busy`)
     }
   }
 
@@ -725,6 +911,29 @@ export class AgentUtilities {
   }
 
   /** The totem, on its own, for the events that cannot wait for the rest of a pass. */
+  /**
+   * Runs one piece of window work, or answers nothing when something else has the window.
+   *
+   * Everything inside is bounded by [within], because a lock a hung click never releases would stop
+   * the agent eating, refilling or restocking for the rest of the session - which is a worse failure
+   * than the interleaving this prevents.
+   */
+  private async claim<T>(work: () => Promise<T>): Promise<T | undefined> {
+    if (this.clicking) return undefined
+
+    this.clicking = true
+    try {
+      return await work()
+    } finally {
+      this.clicking = false
+
+      if (this.owed) {
+        this.owed = false
+        void this.refill()
+      }
+    }
+  }
+
   private async refill(): Promise<void> {
     if (this.wanted().autoTotem === 'off') return
 
@@ -748,8 +957,16 @@ export class AgentUtilities {
    * agent that finished a meal holding bread instead of its stack of stone would be a module that
    * cost more than it saved.
    */
+  /** Whether a golden apple is still working, so a second one would be thrown away. */
+  private medicated(): boolean {
+    const effects = (this.bot.entity as { effects?: Record<number, unknown> } | undefined)?.effects ?? {}
+
+    return effects[ABSORPTION] !== undefined || effects[REGENERATION] !== undefined
+  }
+
   private async eat(): Promise<void> {
     if (this.busy || this.bot.food === undefined) return
+    if (Date.now() - this.fed < MEAL_EVERY) return
 
     const items = carriedIn(this.bot.inventory?.slots ?? [])
     const carried = items.map((item) => ({
@@ -757,7 +974,7 @@ export class AgentUtilities {
       foodPoints: this.bot.registry?.foods?.[item.type]?.foodPoints,
     }))
 
-    const wanted = edible(carried, this.bot.health ?? HEALTH_FULL, this.bot.food)
+    const wanted = edible(carried, this.bot.health ?? HEALTH_FULL, this.bot.food, this.medicated())
     if (!wanted) return
 
     const found = items.find((item) => item.name === wanted.name)
@@ -769,15 +986,33 @@ export class AgentUtilities {
 
     try {
       this.bot.clearControlStates()
-      await within(this.bot.equip(found, 'hand' satisfies Hand))
-      await within(this.bot.consume())
 
-      log.debug(`Agent ${this.agentId} ate ${wanted.name}`)
+      await this.claim(async () => {
+        try {
+          const inHand = await within(this.bot.equip(found, 'hand' satisfies Hand))
+          if (!inHand.ok) {
+            log.debug(`Agent ${this.agentId} could not hold ${wanted.name}: ${inHand.why}`)
+            return
+          }
+
+          const eaten = await within(this.bot.consume())
+          if (!eaten.ok) {
+            log.debug(`Agent ${this.agentId} could not eat ${wanted.name}: ${eaten.why}`)
+            return
+          }
+
+          this.fed = Date.now()
+          log.debug(`Agent ${this.agentId} ate ${wanted.name}`)
+        } finally {
+          // Inside the lock. Putting the hotbar back only after letting go left a golden apple in
+          // the selected slot for whatever claimed the hands next - which was the totem restock,
+          // and it copied the apple with the multiplier worked out for totems.
+          this.bot.setQuickBarSlot(held)
+        }
+      })
     } finally {
       // In a `finally` because the reasons eating fails - a server that refuses it, a stack that ran
-      // out mid-bite - are exactly the ones that would otherwise leave an agent rooted to the spot
-      // holding somebody else's food.
-      this.bot.setQuickBarSlot(held)
+      // out mid-bite - are exactly the ones that would otherwise leave an agent rooted to the spot.
       for (const control of moving) this.bot.setControlState(control, true)
       this.busy = false
     }
