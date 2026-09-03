@@ -248,12 +248,40 @@ async function send(): Promise<void> {
 
   try {
     await agentStore.say(props.speaker.id, text)
+    // Kept only once it has gone. A line the backend refused is still in the box, and recalling it
+    // would put a second copy of it there.
+    sent.value = text
     message.value = ''
   } catch (failure) {
     sendError.value = failure instanceof Error ? failure.message : t('errors.sendMessage')
   } finally {
     sending.value = false
   }
+}
+
+/**
+ * The last line this panel actually sent, for Up to bring back.
+ *
+ * One line rather than a history. What Up is for is the message you just sent and want to send
+ * again, or the one you sent with a typo in it - and a stack of them needs Down, an index, and a
+ * decision about what typing halfway through the stack means. In the panel, and not persisted:
+ * recalling a line into a different conversation than the one it was said in is a way to say
+ * something in the wrong room.
+ */
+const sent = ref('')
+
+/**
+ * Up recalls it; Down clears the box again.
+ *
+ * Only from an empty box. A line half typed is worth more than the last one, and losing it to a
+ * stray arrow key is the kind of small theft an interface should not commit — the caret moves to
+ * the start of a single-line input on Up, so somebody editing a long message presses it on purpose.
+ */
+function recall(event: KeyboardEvent): void {
+  if (message.value !== '' || !sent.value) return
+
+  event.preventDefault()
+  message.value = sent.value
 }
 
 /**
@@ -503,6 +531,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           type="text"
           :placeholder="t('agents.chatPlaceholder')"
           :disabled="blocked !== null"
+          @keydown.up="recall"
         />
         <button
           class="btn btn-primary btn-sm btn-square"

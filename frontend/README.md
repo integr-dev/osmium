@@ -811,6 +811,18 @@ The rows are **live only**. They have no id from the backend because nothing was
 negative ones here, and a reload shows the conversation without the hole and without them. That is
 the honest end state rather than a shortcoming: nothing was stored, so there is no hole in what was.
 
+### Up brings back the last line
+
+The chat box recalls the message it last **sent**, not the last one typed: a line the backend refused
+is still in the box, and recalling it would put a second copy there. One line rather than a history,
+because what Up is for is the message you just sent and want to send again — a stack of them needs
+Down, an index, and an answer to what typing halfway through the stack means.
+
+Only from an empty box. A half-typed line is worth more than the last one, and losing it to a stray
+arrow key is the kind of small theft an interface should not commit. It lives in the panel and is not
+persisted: recalling a line into a different conversation than the one it was said in is a way to say
+something in the wrong room.
+
 ### Searching what was said
 
 The search box matches message text **and sender**, case-insensitively, against the stored feed
