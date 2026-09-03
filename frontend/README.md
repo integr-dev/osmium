@@ -1125,6 +1125,40 @@ different project.
 It also reaches the map and the inventory icons for free — both derive from the same block states —
 so a chest now has a colour from above and a picture in a slot.
 
+### Players wear their own skins
+
+The renderer builds every player from one texture named in its entity table — `steve.png` — with no
+notion that two players look different. What it does give is a **material per mesh**, so the texture
+on one player can be replaced without touching the others or the renderer itself.
+
+Each player gets a texture of its own, built rather than reused. Upstream caches textures by URL, so
+the one hanging off a player belongs to every player *and* to the agent's own body; writing an image
+into it dressed the whole world in whichever skin arrived last.
+
+**A slim skin gets a slim body, because the difference is geometry rather than texture.** An arm is
+four pixels wide on the classic model and three on the slim one, and a three-pixel sheet worn on the
+wide model runs a column of the sleeve's neighbour down each arm. The model is derived in
+`scripts/viewer-assets.mjs` and written into the renderer's entity table there — it cannot be
+registered from application code, because `Entity.js` does `require('./entities.json')` and the
+bundler inlines that table into its pre-bundle. Which of the two a skin was drawn for is read off
+the sheet: the slim layout leaves a column empty on the four faces that run across each arm, and
+that is the only thing in the file that says which model it is for.
+
+**Legacy skins are ordinary, not a rarity to defend against.** Of the first three accounts this was
+checked against, two came back **64x32** — the pre-1.8 layout, which has one arm and one leg and
+lets the game mirror them. The model samples the bottom half of a 64x64 sheet, so an unconverted
+legacy skin renders a player with transparent limbs, and the skin service does not normalise. So
+`src/lib/skins.ts` does, on a canvas: the sheet is copied over and the missing limbs are drawn face
+by face, each flipped. Face by face because a block copied whole comes out with its front and back
+swapped — the faces change sides as the limb crosses the body.
+
+Converted in the browser rather than in the proxy on purpose. The browser is decoding the PNG to
+render it anyway, and the alternative is teaching a service that is currently a byte proxy to decode
+and re-encode untrusted images.
+
+A player whose skin the service does not know, or a deployment with `osmium.avatar.skin-upstream`
+blank, simply stays Steve.
+
 ### Four accommodations for a renderer built for webpack
 
 Upstream's build does things Vite does not, and each gap is a different failure:
@@ -1269,6 +1303,18 @@ Which square is **in hand** is part of it and can be changed from here: it decid
 hits, places and eats with, so it is a fact worth both showing and setting. An empty hotbar square
 is therefore selectable even though there is nothing in it — an empty hand is a real choice — while
 an empty square anywhere else is not, because no click there could mean anything.
+
+### The hand travels
+
+Which hotbar square is in hand is one ring that slides between them, not a border that lights up on
+each square in turn — the same single-marker trick as `TabBar`, measured off the laid-out button and
+translated. The reason is the same too: switching hand is a *movement* along the bar, and nine
+borders taking turns can only say it happened, never that it travelled. The square underneath keeps
+a hint of the same colour, which is what stops the ring reading as floating over an unrelated square
+halfway through the slide.
+
+It is not shared with `TabBar`: that marker is a background a tab sits on and is sized to fill it,
+this one is a ring drawn over something already there. What they share is the idea, not the code.
 
 ### It locks while the agent is building
 

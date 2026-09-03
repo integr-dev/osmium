@@ -11,6 +11,27 @@ declare module 'three' {
   const THREE: {
     DefaultLoadingManager: { setURLModifier(modifier: (url: string) => string): void }
     LinearFilter: number
+    /** What a Minecraft texture is sampled with: anything else smears a 64-pixel sheet. */
+    NearestFilter: number
+    RepeatWrapping: number
+    /** A skin arrives as a canvas, because a legacy one has to be redrawn before it can be used. */
+    CanvasTexture: new (image: HTMLCanvasElement) => {
+      image?: HTMLCanvasElement
+      generateMipmaps: boolean
+      minFilter: number
+      magFilter: number
+      wrapS: number
+      wrapT: number
+      flipY: boolean
+      needsUpdate: boolean
+    }
+    /** A nametag: a canvas quad that keeps facing the camera. Upstream builds one per player. */
+    Sprite: new (material: unknown) => {
+      position: { set(x: number, y: number, z: number): void }
+      userData: Record<string, unknown>
+      isSprite: boolean
+    }
+    SpriteMaterial: new (parameters: { map: unknown }) => unknown
     BoxGeometry: new (width: number, height: number, depth: number) => { translate(x: number, y: number, z: number): void }
     EdgesGeometry: new (geometry: unknown) => unknown
     ClampToEdgeWrapping: number

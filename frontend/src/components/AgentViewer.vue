@@ -6,7 +6,8 @@ import { Eye, Orbit, TriangleAlert } from 'lucide-vue-next'
 import { api } from '../api/client'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerStream'
-import { playerVitals } from '../lib/vitals'
+import { agentDetail, playerVitals } from '../lib/vitals'
+import { skinFor, type Skin } from '../lib/skins'
 
 /**
  * An agent's world, rendered live.
@@ -62,7 +63,8 @@ interface Scene {
   /** Watches the canvas, not the window - see {@link resize}. */
   watcher?: ResizeObserver
   /** The one material every player's box shares; its width is in pixels, so it tracks the canvas. */
-  outlineMaterial?: { resolution: { set(width: number, height: number): void } }
+  /** One per colour. Each is told the canvas size, because a line width is in pixels. */
+  outlineMaterials?: Array<{ resolution: { set(width: number, height: number): void } }>
   controls?: { enabled: boolean; update(): void; dispose(): void; target: { set(x: number, y: number, z: number): void } }
   frame: number
   position?: { pos: { x: number; y: number; z: number }; yaw: number; pitch: number }
@@ -92,11 +94,13 @@ interface Scene {
   /** Usernames, for redrawing the nametags upstream draws off-centre. */
   names: Map<number, string>
   /** Where each entity is, for the distance on its label. */
-  at: Map<number, { x: number; y: number; z: number }>
   /** How big each is, for the box drawn around it. */
   sizes: Map<number, { width: number; height: number }>
   /** Builds an outline in the entity mesh's own units. Held so the decoration needs no imports. */
-  buildOutline?: (width: number, height: number) => Mesh | undefined
+  buildOutline?: (width: number, height: number, ours: boolean) => Mesh | undefined
+  buildNametag?: (height: number) => Mesh | undefined
+  buildTexture?: (image: HTMLCanvasElement) => TextureLike
+  buildSlim?: () => Mesh | undefined
   summary?: ReturnType<typeof setTimeout>
 }
 
@@ -109,8 +113,12 @@ interface Mesh {
   renderOrder: number
   userData: Record<string, unknown>
   add(child: unknown): void
+  remove?(child: unknown): void
   children?: Array<{
     isSprite?: boolean
+    isSkinnedMesh?: boolean
+    /** Only a real mesh has one. The nametag sprite and the outline do not, and neither wears a skin. */
+    geometry?: unknown
     frustumCulled: boolean
     renderOrder: number
     scale: { set(x: number, y: number, z: number): void }
@@ -120,21 +128,26 @@ interface Mesh {
 }
 
 interface SpriteMaterial {
+  /** Only on entity bodies, never on sprites. See `unskin`. */
+  skinning?: boolean
   transparent: boolean
   depthWrite: boolean
   needsUpdate: boolean
   depthTest: boolean
   /** False keeps the label one size at every distance. */
   sizeAttenuation: boolean
-  map?: {
-    image?: HTMLCanvasElement
-    generateMipmaps: boolean
-    minFilter: number
-    magFilter: number
-    wrapS: number
-    wrapT: number
-    needsUpdate: boolean
-  }
+  map?: TextureLike
+}
+
+/** As much of a `THREE.Texture` as this file touches. */
+interface TextureLike {
+  image?: HTMLCanvasElement
+  generateMipmaps: boolean
+  minFilter: number
+  magFilter: number
+  wrapS: number
+  wrapT: number
+  needsUpdate: boolean
 }
 
 /** One vertex stream of a section mesh. `onUpload` fires once three has handed it to the GPU. */
@@ -307,6 +320,16 @@ function reportCoverage(current: Scene): void {
 
 /** How long without a column before the world is considered done arriving. */
 const SETTLED = 2_000
+
+/**
+ * The slim player, which `scripts/viewer-assets.mjs` adds to the renderer's entity table.
+ *
+ * Named here and derived there. It cannot be registered from this side: `Entity.js` does
+ * `require('./entities.json')` and the bundler inlines that table into its pre-bundle of the
+ * package, so an import of the same path from application code is a different object. Adding a
+ * model to it added nothing to what `Entity` could build, and asking for one threw.
+ */
+const SLIM = 'osmium_player_slim'
 
 /** The vertical range the renderer meshes on its own, hardcoded in its `addColumn`. */
 const UPSTREAM_MIN_Y = 0
@@ -498,7 +521,167 @@ function drawable(current: Scene, entity: { id: number; name?: string; delete?: 
 }
 
 /**
- * Makes a nametag legible. Upstream creates the sprite; this corrects it, once, as each appears.
+ * Takes entity bodies off the skinning path, which they only ever used to arrive back where they
+ * started - and which tears them apart once the world coordinates get large.
+ *
+ * Upstream builds every entity as a `SkinnedMesh` and bakes each bone's transform into the vertices
+ * as it emits them, then never moves a bone again: the only thing animated is `rotation.y` on the
+ * parent. So every bone matrix stays equal to the mesh's own `matrixWorld`, the bind matrix is the
+ * identity, and the skinning the shader performs reduces to `inverse(matrixWorld) * matrixWorld * v`.
+ *
+ * That identity is not free, because the shader evaluates it in float32 while the CPU would have
+ * folded the world out in float64. `bindMatrixInverse` carries the entity's position scaled by 16
+ * (the mesh is a sixteenth scale), so at x = 13,554,753 the vertex passes through -2.2e8, where
+ * consecutive float32 values are 16 model units apart - one whole block. Every x within a body
+ * rounds to the same number and the model collapses to a sheet, which shifts to the next cell as
+ * the entity walks: flat, and flickering. The other axes survive or not depending on their own
+ * magnitude, which is why it looks like corruption rather than an obvious failure.
+ *
+ * Switching skinning off leaves `projectionMatrix * modelViewMatrix * position`, and three builds
+ * that model-view on the CPU relative to the camera, so nothing large reaches the GPU at all.
+ */
+function unskin(mesh: Mesh | undefined): void {
+  for (const child of mesh?.children ?? []) {
+    if (!child.isSkinnedMesh) continue
+    const material = child.material
+    if (!material || material.skinning === false) continue
+    material.skinning = false
+    // The define is compiled into the program, so the material has to be told to rebuild it.
+    material.needsUpdate = true
+  }
+}
+
+/**
+ * Dresses a player in their own skin.
+ *
+ * The renderer builds every player from `steve.png` — one texture named in its entity table, with
+ * no notion that two players look different. What it does give us is a material per mesh, so the
+ * texture on one player can be replaced without touching the others or the renderer.
+ *
+ * **Each player gets a texture of its own, and that is not an optimisation to skip.** Upstream
+ * caches textures by URL — `loadTexture` keeps a `textureCache` and hands the same `THREE.Texture`
+ * to every caller — so the one on a player belongs to every player *and* to the agent's own body.
+ * Writing an image into it dressed the whole world in whichever skin arrived last.
+ *
+ * Built rather than cloned. A clone carries whatever else that shared object has been left in, and
+ * the four settings a skin actually needs are worth stating; see `buildTexture`.
+ *
+ * Once per entity, marked on the mesh. The fetch is memoised per player besides, so a fleet of one
+ * account standing together is one request either way; this is about not re-walking the children of
+ * every player on every frame.
+ *
+ * Silent when there is no skin. A player whose name the service does not know, or a deployment with
+ * skins turned off, simply stays Steve — which is what the screen showed before this existed.
+ */
+function wear(current: Scene, id: number, mesh: Mesh): void {
+  if (mesh.userData['osmiumSkinned']) return
+
+  const name = current.names.get(id)
+  if (!name) return
+
+  skin(current, mesh, name)
+}
+
+/**
+ * Fetches one account's skin and puts it on one model.
+ *
+ * Shared by the two paths that need it: every player in view, and the agent's own body, which is
+ * built here rather than streamed.
+ */
+function skin(current: Scene, mesh: Mesh, name: string): void {
+  if (mesh.userData['osmiumSkinned']) return
+
+  // Marked before the fetch, not after: the answer takes a round trip and the caller runs per frame.
+  mesh.userData['osmiumSkinned'] = true
+
+  void skinFor(name).then((worn) => worn && dress(current, mesh, worn))
+}
+
+/**
+ * Puts one skin on one model, narrowing the model first if the skin was drawn for a slim one.
+ *
+ * **The body is replaced rather than re-textured** for a slim skin, because the difference is a
+ * pixel of geometry rather than of texture: the renderer builds every player four-pixel-armed, and
+ * a three-pixel sheet worn on that model runs a column of the sleeve's neighbour down each arm.
+ *
+ * Only the parts with geometry are swapped. The nametag and the outline hang off the same object
+ * and belong to it, not to the body — and rebuilding either would lose what has already been done
+ * to them.
+ *
+ * Safe to swap at all because upstream animates nothing below the mesh: it tweens the whole thing's
+ * position and yaw, and never touches a bone.
+ */
+function dress(current: Scene, mesh: Mesh, worn: Skin): void {
+  const replacement = worn.slim ? current.buildSlim?.() : undefined
+
+  if (replacement) {
+    for (const child of [...(mesh.children ?? [])]) {
+      if (child.isSprite || child.userData['osmiumOutline'] || !child.geometry) continue
+      mesh.remove?.(child)
+    }
+    for (const child of [...(replacement.children ?? [])]) mesh.add(child)
+    // A body that arrives this way has not been through the pass that walks the renderer's list.
+    unskin(mesh)
+  }
+
+  for (const child of mesh.children ?? []) {
+    // The nametag is a sprite and the outline is a line list; what is left is the body.
+    if (child.isSprite || child.userData['osmiumOutline'] || !child.geometry) continue
+
+    const material = child.material
+    if (!material?.map) continue
+
+    const own = current.buildTexture?.(worn.image)
+    if (!own) continue
+
+    material.map = own
+    material.needsUpdate = true
+  }
+}
+
+/** Whether a name belongs to the fleet, which is what decides the colour of the box around it. */
+function ourPlayer(name: string | undefined): boolean {
+  if (!name) return false
+  if (agent.value?.mcUsername === name) return true
+  return nearby.value.some((candidate) => candidate.name === name && candidate.isAgent)
+}
+
+/**
+ * A box around one player, in the colour the map uses for the same person.
+ *
+ * Rebuilt rather than recoloured when the answer changes. Whether somebody is ours arrives with the
+ * telemetry, which can land after the entity does, so the first box is sometimes drawn for a
+ * stranger who turns out to be an agent - and a box built once and left is one that stays the wrong
+ * colour for the rest of the session. It happens about once per player.
+ */
+function outlineOne(
+  current: Scene,
+  mesh: Mesh,
+  ours: boolean,
+  size: { width: number; height: number } | undefined,
+): void {
+  if (mesh.userData['osmiumOutlined'] && mesh.userData['osmiumOurs'] === ours) return
+
+  if (mesh.userData['osmiumOutlined']) {
+    for (const child of [...(mesh.children ?? [])]) {
+      if (child.userData['osmiumOutline']) mesh.remove?.(child)
+    }
+  }
+
+  const outline = size && current.buildOutline?.(size.width, size.height, ours)
+  if (!outline) return
+
+  mesh.userData['osmiumOutlined'] = true
+  mesh.userData['osmiumOurs'] = ours
+  mesh.add(outline)
+}
+
+/**
+ * Corrects a nametag and keeps what it says current.
+ *
+ * Upstream creates the sprite for a streamed player; the agent's own body has one built for it here
+ * - see `buildNametag` - and both arrive needing the same three corrections, so both come through
+ * this.
  *
  * Three things are wrong with it as built. It is drawn onto a 500x100 canvas and mapped onto a
  * `THREE.Sprite`, which is a one-by-one quad unless told otherwise, so the name arrives squashed to
@@ -507,31 +690,12 @@ function drawable(current: Scene, entity: { id: number; name?: string; delete?: 
  * back as streaked noise. And the material is not marked transparent, so the empty area around the
  * name is composited rather than dropped.
  */
-function shapeNametags(current: Scene): void {
-  for (const [id, mesh] of Object.entries(current.viewer.entities?.entities ?? {})) {
-    if (!mesh) continue
+function labelOne(current: Scene, mesh: Mesh, name: string | undefined): void {
+  for (const child of mesh.children ?? []) {
+    if (!child.isSprite || child.userData['osmiumOutline']) continue
+    child.frustumCulled = false
 
-    // These meshes are built with their geometry in absolute model coordinates while their bones
-    // carry accumulated pivots, so the bounding sphere three computes for them does not describe
-    // where they actually are - and an entity disappears at the angles where that wrong sphere
-    // leaves the frustum. There are a few dozen of them; not culling them costs nothing.
-    mesh.frustumCulled = false
-
-    // A box around each player, drawn through everything. Only players: an operator watching an
-    // agent is watching for people, and outlining every cow would bury them.
-    if (current.seen.get(Number(id)) === 'player' && !mesh.userData['osmiumOutlined']) {
-      const size = current.sizes.get(Number(id))
-      const outline = size && current.buildOutline?.(size.width, size.height)
-      if (outline) {
-        mesh.userData['osmiumOutlined'] = true
-        mesh.add(outline)
-      }
-    }
-
-    for (const child of mesh.children ?? []) {
-      if (!child.isSprite || child.userData['osmiumOutline']) continue
-      child.frustumCulled = false
-      if (child.userData['osmiumShaped']) continue
+    if (!child.userData['osmiumShaped']) {
       child.userData['osmiumShaped'] = true
 
       // Last in the transparent pass, whatever the camera thinks the order should be.
@@ -544,66 +708,71 @@ function shapeNametags(current: Scene): void {
       child.renderOrder = NAMETAG_ORDER
       child.scale.set(NAMETAG_WIDTH, NAMETAG_WIDTH * (NAMETAG_CANVAS.height / NAMETAG_CANVAS.width), 1)
 
-
       const material = child.material
-      if (!material) continue
-      material.transparent = true
-      material.depthWrite = false
-      // One size, whatever the distance. A sprite shrinks with range by default, which is right for
-      // a thing in the world and wrong for a label about one: the name furthest away is the hardest
-      // to read and often the one worth reading.
-      material.sizeAttenuation = false
-      // Over the world, as Minecraft draws them: depth-tested, a tag is occluded by the very head
-      // it labels at every angle where that head is nearer the camera.
-      material.depthTest = false
+      if (material) {
+        material.transparent = true
+        material.depthWrite = false
+        // One size, whatever the distance. A sprite shrinks with range by default, which is right
+        // for a thing in the world and wrong for a label about one: the name furthest away is the
+        // hardest to read and often the one worth reading.
+        material.sizeAttenuation = false
+        // Over the world, as Minecraft draws them: depth-tested, a tag is occluded by the very head
+        // it labels at every angle where that head is nearer the camera.
+        material.depthTest = false
 
-      const map = material.map
-      if (!map) continue
-      // Clamped and unmipped: what a non-power-of-two texture needs, and what stops the sampler
-      // reaching past the edge of the drawn name.
-      map.generateMipmaps = false
-      map.minFilter = current.filters.linear
-      map.magFilter = current.filters.linear
-      map.wrapS = current.filters.clamp
-      map.wrapT = current.filters.clamp
-
-      material.needsUpdate = true
+        const sheet = material.map
+        if (sheet) {
+          // Clamped and unmipped: what a non-power-of-two texture needs, and what stops the sampler
+          // reaching past the edge of the drawn name.
+          sheet.generateMipmaps = false
+          sheet.minFilter = current.filters.linear
+          sheet.magFilter = current.filters.linear
+          sheet.wrapS = current.filters.clamp
+          sheet.wrapT = current.filters.clamp
+        }
+        material.needsUpdate = true
+      }
     }
 
-    // Outside the once-only block: the distance changes as the agent and the player move, so the
-    // label is redrawn when the number it shows would differ - not every frame, and not never.
-    for (const child of mesh.children ?? []) {
-      if (!child.isSprite || child.userData['osmiumOutline']) continue
-      const map = child.material?.map
-      if (!map?.image) continue
+    // Outside the once-only block: the distance and the vitals change as everybody moves, so the
+    // label is redrawn when the text it shows would differ - not every frame, and not never.
+    const map = child.material?.map
+    if (!map?.image) continue
 
-      const name = current.names.get(Number(id))
-      const away = distanceTo(current, Number(id))
-      const stats = statsFor(name)
+    const mark = markFor(name)
+    const text = `${mark?.label ?? ''}|${mark?.detail ?? ''}`
+    if (child.userData['osmiumLabel'] === text) continue
+    child.userData['osmiumLabel'] = text
 
-      const label = `${away ?? ''}|${stats ?? ''}`
-      if (child.userData['osmiumLabel'] === label) continue
-      child.userData['osmiumLabel'] = label
-
-      redrawNametag(map.image, name, away, stats)
-      map.needsUpdate = true
-    }
+    redrawNametag(map.image, mark?.label, mark?.detail ?? null)
+    map.needsUpdate = true
   }
 }
 
-/**
- * How far the agent is from an entity, in whole blocks. Null when either position is unknown.
- *
- * Distance rather than health, because health is not ours to show: a client is only told its own,
- * and everyone else's lives in raw entity metadata at an index that moves between versions.
- * mineflayer does not decode it, and guessing at a byte offset per protocol would produce a number
- * that is wrong without ever looking wrong.
- */
-function distanceTo(current: Scene, id: number): number | null {
-  const from = current.position?.pos
-  const to = current.at.get(id)
-  if (!from || !to) return null
-  return Math.round(Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z))
+/** Decorates everything the renderer is holding: skins, boxes and labels, once each per entity. */
+function shapeNametags(current: Scene): void {
+  for (const [key, mesh] of Object.entries(current.viewer.entities?.entities ?? {})) {
+    if (!mesh) continue
+    const id = Number(key)
+    unskin(mesh)
+
+    // These meshes are built with their geometry in absolute model coordinates while their bones
+    // carry accumulated pivots, so the bounding sphere three computes for them does not describe
+    // where they actually are - and an entity disappears at the angles where that wrong sphere
+    // leaves the frustum. There are a few dozen of them; not culling them costs nothing.
+    mesh.frustumCulled = false
+
+    // Skinned and boxed, but only players: an operator watching an agent is watching for people,
+    // and outlining every cow would bury them. The box takes the map's colour for the same person,
+    // so the two screens never disagree about who is ours.
+    if (current.seen.get(id) === 'player') {
+      const name = current.names.get(id)
+      wear(current, id, mesh)
+      outlineOne(current, mesh, ourPlayer(name), current.sizes.get(id))
+    }
+
+    labelOne(current, mesh, current.names.get(id))
+  }
 }
 
 /**
@@ -621,27 +790,28 @@ function distanceTo(current: Scene, id: number): number | null {
  * is nearby and what the server said about them, so this needs nothing new on the wire - and the
  * two sources agree, because both are the same server's account of the same people.
  */
-function statsFor(name: string | undefined): string | null {
+function markFor(name: string | undefined): { label: string; detail: string | null } | null {
   if (!name) return null
 
+  // One of ours: the agent's Osmium label above, and under it exactly the line the map writes -
+  // its Minecraft name and its vitals, read from the fleet's own telemetry rather than from what
+  // the agent could see of it. Food is not something one player learns about another.
+  const fleet = agentStore.agents.find((candidate) => candidate.mcUsername === name)
+  if (fleet) return { label: fleet.label, detail: agentDetail(fleet) || null }
+
+  // Anybody else is named by the only name there is for them, over the same reading the map gives
+  // a stranger. A player the telemetry has not described yet gets the name alone.
   const player = nearby.value.find((candidate) => candidate.name === name)
-  if (!player) return null
-
-  // The shared reading, plus the one thing only this screen knows to say: whether the name over
-  // somebody's head belongs to the fleet.
-  const parts = [playerVitals(player), player.isAgent ? t('viewer.ours') : null].filter(Boolean)
-
-  return parts.length ? parts.join(' · ') : null
+  return { label: name, detail: (player && playerVitals(player)) || null }
 }
 
 /** The protocol's own numbering. Survival is the default and says nothing, so it is left unnamed. */
 function redrawNametag(
   canvas: HTMLCanvasElement | undefined,
-  name: string | undefined,
-  away: number | null,
-  stats: string | null,
+  label: string | undefined,
+  detail: string | null,
 ): void {
-  if (!canvas || !name) return
+  if (!canvas || !label) return
 
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -653,25 +823,36 @@ function redrawNametag(
 
   // White on a dark outline rather than plain black: a label has to stay readable over stone,
   // grass, lava and the sky, and no single fill colour does that.
+  //
+  // **Shrunk to fit, never clipped.** The canvas is a fixed 500 wide and the sprite a fixed width
+  // in the world, so a long line - an agent's label, its Minecraft name and its vitals - ran off
+  // both ends and lost its first and last words to the edges. Measured once and scaled: a string
+  // is linear in its font size, so one pass lands within a pixel of the room available.
   const write = (text: string, y: number, size: number, colour: string) => {
+    const room = canvas.width - NAMETAG_MARGIN * 2
+
     ctx.font = `${Math.floor(size)}px sans-serif`
-    ctx.lineWidth = Math.max(2, size * 0.16)
+    const measured = ctx.measureText(text).width
+    const fitted = measured > room ? Math.max(NAMETAG_MIN_PX, size * (room / measured)) : size
+
+    ctx.font = `${Math.floor(fitted)}px sans-serif`
+    ctx.lineWidth = Math.max(2, fitted * 0.16)
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)'
-    ctx.strokeText(text, canvas.width / 2, y)
+    // `maxWidth` is the last resort: a line long enough to reach the floor above is condensed
+    // rather than cut, which is ugly and still readable, where a cut drops whole words silently.
+    ctx.strokeText(text, canvas.width / 2, y, room)
     ctx.fillStyle = colour
-    ctx.fillText(text, canvas.width / 2, y)
+    ctx.fillText(text, canvas.width / 2, y, room)
   }
 
-  // The name identifies; the distance is what an operator is actually watching for, so it is there
-  // but subordinate.
-  const below = [away === null ? null : `${away}m`, stats].filter(Boolean).join('  ·  ')
-  if (!below) {
-    write(name, canvas.height / 2, canvas.height * 0.62, '#ffffff')
+  // The same two lines the map draws, in the same order: who, then how they are doing.
+  if (!detail) {
+    write(label, canvas.height / 2, canvas.height * 0.62, '#ffffff')
     return
   }
 
-  write(name, canvas.height * 0.34, canvas.height * 0.48, '#ffffff')
-  write(below, canvas.height * 0.78, canvas.height * 0.3, '#d4d4d8')
+  write(label, canvas.height * 0.34, canvas.height * 0.48, '#ffffff')
+  write(detail, canvas.height * 0.78, canvas.height * 0.3, '#d4d4d8')
 }
 
 /** Past anything the world puts in the transparent pass, so a name is never sorted behind a body. */
@@ -685,27 +866,36 @@ const NAMETAG_ORDER = 1000
  * parser does not read, and a one-pixel fill is the browser's own converter. Falls back to the
  * accent's default if the token is missing or in some notation the canvas also refuses.
  */
-function themeColour(): number {
-  const token = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
-  if (!token) return OUTLINE_FALLBACK
+function themeColour(name: string, fallback: number): number {
+  const token = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  if (!token) return fallback
 
   const probe = document.createElement('canvas')
   probe.width = 1
   probe.height = 1
   const ctx = probe.getContext('2d')
-  if (!ctx) return OUTLINE_FALLBACK
+  if (!ctx) return fallback
 
   // An unreadable value leaves fillStyle untouched, so a sentinel says whether it was understood.
   ctx.fillStyle = '#000000'
   ctx.fillStyle = token
-  if (ctx.fillStyle === '#000000') return OUTLINE_FALLBACK
+  if (ctx.fillStyle === '#000000') return fallback
 
   ctx.fillRect(0, 0, 1, 1)
   const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
   return ((r ?? 0) << 16) | ((g ?? 0) << 8) | (b ?? 0)
 }
 
-const OUTLINE_FALLBACK = 0x4ade80
+/**
+ * Stand-ins for the two theme tokens, one each.
+ *
+ * One shared fallback was fine while there was one box colour. There are two now, and `--color-error`
+ * is an `oklch()` value while `--color-primary` is a hex: a browser whose canvas cannot parse the
+ * first would have fallen back to a green shared with the second, drawing every box in the fleet
+ * colour and saying nothing about it.
+ */
+const OUTLINE_OURS = 0x4ade80
+const OUTLINE_THEIRS = 0xe05252
 
 /** How thick the box is drawn, in pixels. */
 const OUTLINE_WIDTH = 3
@@ -721,6 +911,15 @@ const NAMETAG_CANVAS = { width: 500, height: 100 }
  * near a sixth of the viewport's width, whatever the distance.
  */
 const NAMETAG_WIDTH = 0.28
+
+/** How far above the head a label floats, in blocks. Upstream's number, for upstream's tags. */
+const NAMETAG_LIFT = 0.6
+
+/** Room left either side of a label for its own outline, in canvas pixels. */
+const NAMETAG_MARGIN = 10
+
+/** How small a line may be shrunk before it is condensed instead. Below this nothing is legible. */
+const NAMETAG_MIN_PX = 14
 
 function socketUrl(): string {
   const base = import.meta.env['VITE_API_BASE_URL'] || window.location.origin
@@ -753,12 +952,10 @@ function apply(current: Scene, event: ViewerEvent): void {
     }
     if (entity.name) current.seen.set(entity.id, entity.name)
     if (entity.username) current.names.set(entity.id, entity.username)
-    if (entity.pos) current.at.set(entity.id, entity.pos)
     if (entity.width !== undefined && entity.height !== undefined) {
       current.sizes.set(entity.id, { width: entity.width, height: entity.height })
     }
     if (entity.delete) {
-      current.at.delete(entity.id)
       current.sizes.delete(entity.id)
     }
     if (!drawable(current, entity)) return
@@ -806,7 +1003,6 @@ function restream(current: Scene, world: { version: string; minY?: number; heigh
   current.undrawable.clear()
   current.seen.clear()
   current.names.clear()
-  current.at.clear()
   current.sizes.clear()
   current.received = 0
 
@@ -945,13 +1141,36 @@ function showAgent(current: Scene): void {
     const built = current.buildBody?.()
     if (!built) return
     current.body = built
+    unskin(built)
     built.visible = !firstPerson.value
     current.viewer.scene.add(built)
+
+    // The agent's own skin, box and nametag. All three are done here rather than by the pass that
+    // decorates everybody else, because this body is not one of the streamed entities - the host
+    // omits the agent from its own view, so nothing in `viewer.entities` describes it.
+    const own = agent.value?.mcUsername
+    if (own) skin(current, built, own)
+
+    outlineOne(current, built, true, SELF)
+    const tag = current.buildNametag?.(SELF.height)
+    if (tag) built.add(tag)
   }
 
   current.body.position.set(pos.x, pos.y, pos.z)
   current.body.rotation.y = yaw
+
+  // Every frame the agent moves, so its own label keeps up with its own vitals the way the others
+  // do.
+  labelOne(current, current.body, agent.value?.mcUsername ?? undefined)
 }
+
+/**
+ * The agent's own hitbox, which nothing on the wire describes.
+ *
+ * The stream carries a width and height for every entity *except* this one - the host leaves the
+ * agent out of its own view - so the box around it is sized from what a player is.
+ */
+const SELF = { width: 0.6, height: 1.8 }
 
 /**
  * Builds the renderer and points it at Osmium's copy of the assets.
@@ -1057,15 +1276,24 @@ async function mount(world: { version: string; minY?: number; height?: number },
   // the same class, imported the way the rest of this app imports anything.
   const controls = new OrbitControls(viewer.camera as never, element)
 
-  // Shared by every box: the width is measured in pixels, so the material has to be told the size
-  // of the canvas - and one material means one thing to keep in step with it. See `resize`.
-  const outlineMaterial = new LineMaterial({
-    color: themeColour(),
-    linewidth: OUTLINE_WIDTH,
-    depthTest: false,
-    transparent: true,
-  })
-  outlineMaterial.resolution.set(element.clientWidth, element.clientHeight)
+  // Two, and the same two the map paints its markers with: the fleet in `--color-primary` and
+  // everybody else in `--color-error`. A width is measured in pixels, so each has to be told the
+  // size of the canvas - see `resize`.
+  const outlineMaterials = (
+    [
+      ['--color-primary', OUTLINE_OURS],
+      ['--color-error', OUTLINE_THEIRS],
+    ] as const
+  ).map(
+    ([token, fallback]) =>
+      new LineMaterial({
+        color: themeColour(token, fallback),
+        linewidth: OUTLINE_WIDTH,
+        depthTest: false,
+        transparent: true,
+      }),
+  )
+  for (const material of outlineMaterials) material.resolution.set(element.clientWidth, element.clientHeight)
 
   const models = await import('prismarine-viewer/viewer/lib/entity/entities.json')
   const built: Scene = {
@@ -1080,10 +1308,46 @@ async function mount(world: { version: string; minY?: number; height?: number },
     // The version is upstream's fixed one for entities, not the server's - that is the only set of
     // entity models the renderer ships textures for.
     buildBody: () => new Entity('1.16.4', 'player', viewer.scene).mesh as Mesh,
+    /**
+     * The body a slim skin needs, for swapping in once one turns up. See `dress`.
+     *
+     * Undefined rather than throwing when the model is missing — which is what a build that skipped
+     * `viewer-assets` looks like. A slim skin on wide arms is a pixel wrong; a skin that never
+     * arrives because building the body threw is the whole feature gone.
+     */
+    buildSlim: () => {
+      try {
+        return new Entity('1.16.4', SLIM, viewer.scene).mesh as Mesh
+      } catch (err) {
+        console.warn('[osmium] no slim player model; run the viewer-assets step', err)
+        return undefined
+      }
+    },
+    /**
+     * A skin as a texture, set up exactly as upstream sets up the one it replaces.
+     *
+     * Built here rather than cloned from the model's own, because upstream hands the same
+     * `THREE.Texture` to every entity naming the same file - `loadTexture` keeps a cache - so the
+     * texture on a player belongs to every player and to the agent's own body.
+     */
+    buildTexture: (image: HTMLCanvasElement) => {
+      const texture = new THREE.CanvasTexture(image)
+      // Minecraft's own sampling: a 64-pixel sheet on a model this size is magnified heavily, and
+      // anything but nearest turns a face into a smear.
+      texture.magFilter = THREE.NearestFilter
+      texture.minFilter = THREE.NearestFilter
+      // The model's UVs are written for a sheet whose origin is the top left, which is the opposite
+      // of what three assumes.
+      texture.flipY = false
+      texture.wrapS = THREE.RepeatWrapping
+      texture.wrapT = THREE.RepeatWrapping
+      texture.needsUpdate = true
+      return texture as unknown as TextureLike
+    },
     // In world units, not model units: what an entity is attached to is a plain Object3D, and the
     // sixteenth-scale lives on its children. Scaling for it here made everything sixteen times its
     // size.
-    buildOutline: (width: number, height: number) => {
+    buildOutline: (width: number, height: number, ours: boolean) => {
       const box = new THREE.BoxGeometry(width, height, width)
       // The model stands on its origin, so the box is raised to sit around it rather than straddle.
       box.translate(0, height / 2, 0)
@@ -1093,7 +1357,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       // out of quads instead, so a width is actually a width.
       const outline = new LineSegments2(
         new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(box)),
-        outlineMaterial,
+        ours ? outlineMaterials[0] : outlineMaterials[1],
       ) as unknown as Mesh
       outline.renderOrder = NAMETAG_ORDER
       outline.frustumCulled = false
@@ -1101,13 +1365,31 @@ async function mount(world: { version: string; minY?: number; height?: number },
       outline.userData['osmiumOutline'] = true
       return outline
     },
+    /**
+     * A nametag for a body the stream never announced.
+     *
+     * Upstream builds one only inside `getEntityMesh`, and only when the update carries a username -
+     * which the agent's own body, built straight from `Entity`, never gets. Same canvas size as
+     * upstream's so `redrawNametag` and the shaping pass need no second case.
+     */
+    buildNametag: (height: number) => {
+      const label = document.createElement('canvas')
+      label.width = NAMETAG_CANVAS.width
+      label.height = NAMETAG_CANVAS.height
+
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(label) }),
+      ) as unknown as Mesh
+      // Over the head rather than through it, the height upstream uses for everybody else.
+      sprite.position.set(0, height + NAMETAG_LIFT, 0)
+      return sprite
+    },
     filters: { linear: THREE.LinearFilter, clamp: THREE.ClampToEdgeWrapping },
     bounds,
     received: 0,
-    outlineMaterial,
+    outlineMaterials,
     seen: new Map(),
     names: new Map(),
-    at: new Map(),
     sizes: new Map(),
   }
   scene.value = built
@@ -1137,7 +1419,9 @@ function resize(): void {
   current.viewer.camera.updateProjectionMatrix()
   current.renderer.setSize(element.clientWidth, element.clientHeight, false)
   // The box's width is a number of pixels, which means nothing without knowing how many there are.
-  current.outlineMaterial?.resolution.set(element.clientWidth, element.clientHeight)
+  for (const material of current.outlineMaterials ?? []) {
+    material.resolution.set(element.clientWidth, element.clientHeight)
+  }
 }
 
 function fail(message: string): void {
