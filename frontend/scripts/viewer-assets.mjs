@@ -828,6 +828,148 @@ function verifyMapColours(colours, modelled) {
 }
 
 /**
+ * The slim player, added to the renderer's entity table.
+ *
+ * Upstream ships one `player`, with four-pixel arms. A skin drawn for the slim model has three-pixel
+ * ones, and worn on the wide model it runs a column of the sleeve's neighbour down each arm.
+ *
+ * **Written into the package rather than registered at runtime**, which was the first attempt and
+ * does not work: `Entity.js` does `require('./entities.json')`, and the bundler inlines that table
+ * into its pre-bundle of the package — so an import of the same path from application code is a
+ * different object, and adding a model to it adds nothing to what `Entity` can build. Patched here
+ * instead, beside the source edits above and for the same reason: this is where upstream is met on
+ * its own terms.
+ *
+ * Derived, not written out. `addCube` computes a cube's UV unwrap by walking its own `size` from its
+ * `uv` origin, so narrowing an arm from four to three moves every face across it to exactly where a
+ * slim sheet keeps them. The origins move too: an arm hangs off the side of the body, so the right
+ * one starts a pixel further in while the left one still begins where the body ends.
+ */
+function stageSlimPlayer() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+
+  if (entities[SLIM_PLAYER]) return
+
+  const classic = entities[PLAYER]
+  if (!classic) throw new Error('viewer-assets: the renderer has no player to derive a slim one from')
+
+  const slim = structuredClone(classic)
+  let narrowed = 0
+
+  for (const geometry of Object.values(slim.geometry ?? {})) {
+    for (const bone of geometry?.bones ?? []) {
+      const shift = SLIM_ARMS[bone.name]
+      if (shift === undefined) continue
+
+      for (const cube of bone.cubes ?? []) {
+        cube.size[0] = 3
+        cube.origin[0] += shift
+        narrowed++
+      }
+    }
+  }
+
+  // Four: an arm and a sleeve on each side. Fewer means upstream renamed a bone and the model would
+  // come out half slim, which is worse than not offering one.
+  if (narrowed !== 4) {
+    throw new Error(`viewer-assets: narrowed ${narrowed} arm cubes, expected 4 - upstream's player has changed`)
+  }
+
+  entities[SLIM_PLAYER] = slim
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log(`viewer-assets: added ${SLIM_PLAYER} to the entity table`)
+}
+
+/**
+ * Drops Vite's pre-bundle, because the table just written is **inlined into it**.
+ *
+ * `Entity.js` does `require('./entities.json')`, so the optimiser copies the whole table into its
+ * bundle of the package. That cache is keyed on the lockfile and the config, not on the contents of
+ * `node_modules` — so a bundle built before this ran keeps serving a table with no slim player in
+ * it, for as long as the cache survives.
+ *
+ * The failure that causes is silent and looks like a different bug: `Entity` throws on a name the
+ * table does not have, `buildSlim` returns undefined, and a slim skin is worn on the four-pixel
+ * model — a column of the sleeve's neighbour down each arm, and nothing in the interface that says
+ * why. Cheaper to spend one re-optimise here than to debug that twice, which is what it cost.
+ */
+function dropDepCache() {
+  const cache = path.resolve(here, '../node_modules/.vite')
+  if (!existsSync(cache)) return
+  rmSync(cache, { recursive: true, force: true })
+  console.log('viewer-assets: dropped node_modules/.vite so the new table is picked up')
+}
+
+/**
+ * Puts each limb's texture on the limb that is actually on that side.
+ *
+ * Upstream's table pairs every limb bone with the **opposite** side's region of the skin: the bone
+ * it calls `rightArm` stands where the player's left arm goes, and reads from `[40,16]`, which is the
+ * right arm's. So a player wears each sleeve and each trouser leg on the wrong side. Only the head
+ * and the body look right, and only because neither has an opposite half to be confused with.
+ *
+ * **Corrected on the texture side, not the geometry side.** Both would put the right pixels in the
+ * right place, and this one cannot disturb anything else: pivots, rotations and the arm-narrowing
+ * that derives the slim model all read the geometry, and none of them is touched. Nothing is
+ * reflected either — each limb keeps the orientation it already had, which was never wrong.
+ *
+ * Written as the assignment rather than as a swap, so running it twice lands where running it once
+ * did. A swap applied a second time would put everything back.
+ */
+function pairLimbTextures() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+  const before = JSON.stringify(entities)
+
+  for (const model of [PLAYER, SLIM_PLAYER]) {
+    const entry = entities[model]
+    if (!entry) continue
+
+    for (const geometry of Object.values(entry.geometry ?? {})) {
+      for (const bone of geometry?.bones ?? []) {
+        const uv = LIMB_UV[bone.name]
+        if (!uv) continue
+        for (const cube of bone.cubes ?? []) cube.uv = [...uv]
+      }
+    }
+  }
+
+  if (JSON.stringify(entities) === before) return
+
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log('viewer-assets: limbs now wear their own side of the skin')
+}
+
+/**
+ * Where each limb bone reads from, by the side it actually stands on.
+ *
+ * The four on the left of each pair are upstream's own names; the origins beside them are the other
+ * one's. That is the bug, stated as its fix.
+ */
+const LIMB_UV = {
+  rightArm: [32, 48],
+  rightSleeve: [48, 48],
+  leftArm: [40, 16],
+  leftSleeve: [40, 32],
+  rightLeg: [16, 48],
+  rightPants: [0, 48],
+  leftLeg: [0, 16],
+  leftPants: [0, 32],
+}
+
+/** The model upstream ships, which the slim one is derived from. */
+const PLAYER = 'player'
+
+/** The name the frontend asks for. Prefixed, because it is ours and not something upstream ships. */
+const SLIM_PLAYER = 'osmium_player_slim'
+
+/** The four bones an arm is made of, and how far each origin shifts as it narrows. */
+const SLIM_ARMS = { leftArm: 0, leftSleeve: 0, rightArm: 1, rightSleeve: 1 }
+
+/**
  * A sprite sheet of every item's icon, for drawing an agent's inventory.
  *
  * Two sources, because Minecraft has two kinds of item. Something you hold - a pickaxe, a carrot -
@@ -1028,6 +1170,8 @@ function nextPowerOfTwo(n) {
 }
 
 mkdirSync(out, { recursive: true })
+stageSlimPlayer()
+pairLimbTextures()
 await stageWorker()
 stageEntityTextures()
 for (const version of VERSIONS) {
