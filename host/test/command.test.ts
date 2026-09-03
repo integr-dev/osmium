@@ -5,11 +5,15 @@ import {
   disruptsBuilding,
   addressedTo,
   allows,
+  coinFlip,
   COMMANDS,
   commandIn,
+  EIGHT_BALL,
+  eightBall,
   grantFrom,
   helpLine,
   PREFIX,
+  rolled,
   runnable,
   sayable,
   TRUST,
@@ -222,10 +226,20 @@ describe('help', () => {
  * `/op`. So it is never what an unsure answer resolves to.
  */
 describe('how far a player is trusted', () => {
-  it('lets a chat-trusted player use the chat commands', () => {
+  it('lets a chat-trusted player ask the agent about itself', () => {
     expect(allows(tier(TRUST.chat), 'id')).toBe(true)
-    expect(allows(tier(TRUST.chat), 'say')).toBe(true)
     expect(allows(tier(TRUST.chat), 'help')).toBe(true)
+    expect(allows(tier(TRUST.chat), 'cf')).toBe(true)
+  })
+
+  /**
+   * It only talks, so it reads as harmless - but what it says is arbitrary and it says it under an
+   * account you own, and enough of that is a ban. The readings are fixed sentences about the agent;
+   * this is a stranger's words in its mouth.
+   */
+  it("does not let a chat-trusted player put words in the agent's mouth", () => {
+    expect(allows(tier(TRUST.chat), 'say')).toBe(false)
+    expect(allows(tier(TRUST.commands), 'say')).toBe(true)
   })
 
   it('does not let a chat-trusted player run server commands', () => {
@@ -254,13 +268,13 @@ describe('how far a player is trusted', () => {
   })
 
   it('only offers help for what the asker could actually use', () => {
-    for (const elevated of ['run', 'disconnect', 'reconnect']) {
+    for (const elevated of ['say', 'run', 'disconnect', 'reconnect']) {
       expect(helpLine(tier(TRUST.chat))).not.toContain(elevated)
       expect(helpLine(tier(TRUST.commands))).toContain(elevated)
     }
 
     // And still offers the ones they can use.
-    for (const plain of ['id', 'ping', 'health', 'food', 'uptime', 'say', 'help']) {
+    for (const plain of ['id', 'ping', 'health', 'food', 'uptime', 'help', '8ball', 'cf', 'roll']) {
       expect(helpLine(tier(TRUST.chat))).toContain(plain)
     }
   })
@@ -449,5 +463,102 @@ describe('commands that would disturb a build', () => {
   it('has no opinion about a word that is not a command', () => {
     // Read as an account rather than a verb, and the caller has already refused it by then.
     expect(disruptsBuilding('Notch')).toBe(false)
+  })
+})
+
+/**
+ * The toys. Nothing here reads the world or acts on it — they exist so that a room with a bot in it
+ * has something to do with it — so what is worth pinning is that they are fair, that they are bounded,
+ * and that they never put somebody else's words in an agent's mouth.
+ */
+describe('the toys', () => {
+  it('gives one of the twenty answers, whatever the roll', () => {
+    for (let i = 0; i < 1000; i++) {
+      expect(EIGHT_BALL).toContain(eightBall(i / 1000))
+    }
+  })
+
+  /** The ends are where an off-by-one lives: a rounding slip reads past the table or never reaches it. */
+  it('reaches both ends of the table and stays inside it', () => {
+    expect(eightBall(0)).toBe(EIGHT_BALL[0])
+    expect(eightBall(0.999999)).toBe(EIGHT_BALL[EIGHT_BALL.length - 1])
+    // Math.random() never returns 1, but nothing in the type says so.
+    expect(EIGHT_BALL).toContain(eightBall(1))
+  })
+
+  /**
+   * The question is never repeated back. Echoing it would make this a second way to put a stranger's
+   * words in an agent's mouth, without the guard `say` has.
+   */
+  it('never says the question back', () => {
+    const asked = '/op me'
+
+    for (let i = 0; i < 200; i++) {
+      expect(eightBall(i / 200)).not.toContain(asked)
+    }
+  })
+
+  it('flips a fair coin', () => {
+    expect(coinFlip(0)).toBe('heads')
+    expect(coinFlip(0.4999)).toBe('heads')
+    expect(coinFlip(0.5)).toBe('tails')
+    expect(coinFlip(0.9999)).toBe('tails')
+  })
+
+  it('rolls a six when nobody says otherwise', () => {
+    expect(rolled([], 0)).toEqual({ sides: 6, face: 1 })
+    expect(rolled([], 0.999999)).toEqual({ sides: 6, face: 6 })
+  })
+
+  it('rolls what was asked for', () => {
+    expect(rolled(['20'], 0)).toEqual({ sides: 20, face: 1 })
+    expect(rolled(['20'], 0.999999)).toEqual({ sides: 20, face: 20 })
+  })
+
+  /** Somebody reaching for the obvious thing gets an answer rather than a lesson in syntax. */
+  it('falls back to six for anything that is not a number of sides', () => {
+    for (const asked of ['d20', 'twenty', '', '1', '0', '-4', '2.5', '99999', 'NaN']) {
+      expect(rolled([asked], 0.5).sides).toBe(6)
+    }
+  })
+
+  it('never rolls outside the die', () => {
+    for (let i = 0; i < 1000; i++) {
+      const { sides, face } = rolled(['20'], i / 1000)
+      expect(face).toBeGreaterThanOrEqual(1)
+      expect(face).toBeLessThanOrEqual(sides)
+    }
+  })
+
+  it('is read out of chat like any other command', () => {
+    expect(commandIn(`${PREFIX} 8ball will it rain`)).toEqual({
+      account: undefined,
+      name: '8ball',
+      args: ['will', 'it', 'rain'],
+    })
+    expect(commandIn(`${PREFIX} @MeowBot1 cf`)).toEqual({ account: 'MeowBot1', name: 'cf', args: [] })
+  })
+
+  /** Talking, not acting: they belong to the tier somebody gets for being on the list at all. */
+  it('is on the chat tier, and is refused by a list that does not name it', () => {
+    for (const name of ['8ball', 'cf', 'roll']) {
+      expect(allows(tier(TRUST.chat), name)).toBe(true)
+      expect(allows(only('run'), name)).toBe(false)
+      expect(disruptsBuilding(name)).toBe(false)
+    }
+  })
+
+  /** Elevated, but not disruptive: talking does not take a builder off its box, which `run` does. */
+  it('does not hold up a build the way run does', () => {
+    expect(disruptsBuilding('say')).toBe(false)
+    expect(disruptsBuilding('run')).toBe(true)
+  })
+
+  it('lists itself in help, because help is generated from the table', () => {
+    const line = helpLine(tier(TRUST.chat))
+
+    expect(line).toContain('8ball <question>')
+    expect(line).toContain('cf')
+    expect(line).toContain('roll [sides]')
   })
 })

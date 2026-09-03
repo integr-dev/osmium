@@ -16,13 +16,21 @@ export const PREFIX = '!osm'
 /**
  * How far a trusted player is trusted.
  *
- * **Two powers, not one.** Making an agent talk and making an agent *act* are different things, and
- * a list with one level forces the operator to grant both to get either. `chat` is the tier somebody
- * gets for being in the list at all; `commands` additionally lets them run server commands through
- * the agent, under whatever permissions its Minecraft account holds.
+ * **Two powers, not one.** Asking an agent about itself and *using* an agent are different things,
+ * and a list with one level forces the operator to grant both to get either. `chat` is the tier
+ * somebody gets for being in the list at all: it asks questions and gets answers about the agent, and
+ * plays with the toys. `commands` additionally lets them run server commands through the agent,
+ * under whatever permissions its Minecraft account holds — and put words of their choosing in its
+ * mouth.
  *
  * `commands` is close to handing over the account. Anyone holding it on an operator bot can `/op`
  * themselves, and nothing here can tell that apart from an intended `/tp`.
+ *
+ * **`say` is on that side too**, which is not obvious, because it only talks. What it says is
+ * arbitrary and it says it under an account you own: the room reads it as the account's owner, and
+ * enough of it is a mute or a ban, which is the one consequence here that cannot be undone. The
+ * agent's own readings are fixed sentences about itself and carry neither risk, which is what
+ * separates them.
  */
 export const TRUST = { chat: 'chat', commands: 'commands' } as const
 
@@ -37,8 +45,8 @@ export type Trust = (typeof TRUST)[keyof typeof TRUST]
  * the player who should have one command out of the powerful tier and none of the others.
  *
  * A list is exact in both directions: it grants what it names and refuses everything else, the chat
- * commands included. Anything less would make "only `run`" quietly mean "`run` and the seven
- * harmless ones", which is not what somebody naming commands one at a time asked for.
+ * commands included. Anything less would make "only `run`" quietly mean "`run` and the harmless
+ * ones", which is not what somebody naming commands one at a time asked for.
  */
 export type Grant =
   | { kind: 'tier'; tier: Trust }
@@ -61,7 +69,7 @@ export function allows(grant: Grant | undefined, command: string): boolean {
  * What was written after the colon, read into a grant.
  *
  * A word that is not a tier is a **list of one**, not a tier this build guessed at. Falling back to
- * `chat` there would grant the seven harmless commands to an entry that plainly asked for something
+ * `chat` there would grant every harmless command to an entry that plainly asked for something
  * else - and since a command that cannot be named is refused, a list of nonsense grants nothing.
  */
 export function grantFrom(written: string | undefined): Grant {
@@ -92,7 +100,11 @@ export function grantLabel(grant: Grant | undefined): string {
  * `satisfies` below is what makes answering it compulsory — a command added without it does not
  * compile. `run` is why it exists at all: it hands somebody an arbitrary server command, so a
  * `/tp` typed in chat can take a builder off its box mid-segment. `disconnect` and `reconnect` end
- * the session under it. The rest only read, or talk.
+ * the session under it. The rest only read, or talk — `say` included, which needs `commands` but
+ * does not disrupt: talking does not take a builder off its box.
+ *
+ * Ordered by tier, because `help` is rendered in this order and a reader should not have to check
+ * each name against the list of what they are allowed.
  *
  * A first word that is not one of these keys is read as an account instead.
  */
@@ -102,8 +114,11 @@ export const COMMANDS = {
   health: { args: '', needs: 'chat', disrupts: false },
   food: { args: '', needs: 'chat', disrupts: false },
   uptime: { args: '', needs: 'chat', disrupts: false },
-  say: { args: '<message>', needs: 'chat', disrupts: false },
   help: { args: '', needs: 'chat', disrupts: false },
+  '8ball': { args: '<question>', needs: 'chat', disrupts: false },
+  cf: { args: '', needs: 'chat', disrupts: false },
+  roll: { args: '[sides]', needs: 'chat', disrupts: false },
+  say: { args: '<message>', needs: 'commands', disrupts: false },
   run: { args: '<command>', needs: 'commands', disrupts: true },
   disconnect: { args: '', needs: 'commands', disrupts: true },
   reconnect: { args: '', needs: 'commands', disrupts: true },
@@ -111,6 +126,77 @@ export const COMMANDS = {
 
 /** Minecraft refuses a chat message longer than this, and a server usually kicks for trying. */
 const SAY_MAX = 256
+
+/**
+ * The twenty answers a Magic 8-Ball gives, in its own order: ten yes, five maybe, five no.
+ *
+ * **Fixed strings, and the question is never repeated back.** Echoing it would make `8ball` a second
+ * way to put a stranger's words in an agent's mouth — which is what `say` is, with a guard on it
+ * that this would not have. The answer is the whole point of the toy anyway; the question was
+ * rhetorical.
+ */
+export const EIGHT_BALL = [
+  'it is certain',
+  'it is decidedly so',
+  'without a doubt',
+  'yes definitely',
+  'you may rely on it',
+  'as I see it, yes',
+  'most likely',
+  'outlook good',
+  'yes',
+  'signs point to yes',
+  'reply hazy, try again',
+  'ask again later',
+  'better not tell you now',
+  'cannot predict now',
+  'concentrate and ask again',
+  "don't count on it",
+  'my reply is no',
+  'my sources say no',
+  'outlook not so good',
+  'very doubtful',
+] as const
+
+/**
+ * The three below take their randomness as an argument rather than reaching for `Math.random`.
+ *
+ * Not ceremony: a coin that comes up heads half the time is the entire behaviour, and a function
+ * that rolls its own dice can only be tested by rolling it a thousand times and hoping. Passing the
+ * number in makes each of them a table of inputs to outputs, and leaves the one call to `Math.random`
+ * where it belongs, at the edge.
+ *
+ * `chance` is in [0, 1), as `Math.random` returns.
+ */
+export function eightBall(chance: number): string {
+  return EIGHT_BALL[Math.min(EIGHT_BALL.length - 1, Math.floor(chance * EIGHT_BALL.length))]!
+}
+
+export function coinFlip(chance: number): string {
+  return chance < 0.5 ? 'heads' : 'tails'
+}
+
+/** A die with this many sides when nobody says otherwise, and the most one may ask for. */
+const DIE = 6
+const SIDES_MAX = 1000
+
+/**
+ * A roll of `[sides]`, defaulting to six.
+ *
+ * **Anything unreadable is a six rather than a refusal.** `!osm roll d20` and `!osm roll twenty` are
+ * somebody reaching for the obvious thing, and answering the common case beats explaining the syntax
+ * to a room. One-sided and negative dice are the same case: not a number of sides.
+ *
+ * Capped, because the answer goes into chat and a die with a million sides is a number nobody asked
+ * to read.
+ */
+export function rolled(words: string[], chance: number): { sides: number; face: number } {
+  const asked = Number(words[0])
+  const sides =
+    Number.isInteger(asked) && asked >= 2 && asked <= SIDES_MAX ? asked : DIE
+
+  return { sides, face: Math.min(sides, Math.floor(chance * sides) + 1) }
+}
 
 export type CommandName = keyof typeof COMMANDS
 

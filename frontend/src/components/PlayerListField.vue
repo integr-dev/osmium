@@ -164,7 +164,7 @@ function paste(event: ClipboardEvent): void {
           -->
             <!--
               What they hold, as a count, and the way in to change it. A count rather than the names:
-              ten commands do not fit beside a username, and the question a list is scanned for is
+              a dozen commands do not fit beside a username, and the question a list is scanned for is
               "does anybody here have more than they should", which a number and a colour answer.
             -->
             <button

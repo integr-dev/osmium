@@ -592,13 +592,21 @@ adds to it, and an operator reading the feed at midnight has only this line to g
 
 ```
 Joined play.example.com:41945 as Mason_04 on 26.1, at 128, 71, -344 in the overworld
+Joined play.dupeanarchy.com as intemeow on 26.1, at 250, 320, 249 in pvp arena
 Died at 214, 12, -87 in the nether: Mason_04 was slain by Zombified Piglin
 Kicked after 4 hours: You have been idle for too long
 Dropped from play.example.com:41945 after 2 minutes: socketClosed
 Could not join play.example.com:25565 speaking 26.1: getaddrinfo ENOTFOUND
 ```
 
-Two things worth copying. **Resolve the server's components against the version's language file**
+**Name the world the agent is in, not the dimension type it is built on.** These two lines are the
+same code: the first is a vanilla server, the second one with custom worlds. The type is the obvious
+thing to reach for and it is a trap — a server like the second runs nearly everything as type
+`overworld`, so every line says "in the overworld" and says nothing, while the agent's own page reads
+the level name and says "Pvp Arena". One of them has to give, and it is the one that is true and
+useless. "the" belongs to the three the game ships; a server's own world is a name.
+
+Two more things worth copying. **Resolve the server's components against the version's language file**
 before putting them in here — a kick arrives as `multiplayer.disconnect.idling` and a death as
 `death.attack.mob`, and a feed full of translation keys is a feed nobody reads. And **name the
 version on a failed join**: it may have been guessed (§3 `connect`), and this line is the only place
@@ -888,20 +896,39 @@ Ordering within a reconnect replay is preserved by row id, so replaying a buffer
 An agent can be told to do things from inside the game:
 
 ```
-!osm [account] id | ping | health | food | uptime | say <message> | help   trusted for chat
-!osm [account] run <command> | disconnect | reconnect                       trusted for commands
+!osm [account] id | ping | health | food | uptime | help                   trusted for chat
+!osm [account] 8ball <question> | cf | roll [sides]                         trusted for chat
+!osm [account] say <message> | run <command> | disconnect | reconnect        trusted for commands
 ```
 
 Naming an account addresses one agent — `@name` works too. Leaving it out addresses every agent that
 heard the line. `help` is generated from the command table and **filtered to the asker's tier**, so a
 command added there lists itself, and somebody who cannot use `run` is not told it exists.
 
-**Two tiers, because talking and acting are different powers.** `players.whitelist` holds `name` for
+**`8ball`, `cf` and `roll` are toys**, and are on the chat tier because talking is all they do.
+Two things about them are deliberate. The 8-ball **never repeats the question back**: echoing it
+would be a second way to put a stranger's words in an agent's mouth, and that is what `say` is, with
+a guard this would not have. And all three take their randomness as an argument, leaving the single
+call to `Math.random` at the edge — a coin that comes up heads half the time is the whole behaviour,
+and a function that rolls its own dice can only be tested by rolling it a thousand times and hoping.
+
+`roll` answers a six for anything it cannot read as a number of sides, `d20` and `twenty` included:
+somebody reaching for the obvious thing gets an answer rather than a lesson in syntax. Sides are
+capped at 1000, because the answer goes into chat.
+
+**`say` needs `commands`, not `chat`**, which surprises people because it only talks. What it says
+is arbitrary and it says it under an account you own — the room reads it as that account's owner, and
+enough of it is a mute or a ban, the one consequence here that cannot be undone. It does not
+`disrupt`, though: talking does not take a builder off its box, which is what separates it from
+`run`.
+
+**Two tiers, because asking and using are different powers.** `players.whitelist` holds `name` for
 chat and `name:commands` for both; an entry with nothing written after the colon is chat. A setting
 from a newer Osmium must never quietly grant more than it says.
 
-- **chat** — `id`, `ping`, `health`, `food`, `uptime`, `say`, `help`. Makes the agent talk and
-  report about itself.
+- **chat** — `id`, `ping`, `health`, `food`, `uptime`, `help`, `8ball`, `cf`, `roll`. Asks the
+  agent about itself, and plays with the toys. Everything it answers is a fixed sentence about
+  itself.
 - **an exact list** — `name:run+say` grants precisely those and refuses everything else, the chat
   commands included. **This is what the interface writes**, always: the tiers are read for settings
   saved before it existed, and normalised into a list the first time the form is saved. This is for the player who should have one command out of the powerful tier and

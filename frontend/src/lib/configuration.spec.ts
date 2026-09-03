@@ -103,9 +103,10 @@ describe('granting commands one at a time', () => {
     expect(playersFrom('Notch:commands')).toEqual([{ name: 'Notch', commands: [...COMMAND_NAMES] }])
   })
 
-  /** The chat tier never reached the powerful three, and expanding it must not start. */
+  /** The chat tier never reached the powerful ones, and expanding it must not start. */
   it('expands the chat tier to the harmless commands only', () => {
-    expect(CHAT_COMMANDS).toContain('say')
+    expect(CHAT_COMMANDS).toContain('id')
+    expect(CHAT_COMMANDS).not.toContain('say')
     expect(CHAT_COMMANDS).not.toContain('run')
     expect(CHAT_COMMANDS).not.toContain('disconnect')
     expect(CHAT_COMMANDS).not.toContain('reconnect')
@@ -141,7 +142,8 @@ describe('granting commands one at a time', () => {
     expect(elevated('run')).toBe(true)
     expect(elevated('disconnect')).toBe(true)
     expect(elevated('reconnect')).toBe(true)
-    expect(elevated('say')).toBe(false)
+    // Only talks, but says whatever it is told to, under an account you own.
+    expect(elevated('say')).toBe(true)
     expect(elevated('selfDestruct')).toBe(false)
   })
 })
@@ -164,3 +166,23 @@ describe('the settings a form binds to', () => {
     expect(settingsOf(agent)['chat.sender']).toBe('^x')
   })
 })
+
+/**
+ * The table here is a copy of the host's, so the two can drift - and the picker can only offer what
+ * this copy names. A command the host answers but this does not is one an operator cannot grant.
+ */
+describe('the commands the picker can offer', () => {
+  it('offers the toys, on the harmless side of the list', () => {
+    for (const name of ['8ball', 'cf', 'roll']) {
+      expect(COMMAND_NAMES).toContain(name)
+      expect(CHAT_COMMANDS).toContain(name)
+      expect(elevated(name)).toBe(false)
+    }
+  })
+
+  /** What a bare name in an old setting expands to, which must not quietly shrink somebody's grant. */
+  it('expands a bare name to every harmless command, the toys included', () => {
+    expect(playersFrom('integr')).toEqual([{ name: 'integr', commands: CHAT_COMMANDS }])
+  })
+})
+

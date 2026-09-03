@@ -170,8 +170,9 @@ export const USERNAME = /^[A-Za-z0-9_]{1,16}$/
 /**
  * How far a player on the list is trusted.
  *
- * **Two powers, not one.** `chat` lets somebody make an agent talk and report; `commands` also lets
- * them run server commands through it, under whatever permissions the agent's Minecraft account
+ * **Two powers, not one.** `chat` lets somebody ask an agent about itself; `commands` also lets
+ * them put words of their choosing in its mouth and run server commands through it, under whatever
+ * permissions the agent's Minecraft account
  * holds. That second one is close to handing over the account — on an operator bot it is `/op` — so
  * it is a deliberate second step rather than something being on the list already grants.
  */
@@ -194,8 +195,11 @@ export const COMMANDS = {
   health: TRUST.chat,
   food: TRUST.chat,
   uptime: TRUST.chat,
-  say: TRUST.chat,
   help: TRUST.chat,
+  '8ball': TRUST.chat,
+  cf: TRUST.chat,
+  roll: TRUST.chat,
+  say: TRUST.commands,
   run: TRUST.commands,
   disconnect: TRUST.commands,
   reconnect: TRUST.commands,
@@ -293,12 +297,12 @@ export function playersTo(players: TrustedPlayer[]): string {
 /**
  * The inverse of {@link commandsFrom}.
  *
- * Always explicit, never a tier. An entry read as `commands` is written back as the ten commands it
+ * Always explicit, never a tier. An entry read as `commands` is written back as every command it
  * meant - longer, and worth it: what is stored then says what is granted, and adding a command to
  * this build cannot widen a grant somebody already made.
  *
  * Granting nothing is spelled out rather than written as an empty suffix, which would read back as
- * the chat tier and hand back the seven commands that were just taken away.
+ * the chat tier and hand back the harmless commands that were just taken away.
  */
 export function commandsTo(commands: string[]): string {
   return commands.length ? commands.join('+') : NOTHING
