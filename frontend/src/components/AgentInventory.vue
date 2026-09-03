@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Backpack, TriangleAlert } from 'lucide-vue-next'
 import { t } from '../i18n'
 import { useAgentStore, type AgentInventory } from '../stores/agents'
@@ -64,6 +64,83 @@ const bySlot = computed(() => {
 
 /** Which square the agent has in hand, as a slot rather than as a hotbar index. */
 const heldSlot = computed(() => (inventory.value ? HOTBAR[inventory.value.held] : undefined))
+
+/**
+ * The ring that says which square is in hand, and travels between them.
+ *
+ * The same measure-and-translate as `TabBar`, and it is here rather than shared with it because
+ * the two agree on nothing but the idea: that marker is a background a tab sits on and is sized to
+ * the tab it fills, this one is a ring drawn over a square that is already there. What they share
+ * is the reason - a border on each square can only appear here and vanish there, and switching hand
+ * is a movement along the bar.
+ */
+const hotbar = ref<HTMLElement | null>(null)
+const ring = ref({ x: 0, y: 0, width: 0, height: 0 })
+
+/** Off until it has been measured, so it never slides in from the first square on open. */
+const ringPlaced = ref(false)
+
+/**
+ * Measured off the laid-out squares rather than computed from the grid.
+ *
+ * `data-slot` rather than a ref per square: the numbers are this application's own, never anything
+ * a server names, and reading one attribute is less machinery than keeping nine element refs in
+ * step. The container's own border is taken off both axes because an absolutely positioned child is
+ * placed against the padding box while `getBoundingClientRect` reports the border box - the same
+ * few pixels the tab marker was out by before it did this.
+ */
+function measureRing(): void {
+  const container = hotbar.value
+  const slot = heldSlot.value
+  // The button, not the cell it sits in. A grid track is a fraction of the row and the square is a
+  // fixed size inside it, so the two boxes agree to within a rounding error - and a ring that is a
+  // rounding error too wide is a ring that does not sit on the square it is pointing at.
+  const square =
+    slot === undefined ? null : container?.querySelector<HTMLElement>(`[data-slot="${slot}"] > button`)
+  if (!container || !square) {
+    ringPlaced.value = false
+    return
+  }
+
+  const strut = container.getBoundingClientRect()
+  const box = square.getBoundingClientRect()
+
+  ring.value = {
+    x: box.left - strut.left - container.clientLeft,
+    y: box.top - strut.top - container.clientTop,
+    width: box.width,
+    height: box.height,
+  }
+  ringPlaced.value = true
+}
+
+/** After the DOM has the change: every number here comes off the laid-out squares. */
+async function remeasureRing(): Promise<void> {
+  await nextTick()
+  measureRing()
+}
+
+// The hand moving is the whole point; the inventory arriving is what puts the squares there to
+// measure in the first place.
+watch([heldSlot, inventory], remeasureRing)
+
+let squares: ResizeObserver | null = null
+
+onMounted(() => {
+  void remeasureRing()
+  // The card is beside the nearby list in a grid that reflows, and the sidebar can be dragged.
+  squares = new ResizeObserver(() => measureRing())
+  if (hotbar.value) squares.observe(hotbar.value)
+})
+
+onBeforeUnmount(() => squares?.disconnect())
+
+/** Where the ring sits. Translated rather than offset, so it is the one thing that animates. */
+const ringStyle = computed(() => ({
+  translate: `${ring.value.x}px ${ring.value.y}px`,
+  width: `${ring.value.width}px`,
+  height: `${ring.value.height}px`,
+}))
 
 /**
  * The sprite sheet, once it arrives.
@@ -385,10 +462,23 @@ function release(slot: number): void {
               not look alike.
             -->
             <div class="mt-1 text-xs uppercase opacity-50">{{ t('inventory.hotbar') }}</div>
-            <div class="grid grid-cols-9 gap-1.5">
+            <div ref="hotbar" class="relative grid grid-cols-9 gap-1.5">
+              <!--
+                Which square is in hand, as one ring that travels rather than nine that take turns.
+                After the squares in the DOM so it paints over them: neither carries a stacking
+                order, which leaves document order to decide.
+              -->
+              <span
+                aria-hidden="true"
+                class="osmium-held-marker"
+                :class="ringPlaced ? '' : 'osmium-held-marker-idle'"
+                :style="ringStyle"
+              ></span>
+
               <InventorySquare
                 v-for="slot in HOTBAR"
                 :key="slot"
+                :data-slot="slot"
                 :item="bySlot.get(slot)"
                 :icon="icon(slot)"
                 :label="label(slot)"

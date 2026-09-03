@@ -342,6 +342,27 @@ progress::-moz-progress-bar {
 }
 
 /*
+ * Which hotbar square an agent is holding, as a ring that travels between them.
+ *
+ * The same trick as the tab marker and for the same reason: a border drawn on each square can only
+ * appear here and disappear there, and switching hand is a *movement* — the agent ran its scroll
+ * wheel along the bar. One element that slides says that; nine that take turns lighting up do not.
+ *
+ * Over the squares rather than under them, unlike the tabs: the pill there is a background the tab
+ * sits on, and this is a ring around something already drawn. Transparent inside, so the icon it
+ * rings is the square's own.
+ */
+.osmium-held-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  border: 2px solid color-mix(in oklab, var(--color-warning) 70%, transparent);
+  border-radius: var(--radius-field, 0.25rem);
+  transition: translate 0.28s var(--osmium-ease);
+}
+
+/*
  * What a panel is swapped inside, wherever it slides sideways to get there.
  *
  * A panel arrives from 1.25rem outside the frame and the one it replaces leaves the same way,
@@ -496,6 +517,17 @@ progress::-moz-progress-bar {
 
 /* Before it has been measured. It has nowhere to be yet, and no distance to have travelled. */
 .osmium-tab-marker-idle {
+  opacity: 0;
+  transition: none;
+}
+
+/*
+ * Off until the row has been measured once, and again whenever there is nothing to point at.
+ *
+ * Without it the ring slides in from the first square every time the card opens, which is an
+ * animation about nothing — the agent did not just switch hand, the screen simply arrived.
+ */
+.osmium-held-marker-idle {
   opacity: 0;
   transition: none;
 }
@@ -849,7 +881,9 @@ progress::-moz-progress-bar {
   /* The deck still opens and closes; it simply arrives in each state rather than easing into it. */
   .osmium-toast,
   /* Still marks the row it is on — only the travel between rows stops. */
-  .osmium-nav-marker {
+  .osmium-nav-marker,
+  /* Likewise: the ring still says which square is in hand, it just stops sliding there. */
+  .osmium-held-marker {
     transition: none;
   }
 

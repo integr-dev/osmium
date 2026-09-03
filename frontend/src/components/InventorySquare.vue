@@ -190,10 +190,17 @@ const sprite = computed(() =>
   outline-offset: 1px;
 }
 
-/* What the agent is holding. Ringed, because it is a fact rather than a selection. */
+/*
+ * What the agent is holding.
+ *
+ * **The ring is not drawn here.** It is one element that travels across the hotbar - see
+ * `.osmium-held-marker` - because switching hand is a movement along the bar, and a border on each
+ * square can only appear here and vanish there. What is left on the square itself is the hint of
+ * warm colour under it, which is what stops the travelling ring looking like it is floating over an
+ * unrelated square mid-slide.
+ */
 .square.held {
-  border-color: color-mix(in oklab, var(--color-warning) 70%, transparent);
-  border-width: 2px;
+  background-color: color-mix(in oklab, var(--color-warning) 12%, transparent);
 }
 
 /*
