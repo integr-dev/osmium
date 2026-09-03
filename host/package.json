@@ -1,6 +1,6 @@
 {
   "name": "osmium-host",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Runs Minecraft agents for an Osmium backend.",
