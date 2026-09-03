@@ -78,6 +78,10 @@ function event(body: Event): Json {
       // that ignores this loses the colours and nothing else.
       put(payload, 'components', body.components)
 
+      // What was typed, for a line whose speaker could be named. Absent is meaningful rather than
+      // missing: it says this host could not tell where the server's decoration ended.
+      put(payload, 'typed', body.typed)
+
       return { kind: 'event', type: 'chat', agentId: body.agentId, payload }
     }
 

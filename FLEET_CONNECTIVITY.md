@@ -498,11 +498,12 @@ that classifies, so sending the wrong type is an obvious mistake rather than a s
 | `chat.from` | no | who said it; defaults to the agent's own label, which is who says an `outbound` line |
 | `chat.text` | yes | truncated at 512 characters; a blank line is dropped |
 | `chat.components` | no | the same line as a component tree, styled as the server sent it; dropped whole past 8192 characters |
+| `chat.typed` | no | what the speaker typed, with the server's decoration removed; absent when the sender pattern did not match |
 | `activity.scope` | yes | `system`, `lifecycle` |
 | `activity.severity` | no | `info`, `warning`, `error`; defaults to `info` |
 | `activity.text` | yes | truncated at 512 characters |
 
-Four rules that are easy to get wrong:
+Five rules that are easy to get wrong:
 
 - **An unrecognised scope is dropped, not guessed at.** Filing a kick into chat is worse than losing
   it, since the whole reason the feeds are split is that an incident must not be buried in
@@ -517,6 +518,14 @@ Four rules that are easy to get wrong:
   server's translation keys, resolves style absolutely rather than leaving it to be inherited, and
   strips everything interactive — `clickEvent`, `hoverEvent`, `insertion`, `font` — before sending
   it. The backend stores the tree as text and the interface draws it.
+- **`typed` is the same line with the prefix taken off, and only the host can produce it.** The
+  `chat.sender` pattern that names the speaker also says where the server's decoration ends, so the
+  end of that match is the start of the message: ` [★57] [MEMBER] integr [ʙʟᴏᴏᴍ] » hello` sends
+  `hello`. It is **not stored** — `text` is the whole line and remains so — and exists only so the
+  backend can compare what people said. On a server that renders ranks the prefix is constant per
+  player and most of a short line, measured at 22 characters of an average 36, which makes two
+  unrelated messages look alike. It is absent for exactly the lines `from` cannot name a speaker
+  for: one pattern decides both.
 - **There is no timestamp field.** The backend stamps the line when it receives it. Host clocks are
   not synchronised with each other, and a skewed one would file its chat into the middle of the feed
   or into the future — which in a newest-first feed means either invisible or permanently pinned to
@@ -1201,6 +1210,11 @@ because logging that operator X made agent Y speak without logging what it said 
 within days or not at all; a death from three weeks ago tells you nothing you would act on. Ten days
 covers a fortnight's on-call without keeping noise forever.
 
+The chat purge runs nightly **and once at startup**. The cron alone is not enough: a deployment that
+is stopped overnight never reaches 03:40, and the window silently stops being enforced — found on a
+live database with four fifths of the chat table already past its retention. Audit and activity
+still purge on the cron alone, and have the same gap on a deployment that is not up at night.
+
 **Chat is the largest stream and the only one full of other people's words**, so it gets the
 shortest life. This is still a **loosening** of the original decision that inbound chat would never
 be persisted at all — only a ~50-line per-agent ring buffer. Scrollback surviving a reload was
@@ -1230,6 +1244,61 @@ dead host would otherwise exhaust themselves on messages nobody saw — the same
 trail, where nothing that failed to happen is recorded. And a **restart forgives what was spent**,
 which is the right way round: being briefly too lenient is a better failure than locking an operator
 out of a fleet they need to control.
+
+### Inbound spam
+
+Outbound chat is limited by budget; inbound chat is filtered by **repetition**, per player, per
+server, on the way in — before the row is written, which is the point: one player looping `/dupe` at
+a macro's pace wrote 1,946 rows in an evening on a real server.
+
+What is refused is **counted rather than stored**. A run of refusals goes out on the live stream as
+`chat-suppressed` carrying how many have gone since the last line that got through, and a panel
+draws one row in the gap — "412 suppressed as repetition" — growing in place until something lands,
+then starting again at one. Writing a marker row instead would have cost the storage the refusal
+saved and put a line nobody said into a transcript of what people said. The cost of not storing it
+is that only somebody already watching sees it, which is the right way round: a gap matters while
+you are reading past it, and a conversation fetched fresh has no gap to explain.
+
+- **Global only.** It is 98% of what is stored and all of it is strangers talking. An agent's own
+  outbound lines are audited and few, and a whisper is somebody addressing the fleet directly —
+  a player repeating a request because an agent has not answered yet is the last person to silence.
+- **Nothing here reaches the game.** Commands are dispatched host-side before a line is reported, so
+  an agent still answers somebody it has stopped recording. This decides what is kept, not what is
+  heard.
+- **Compared on `typed`, never on the rendered line**, for the reason the wire contract gives.
+- **Two tests, either one enough**, over the last six lines that player sent — one is not enough,
+  because alternating between two messages defeats it. **Overlap** is Jaccard of character trigrams
+  at 0.8, with digits collapsed first so `/dupe 444` and `/dupe 4444444` are one message. **A shared
+  opening** is 16 identical leading characters covering at least half the longer line.
+- **The shared opening is what catches a macro**, and overlap alone does not. A constant template
+  with sixteen random letters on the end measures 0.33 against its own predecessor, and `/dupe`
+  repeated six times before a random tail measures 0.17 — under any overlap threshold that does not
+  also catch strangers, because the repeated part collapses into a few distinct trigrams while each
+  fresh tail contributes fifteen. Both are obvious by their first half. The 16-character floor is
+  what keeps the ratio from calling "yes i think so" and "yes i think not" a repeat: on real chat it
+  cost 168 lines of catch, all of them ordinary conversation.
+- **A repeat scores a point, and time takes points back continuously** — one a minute — for the same
+  reason the outbound limiter is a bucket rather than a calendar window. Muting at four and
+  releasing at two, because a single level flaps. Suppressed lines still score, capped at twice the
+  threshold so recovery is bounded.
+- **It gags the repetition, not the player.** While muted, only lines alike to the recent ones are
+  dropped; something new lands as usual. Somebody arguing in chat repeats themselves several times
+  in the middle of a real conversation, and muting all of it cost 48 ordinary lines on one evening
+  of real data.
+- **Short lines are never scored.** Under seven characters sit `gg`, `lol` and `yea` — alike by any
+  measure, most of what conversation is made of, and not worth silencing anybody over.
+- **Unattributed lines are exempt.** Every line the host could not name a speaker for shares one
+  name, so scoring it would judge a whole server as a single person. The consequence is worth
+  stating plainly: **a server with no `chat.sender` pattern gets no filtering at all**, because all
+  of its chat lands in that bucket. Setting the pattern is what turns this on.
+
+In memory and per instance, like the outbound limiter, with the same consequences: several instances
+mean several counters, and a restart forgives what was scored. Speakers are held in a bounded
+least-recently-heard map — a stranger on a public server has no deletion to hang a cleanup off, and
+a spam defence that grows without limit is the thing it exists to prevent.
+
+Measured against a week of real traffic this refuses about 4.5% of attributed global chat. The
+retention purge is the larger lever by far; the two are independent.
 
 ## Servers
 

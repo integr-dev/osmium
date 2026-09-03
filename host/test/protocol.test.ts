@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { deserialize, MessageError } from '../src/protocol/deserialize.ts'
 import { serialize } from '../src/protocol/serialize.ts'
-import { LoginState } from '../src/protocol/wire.ts'
+import { ChatScope, LoginState } from '../src/protocol/wire.ts'
 import { advertised } from '../src/token/login.ts'
 
 function parse(raw: string): any {
@@ -84,6 +84,41 @@ describe('serialize', () => {
     expect(json.payload.pingMs).toBe(42)
     expect(json.payload.position.x).toBe(128.5)
     expect('state' in json.payload).toBe(false)
+  })
+
+  it('sends what was typed beside the line it was read out of', () => {
+    const json = parse(
+      serialize({
+        kind: 'event',
+        body: {
+          type: 'chat',
+          agentId: 42,
+          scope: ChatScope.Global,
+          from: 'Notch',
+          text: '[MEMBER] Notch » selling diamonds',
+          typed: 'selling diamonds',
+        },
+      }),
+    )
+
+    expect(json.payload.text).toBe('[MEMBER] Notch » selling diamonds')
+    // The decoration off the front. The backend compares this rather than the rendered line, where
+    // a rank prefix is constant per player and most of a short message.
+    expect(json.payload.typed).toBe('selling diamonds')
+  })
+
+  it('omits what was typed for a line it could not read a speaker out of', () => {
+    const json = parse(
+      serialize({
+        kind: 'event',
+        body: { type: 'chat', agentId: 42, scope: ChatScope.Global, text: 'Notch joined the game' },
+      }),
+    )
+
+    // Absent rather than empty: it says this host could not tell where the decoration ended, which
+    // is the same thing that left the line unattributed.
+    expect('typed' in json.payload).toBe(false)
+    expect('from' in json.payload).toBe(false)
   })
 
   it('keeps the heartbeat host scoped', () => {

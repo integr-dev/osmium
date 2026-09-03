@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { agentBehind, agentsByAccount, belongsTo, parseScopeKey, scopeFilter, scopeKey, speakerCandidates } from './chat'
+import {
+  agentBehind,
+  agentsByAccount,
+  belongsTo,
+  foldRun,
+  isSuppressed,
+  parseScopeKey,
+  scopeFilter,
+  scopeKey,
+  speakerCandidates,
+  type ChatRow,
+} from './chat'
 import type { ChatMessageResponse } from '../api/client'
 import type { FleetAgent } from '../stores/agents'
 
@@ -167,5 +178,63 @@ describe('the agent behind a line', () => {
 
   it('ignores an agent that has never been set up', () => {
     expect(agentsByAccount([bot(3, 'unlinked', '', null)]).size).toBe(0)
+  })
+})
+
+/**
+ * The row drawn where refused lines would have been. It is the only thing in the panel that grows
+ * in place rather than arriving, so what it does on the second event is the whole behaviour.
+ */
+describe('foldRun', () => {
+  function run(count: number, from: string | null = 'Notch') {
+    return { at: '2026-09-03T12:00:00Z', serverAddress: 'play.example.com', from, count }
+  }
+
+  it('starts a row for the first of a run', () => {
+    const rows: ChatRow[] = [line()]
+
+    const fresh = foldRun(rows, run(1), -1)
+
+    expect(fresh).toEqual({ id: -1, ...run(1) })
+  })
+
+  it('grows the row already at the top instead of adding another', () => {
+    const rows: ChatRow[] = [{ id: -1, ...run(1) }, line()]
+
+    expect(foldRun(rows, run(2), -2)).toBeNull()
+    expect(foldRun(rows, run(412), -3)).toBeNull()
+    expect(rows).toHaveLength(2)
+    expect(isSuppressed(rows[0]!) && rows[0]!.count).toBe(412)
+  })
+
+  /**
+   * A line getting through closes the gap, and the backend says so by counting from one again. The
+   * row it closed is left where it is: it is a true record of a hole further up the transcript.
+   */
+  it('starts a new row once a line has got through', () => {
+    const rows: ChatRow[] = [line(), { id: -1, ...run(9) }]
+
+    const fresh = foldRun(rows, run(1), -2)
+
+    expect(fresh).toEqual({ id: -2, ...run(1) })
+  })
+
+  /**
+   * Self-correcting rather than trusting the sequence. A panel that missed an event would otherwise
+   * keep growing a gap the backend has already closed.
+   */
+  it('grows nothing when the row above is a line', () => {
+    const rows: ChatRow[] = [line()]
+
+    expect(foldRun(rows, run(7), -1)).toEqual({ id: -1, ...run(7) })
+  })
+
+  /** Either name would be a lie about most of a gap two people share. */
+  it('stops naming anybody once a second person is in the same gap', () => {
+    const rows: ChatRow[] = [{ id: -1, ...run(1) }]
+
+    foldRun(rows, run(2, 'Alex'), -2)
+
+    expect(isSuppressed(rows[0]!) && rows[0]!.from).toBeNull()
   })
 })

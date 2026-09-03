@@ -762,7 +762,9 @@ export interface paths {
         };
         /**
          * Stream everything this account is entitled to see change.
-         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `activity`, `telemetry`, `user`, `user-removed`, `audit`, `permissions`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat`, `activity` and `audit` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
+         * @description Events: `agent`, `agent-removed`, `host`, `host-removed`, `chat`, `chat-suppressed`, `activity`, `telemetry`, `user`, `user-removed`, `audit`, `permissions`. Resource payloads match the REST responses, so a client replaces what it holds rather than refetching; `chat`, `activity` and `audit` are single lines to append, and `telemetry` is `{ agentId, telemetry }` to merge, published on a fixed tick rather than per reported sample.
+         *
+         *     `chat-suppressed` is the exception to all of that: it corresponds to no stored row and cannot be paged back, because it stands for global chat refused as repetition and refusing it is what kept it out of the database. It carries a running count of how many have gone in a row on that server, growing until a line gets through and starting again at one after that, so a client draws one row rather than a line per refusal.
          *
          *     **Each event carries its own permission.** Opening the stream needs only `user.read.self`, since every account has to be able to hear about itself; what actually arrives is decided per event, so `agent` reaches only `agent.read` and `audit` only `audit.read`. `permissions` is addressed to a single account when its own role changes and carries what `/api/auth/me` returns. Authority is re-read on a 30s tick, so a demotion narrows an open stream rather than needing a reconnect.
          */

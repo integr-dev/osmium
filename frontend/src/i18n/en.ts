@@ -111,6 +111,12 @@ export const en = {
      * at again. Says that the transcript jumping is the backlog landing rather than a glitch.
      */
     catchingUp: 'catching up…',
+    /**
+     * A run of lines the backend refused as repetition, drawn where they would have been. Says
+     * "suppressed" rather than "deleted": they were never stored, so nothing was removed.
+     */
+    suppressed: '{count} suppressed as repetition',
+    suppressedFrom: '{count} from {name} suppressed as repetition',
     speakerOffline: '{name} is not in game.',
     hostOffline: 'Host {host} is unreachable.',
   },

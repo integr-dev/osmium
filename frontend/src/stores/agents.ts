@@ -300,6 +300,10 @@ export const useAgentStore = defineStore('agents', () => {
         useAuthStore().user = data as UserResponse
         break
       case 'chat':
+      // A gap where lines were refused as repetition. Handed on like a line because it is drawn in
+      // the same list - but it is live only, and a panel that was not open when it happened never
+      // learns of it, because nothing was stored to learn from.
+      case 'chat-suppressed':
       case 'activity':
       case 'audit':
       case 'user':

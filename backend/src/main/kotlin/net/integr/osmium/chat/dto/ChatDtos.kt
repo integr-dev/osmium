@@ -37,6 +37,25 @@ data class ChatMessageResponse(
     val components: Map<String, Any?>?,
 )
 
+/**
+ * A run of lines refused as repetition, on its way to whoever is watching that server.
+ *
+ * Not a [ChatMessageResponse] with a flag on it. Nothing here was said by anybody, it has no id
+ * because no row exists, and giving it the shape of a message would put something in the transcript
+ * that reads like something somebody typed.
+ */
+@Schema(description = "Lines dropped in a row as repetition. Live only; never stored, never paged.")
+data class ChatSuppressedResponse(
+    @param:Schema(description = "When the most recent of them was refused.")
+    val at: Instant,
+    @param:Schema(description = "The server whose feed has the gap.")
+    val serverAddress: String,
+    @param:Schema(description = "Who was repeating themselves when the run started.", example = "Notch")
+    val from: String,
+    @param:Schema(description = "How many have been dropped since the last line that got through.")
+    val count: Int,
+)
+
 @Schema(description = "One page of chat, newest first.")
 data class ChatPageResponse(
     val items: List<ChatMessageResponse>,

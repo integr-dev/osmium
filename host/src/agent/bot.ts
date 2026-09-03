@@ -8,10 +8,13 @@ import {
   addressedTo,
   disruptsBuilding,
   allows,
+  coinFlip,
   commandIn,
+  eightBall,
   grantFrom,
   grantLabel,
   helpLine,
+  rolled,
   runnable,
   sayable,
   type Grant,
@@ -556,7 +559,7 @@ export class Agent {
         // account, speaking what, and where it came out. The version is worth stating because it may
         // have been guessed - see `negotiate` - and a wrong guess shows up as odd behaviour later
         // rather than as a failure here.
-        const place = placeOf(bot)
+        const place = placeOf(bot, this.level)
         this.activity(
           ActivityScope.Lifecycle,
           Severity.Info,
@@ -602,7 +605,7 @@ export class Agent {
       live(() => {
         // Read now, synchronously: mineflayer respawns immediately after this event, and by the time
         // the report is written the agent is standing somewhere else entirely.
-        const place = placeOf(bot)
+        const place = placeOf(bot, this.level)
 
         setTimeout(() => {
           if (this.bot !== bot) return
@@ -937,27 +940,27 @@ export class Agent {
     const direct = !ours && whispered !== SERVER
 
     /*
-     * Commands, before the listener guard, because that guard is about *reporting* and this is not.
+     * What the speaker **typed**, with the server's decoration taken off the front.
      *
-     * The election exists so twenty agents do not send the backend one line twenty times. Every
-     * agent still hears the room, and `!osm id` asked of everybody has to be answered by everybody -
-     * an agent that stayed silent because somebody else was elected to forward chat would look
-     * broken to whoever typed it.
+     * The same pattern that named them says where the server's decoration ends, so ` [★57]
+     * [MEMBER] integr [ʙʟᴏᴏᴍ] » !osm id` becomes `!osm id`. Anchoring on the raw line instead
+     * looked stricter and was simply broken - on any server that renders a rank the prefix is never
+     * at position zero, so no command ever fired.
+     *
+     * Read once and used twice. The backend compares what people said to find somebody repeating
+     * themselves, and it has to compare the same thing this does: a rank prefix is constant per
+     * player and most of a short line, so two unrelated messages look alike until it is off.
+     *
+     * Commands run from it here, before the listener guard, because that guard is about *reporting*
+     * and this is not. The election exists so twenty agents do not send the backend one line twenty
+     * times. Every agent still hears the room, and `!osm id` asked of everybody has to be answered
+     * by everybody - an agent that stayed silent because somebody else was elected to forward chat
+     * would look broken to whoever typed it.
      */
-    if (!ours) {
-      /*
-       * The command is read out of what the speaker **typed**, not out of the rendered line.
-       *
-       * The same pattern that named them says where the server's decoration ends, so ` [★57]
-       * [MEMBER] integr [ʙʟᴏᴏᴍ] » !osm id` becomes `!osm id`. Anchoring on the raw line instead
-       * looked stricter and was simply broken - on any server that renders a rank the prefix is
-       * never at position zero, so no command ever fired.
-       */
-      const format = direct ? (this.chatWhisper ?? WHISPER) : (this.chatSender ?? VANILLA)
-      const typed = spokenIn(message, format)
+    const format = direct ? (this.chatWhisper ?? WHISPER) : (this.chatSender ?? VANILLA)
+    const typed = ours ? undefined : spokenIn(message, format)
 
-      if (typed !== undefined) this.commanded(typed, direct ? whispered : speaker, direct)
-    }
+    if (typed !== undefined) this.commanded(typed, direct ? whispered : speaker, direct)
 
     /*
      * The listener role covers **the room**, and only the room.
@@ -988,6 +991,7 @@ export class Agent {
       from: ours ? (this.identity?.username ?? SERVER) : direct ? whispered : (speaker ?? SERVER),
       text: message,
       ...(components ? { components } : {}),
+      ...(typed ? { typed } : {}),
     })
   }
 
@@ -1110,6 +1114,26 @@ export class Agent {
       case 'help':
         this.answer(helpLine(held), back)
         return
+
+      /*
+       * The three toys. They answer where they were asked, like every other reading does, and they
+       * take their randomness from here so the functions themselves stay testable.
+       *
+       * The question is deliberately not repeated back - see `EIGHT_BALL`.
+       */
+      case '8ball':
+        this.answer(`Agent ${this.id} says ${eightBall(Math.random())}`, back)
+        return
+
+      case 'cf':
+        this.answer(`Agent ${this.id} flipped ${coinFlip(Math.random())}`, back)
+        return
+
+      case 'roll': {
+        const { sides, face } = rolled(command.args, Math.random())
+        this.answer(`Agent ${this.id} rolled ${face} of ${sides}`, back)
+        return
+      }
 
       case 'disconnect':
         log.info(`Agent ${this.id} was told to leave by ${speaker}`)
@@ -1938,26 +1962,35 @@ export function flatten(node: Component): string {
  *
  * Undefined when the entity is not there yet, which is a real state - `login` arrives before the
  * world does. A caller says less rather than saying "at undefined". */
-export function placeOf(bot: Bot): string | undefined {
+export function placeOf(bot: Bot, level?: string): string | undefined {
   const at = bot.entity?.position
   if (!at) return undefined
 
   const where = `${Math.round(at.x)}, ${Math.round(at.y)}, ${Math.round(at.z)}`
-  // `the_end` would otherwise read as "in the the end".
-  const dimension = dimensionOf(bot)?.replaceAll('_', ' ').replace(/^the /, '')
+  const world = worldOf(bot, level)
 
-  return dimension ? `${where} in the ${dimension}` : where
+  return world ? `${where} in ${named(world)}` : where
 }
 
+/** The three the game ships, which are the ones a sentence puts "the" in front of. */
+const VANILLA_WORLDS = new Set(['overworld', 'the_nether', 'the_end', 'nether', 'end'])
+
 /**
- * Which dimension an agent is in, for a sentence somebody reads.
+ * A world's name as it goes into a sentence.
  *
- * The *type* rather than the level name, deliberately: "at 12, 64, 30 in the nether" is what a
- * person means, and a world called `pvp_arena` reads as itself rather than as a dimension. What the
- * agent reports as its world - the thing the map files terrain under - is `worldOf` instead.
+ * **The level name, not the dimension type**, and the same one the agent reports as its world -
+ * so the line in the activity feed and the reading on the agent's own page agree about where it is.
+ * They did not: this said "in the overworld" while the page said "Pvp Arena", because a server with
+ * custom worlds runs nearly all of them as type `overworld` and the type is then true and useless.
+ *
+ * "the" only for the three the game ships. "in the overworld" is right and "in the pvp arena" is
+ * not; a server's own world is a name rather than a place everybody knows. `the_end` drops its own
+ * "the" first, or it reads as "in the the end".
  */
-function dimensionOf(bot: Bot): string | undefined {
-  return bot.game?.dimension?.replace(/^minecraft:/, '') || undefined
+function named(world: string): string {
+  const spoken = world.replaceAll('_', ' ').replace(/^the /, '')
+
+  return VANILLA_WORLDS.has(world) ? `the ${spoken}` : spoken
 }
 
 /**

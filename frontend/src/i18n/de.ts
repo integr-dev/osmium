@@ -92,6 +92,8 @@ export const de: Copy = {
     noSpeaker: 'Hier ist niemand im Spiel, durch den gesprochen werden könnte.',
     fromServer: 'Server',
     catchingUp: 'wird nachgeholt …',
+    suppressed: '{count} als Wiederholung unterdrückt',
+    suppressedFrom: '{count} von {name} als Wiederholung unterdrückt',
     speakerOffline: '{name} ist nicht im Spiel.',
     hostOffline: 'Host {host} ist nicht erreichbar.',
   },

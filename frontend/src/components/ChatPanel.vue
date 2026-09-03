@@ -1,13 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, Send, Server, TriangleAlert } from 'lucide-vue-next'
+import { EyeOff, Search, Send, Server, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
 import McText from './McText.vue'
 
 import type { ChatMessageResponse } from '../api/client'
 import { fetchChatPage } from '../api/feeds'
-import { agentBehind, agentsByAccount, belongsTo, scopeFilter, type ChatScope } from '../lib/chat'
+import {
+  agentBehind,
+  agentsByAccount,
+  belongsTo,
+  foldRun,
+  isSuppressed,
+  scopeFilter,
+  type ChatRow,
+  type ChatScope,
+  type ChatSuppressedRun,
+} from '../lib/chat'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -58,7 +68,7 @@ const searching = ref('')
  */
 const everywhere = ref(false)
 
-const feed = useFeed<ChatMessageResponse>((cursor) =>
+const feed = useFeed<ChatRow>((cursor) =>
   fetchChatPage(
     cursor,
     searching.value && everywhere.value ? {} : scopeFilter(props.scope),
@@ -158,7 +168,27 @@ let settle: number | undefined
  * colours the server put on it. That is the version worth reading, and waiting for it is the only
  * honest way to show it.
  */
+/**
+ * Ids for the gap rows, which the backend has none for because it stored nothing.
+ *
+ * Counting down from zero, so however long a panel is left open they can never meet a real line's.
+ */
+let nextRunId = 0
+
 const stopListening = agentStore.onFeedEvent((name, data) => {
+  if (name === 'chat-suppressed') {
+    // A search is a question about the past, and a gap in the live stream is not part of the answer.
+    if (searching.value) return
+
+    const run = data as Omit<ChatSuppressedRun, 'id'>
+    // Global chat only ever appears on a server feed, so a gap in it can only belong to one.
+    if (props.scope.kind !== 'server' || run.serverAddress !== props.scope.address) return
+
+    const fresh = foldRun(items.value, run, (nextRunId -= 1))
+    if (fresh) feed.prepend(fresh)
+    return
+  }
+
   if (name !== 'chat') return
   const line = data as ChatMessageResponse
   // A search is a question about the past. Dropping new lines into the middle of its answer would
@@ -354,51 +384,69 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           it, which nobody can see in a scrolling panel anyway.
         -->
         <TransitionGroup :name="items.length > SETTLED_LINES ? '' : 'feed'" tag="div" class="flex flex-col-reverse gap-1">
-          <p v-for="line in items" :key="line.id" class="flex items-start gap-2 px-1 text-sm">
-            <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
+          <template v-for="line in items" :key="line.id">
             <!--
-              Global chat is where strangers show up, so a head is not decoration — it is how a player
-              nobody recognises is told apart from an agent at a glance. A line the host could not
-              attribute to anybody gets a server mark instead of a face nobody owns.
+              A gap, drawn as one row that grows rather than as the lines it stands for — which is
+              the point, since those were refused precisely so they would not be kept. Dimmed and
+              italic because nobody said it: it is the panel talking, not the server.
             -->
-            <Server v-if="fromServer(line)" class="mt-1 size-3.5 shrink-0 opacity-40" />
-            <PlayerHead v-else :id="line.from" :name="line.from" size="xs" class="mt-0.5 shrink-0" />
-            <!--
-              The agent behind the account, when the account is one of ours. Chat names a Minecraft
-              account and an operator thinks in agents, so a line from the fleet says which one — and
-              it comes first, because that is the name the operator gave it and the one they are
-              looking for.
-            -->
-            <span v-if="nameBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
-              {{ nameBehind(line) }}
-            </span>
-            <!--
-              The account name, but only when the line does not already carry one. A server-rendered
-              line comes with its own prefix — rank, colours, the speaker — so printing `from` beside it
-              would say the name twice, once ours and once theirs.
-            -->
-            <span
-              v-if="!line.components"
-              class="shrink-0 font-medium"
-              :class="[line.scope === 'OUTBOUND' ? 'text-primary' : '', fromServer(line) ? 'italic opacity-60' : '']"
-            >
-              {{ fromServer(line) ? t('chat.fromServer') : line.from }}
-            </span>
-            <!--
-              Which agent a line involves, on a server feed only. Everything said on the server is
-              here, so a whisper to one agent would otherwise be indistinguishable from public chat -
-              and "who was this to" is the whole question a private line raises. On an agent feed it
-              would be the same name on every row.
-            -->
-            <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
-              {{ line.agentLabel }}
-            </span>
-            <!--
-              Styled as the server sent it, falling back to the plain line. A host may send no tree at
-              all - anything an agent said itself has none - so the plain text is what is always there.
-            -->
-            <McText :components="line.components" :text="line.text" class="min-w-0 flex-1 break-words opacity-80" />
-          </p>
+            <p v-if="isSuppressed(line)" class="flex items-center gap-2 px-1 text-xs italic opacity-40">
+              <span class="shrink-0 font-mono">{{ atTime(line.at) }}</span>
+              <EyeOff class="size-3.5 shrink-0" />
+              <span class="min-w-0 flex-1 break-words">
+                {{
+                  line.from
+                    ? t('chat.suppressedFrom', { count: line.count, name: line.from })
+                    : t('chat.suppressed', { count: line.count })
+                }}
+              </span>
+            </p>
+            <p v-else class="flex items-start gap-2 px-1 text-sm">
+              <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
+              <!--
+                Global chat is where strangers show up, so a head is not decoration — it is how a player
+                nobody recognises is told apart from an agent at a glance. A line the host could not
+                attribute to anybody gets a server mark instead of a face nobody owns.
+              -->
+              <Server v-if="fromServer(line)" class="mt-1 size-3.5 shrink-0 opacity-40" />
+              <PlayerHead v-else :id="line.from" :name="line.from" size="xs" class="mt-0.5 shrink-0" />
+              <!--
+                The agent behind the account, when the account is one of ours. Chat names a Minecraft
+                account and an operator thinks in agents, so a line from the fleet says which one — and
+                it comes first, because that is the name the operator gave it and the one they are
+                looking for.
+              -->
+              <span v-if="nameBehind(line)" class="shrink-0 pt-0.5 font-mono text-xs text-primary/70">
+                {{ nameBehind(line) }}
+              </span>
+              <!--
+                The account name, but only when the line does not already carry one. A server-rendered
+                line comes with its own prefix — rank, colours, the speaker — so printing `from` beside it
+                would say the name twice, once ours and once theirs.
+              -->
+              <span
+                v-if="!line.components"
+                class="shrink-0 font-medium"
+                :class="[line.scope === 'OUTBOUND' ? 'text-primary' : '', fromServer(line) ? 'italic opacity-60' : '']"
+              >
+                {{ fromServer(line) ? t('chat.fromServer') : line.from }}
+              </span>
+              <!--
+                Which agent a line involves, on a server feed only. Everything said on the server is
+                here, so a whisper to one agent would otherwise be indistinguishable from public chat -
+                and "who was this to" is the whole question a private line raises. On an agent feed it
+                would be the same name on every row.
+              -->
+              <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
+                {{ line.agentLabel }}
+              </span>
+              <!--
+                Styled as the server sent it, falling back to the plain line. A host may send no tree at
+                all - anything an agent said itself has none - so the plain text is what is always there.
+              -->
+              <McText :components="line.components" :text="line.text" class="min-w-0 flex-1 break-words opacity-80" />
+            </p>
+          </template>
         </TransitionGroup>
 
         <!--

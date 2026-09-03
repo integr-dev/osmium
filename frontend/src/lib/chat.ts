@@ -10,6 +10,67 @@ import { isOnline, type FleetAgent } from '../stores/agents'
  */
 export type ChatScope = { kind: 'server'; address: string } | { kind: 'agent'; id: number }
 
+/**
+ * A gap in the transcript where somebody was repeating themselves.
+ *
+ * **Not stored, and not a message.** The backend refuses a repeated line rather than writing it, so
+ * there is no row to page back to and nothing was said — which is why this has its own shape rather
+ * than being a `ChatMessageResponse` with a flag on it. It exists so that a panel somebody is
+ * watching does not lose lines in silence.
+ *
+ * It follows that a gap is only ever seen by whoever was there. Reloading shows the conversation
+ * without the hole and without this, which is the honest end state: nothing was stored, so there is
+ * no hole in what was.
+ */
+export interface ChatSuppressedRun {
+  /**
+   * Negative and assigned in the browser, because the backend has no id for something it did not
+   * store. Negative so it can never collide with a real line's, which is what the list keys on.
+   */
+  id: number
+  at: string
+  serverAddress: string
+  /** Who was repeating themselves, or null once more than one person has been in the same gap. */
+  from: string | null
+  count: number
+}
+
+/** A rendered row: a line somebody said, or a gap where lines were refused. */
+export type ChatRow = ChatMessageResponse | ChatSuppressedRun
+
+export function isSuppressed(row: ChatRow): row is ChatSuppressedRun {
+  return 'count' in row
+}
+
+/**
+ * Folds an arriving run into the rows already on screen.
+ *
+ * The backend counts the run and resets it when a line gets through, so the count says which of the
+ * two things to do: anything past the first grows the row at the top, and a one starts a new one.
+ * Reading it off the count rather than off what is on screen means a panel that missed an event
+ * corrects itself on the next one, instead of growing a gap that should have closed.
+ *
+ * Returns the row to prepend, or null when it grew the one already there.
+ */
+export function foldRun(
+  rows: ChatRow[],
+  run: Omit<ChatSuppressedRun, 'id'>,
+  id: number,
+): ChatSuppressedRun | null {
+  const head = rows[0]
+
+  if (run.count > 1 && head && isSuppressed(head)) {
+    head.count = run.count
+    head.at = run.at
+    // Named only while one person is responsible for the whole gap. Two people repeating themselves
+    // into the same hole makes either name a lie about most of it.
+    if (head.from !== run.from) head.from = null
+    return null
+  }
+
+  return { id, ...run }
+}
+
 /** Stable identity for a scope — what `watch` compares and what the rail persists. */
 export function scopeKey(scope: ChatScope): string {
   return scope.kind === 'server' ? `server:${scope.address}` : `agent:${scope.id}`

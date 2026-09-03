@@ -141,6 +141,16 @@ export type Event =
        * Absent for anything a host said itself, and for a server that sent plain text. Whatever
        * draws chat falls back to {@link text}, which is always present and always the whole line. */
       components?: Component
+      /** What the speaker typed, with the server's decoration taken off the front.
+       *
+       * Only this host can produce it: the `chat.sender` pattern that says where a prefix ends is
+       * configuration this host holds, and the separator differs from server to server. Absent for
+       * a line the pattern did not match, and for anything the agent said itself - the same cases
+       * {@link from} cannot name a player for.
+       *
+       * Not stored anywhere. It exists so the backend can compare what people said without
+       * comparing the rank prefix in front of it, which on a decorated server is most of a line. */
+      typed?: string
     }
   | { type: 'activity'; agentId: number; scope: ActivityScope; severity: Severity; text: string }
   /** What the agent is carrying, whenever it changes.

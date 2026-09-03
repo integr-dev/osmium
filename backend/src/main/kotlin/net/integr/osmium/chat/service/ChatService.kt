@@ -3,6 +3,7 @@ package net.integr.osmium.chat.service
 import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.chat.config.ChatProperties
 import net.integr.osmium.chat.dto.ChatPageResponse
+import net.integr.osmium.chat.dto.ChatSuppressedResponse
 import net.integr.osmium.chat.dto.toResponse
 import net.integr.osmium.chat.model.ChatMessage
 import net.integr.osmium.chat.model.ChatScope
@@ -12,6 +13,8 @@ import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.web.PageCursor
 import org.slf4j.LoggerFactory
+import org.springframework.boot.context.event.ApplicationReadyEvent
+import org.springframework.context.event.EventListener
 import org.springframework.data.domain.Limit
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -69,6 +72,32 @@ class ChatService(
             LiveUpdateEvent(type = LiveUpdateType.CHAT_MESSAGE, data = saved.toResponse(), agentId = agent.id),
         )
         return saved
+    }
+
+    /**
+     * Says that a line was refused, without storing anything.
+     *
+     * Published rather than recorded on purpose. The point of refusing was not to write the row; a
+     * marker row written in its place would cost the same storage the refusal saved, and would put
+     * a line nobody said into a transcript of what people said.
+     *
+     * The consequence is that this is only ever seen by somebody already watching. That is the right
+     * trade for what it says: a gap matters while you are reading past it, and a conversation
+     * fetched fresh has no gap to explain.
+     */
+    fun suppressed(agent: Agent, from: String, run: Int) {
+        broker.publish(
+            LiveUpdateEvent(
+                type = LiveUpdateType.CHAT_SUPPRESSED,
+                data = ChatSuppressedResponse(
+                    at = Instant.now(),
+                    serverAddress = agent.serverAddress ?: UNASSIGNED_SERVER,
+                    from = from,
+                    count = run,
+                ),
+                agentId = agent.id,
+            ),
+        )
     }
 
     /**
@@ -149,7 +178,23 @@ class ChatService(
 
     @Scheduled(cron = PURGE_CRON)
     @Transactional
-    fun purgeExpired() {
+    fun purgeExpired() = purge()
+
+    /**
+     * Again at startup, because the nightly sweep only runs on a backend that is up at 03:40.
+     *
+     * Not a belt-and-braces measure: a deployment that is stopped overnight - a development machine,
+     * or anything redeployed on a schedule - never reaches the cron at all, and the retention window
+     * silently stops being enforced. Found with four fifths of a live table already past it.
+     *
+     * On [ApplicationReadyEvent] rather than at construction, so Flyway has run and the table this
+     * deletes from is the shape the entity expects.
+     */
+    @EventListener(ApplicationReadyEvent::class)
+    @Transactional
+    fun purgeOnStartup() = purge()
+
+    private fun purge() {
         val cutoff = Instant.now().minus(chatProperties.retention)
         val removed = chatMessageRepository.deleteOlderThan(cutoff)
         if (removed > 0) log.info("Purged {} chat messages older than {}", removed, cutoff)

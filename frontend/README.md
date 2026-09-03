@@ -796,6 +796,21 @@ since it is the one already forwarding the conversation being read. A server nob
 has no global feed at all, so the rail says so rather than showing an empty panel, which would read
 as a quiet server instead of a missing one.
 
+### A gap where somebody was repeating themselves
+
+The backend refuses global chat from a player saying the same thing over and over, and refusing it
+means there is no row — so the panel would simply lose lines, which reads as the feed being broken.
+It draws **one row that grows** instead: "412 suppressed as repetition", counting up until something
+gets through, and the next run starting a new row at one.
+
+The count comes from the backend, which resets it when a line lands, so `foldRun` reads which of the
+two things to do off the count rather than off what is on screen. A panel that missed an event then
+corrects itself on the next one instead of growing a gap that should have closed.
+
+The rows are **live only**. They have no id from the backend because nothing was stored, so they take
+negative ones here, and a reload shows the conversation without the hole and without them. That is
+the honest end state rather than a shortcoming: nothing was stored, so there is no hole in what was.
+
 ### Searching what was said
 
 The search box matches message text **and sender**, case-insensitively, against the stored feed
@@ -976,6 +991,13 @@ agent's page now compute a reason or null, the same shape `ChatPanel`'s `blocked
 box. The reason is on each button's `title` and in a line under the row, deduplicated: an unreachable
 host blocks all three and is said once. Only reasons for actions this operator can actually see are
 listed, since naming a precondition of a button that is not on their screen explains nothing.
+
+**Change server** was the same dead end one level further in: the button always opened, and the
+dialog behind it had its field and its Save disabled whenever the agent was in game. So the reason
+arrived only after a click, in a box that could do nothing. It computes a reason like the other
+three now. The guards inside the dialog stay — an agent can connect while it is open, and the field
+then disables itself under the operator — because the two answer different questions: the button is
+about whether to start, the field about the state changing mid-edit.
 
 ## Tabs live in the URL; steps do not
 

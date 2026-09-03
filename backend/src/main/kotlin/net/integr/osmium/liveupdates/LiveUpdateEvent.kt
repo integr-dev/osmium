@@ -36,6 +36,16 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      * agent currently forwards it. A client showing one agent's conversation filters on `scope`.
      */
     CHAT_MESSAGE("chat", Nodes.CHAT_READ),
+    /**
+     * A gap in a server's chat where somebody was repeating themselves, carrying how many lines are
+     * in it so far.
+     *
+     * **Live only, and deliberately unstored.** A suppressed line is never written, so this cannot
+     * be paged back: re-fetching the feed shows the conversation without the hole and without this.
+     * It exists so that a panel somebody is watching does not silently lose lines - the run grows in
+     * place until something gets through, and the next run starts a new one.
+     */
+    CHAT_SUPPRESSED("chat-suppressed", Nodes.CHAT_READ),
     ACTIVITY_ENTRY("activity", Nodes.ACTIVITY_READ),
 
     /**

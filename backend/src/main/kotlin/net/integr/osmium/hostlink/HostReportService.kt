@@ -20,6 +20,7 @@ import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.build.service.BuildJobService
 import net.integr.osmium.chat.model.ChatScope
 import net.integr.osmium.chat.service.ChatService
+import net.integr.osmium.chat.service.ChatSpamFilter
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
@@ -46,6 +47,7 @@ class HostReportService(
     private val agentRepository: AgentRepository,
     private val hostService: HostService,
     private val chatService: ChatService,
+    private val chatSpamFilter: ChatSpamFilter,
     private val activityService: ActivityService,
     private val buildJobs: BuildJobService,
     private val telemetryStore: AgentTelemetryStore,
@@ -446,11 +448,39 @@ class HostReportService(
             return
         }
 
+        // Falls back to the agent's own name, which is who said it when the scope is outbound.
+        val from = payload.get("from")?.asString() ?: agent.label
+
+        /*
+         * The room, and only the room, is filtered for repetition.
+         *
+         * Global chat is 98% of what is stored and all of it is strangers talking, so it is both the
+         * volume worth defending against and the stream where losing a line costs least. The other
+         * two are neither: an agent's own outbound lines are audited and few, and a whisper is
+         * somebody addressing this fleet directly - a player repeating a request because an agent
+         * has not answered yet is the last person to stop listening to.
+         *
+         * `typed` is the line with the server's decoration removed, which only the host can do. It
+         * is read for the comparison and then dropped: `text` already holds the whole line, and a
+         * column for it would cost a migration on the table this exists to keep small.
+         */
+        if (scope == ChatScope.GLOBAL) {
+            val verdict = chatSpamFilter.judge(
+                serverAddress = agent.serverAddress.orEmpty(),
+                sender = from,
+                typed = payload.get("typed")?.asString(),
+            )
+
+            if (verdict is ChatSpamFilter.Verdict.Drop) {
+                chatService.suppressed(agent, from, verdict.run)
+                return
+            }
+        }
+
         chatService.record(
             agent = agent,
             scope = scope,
-            // Falls back to the agent's own name, which is who said it when the scope is outbound.
-            from = payload.get("from")?.asString() ?: agent.label,
+            from = from,
             text = text,
             // Re-serialised, never interpreted. This backend holds no opinion about what a chat
             // component is - the host resolved the server's translation keys and dropped everything
