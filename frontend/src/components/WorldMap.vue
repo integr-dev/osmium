@@ -45,6 +45,13 @@ export interface Mark {
   detail?: string
   /** Recent positions, oldest first, for the trail. Only the fleet keeps one. */
   trail?: Array<{ x: number; z: number }>
+  /**
+   * Nobody can see this one any more; it is drawn where it last was.
+   *
+   * The same marker, drained of colour - see {@link GONE}. Its {@link detail} is the caller's to
+   * write, and is the one line that says so.
+   */
+  gone?: boolean
   /** Their head, already fetched by the caller. Absent until it arrives, or if there is none. */
   avatar?: string | null
   /**
@@ -251,6 +258,16 @@ const HEAD = 18
 const PIP = 3.5
 
 /**
+ * What a position nobody can confirm is drawn in.
+ *
+ * A literal mid grey rather than a theme token, and deliberately: the point of it is that the
+ * marker is the same marker with the colour taken out, so it must not *be* one of the two colours
+ * that mean something. Mid enough to carry on both grounds, and the halo and the ring every marker
+ * already gets do the rest.
+ */
+const GONE = '#9ca3af'
+
+/**
  * Heads, by the url they were fetched from.
  *
  * The caller resolves the url - it is an authenticated request against Osmium's own avatar
@@ -343,7 +360,7 @@ function drawMarks(context: CanvasRenderingContext2D): void {
   const { ours, theirs, ink, ground } = themeInks()
 
   for (const mark of props.marks) {
-    const colour = mark.ours ? ours : theirs
+    const colour = mark.gone ? GONE : mark.ours ? ours : theirs
 
     // Oldest faintest. Motion is what makes a fleet read as working rather than as a list of dots,
     // and a trail is the only part of this picture that shows any.
@@ -376,8 +393,12 @@ function drawMarks(context: CanvasRenderingContext2D): void {
       const top = atY - HEAD / 2
 
       context.imageSmoothingEnabled = false
+      // Through the filter for somebody nobody can see any more, so the head reads as the same
+      // head rather than as a different person. Put back straight afterwards: the filter is on the
+      // context, not on the call, and everything drawn after it would inherit it.
+      if (mark.gone) context.filter = 'grayscale(1)'
       context.drawImage(face, left, top, HEAD, HEAD)
-      context.imageSmoothingEnabled = false
+      context.filter = 'none'
 
       // The same halo the names get, for the same reason: a head is eight pixels of whatever the
       // skin happens to be, and against terrain of a similar tone it has no edge at all. The
@@ -419,7 +440,9 @@ function drawMarks(context: CanvasRenderingContext2D): void {
     // the ring above - a halo the same colour as the letters it surrounds, which is a smudge.
     // Outlined in the page's ground and filled with its ink. Both were `ink` before, left over from
     // the ring above - a halo the same colour as the letters it surrounds, which is a smudge.
-    const detail = view.value.k >= DETAIL_FROM ? mark.detail : undefined
+    // A last-known line is drawn however far out the map is: it does not describe the marker, it
+    // qualifies it, and a grey dot with no explanation is one an operator would read as live.
+    const detail = mark.gone || view.value.k >= DETAIL_FROM ? mark.detail : undefined
     // Clear of whichever was drawn, so a name does not sit on a face.
     const above = mark.avatar && faces.get(mark.avatar)?.complete ? HEAD / 2 + 2 : DOT
     const nameAt = atY - above - (detail ? 14 : 4)

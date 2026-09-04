@@ -7,8 +7,8 @@ import { Crosshair, Map as MapIcon, Navigation } from 'lucide-vue-next'
 
 import PlayerHead from '../components/PlayerHead.vue'
 import WorldMap, { type Mark } from '../components/WorldMap.vue'
-import { listMappedServers, type MapExtentResponse } from '../api/map'
-import { useAgentStore } from '../stores/agents'
+import { fetchLastSeen, listMappedServers, type MapExtentResponse } from '../api/map'
+import { isOnline, useAgentStore } from '../stores/agents'
 import { atShort } from '../lib/time'
 import { parsePlace } from '../lib/mapCoords'
 import { agentDot, agentStateLabel } from '../lib/agentState'
@@ -268,18 +268,26 @@ watch(
 )
 
 /**
- * Everything drawn over the terrain: the fleet, and the people standing near it.
+ * Everything in view right now: the fleet that is still in the game, and the people around it.
  *
  * Ours are keyed by id, because two agents may legitimately share a Minecraft name.
+ *
+ * **An agent that has left the game is not in here.** Its last telemetry stays in the store - which
+ * is what the panel beside the map lists it from - but the position in it is where it *was*, and a
+ * marker in the fleet colour says it is there now. It comes back below, in grey.
+ *
+ * `face` is not part of a {@link Mark}: it is what the head was fetched by, carried so that a
+ * marker remembered after its owner has gone can still be drawn as the same person.
  */
-const marks = computed<Mark[]>(() => [
-  ...shown.value.map((agent) => ({
+const live = computed(() => [
+  ...shown.value.filter(isOnline).map((agent) => ({
     id: `agent-${agent.id}`,
     label: agent.label,
     x: agent.telemetry!.position.x,
     z: agent.telemetry!.position.z,
     ours: true,
     detail: agentDetail(agent),
+    face: agent.mcUuid ?? agent.mcUsername ?? null,
     avatar: faceOf(agent.mcUuid ?? agent.mcUsername),
     // The same dot the sidebar puts on the same head, so one agent looks like one thing.
     dot: agentDot(agent.state, agentStore.isBuilding(agent.id)),
@@ -292,9 +300,173 @@ const marks = computed<Mark[]>(() => [
     z: player.z,
     ours: false,
     detail: strangerVitals(player),
+    face: player.uuid ?? player.name,
     avatar: faceOf(player.uuid ?? player.name),
   })),
 ])
+
+/** Where somebody was when they were last in view, and when that was. */
+interface Remembered {
+  id: string
+  label: string
+  x: number
+  z: number
+  ours: boolean
+  /** What their head is fetched by, so the marker stays the same person's. */
+  face: string | null
+  /** The map this was taken on. A position means nothing on another server or in another world. */
+  server: string
+  dimension: string
+  at: number
+}
+
+/**
+ * The last position known for everyone, live or not.
+ *
+ * **Two sources, one map.** The backend keeps a sighting per person per world, written from the
+ * same telemetry this screen draws, and that is what fills this in when the screen opens - it is
+ * how a map can say where somebody was before anybody was looking. On top of it goes what this
+ * screen watches itself, which is the same record a few seconds fresher.
+ *
+ * Nothing here expires. The stored copy is deleted from the storage screen and by nothing else,
+ * and this one lasts as long as the world being drawn is the world it was taken in.
+ */
+const remembered = ref(new Map<string, Remembered>())
+
+/** How a mark is identified, so a stored sighting and a live one are the same marker. */
+function markId(kind: 'AGENT' | 'PLAYER', subject: string): string {
+  return kind === 'AGENT' ? `agent-${subject}` : `player-${subject}`
+}
+
+/**
+ * Loads what the fleet has recorded for the world being drawn.
+ *
+ * Replaced rather than merged into: every entry is addressed by a world, and the one being left is
+ * not the one being drawn. Anything the screen has watched itself is written again a second later
+ * by the pass below, so nothing that is still in view is lost by this.
+ *
+ * A failure is quiet. What it costs is the history from before this screen opened; what it must not
+ * do is put an error over a map that is drawing perfectly well from telemetry.
+ */
+watch(
+  [server, world],
+  async ([address, dimension]) => {
+    remembered.value = new Map()
+    if (!address || !dimension) return
+
+    let stored
+    try {
+      stored = await fetchLastSeen(address, dimension)
+    } catch (err) {
+      console.warn('[osmium] could not read the last known positions', err)
+      return
+    }
+
+    // The world may have been changed under the request, in which case these describe somewhere
+    // else entirely.
+    if (address !== server.value || dimension !== world.value) return
+
+    const next = new Map<string, Remembered>()
+    for (const seen of stored) {
+      const id = markId(seen.kind, seen.subject)
+      next.set(id, {
+        id,
+        label: seen.label,
+        x: seen.x,
+        z: seen.z,
+        ours: seen.kind === 'AGENT',
+        face: seen.face,
+        server: address,
+        dimension,
+        at: Date.parse(seen.at),
+      })
+    }
+
+    // Whatever has been watched since the request went out stays: it is newer than any of this.
+    for (const [id, held] of remembered.value) next.set(id, held)
+    remembered.value = next
+  },
+  { immediate: true },
+)
+
+/**
+ * Keeps the last position of everything in view.
+ *
+ * Written on every pass rather than only when something leaves, because leaving is not an event
+ * this screen receives: an agent stops being online and a player stops being listed, and both are
+ * simply an absence from the next sample. What can be recorded is presence, so that is what is.
+ *
+ * The backend is recording the same thing from the same telemetry, a flush behind. This is the
+ * copy that is exactly right for the people this screen was watching when they went.
+ */
+watch(
+  live,
+  (present) => {
+    if (!server.value || !world.value) return
+
+    const now = Date.now()
+    const next = new Map(remembered.value)
+    for (const mark of present) {
+      next.set(mark.id, {
+        id: mark.id,
+        label: mark.label,
+        x: mark.x,
+        z: mark.z,
+        ours: mark.ours,
+        face: mark.face,
+        server: server.value,
+        dimension: world.value,
+        at: now,
+      })
+    }
+
+    remembered.value = next
+  },
+  { immediate: true },
+)
+
+// And for the ones nobody can see any more, whose heads are drawn drained but are still theirs.
+watch(
+  remembered,
+  (held) => {
+    for (const seen of held.values()) rememberFace(seen.face)
+  },
+  { immediate: true },
+)
+
+/**
+ * The live marks, and under them the last known position of everyone who has gone.
+ *
+ * Ghosts first, so a marker that is still true is drawn over one that only used to be - two agents
+ * in the same doorway, one of which left, should read as the one that is there.
+ */
+const marks = computed<Mark[]>(() => {
+  const present = new Set(live.value.map((mark) => mark.id))
+
+  const gone = [...remembered.value.values()]
+    .filter(
+      (held) =>
+        !present.has(held.id) && held.server === server.value && held.dimension === world.value,
+    )
+    .map((held) => ({
+      id: held.id,
+      label: held.label,
+      x: held.x,
+      z: held.z,
+      ours: held.ours,
+      gone: true,
+      // The one line under a grey marker, and the only thing it can usefully say: this is where
+      // they were, and this is when that was true. With the day on it, not just the time: nothing
+      // expires any more, so a marker may well be from last week and an hour and a minute would
+      // read as this morning.
+      detail: t('map.lastKnown', { when: atShort(held.at) }),
+      avatar: faceOf(held.face),
+      // No state pip. The sidebar's dot says what an agent is doing, and nobody knows that about
+      // an agent that is not there.
+    }))
+
+  return [...gone, ...live.value]
+})
 
 /**
  * Appends to each trail as positions arrive.

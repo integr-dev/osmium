@@ -278,12 +278,15 @@ export const en = {
     subtitle: 'The agents, the machines that run them, and how the two are wired together.',
     tabBots: 'Bots',
     tabHosts: 'Hosts',
+    tabProxies: 'Proxies',
     tabGraph: 'Graph',
   },
 
   /** The wiring, drawn. The three link states are the same three the rest of the app uses. */
   graph: {
-    hint: 'Every line is a live connection. Packets flow while it is carrying traffic.',
+    hint: 'Every line is a connection or a route. Packets flow while one is carrying traffic.',
+    /** The outermost tier. Not "connections": nothing along them reports to Osmium. */
+    servers: 'Minecraft servers',
     live: 'Connected',
     stale: 'Faltering',
     down: 'Not connected',
@@ -344,6 +347,13 @@ export const en = {
     /** Where an agent plays decides what its *next* connection targets, so it is an offline edit. */
     blockedOnlineServer: 'Disconnect this agent before changing the server it plays on.',
     cancelConnect: 'Cancel',
+    /**
+     * Between the press and the host reporting that it stopped.
+     *
+     * Its own word rather than the button going quiet, because the gap is real: an attempt is
+     * abandoned where it next gives up the thread, and a lookup or a version ping is a round trip.
+     */
+    cancelling: 'Cancelling…',
     stopRejoining: 'Stop trying',
     /**
      * SETUP_PENDING is open-ended by design, so the way out is the operator saying it is not coming.
@@ -415,6 +425,8 @@ export const en = {
     title: 'View',
     subtitle: "What this agent can see, as it sees it.",
     orbit: 'Free camera',
+    /** Under the name of somebody the stream has dropped, whose body is left where it last was. */
+    lastKnown: 'Last known {when}',
     outdated: 'This agent has left the game. What you are seeing is the world as it last was.',
     ours: 'ours',
     firstPerson: 'First person',
@@ -482,11 +494,39 @@ export const en = {
     hearts: '{n}/20 hp',
     food: '{n}/20 food',
     seenBy: 'Nearest to {agent}',
+    /**
+     * Said under a marker nobody can see any more: an agent that left the game or walked into
+     * another world, and a player who went out of the view of every agent. The position is real
+     * and it was true when it was taken, which is what makes the time worth saying out loud.
+     */
+    lastKnown: 'Last known {when}',
     /** Said of the picture, not of any one tile: parts of it may be hours old. */
     stale: 'Terrain is as it was last seen, not as it is now.',
   },
 
   /** A placeholder screen. Nothing is built behind it yet. */
+  /**
+   * What each host can route a session through.
+   *
+   * Read-only on purpose, and the copy says why rather than leaving an operator hunting for an
+   * "add" button: a proxy is a file on the machine that dials it, because the password it may need
+   * is not something Osmium should be storing, showing or relaying.
+   */
+  proxies: {
+    subtitle: 'Routes the hosts are offering. {count} agents connect from their host directly.',
+    empty: 'No host is offering a proxy. Hosts read them from a file of their own and announce them on connect — see the host README.',
+    name: 'Name',
+    kind: 'Kind',
+    address: 'Address',
+    routed: 'Agents routed',
+    nobody: 'nobody',
+    /** On the icon beside a name. What it authenticates *with* never leaves the host. */
+    authenticated: 'Needs a password, which stays on the host',
+    /** A machine that is not connected is not offering nothing; it is not saying. */
+    unheard: 'Not connected',
+    stranded: 'is set to route through “{name}”, which this host is not offering. It will refuse to connect rather than go direct.',
+  },
+
   /**
    * Build jobs: a plan frozen and being carried out.
    *
@@ -900,6 +940,16 @@ export const en = {
         label: 'Trusted players',
         hint: 'Who may command this agent from in game, with !osm. Empty means nobody. Chat lets somebody make the agent talk and identify itself; Commands also lets them run server commands through it, under whatever permissions its Minecraft account holds — on an operator account that is close to handing it over.',
       },
+      connect_proxy: {
+        label: 'Route through',
+        hint: "Sends this agent's connection through one of its host's proxies, so the server sees the proxy's address instead of the machine's. The list is what that host holds; the address and any password stay on it, and Osmium never learns them. An agent naming a proxy its host does not have refuses to connect rather than going direct.",
+        /** The empty option. Not "off": nothing is being turned off, the traffic simply goes as it is. */
+        direct: 'Directly, from the host',
+        /** When the selection spans hosts, a proxy is named with the machine that holds it. */
+        onHost: '{name} — {host}',
+        /** Said in place of the picker when nothing can be picked. */
+        none: 'No host in this selection is holding any proxies.',
+      },
       connect_rejoin: {
         label: 'Rejoin automatically',
         hint: 'Puts the agent back after a kick, a server restart or a host reboot, waiting longer between each try. Only after somebody has connected it: an agent you disconnected stays out. Gives up after about half an hour and says so in its activity.',
@@ -1074,6 +1124,8 @@ export const en = {
       CHAT: 'Chat',
       ACTIVITY: 'Activity',
       MAP: 'Map',
+      /** Where each person was last seen, which is what the map draws in grey. */
+      POSITIONS: 'Last known positions',
       AUDIT: 'Audit trail',
       SCHEMATICS: 'Schematics',
       BUILDS: 'Builds',

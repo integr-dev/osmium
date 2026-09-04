@@ -8,6 +8,7 @@ import { isOnline, useAgentStore } from '../stores/agents'
 import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerStream'
 import { agentDetail, playerVitals } from '../lib/vitals'
 import { skinFor, type Skin } from '../lib/skins'
+import { atTime } from '../lib/time'
 
 /**
  * An agent's world, rendered live.
@@ -72,6 +73,28 @@ interface Scene {
   models: Set<string>
   /** Entities ruled out at spawn, so their movements can be dropped too. */
   undrawable: Set<number>
+  /**
+   * Players the stream has dropped, and when it dropped them.
+   *
+   * Their bodies are still in the scene, standing where they last were: an id in here is one whose
+   * removal was never passed on to the renderer - see {@link apply}.
+   *
+   * **Nothing here expires.** A body stands until the stream ends or until the id is reused, the
+   * same rule the stored record follows: a last known position is worth exactly as much an hour
+   * later as it was a minute later, and a viewer that quietly forgot one would be a viewer that
+   * disagreed with the map.
+   */
+  ghosts: Map<number, number>
+  /** Faces cut out of skins, by account, for the icon on a nametag. Null once none is coming. */
+  heads: Map<string, HTMLCanvasElement | null>
+  /**
+   * The three box colours as CSS, resolved once with the materials themselves.
+   *
+   * A canvas cannot be handed a `THREE.Color`, and the face on a label is outlined in the same
+   * colour as the box around the body - so both have to come out of the same resolution of the
+   * same tokens, or the two would disagree about what "ours" looks like.
+   */
+  tones: Record<Tone, string>
   /** The agent's own body, which nothing in the stream describes - see {@link showAgent}. */
   body?: Mesh
   /** Makes one, from the renderer's player model. Held so `showAgent` needs no imports. */
@@ -97,7 +120,7 @@ interface Scene {
   /** How big each is, for the box drawn around it. */
   sizes: Map<number, { width: number; height: number }>
   /** Builds an outline in the entity mesh's own units. Held so the decoration needs no imports. */
-  buildOutline?: (width: number, height: number, ours: boolean) => Mesh | undefined
+  buildOutline?: (width: number, height: number, tone: Tone) => Mesh | undefined
   buildNametag?: (height: number) => Mesh | undefined
   buildTexture?: (image: HTMLCanvasElement) => TextureLike
   buildSlim?: () => Mesh | undefined
@@ -141,13 +164,16 @@ interface SpriteMaterial {
 
 /** As much of a `THREE.Texture` as this file touches. */
 interface TextureLike {
-  image?: HTMLCanvasElement
+  /** A canvas for anything built here; an `<img>` for the sheets the renderer loaded itself. */
+  image?: HTMLCanvasElement | HTMLImageElement
   generateMipmaps: boolean
   minFilter: number
   magFilter: number
   wrapS: number
   wrapT: number
   needsUpdate: boolean
+  /** Only the ones built here are ever disposed of - see {@link greyOne}. */
+  dispose?(): void
 }
 
 /** One vertex stream of a section mesh. `onUpload` fires once three has handed it to the GPU. */
@@ -637,6 +663,11 @@ function dress(current: Scene, mesh: Mesh, worn: Skin): void {
     material.map = own
     material.needsUpdate = true
   }
+
+  // A skin can land after its owner has already been dropped from the stream, and the pass that
+  // drains a ghost only runs on entity events - of which a world whose last player just left sends
+  // none. So the drain is applied here too, over whatever was just put on.
+  if (mesh.userData['osmiumGone']) greyOne(current, mesh, true)
 }
 
 /** Whether a name belongs to the fleet, which is what decides the colour of the box around it. */
@@ -652,15 +683,16 @@ function ourPlayer(name: string | undefined): boolean {
  * Rebuilt rather than recoloured when the answer changes. Whether somebody is ours arrives with the
  * telemetry, which can land after the entity does, so the first box is sometimes drawn for a
  * stranger who turns out to be an agent - and a box built once and left is one that stays the wrong
- * colour for the rest of the session. It happens about once per player.
+ * colour for the rest of the session. It happens about once per player. A body that goes on being
+ * drawn after the stream has dropped it changes tone the same way, in the other direction.
  */
 function outlineOne(
   current: Scene,
   mesh: Mesh,
-  ours: boolean,
+  tone: Tone,
   size: { width: number; height: number } | undefined,
 ): void {
-  if (mesh.userData['osmiumOutlined'] && mesh.userData['osmiumOurs'] === ours) return
+  if (mesh.userData['osmiumOutlined'] && mesh.userData['osmiumTone'] === tone) return
 
   if (mesh.userData['osmiumOutlined']) {
     for (const child of [...(mesh.children ?? [])]) {
@@ -668,12 +700,84 @@ function outlineOne(
     }
   }
 
-  const outline = size && current.buildOutline?.(size.width, size.height, ours)
+  const outline = size && current.buildOutline?.(size.width, size.height, tone)
   if (!outline) return
 
   mesh.userData['osmiumOutlined'] = true
-  mesh.userData['osmiumOurs'] = ours
+  mesh.userData['osmiumTone'] = tone
   mesh.add(outline)
+}
+
+/**
+ * Drains the colour out of a body, or puts it back.
+ *
+ * The same idea as the grey marker on the map, and for the same reason: what is on screen is a real
+ * position that was true when it was taken, and the one thing it must not look like is a live one.
+ *
+ * **A copy of the texture, never the texture itself.** The renderer caches sheets by URL and hands
+ * the same `THREE.Texture` to every entity that names one, so a player with no skin of their own is
+ * wearing the very object every other Steve in the world is wearing. Draining that in place would
+ * grey the living along with the dead. The material, unlike the texture, belongs to this mesh.
+ *
+ * Keyed off the texture rather than off a flag, so a skin that lands after the drain is drained in
+ * turn rather than being taken for one that already has been.
+ */
+function greyOne(current: Scene, mesh: Mesh, gone: boolean): void {
+  mesh.userData['osmiumGone'] = gone
+
+  for (const child of mesh.children ?? []) {
+    // The nametag is a sprite and the outline is a line list; what is left is the body.
+    if (child.isSprite || child.userData['osmiumOutline'] || !child.geometry) continue
+
+    const material = child.material
+    if (!material?.map) continue
+
+    if (gone) {
+      if (child.userData['osmiumGreyed'] === material.map) continue
+
+      const drained = fade(material.map.image)
+      const texture = drained && current.buildTexture?.(drained)
+      if (!texture) continue
+
+      child.userData['osmiumLively'] = material.map
+      child.userData['osmiumGreyed'] = texture
+      material.map = texture
+      material.needsUpdate = true
+      continue
+    }
+
+    const lively = child.userData['osmiumLively'] as TextureLike | undefined
+    if (!lively) continue
+
+    material.map = lively
+    // Built here, so it is this file's to free. The one it replaced is upstream's or the skin's.
+    ;(child.userData['osmiumGreyed'] as TextureLike | undefined)?.dispose?.()
+    child.userData['osmiumLively'] = undefined
+    child.userData['osmiumGreyed'] = undefined
+    material.needsUpdate = true
+  }
+}
+
+/** A drained copy of whatever a texture was drawn from, at its own size. */
+function fade(image: HTMLCanvasElement | HTMLImageElement | undefined): HTMLCanvasElement | null {
+  if (!image) return null
+
+  const width = image instanceof HTMLImageElement ? image.naturalWidth : image.width
+  const height = image instanceof HTMLImageElement ? image.naturalHeight : image.height
+  if (!width || !height) return null
+
+  const drained = document.createElement('canvas')
+  drained.width = width
+  drained.height = height
+
+  const ctx = drained.getContext('2d')
+  if (!ctx) return null
+
+  // Nearest neighbour, as everywhere else a skin is touched: this is a 64-pixel sheet.
+  ctx.imageSmoothingEnabled = false
+  ctx.filter = 'grayscale(1)'
+  ctx.drawImage(image, 0, 0)
+  return drained
 }
 
 /**
@@ -690,7 +794,7 @@ function outlineOne(
  * back as streaked noise. And the material is not marked transparent, so the empty area around the
  * name is composited rather than dropped.
  */
-function labelOne(current: Scene, mesh: Mesh, name: string | undefined): void {
+function labelOne(current: Scene, mesh: Mesh, name: string | undefined, tone: Tone, since?: number): void {
   for (const child of mesh.children ?? []) {
     if (!child.isSprite || child.userData['osmiumOutline']) continue
     child.frustumCulled = false
@@ -710,6 +814,15 @@ function labelOne(current: Scene, mesh: Mesh, name: string | undefined): void {
 
       const material = child.material
       if (material) {
+        // Upstream draws its tags onto a 500x100 canvas, which is the room for two lines of text
+        // and nothing else. The face goes above them, so the sheet is grown to match the shape the
+        // scale above assumes. Resizing clears it, which costs nothing: it is redrawn below.
+        const upstream = material.map?.image
+        if (upstream instanceof HTMLCanvasElement && upstream.height !== NAMETAG_CANVAS.height) {
+          upstream.width = NAMETAG_CANVAS.width
+          upstream.height = NAMETAG_CANVAS.height
+        }
+
         material.transparent = true
         material.depthWrite = false
         // One size, whatever the distance. A sprite shrinks with range by default, which is right
@@ -737,14 +850,31 @@ function labelOne(current: Scene, mesh: Mesh, name: string | undefined): void {
     // Outside the once-only block: the distance and the vitals change as everybody moves, so the
     // label is redrawn when the text it shows would differ - not every frame, and not never.
     const map = child.material?.map
-    if (!map?.image) continue
+    const sheet = map?.image
+    // Upstream's tag and the one built here are both canvases; nothing else reaches this.
+    if (!map || !(sheet instanceof HTMLCanvasElement)) continue
 
     const mark = markFor(name)
-    const text = `${mark?.label ?? ''}|${mark?.detail ?? ''}`
+    // A body the stream has dropped says when it was last seen instead of how it was doing: the
+    // vitals belong to somebody the fleet can still see, and this one it cannot.
+    const detail =
+      since === undefined ? (mark?.detail ?? null) : t('viewer.lastKnown', { when: atTime(since) })
+    const head = headFor(current, name)
+
+    // The face counts as part of what is drawn, so its arrival has to count as a change: it is
+    // fetched, and it lands long after the first label was painted. So does the tone, which is
+    // what the face is outlined in.
+    const text = `${mark?.label ?? ''}|${detail ?? ''}|${head ? 'face' : ''}|${tone}`
     if (child.userData['osmiumLabel'] === text) continue
     child.userData['osmiumLabel'] = text
 
-    redrawNametag(map.image, mark?.label, mark?.detail ?? null)
+    redrawNametag(sheet, {
+      label: mark?.label,
+      detail,
+      head,
+      outline: current.tones[tone],
+      faded: since !== undefined,
+    })
     map.needsUpdate = true
   }
 }
@@ -765,13 +895,17 @@ function shapeNametags(current: Scene): void {
     // Skinned and boxed, but only players: an operator watching an agent is watching for people,
     // and outlining every cow would bury them. The box takes the map's colour for the same person,
     // so the two screens never disagree about who is ours.
+    const name = current.names.get(id)
+    const since = current.ghosts.get(id)
+    const tone: Tone = since !== undefined ? 'gone' : ourPlayer(name) ? 'ours' : 'theirs'
+
     if (current.seen.get(id) === 'player') {
-      const name = current.names.get(id)
       wear(current, id, mesh)
-      outlineOne(current, mesh, ourPlayer(name), current.sizes.get(id))
+      greyOne(current, mesh, since !== undefined)
+      outlineOne(current, mesh, tone, current.sizes.get(id))
     }
 
-    labelOne(current, mesh, current.names.get(id))
+    labelOne(current, mesh, name, tone, since)
   }
 }
 
@@ -805,13 +939,79 @@ function markFor(name: string | undefined): { label: string; detail: string | nu
   return { label: name, detail: (player && playerVitals(player)) || null }
 }
 
+/**
+ * The face out of a skin sheet: the front of the head, with the hat layer laid over it.
+ *
+ * The same eight pixels the map draws beside a marker, cut here rather than fetched: the skin is
+ * already in hand for the body, and the head endpoint would be a second request for a crop of it.
+ */
+function headshot(worn: HTMLCanvasElement): HTMLCanvasElement | null {
+  const face = document.createElement('canvas')
+  face.width = FACE
+  face.height = FACE
+
+  const ctx = face.getContext('2d')
+  if (!ctx) return null
+
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(worn, 8, 8, FACE, FACE, 0, 0, FACE, FACE)
+  // The second layer, which is a hat on most skins and the whole face on a few.
+  ctx.drawImage(worn, 40, 8, FACE, FACE, 0, 0, FACE, FACE)
+  return face
+}
+
+/**
+ * The face for one account, once it is there.
+ *
+ * Claimed with a null before the request, so the label pass - which runs every frame for the
+ * agent's own body - asks once rather than on every frame the skin is in flight. Null is also the
+ * settled answer for somebody who has no skin, and their label is simply drawn without a face.
+ */
+function headFor(current: Scene, name: string | undefined): HTMLCanvasElement | null {
+  if (!name) return null
+
+  const held = current.heads.get(name)
+  if (held !== undefined) return held
+
+  current.heads.set(name, null)
+  void skinFor(name).then((worn) => {
+    if (worn) current.heads.set(name, headshot(worn.image))
+  })
+  return null
+}
+
+/** The face on a skin sheet, in its own pixels. */
+const FACE = 8
+
+/**
+ * How big the face is drawn on a label, how far it sits from the top of it, and how much room is
+ * left between it and the first line of text.
+ *
+ * `HEADSHOT_TOP` is not zero because the face is outlined, and a stroke centred on the edge of the
+ * canvas loses its outer half.
+ */
+const HEADSHOT = 56
+const HEADSHOT_TOP = 6
+const HEADSHOT_GAP = 8
+
+/** How heavy that outline is. The weight the text is haloed at, which is what it is drawn beside. */
+const HEADSHOT_OUTLINE = 6
+
 /** The protocol's own numbering. Survival is the default and says nothing, so it is left unnamed. */
 function redrawNametag(
-  canvas: HTMLCanvasElement | undefined,
-  label: string | undefined,
-  detail: string | null,
+  canvas: HTMLCanvasElement,
+  mark: {
+    label: string | undefined
+    detail: string | null
+    head: HTMLCanvasElement | null
+    /** What the face is ringed in: the colour of the box around the body it belongs to. */
+    outline: string
+    /** Drawn drained, for a body the stream has dropped. See {@link greyOne}. */
+    faded: boolean
+  },
 ): void {
-  if (!canvas || !label) return
+  const { label, detail, head, outline, faded } = mark
+  if (!label) return
 
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -820,39 +1020,79 @@ function redrawNametag(
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.lineJoin = 'round'
+  ctx.filter = 'none'
 
-  // White on a dark outline rather than plain black: a label has to stay readable over stone,
-  // grass, lava and the sky, and no single fill colour does that.
-  //
+  // Whatever the face does not take, measured from under it. Without one that is the whole label,
+  // which is what a mob's tag and a player whose skin never arrived both get.
+  const under = head ? HEADSHOT_TOP + HEADSHOT + HEADSHOT_GAP : 0
+  const band = canvas.height - under
+
+  // The same two lines the map draws, in the same order: who, then how they are doing.
+  const lines = detail
+    ? [
+        { text: label, y: under + band * 0.34, size: band * 0.48, colour: '#ffffff' },
+        { text: detail, y: under + band * 0.78, size: band * 0.3, colour: '#d4d4d8' },
+      ]
+    : [{ text: label, y: under + band / 2, size: band * 0.62, colour: '#ffffff' }]
+
+  const room = canvas.width - NAMETAG_MARGIN * 2
+
   // **Shrunk to fit, never clipped.** The canvas is a fixed 500 wide and the sprite a fixed width
   // in the world, so a long line - an agent's label, its Minecraft name and its vitals - ran off
   // both ends and lost its first and last words to the edges. Measured once and scaled: a string
   // is linear in its font size, so one pass lands within a pixel of the room available.
-  const write = (text: string, y: number, size: number, colour: string) => {
-    const room = canvas.width - NAMETAG_MARGIN * 2
-
-    ctx.font = `${Math.floor(size)}px sans-serif`
-    const measured = ctx.measureText(text).width
-    const fitted = measured > room ? Math.max(NAMETAG_MIN_PX, size * (room / measured)) : size
+  //
+  // Measured before anything is drawn, because the face is placed against the text rather than
+  // against the canvas: a name and the head beside it are one thing, and centring the two
+  // separately would leave whatever was left over as a gap between them.
+  const measured = lines.map((line) => {
+    ctx.font = `${Math.floor(line.size)}px sans-serif`
+    const width = ctx.measureText(line.text).width
+    const fitted = width > room ? Math.max(NAMETAG_MIN_PX, line.size * (room / width)) : line.size
 
     ctx.font = `${Math.floor(fitted)}px sans-serif`
-    ctx.lineWidth = Math.max(2, fitted * 0.16)
+    return { ...line, size: fitted, width: Math.min(ctx.measureText(line.text).width, room) }
+  })
+
+  const middle = canvas.width / 2
+
+  if (head) {
+    const left = middle - HEADSHOT / 2
+
+    // Nearest neighbour: eight pixels blown up to fifty-six, and anything else is a smear.
+    ctx.imageSmoothingEnabled = false
+    if (faded) ctx.filter = 'grayscale(1)'
+    ctx.drawImage(head, left, HEADSHOT_TOP, HEADSHOT, HEADSHOT)
+    ctx.filter = 'none'
+
+    // Ringed the way the letters below are haloed, and in the colour of the box around the body:
+    // eight pixels of somebody's skin has no edge of its own against sky, stone or snow, and the
+    // colour is the one thing on a label that says whether this is one of ours.
+    //
+    // The path is inset by half the line so the stroke lands wholly outside the face - centred on
+    // its edge, half of it would cover the outermost pixel of the skin, which on a head is an ear.
+    ctx.lineWidth = HEADSHOT_OUTLINE
+    ctx.strokeStyle = outline
+    ctx.strokeRect(
+      left - HEADSHOT_OUTLINE / 2,
+      HEADSHOT_TOP - HEADSHOT_OUTLINE / 2,
+      HEADSHOT + HEADSHOT_OUTLINE,
+      HEADSHOT + HEADSHOT_OUTLINE,
+    )
+  }
+
+  // White on a dark outline rather than plain black: a label has to stay readable over stone,
+  // grass, lava and the sky, and no single fill colour does that.
+  for (const line of measured) {
+    ctx.font = `${Math.floor(line.size)}px sans-serif`
+    ctx.lineWidth = Math.max(2, line.size * 0.16)
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)'
     // `maxWidth` is the last resort: a line long enough to reach the floor above is condensed
     // rather than cut, which is ugly and still readable, where a cut drops whole words silently.
-    ctx.strokeText(text, canvas.width / 2, y, room)
-    ctx.fillStyle = colour
-    ctx.fillText(text, canvas.width / 2, y, room)
+    ctx.strokeText(line.text, middle, line.y, room)
+    ctx.fillStyle = line.colour
+    ctx.fillText(line.text, middle, line.y, room)
   }
-
-  // The same two lines the map draws, in the same order: who, then how they are doing.
-  if (!detail) {
-    write(label, canvas.height / 2, canvas.height * 0.62, '#ffffff')
-    return
-  }
-
-  write(label, canvas.height * 0.34, canvas.height * 0.48, '#ffffff')
-  write(detail, canvas.height * 0.78, canvas.height * 0.3, '#d4d4d8')
 }
 
 /** Past anything the world puts in the transparent pass, so a name is never sorted behind a body. */
@@ -897,11 +1137,38 @@ function themeColour(name: string, fallback: number): number {
 const OUTLINE_OURS = 0x4ade80
 const OUTLINE_THEIRS = 0xe05252
 
-/** How thick the box is drawn, in pixels. */
-const OUTLINE_WIDTH = 3
+/**
+ * And the third, for a body nobody can see any more.
+ *
+ * Not a theme token at all. The other two mean "ours" and "theirs" and this one means neither -
+ * what it says is that the colour is gone, so it has to be a grey rather than a dimmer version of
+ * a thing that means something. Mid enough to read against a night sky and against snow.
+ */
+const OUTLINE_GONE = 0x9ca3af
 
-/** What upstream draws a name onto. */
-const NAMETAG_CANVAS = { width: 500, height: 100 }
+/** Which of the three a box is drawn in. */
+type Tone = 'ours' | 'theirs' | 'gone'
+
+/** The order {@link Scene.outlineMaterials} is built in, so a tone can pick its own. */
+const TONES: readonly Tone[] = ['ours', 'theirs', 'gone']
+
+/**
+ * How thick the box is drawn, in pixels.
+ *
+ * Two rather than three. A box is a hint about where somebody is, and at three the line was wide
+ * enough to eat the edges of the body inside it - which is the thing being pointed at.
+ */
+const OUTLINE_WIDTH = 2
+
+/**
+ * What a name is drawn onto.
+ *
+ * Upstream's is 500x100 - two lines of text and nothing else. The face sits above them, so this is
+ * taller by exactly the room the face takes, which leaves the text at the size it was: how big a
+ * line ends up on screen depends on its pixels and the canvas *width*, and the width has not moved.
+ * Tags upstream built are resized to match when they are shaped - see {@link labelOne}.
+ */
+const NAMETAG_CANVAS = { width: 500, height: 170 }
 
 /**
  * How wide the label is on screen, as world units at unit distance.
@@ -937,6 +1204,20 @@ let waiting: ViewerEvent[] = []
 /** Whether the scene is being built, so a second `version` frame does not start a second one. */
 let building = false
 
+/**
+ * Everything remembered about one entity id, dropped together.
+ *
+ * Ids are reused, so a ruling or a name kept past the thing it described is worse than none: it
+ * would be applied to whoever the server issues the id to next.
+ */
+function forget(current: Scene, id: number): void {
+  current.ghosts.delete(id)
+  current.seen.delete(id)
+  current.names.delete(id)
+  current.sizes.delete(id)
+  current.undrawable.delete(id)
+}
+
 /** Hands one update to the renderer. */
 function apply(current: Scene, event: ViewerEvent): void {
   if (event.name === 'position') current.position = event.data as Scene['position']
@@ -950,6 +1231,37 @@ function apply(current: Scene, event: ViewerEvent): void {
       pos?: { x: number; y: number; z: number }
       delete?: true
     }
+
+    /*
+     * A player the stream drops is kept rather than removed - the removal is simply not passed on,
+     * and the body stays exactly where the last update put it. What it is *for* is the question an
+     * operator watching an agent actually has: somebody was standing here a minute ago, where.
+     *
+     * Only players. Everything else the agent can see is either scenery or a mob, and a field of
+     * cows nobody can see any more is not a record of anything.
+     */
+    if (entity.delete && current.seen.get(entity.id) === 'player') {
+      current.ghosts.set(entity.id, Date.now())
+      // Its box, its skin and its label all change at once, and no further event will arrive for
+      // this id to drive that pass - this is the last one.
+      shapeNametags(current)
+      return
+    }
+
+    if (!entity.delete && current.ghosts.has(entity.id)) {
+      // A player who walked back into view, under the id they left with. Nothing else to do: the
+      // decoration pass below reads `ghosts` and puts the colour back.
+      if (!entity.username || entity.username === current.names.get(entity.id)) {
+        current.ghosts.delete(entity.id)
+      } else {
+        // Or somebody else entirely, wearing a reused id. The ghost has to be let go of *before*
+        // upstream sees this update, because upstream would otherwise take the body already under
+        // that id and simply move it - and the newcomer would arrive wearing a dead player's skin.
+        current.emitter.emit('entity', { id: entity.id, delete: true })
+        forget(current, entity.id)
+      }
+    }
+
     if (entity.name) current.seen.set(entity.id, entity.name)
     if (entity.username) current.names.set(entity.id, entity.username)
     if (entity.width !== undefined && entity.height !== undefined) {
@@ -1000,6 +1312,8 @@ function restream(current: Scene, world: { version: string; minY?: number; heigh
   current.viewer.setVersion(world.version)
 
   // Everything remembered about entities describes ids the last stream issued, and ids are reused.
+  // The ghosts go with them: `setVersion` empties the scene, so their bodies are already gone.
+  current.ghosts.clear()
   current.undrawable.clear()
   current.seen.clear()
   current.names.clear()
@@ -1151,7 +1465,7 @@ function showAgent(current: Scene): void {
     const own = agent.value?.mcUsername
     if (own) skin(current, built, own)
 
-    outlineOne(current, built, true, SELF)
+    outlineOne(current, built, 'ours', SELF)
     const tag = current.buildNametag?.(SELF.height)
     if (tag) built.add(tag)
   }
@@ -1161,7 +1475,7 @@ function showAgent(current: Scene): void {
 
   // Every frame the agent moves, so its own label keeps up with its own vitals the way the others
   // do.
-  labelOne(current, current.body, agent.value?.mcUsername ?? undefined)
+  labelOne(current, current.body, agent.value?.mcUsername ?? undefined, 'ours')
 }
 
 /**
@@ -1276,18 +1590,25 @@ async function mount(world: { version: string; minY?: number; height?: number },
   // the same class, imported the way the rest of this app imports anything.
   const controls = new OrbitControls(viewer.camera as never, element)
 
-  // Two, and the same two the map paints its markers with: the fleet in `--color-primary` and
-  // everybody else in `--color-error`. A width is measured in pixels, so each has to be told the
-  // size of the canvas - see `resize`.
-  const outlineMaterials = (
-    [
-      ['--color-primary', OUTLINE_OURS],
-      ['--color-error', OUTLINE_THEIRS],
-    ] as const
-  ).map(
-    ([token, fallback]) =>
+  // Two of them are the two the map paints its markers with: the fleet in `--color-primary` and
+  // everybody else in `--color-error`. The third is nobody's, and is not a theme colour at all -
+  // see `OUTLINE_GONE`.
+  //
+  // Resolved once, here, because two things are drawn in them: the box around a body and the ring
+  // around the face on its label. Resolving the tokens twice is two chances for the same player to
+  // be outlined in two colours.
+  const tones: Record<Tone, number> = {
+    ours: themeColour('--color-primary', OUTLINE_OURS),
+    theirs: themeColour('--color-error', OUTLINE_THEIRS),
+    gone: OUTLINE_GONE,
+  }
+
+  // A width is measured in pixels, so each has to be told the size of the canvas - see `resize`.
+  // Built in the order `TONES` names them, which is how `buildOutline` finds one.
+  const outlineMaterials = TONES.map(
+    (tone) =>
       new LineMaterial({
-        color: themeColour(token, fallback),
+        color: tones[tone],
         linewidth: OUTLINE_WIDTH,
         depthTest: false,
         transparent: true,
@@ -1347,7 +1668,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
     // In world units, not model units: what an entity is attached to is a plain Object3D, and the
     // sixteenth-scale lives on its children. Scaling for it here made everything sixteen times its
     // size.
-    buildOutline: (width: number, height: number, ours: boolean) => {
+    buildOutline: (width: number, height: number, tone: Tone) => {
       const box = new THREE.BoxGeometry(width, height, width)
       // The model stands on its origin, so the box is raised to sit around it rather than straddle.
       box.translate(0, height / 2, 0)
@@ -1357,7 +1678,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       // out of quads instead, so a width is actually a width.
       const outline = new LineSegments2(
         new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(box)),
-        ours ? outlineMaterials[0] : outlineMaterials[1],
+        outlineMaterials[TONES.indexOf(tone)],
       ) as unknown as Mesh
       outline.renderOrder = NAMETAG_ORDER
       outline.frustumCulled = false
@@ -1391,6 +1712,11 @@ async function mount(world: { version: string; minY?: number; height?: number },
     seen: new Map(),
     names: new Map(),
     sizes: new Map(),
+    ghosts: new Map(),
+    heads: new Map(),
+    tones: Object.fromEntries(
+      TONES.map((tone) => [tone, '#' + tones[tone].toString(16).padStart(6, '0')]),
+    ) as Record<Tone, string>,
   }
   scene.value = built
   status.value = 'watching'

@@ -18,6 +18,27 @@ export async function listMappedServers(): Promise<MapExtentResponse[]> {
   return (data ?? []) as MapExtentResponse[]
 }
 
+/** Where somebody was the last time any agent could see them. */
+export type LastSeenResponse = Required<components['schemas']['LastSeenResponse']>
+
+/**
+ * Everyone last seen in one world, newest first.
+ *
+ * The other half of what the map draws: the tiles are the ground, and these are the people who
+ * were standing on it. Read rather than remembered, so a screen opened now can say where somebody
+ * was before it was opened.
+ */
+export async function fetchLastSeen(
+  server: string,
+  dimension: string,
+): Promise<LastSeenResponse[]> {
+  const { data, error } = await api.GET('/api/map/last-seen', {
+    params: { query: { server, dimension } },
+  })
+  if (error) throw new Error(errorMessage(error))
+  return (data ?? []) as LastSeenResponse[]
+}
+
 /** A rectangle of chunks, corners included. */
 export interface Area {
   minX: number

@@ -52,6 +52,20 @@ enum class StorageArea(
     MAP(tables = listOf("map_tiles"), purges = "map_tiles", dated = "at"),
 
     /**
+     * Where the fleet last saw each person, which is the other half of the same record.
+     *
+     * Purgeable, and unlike the map it is the *only* way these rows ever go: nothing here expires,
+     * because the value of an old position is that it is the only one there is. It is also the one
+     * area whose rows are about people who are not ours, which is a reason of its own for an
+     * operator to be able to empty it without touching the ground it was recorded on.
+     */
+    POSITIONS(
+        tables = listOf("last_seen_positions"),
+        purges = "last_seen_positions",
+        dated = "at",
+    ),
+
+    /**
      * The operator trail. **Shown, never purged from here.**
      *
      * A screen that can delete the record of its own use is a screen with a hole in it, and the

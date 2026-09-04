@@ -5,9 +5,11 @@ import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
+import net.integr.osmium.map.dto.LastSeenResponse
 import net.integr.osmium.map.dto.MapAreaResponse
 import net.integr.osmium.map.dto.MapExtentResponse
 import net.integr.osmium.map.dto.toResponse
+import net.integr.osmium.map.service.LastSeenService
 import net.integr.osmium.map.service.MapService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.GetMapping
@@ -26,7 +28,10 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/map")
 @Tag(name = "Map", description = "What the fleet has charted, per server, one pixel per block column.")
-class MapController(private val mapService: MapService) {
+class MapController(
+    private val mapService: MapService,
+    private val lastSeenService: LastSeenService,
+) {
 
     @GetMapping("/servers")
     @PreAuthorize("hasAuthority('agent.read')")
@@ -46,6 +51,38 @@ class MapController(private val mapService: MapService) {
         ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
     )
     fun servers(): List<MapExtentResponse> = mapService.extents().map { it.toResponse() }
+
+    @GetMapping("/last-seen")
+    @PreAuthorize("hasAuthority('agent.read')")
+    @Operation(
+        summary = "Where everybody was, the last time any agent could see them.",
+        description = """
+            One entry per person per world: the fleet's agents, and every player who has stood near
+            one of them. What is stored is the **last** position known, not a history - a trail of
+            where somebody has been belongs to the screen watching them move.
+
+            This is what a map draws in grey. Somebody in it may well be standing in front of an
+            agent right now, in which case telemetry describes them better and this entry is simply
+            older; `at` is what says which.
+
+            Nothing here expires. It is deleted from the storage screen and by nothing else, so the
+            newest 500 are answered rather than all of them - a server that has been busy for a year
+            holds every account that has ever walked past an agent.
+        """,
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "The newest sightings in that world."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
+    )
+    fun lastSeen(
+        @Parameter(description = "The server to read sightings from.", example = "mc.example.com")
+        @RequestParam server: String,
+        @Parameter(
+            description = "Which world, without its `minecraft:` prefix.",
+            example = "overworld",
+        )
+        @RequestParam dimension: String,
+    ): List<LastSeenResponse> = lastSeenService.inWorld(server, dimension).map { it.toResponse() }
 
     @GetMapping("/tiles")
     @PreAuthorize("hasAuthority('agent.read')")

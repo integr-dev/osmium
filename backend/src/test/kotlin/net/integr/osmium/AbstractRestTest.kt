@@ -33,6 +33,10 @@ import org.springframework.transaction.annotation.Transactional
         // `data/schematics`, running the suite silently deletes whatever a developer has uploaded
         // locally.
         "osmium.schematic.directory=\${java.io.tmpdir}/osmium-schematic-test",
+        // Sightings are flushed by hand in the tests that care about them. Left on its own timer,
+        // that flush commits rows outside the transaction each test is rolled back with, and every
+        // later assertion about who was last seen where would depend on when it happened to fire.
+        "osmium.map.last-seen-flush-ms=3600000",
     ],
 )
 @AutoConfigureMockMvc

@@ -1,7 +1,9 @@
 package net.integr.osmium.map.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import net.integr.osmium.map.model.LastSeen
 import net.integr.osmium.map.model.MapTile
+import net.integr.osmium.map.model.SubjectKind
 import net.integr.osmium.map.repository.MapExtent
 import java.time.Instant
 import java.util.Base64
@@ -70,6 +72,40 @@ data class MapExtentResponse(
     val maxZ: Int,
     @param:Schema(description = "When any part of it was last seen.")
     val at: Instant,
+)
+
+@Schema(
+    description = "Where somebody was the last time any agent could see them. One entry per " +
+        "person per world - the last thing known, not a history of where they have been.",
+)
+data class LastSeenResponse(
+    @param:Schema(
+        description = "Whether this is one of ours. An agent is addressed by its id, because two " +
+            "may share a Minecraft name; anyone else by the only name there is for them.",
+    )
+    val kind: SubjectKind,
+    @param:Schema(description = "The agent's id written out, or the player's name.", example = "42")
+    val subject: String,
+    @param:Schema(description = "What to call them: an agent's label, or a player's name.")
+    val label: String,
+    @param:Schema(description = "What to fetch their head by. Null when neither a uuid nor a name was known.")
+    val face: String?,
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    @param:Schema(description = "When they were last seen there. The whole point of the row.")
+    val at: Instant,
+)
+
+fun LastSeen.toResponse(): LastSeenResponse = LastSeenResponse(
+    kind = kind,
+    subject = subject,
+    label = label,
+    face = face,
+    x = x,
+    y = y,
+    z = z,
+    at = at,
 )
 
 fun MapTile.toResponse(): MapTileResponse = MapTileResponse(
