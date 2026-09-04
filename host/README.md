@@ -21,17 +21,54 @@ OSMIUM_HOST_TOKEN=osm_host_…  OSMIUM_WS_URL=wss://…/ws/host  npm start
 ```
 
 `OSMIUM_ACCOUNTS` (default `/agent/accounts.json`) records which credential belongs to which agent;
-`OSMIUM_TOKEN_CACHE` (default `/agent/msa`) is prismarine-auth's own token cache. Both sit under the
+`OSMIUM_TOKEN_CACHE` (default `/agent/msa`) is prismarine-auth's own token cache;
+`OSMIUM_PROXIES` (default `/agent/proxies.json`) is the proxy list below. All three sit under the
 same volume, so a container that keeps `/agent` keeps its accounts. `OSMIUM_LOG` takes `error`,
 `warn`, `info` or `debug`.
 
 Accounts are normally added through the interface: "Sign in with Microsoft" when setting an agent up
 puts the code in that agent's activity feed. `osmium-link` does the same from a shell, for a host
-that is not enrolled yet or for a session token nothing can obtain.
+that is not enrolled yet or for a session token nothing can obtain — and it is the **only** way to
+add a proxy, because the password one may need is the thing Osmium deliberately never learns.
 
 ```
-osmium-link microsoft     osmium-link token     osmium-link list     osmium-link remove <id>
+osmium-link                      ask what to do
+osmium-link microsoft            sign in with Microsoft and keep the account
+osmium-link token                add a Minecraft session token
+osmium-link list                 show what this host holds
+osmium-link remove <id>          drop one credential
+osmium-link proxy add            add a proxy agents can be routed through
+osmium-link proxy list           show the proxies this host holds
+osmium-link proxy remove <name>  drop one
+osmium-link proxy check <name>   dial through it and say whether it worked
 ```
+
+**Run it with no arguments and it takes the screen.** It swaps to the terminal's alternate buffer —
+the way `less` does, so your scrollback is untouched and comes back on the way out — and shows one
+thing at a time: a menu you move through with the arrow keys, and a **form** for anything that needs
+more than one answer. Arrows move between fields, left and right change a choice, enter saves, esc
+goes back; it returns to the menu when a task is done and leaves when you pick Quit.
+
+Adding a proxy is one screen with five fields on it rather than five questions in a row, which is
+the difference between checking what you typed and remembering it. A password is a field like any
+other, shown as dots, sitting beside the username it belongs to.
+
+Every command also takes flags for a script, and any gap in one becomes a form when there is a
+terminal to draw on — with none, it names the flags that were left out rather than waiting on an
+answer that is never coming.
+
+> **Git Bash needs `winpty`.** mintty gives a Windows program a pipe rather than a console, so node
+> reports no TTY, raw mode is unavailable and every prompt refuses — which looks like the tool
+> exiting the instant it starts. Run `winpty osmium-link`, or use Windows Terminal or PowerShell,
+> where it works unwrapped. The tool says so itself rather than printing the usage and leaving you
+> to guess. Two values are never arguments: a
+session token and a proxy password are typed without echo, or read from stdin and
+`OSMIUM_PROXY_PASSWORD` respectively, because an argument is in the shell history and in `ps` for
+every other user on the machine.
+
+`proxy check` is the one thing the interface cannot do. It dials through a proxy to
+`example.com:443` — or wherever `--to host:port` says — and reports what happened, which beats
+pointing an agent at it and reading the activity feed to find out it was wrong.
 
 ### Tests, CI and the image
 
@@ -299,6 +336,7 @@ one would otherwise run on defaults with nothing saying so.
 | `util.antiHunger` | `careful`, `spoof`, or unset for off. Exhaustion is charged by distance at a rate that depends on whether the server believes the agent is sprinting. `careful` gives up the sprint. `spoof` keeps the speed and drops the packet that declares it. Read per packet and per tick. |
 | `util.noFall` | `true` to report standing on the ground on every movement packet that says otherwise, which resets the fall distance the server accumulates. Read per packet. |
 | `util.fleeDistance` | Blocks. A player who is not on `players.whitelist` coming this close makes the agent raise a `system`/`error` activity entry, send `stand_down`, and leave. Blank or anything that is not a positive number is off. The agent's own account is not a stranger to it; **every other agent in the fleet is**, so agents sharing a server go on each other's lists. |
+| `connect.proxy` | The name of one of this host's proxies — see **Proxies** below. Blank connects from this machine's own address. A name this host does not hold is **not** a fallback to a direct connection: the attempt is refused, an activity entry says why, and the agent reports `failed_connection`. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
 
 **Count the off hand.** mineflayer's `items()` covers slots 9 to 44 and stops there, so a totem in
@@ -917,6 +955,33 @@ revoke.
 **Advertise nothing and you can set nothing up.** The operator is told that this host has not said
 what it can log in with, rather than being offered a chooser that cannot work.
 
+#### `proxies` — what you can route a session through
+
+The proxies this machine holds, so an operator can pick one per agent. The chosen name comes back as
+the `connect.proxy` setting.
+
+```jsonc
+"proxies": [ { "name": "resi-eu-1", "kind": "socks5",
+               "host": "10.0.0.9", "port": 1080, "authenticated": true } ]
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | What `connect.proxy` holds. Unique on this host; a duplicate is dropped. |
+| `kind` | no | `socks5` (assumed), `socks4`, `http` or `https`. Opaque to the backend. |
+| `host` | yes | Where the proxy is. |
+| `port` | yes | Any port. Nothing assumes 1080. |
+| `authenticated` | no | Whether it wants a credential. **Never what the credential is.** |
+
+**The address is not a secret; the credential is.** A username and password stay in the file on this
+machine and are never sent — the interface says a proxy authenticates and stops there. That is the
+same bargain as the accounts: Osmium learns what this host *can do*, never what it holds.
+
+**Not stored**, exactly like `loginMethods`: the backend holds the list with your connection and
+drops it when the socket closes. Re-send it on every connect.
+
+---
+
 ---
 
 ## 4.5 Streaming an agent's world
@@ -1088,6 +1153,43 @@ its box mid-segment; the other two end the session under it. Everything else onl
 
 **Silently, like every other refusal here.** Answering would tell the room that the account is a bot
 with work queued, which is the thing §5.1 spends its length avoiding.
+
+## 4.8 Proxies
+
+An agent can be routed through a proxy, chosen per agent by name. The names — and only the names —
+travel: what each one *is* lives in `OSMIUM_PROXIES` (default `/agent/proxies.json`) on this
+machine.
+
+```json
+[
+  { "name": "resi-eu-1", "kind": "socks5", "host": "10.0.0.9", "port": 1080,
+    "username": "erik", "password": "…" },
+  { "name": "datacentre", "kind": "http", "host": "proxy.internal", "port": 8080 }
+]
+```
+
+`kind` is `socks5` (the default), `socks4`, `http` or `https`; `port` is whatever the provider
+handed out. `username` and `password` are optional and are the reason this is a file rather than a
+setting — a setting is stored in Postgres, rendered into a form and relayed over a socket, and a
+proxy credential has no business in any of the three.
+
+The file is read once, at startup. An entry that could not be dialled — no name, no host, a port
+that is not a port, a kind nothing speaks — is dropped with a warning and the rest are kept; a file
+that is missing or is not JSON leaves the host holding none, which is what a host without proxies
+has always been.
+
+**Four connections make up one join, and three of them go through the proxy.** The version ping,
+the game socket and the session-server call that proves the account is joining are all routed;
+Microsoft sign-in and token refresh are not, because `prismarine-auth` runs on `msal` and offers no
+per-request agent. That traffic is rare — a first sign-in, then a refresh about once a day — and it
+is worth knowing it comes from this machine's own address.
+
+**A proxy that cannot be reached fails the connection.** There is no fallback to a direct one: the
+whole reason to route an agent through somewhere else is that this machine's address must not appear
+on that server, so a silent direct connection would be the one outcome worth preventing. The same
+goes for a `connect.proxy` naming something this host does not hold.
+
+---
 
 ## 5. Chat scoping and the listener role
 

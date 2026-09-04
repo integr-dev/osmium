@@ -587,6 +587,13 @@ Two areas are deliberately not purgeable:
   those from a storage screen means a second, blunter deletion path beside the one that already
   understands the relationships, and it would take a schematic's cells without the schematic.
 
+**`POSITIONS` is purgeable and has to be**, unlike everything else that grows on its own. Where the
+fleet last saw each person is written from telemetry and **never expires**: the value of an old
+position is that it is the only one there is, so nothing ages it out and the storage screen is the
+only way those rows ever go. It is also the one area whose rows are mostly about people who are not
+ours, which is a reason of its own for an operator to be able to empty it without touching the
+ground it was recorded on.
+
 `OTHER` exists so the areas add up to the database. A table added by a migration and named in no
 area would otherwise disappear from the one screen whose job is saying what is on the disk, and the
 total would quietly start meaning something else.

@@ -127,14 +127,22 @@ the interface agreeing with the API rather than guarding it.
 ## Resources
 
 What the deployment is *made of*, as opposed to what is being done with it — which is the line
-between this page and Operations. Three tabs, and an operator moves between them in one sitting:
-which agents exist, which machines run them, and how the two are wired together right now.
+between this page and Operations. Four tabs, and an operator moves between them in one sitting:
+which agents exist, which machines run them, where those machines can send a session, and how the
+whole lot is wired together right now.
 
 | Tab | What it answers |
 |---|---|
 | Bots | what have I got — account, host, server, state, across the whole fleet |
 | Hosts | which machines are answering, and the three things that can be done to one |
+| Proxies | what each host can route through, and which agents are taking it |
 | Graph | what is connected to what, at this moment |
+
+**Proxies is a read and has no "add".** A proxy is a file on the machine that dials it, because the
+password it may need is not something to store in Postgres, render into a form and relay over a
+socket — so what this tab shows is what each host announced on connect, plus who is routed through
+each one and any agent naming a proxy its host is not offering. That last row is worth its own
+warning: the host refuses to connect it at all rather than going direct.
 
 The host table used to be its own page at `/hosts`. That path now redirects here rather than 404ing,
 because it is the one URL an operator may have bookmarked.
@@ -157,9 +165,17 @@ notification — which is exactly what the chat rail puts there, a few rows belo
 
 ### The graph
 
-Three tiers — Osmium, the hosts dialled into it, the agents each host runs. Not four: a Minecraft
-server would be a different kind of line entirely, because nothing on that link reports to Osmium,
-so its health would have to be invented.
+Five tiers — Osmium, the hosts dialled into it, the agents each host runs, and then where each of
+those sessions actually goes: the proxy it is routed through, if it names one, and the Minecraft
+server it plays on.
+
+**The last two were left out for a long time**, on the grounds that nothing along them reports to
+Osmium, so their health would have to be invented. That objection was about health rather than about
+the tiers, and it has an answer: an agent that is ONLINE has proved the whole path it took, because
+it could not be in the game otherwise. So a proxy and a server carry the health of the agents
+reaching them and nothing else is guessed — a route nobody is taking is not drawn at all. They are
+squares rather than circles, which says the same thing without a legend: the circles are connections
+Osmium holds and would notice losing, the squares are places an agent's session goes.
 
 **Colour and motion both carry health**, which is not redundancy. Colour alone fails anyone who
 cannot separate the hues, and across a whole graph the eye catches movement long before it reads a
@@ -1379,6 +1395,27 @@ Agents are drawn in the theme's accent with a fading trail of their last thirty 
 motion is what makes a fleet read as working rather than as a list of dots. **A player who is not
 one of ours is drawn in red** — a stranger walking onto a build is the question an operator opens a
 map to answer. Strangers are collapsed by name, since two agents seeing one person is one person.
+
+### And where they were
+
+An agent that leaves the game, or a player who walks out of every agent's view, stops being in the
+telemetry — so the marker would simply vanish, which answers none of the questions somebody opens a
+map with. The same marker is drawn where it last stood instead, **drained of colour**: the head
+through a greyscale filter, the ring in a mid grey that is deliberately neither of the two colours
+that mean something, and a line under it saying when that was true.
+
+The last position of everyone the fleet has seen is **stored**, per person per world, written from
+the same telemetry the live markers come from. So the map can say who was standing there an hour
+ago, before this screen was ever opened. It does not expire: it is deleted from the storage screen
+and by nothing else, which is also why the endpoint answers with the newest few hundred rather than
+all of them. On top of that sits what this screen has watched itself, which is the same record a
+flush fresher.
+
+The 3D viewer does the same thing one tier down. A player the world stream drops keeps their body,
+greyed — a copy of the skin texture, never the shared one, or every Steve in the world would go grey
+with them — with the box around them in grey and the label saying when they were last seen. And
+every nametag now carries the player's **head**, cut from the skin already fetched for the body and
+drawn above the name, ringed in the colour of the box it belongs to.
 
 ## The inventory card
 

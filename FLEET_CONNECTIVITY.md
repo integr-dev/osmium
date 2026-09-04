@@ -413,19 +413,22 @@ across the top level**.
 // host-scoped, so no agentId
 { "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
 
-// host-scoped, sent once on connect: what this host is, both keys optional
+// host-scoped, sent once on connect: what this host is, every key optional
 { "kind": "event", "type": "handshake",
   "payload": {
     "agents": [ { "agentId": 42, "state": "ONLINE" } ],
     "loginMethods": [ { "id": "device_code", "label": "Device code",
-                        "description": "Approve a code on the host machine." } ] } }
+                        "description": "Approve a code on the host machine." } ],
+    "proxies": [ { "name": "resi-eu-1", "kind": "socks5",
+                   "host": "10.0.0.9", "port": 1080, "authenticated": true } ] } }
 ```
 
 ### The handshake
 
-One message, sent as soon as the socket is up, carrying the two things only the host can state:
-**what it is running** and **what it can log in with**. The keys are independent and both optional,
-so a host implementing one half is handled rather than rejected.
+One message, sent as soon as the socket is up, carrying the three things only the host can state:
+**what it is running**, **what it can log in with** and **what it can route a session through**. The
+keys are independent and all optional, so a host implementing some of them is handled rather than
+rejected — which is also what a host older than the backend looks like.
 
 It was called `agents` while the agent list was all it carried. That name no longer describes the
 contents, and the rename is a clean break with no alias — nothing had shipped sending the old one.
@@ -472,6 +475,25 @@ choice that no longer exists, and told so only after trying it.
 **A host that advertises nothing can set nothing up**, and the frontend says so rather than offering
 a chooser that cannot work. That is the deliberate consequence of the backend no longer inventing a
 list of its own.
+
+#### What it can route through
+
+`proxies` is the same bargain one tier down. An agent can be sent through a proxy, and which proxy
+is an ordinary setting — `connect.proxy`, holding a **name** from this list. The backend relays that
+string without interpreting it, exactly as it relays a login `method`.
+
+What crosses is a name, a kind, an address and whether the proxy wants a credential. **Never the
+credential.** Those live in a file on the host beside the account store, for the reason every other
+secret does: a value the backend holds is a value stored in Postgres, rendered into a form and sent
+back down a socket. The address is not a secret and is carried deliberately — an operator choosing
+between four proxies is choosing between four places, and the fleet graph draws the route an agent
+actually takes.
+
+**Not stored**, exactly like `loginMethods`: it describes a file on a process that is running now.
+
+The one rule the host must not bend: a `connect.proxy` naming something it does not hold, or a proxy
+that will not answer, **fails the connection**. There is no fallback to a direct one — the whole
+reason to route an agent elsewhere is that the host's own address must not appear on that server.
 
 The copy is the host's because the mechanism is the host's — it is the only party that knows what
 its own methods are, so it is the only one that can describe them. Which puts the same obligation on

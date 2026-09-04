@@ -19,16 +19,19 @@ what needs attention, and what is being said in game.
 > also be watched live: the host streams the blocks and entities around it, and the browser renders
 > them. Alongside that, agents chart the ground they walk over into a shared top-down map, report
 > what they are carrying — which an operator can rearrange, drop or put in hand — and report
-> everyone in view with their health. An administrator can see what all of that costs on disk, and
-> free it.
+> everyone in view with their health — and where each of them *was*, kept past the moment they
+> went, so the map can say who was standing there an hour ago. An agent's connection can be routed
+> through one of its host's proxies, chosen by name, with the credential for it never leaving that
+> machine. An administrator can see what all of that costs on disk, and free it.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 576 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 455 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 242 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 605 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 476 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 371 tests |
+| [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
 
@@ -71,6 +74,36 @@ Sign in with `admin` / `admin`. Those are development defaults and are seeded on
 table is empty — override `OSMIUM_BOOTSTRAP_USERNAME` / `OSMIUM_BOOTSTRAP_PASSWORD`, and
 `OSMIUM_JWT_SECRET`, before running this anywhere real.
 
+## `osmium-link` — the host's command line
+
+The interface can do almost everything, and the two things it cannot are both about custody. A host
+holds its own Minecraft credentials and its own proxy passwords, and neither ever crosses to the
+backend — so both are managed on the machine, by the tool that ships beside the host.
+
+```bash
+cd host && npm run link                    # or osmium-link from the image
+```
+
+Run with no arguments it **takes the screen**: the terminal's alternate buffer, a menu moved through
+with the arrow keys, and a form for anything that needs more than one answer — adding a proxy is one
+screen of five fields rather than five questions in a row. It comes back to the menu when a task is
+done, shows a failure as a page rather than falling over, and leaves your scrollback exactly as it
+found it.
+
+| Command | What it does |
+|---|---|
+| `microsoft` | the device-code sign-in, and keeps the account |
+| `token` | adds a Minecraft session token — the one credential nothing here can obtain |
+| `list` / `remove <id>` | what this host holds, and dropping one |
+| `proxy add` | a proxy agents can be routed through, by name |
+| `proxy list` / `proxy remove <name>` | what it can route through, and dropping one |
+| `proxy check <name>` | dials through one and says whether it worked |
+
+Every command also takes flags, so a script needs no terminal at all — with two exceptions that are
+never arguments, because an argument is in the shell history and in `ps` for every other user on the
+machine: a session token, and a proxy password. Details, the proxy file format and the Git Bash
+caveat are in [`host/README.md`](host/README.md).
+
 ## Permissions
 
 Routes authorize against **permission nodes**, never against role names. Roles are named bundles of
@@ -88,9 +121,9 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 515 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 399 tests
-cd host && npm test              # 188 tests
+cd backend && ./gradlew test     # 605 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 476 tests
+cd host && npm test              # 371 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
@@ -99,8 +132,10 @@ time. The frontend covers the route guard, the auth store, the API client middle
 store's derived state, cursor paging, the geometry behind the charts and the box viewer, and that
 the English and German copy stay in step. The host covers the protocol codec, the chat formats
 against lines captured from real servers, the chat command system — including an adversarial pass on
-the one input it takes from strangers — and the world stream, where the columns a viewer actually
-puts on the wire are checked against the ones its own spiral asked for.
+the one input it takes from strangers — the world stream, where the columns a viewer actually puts
+on the wire are checked against the ones its own spiral asked for, the proxy file and what counts as
+a dialable entry in it, and the command line's own reading of a keystroke: the escape sequences a
+terminal sends, and what each one does to a form.
 
 ## CI
 
