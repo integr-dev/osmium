@@ -13,6 +13,7 @@ import net.integr.osmium.agent.service.AgentInventoryStore
 import net.integr.osmium.agent.service.AgentTelemetryPublisher
 import net.integr.osmium.agent.service.AgentService
 import net.integr.osmium.agent.service.AgentTelemetryStore
+import net.integr.osmium.map.service.LastSeenService
 import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.activity.model.ActivityScope
 import net.integr.osmium.activity.model.ActivitySeverity
@@ -53,6 +54,7 @@ class HostReportService(
     private val activityService: ActivityService,
     private val buildJobs: BuildJobService,
     private val telemetryStore: AgentTelemetryStore,
+    private val lastSeenService: LastSeenService,
     private val inventoryStore: AgentInventoryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val broker: LiveUpdateBroker,
@@ -137,10 +139,12 @@ class HostReportService(
     }
 
     /**
-     * What a host says it is, on arrival: what it is running, and what it can log in with.
+     * What a host says it is, on arrival: what it is running, what it can log in with, and what it
+     * can route through.
      *
-     * Two independent halves of one message, and each key is optional, so a host that only
-     * implements one of them is handled rather than rejected.
+     * Independent parts of one message, and every key is optional, so a host that implements only
+     * some of them is handled rather than rejected — which is also what a host older than this
+     * backend looks like.
      */
     private fun handshake(hostId: Long, envelope: HostEnvelope) {
         envelope.payload?.get("loginMethods")?.takeIf { it.isArray }?.let { advertised ->
@@ -156,6 +160,29 @@ class HostReportService(
                 }
             }
             hostService.recordLoginMethods(hostId, methods)
+        }
+
+        envelope.payload?.get("proxies")?.takeIf { it.isArray }?.let { offered ->
+            // A name and somewhere to dial are the whole of an entry. Anything missing either is
+            // dropped rather than kept as a route nobody could take: the host has already refused
+            // it for the same reason, and this is the second reader of the same file.
+            val proxies = offered.mapNotNull { node ->
+                val name = node.get("name")?.asString()?.takeIf { it.isNotBlank() }
+                val address = node.get("host")?.asString()?.takeIf { it.isNotBlank() }
+                val port = node.get("port")?.takeIf { it.isNumber }?.asInt()
+
+                if (name == null || address == null || port == null) null
+                else HostProxy(
+                    name = name,
+                    // The host's own word for it, relayed and never interpreted. This backend does
+                    // not dial anything and has no opinion about what a kind means.
+                    kind = node.get("kind")?.asString()?.takeIf { it.isNotBlank() } ?: "socks5",
+                    host = address,
+                    port = port,
+                    authenticated = node.get("authenticated")?.asBoolean() ?: false,
+                )
+            }
+            hostService.recordProxies(hostId, proxies)
         }
 
         envelope.payload?.get("agents")?.takeIf { it.isArray }?.let { reconcile(hostId, it) }
@@ -361,6 +388,9 @@ class HostReportService(
         )
 
         telemetryStore.record(agentId, telemetry)
+        // Where everybody in this sample is, kept past the sample itself. Buffered rather than
+        // written here: this runs on every report from every host. See LastSeenService.
+        lastSeenService.record(agent, telemetry)
         // Marked rather than published. Reports arrive as fast as hosts choose to send them; the
         // browser is fed on a fixed tick carrying the latest reading. See AgentTelemetryPublisher.
         telemetryPublisher.reported(agentId)

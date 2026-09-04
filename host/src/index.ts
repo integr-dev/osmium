@@ -2,6 +2,7 @@ import { readNbtStringsProperly } from './agent/nbt.ts'
 import { log, reason } from './log.ts'
 import { Dispatcher } from './router/dispatch.ts'
 import { HostSocket } from './socket/client.ts'
+import { Proxies, proxiesPath } from './agent/proxy.ts'
 import { accountsPath, cachePath } from './token/paths.ts'
 import { AccountStore } from './token/store.ts'
 import { VERSION } from './version.ts'
@@ -21,6 +22,10 @@ async function main(): Promise<void> {
   const store = await AccountStore.open(accounts)
   log.info(`Reading accounts from ${accounts}`)
 
+  // Read here for the same reason the accounts are: a file this host cannot make sense of should be
+  // discovered before the backend is told the host is up, not while an agent is trying to connect.
+  const proxies = await Proxies.open(proxiesPath())
+
   const socket = new HostSocket(url, token, VERSION, {
     connected: () => dispatcher.announce(),
     command: (command) => dispatcher.command(command),
@@ -29,6 +34,7 @@ async function main(): Promise<void> {
   const dispatcher = new Dispatcher(
     store,
     cache,
+    proxies,
     (message) => socket.send(message),
     (frame) => socket.stream(frame),
   )

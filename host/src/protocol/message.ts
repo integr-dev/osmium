@@ -2,6 +2,7 @@ import type { Component } from '../agent/chat.ts'
 import type { Inventory } from '../agent/inventory.ts'
 import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
+import type { AdvertisedProxy } from '../agent/proxy.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
 
 /** A command the backend sent. Only commands arrive; results and events travel the other way. */
@@ -119,7 +120,13 @@ export type Event =
    * connection that reported it, so a host that restarts without this leaves Osmium asserting
    * sessions nobody is running. An empty `agents` is a real announcement - it says "I am running
    * none of them", which is what a freshly started host has to say. */
-  | { type: 'handshake'; agents: AgentSnapshot[]; loginMethods: LoginMethod[] }
+  | {
+      type: 'handshake'
+      agents: AgentSnapshot[]
+      loginMethods: LoginMethod[]
+      /** The proxies this host holds, by name. Addresses, never credentials - see `proxy.ts`. */
+      proxies: AdvertisedProxy[]
+    }
   | { type: 'heartbeat'; version: string }
   | {
       type: 'agent_status'

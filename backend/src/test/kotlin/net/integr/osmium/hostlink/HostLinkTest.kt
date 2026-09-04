@@ -409,6 +409,61 @@ class HostLinkTest {
         awaitUntil { !hosts().contains("device_code") }
     }
 
+    // ---- what a host can route through -------------------------------------------------------
+
+    /**
+     * The same bargain as the login methods, one tier down: the host says which proxies it holds,
+     * the backend learns names and addresses, and the credential each may need never leaves the
+     * machine. An agent is then routed by naming one in `connect.proxy`.
+     */
+    @Test
+    fun `advertised proxies reach the frontend and leave with the connection`() {
+        val socket = connect(token())
+        socket.send(
+            announce(
+                proxies = listOf(
+                    mapOf(
+                        "name" to "resi-eu",
+                        "kind" to "socks5",
+                        "host" to "10.0.0.9",
+                        "port" to 1080,
+                        "authenticated" to true,
+                    ),
+                ),
+            ),
+        )
+
+        awaitUntil { hosts().contains("resi-eu") }
+
+        val listed = hosts()
+        assertTrue(listed.contains("10.0.0.9"), "an operator picking a proxy is picking a place")
+        assertTrue(listed.contains("1080"), "any port, so it has to be said")
+
+        socket.close()
+
+        // A proxy is a file on a running machine, so the list goes with the process that claimed it.
+        awaitUntil { !hosts().contains("resi-eu") }
+    }
+
+    /** A route with nowhere to dial is not a route. Dropped rather than offered and then refused. */
+    @Test
+    fun `a proxy with no address is not offered`() {
+        val socket = connect(token())
+        socket.send(
+            announce(
+                proxies = listOf(
+                    mapOf("name" to "nowhere", "kind" to "socks5"),
+                    mapOf("name" to "usable", "kind" to "socks5", "host" to "10.0.0.9", "port" to 1080),
+                ),
+            ),
+        )
+
+        awaitUntil { hosts().contains("usable") }
+        assertFalse(hosts().contains("nowhere"))
+
+        socket.close()
+    }
+
     @Test
     fun `a method the host never advertised is refused before anything is dispatched`() {
         val socket = connect(token())
@@ -496,10 +551,11 @@ class HostLinkTest {
         .body(String::class.java)
         .orEmpty()
 
-    /** What a host says on arrival. Both halves are optional, so each is omitted when not given. */
+    /** What a host says on arrival. Every part is optional, so each is omitted when not given. */
     private fun announce(
         agents: List<Map<String, Any?>>? = null,
         loginMethods: List<String>? = null,
+        proxies: List<Map<String, Any?>>? = null,
     ) = HostEnvelope(
         kind = MessageKind.EVENT,
         type = EventType.HANDSHAKE,
@@ -507,6 +563,7 @@ class HostLinkTest {
             buildMap {
                 agents?.let { put("agents", it) }
                 loginMethods?.let { ids -> put("loginMethods", ids.map { mapOf("id" to it) }) }
+                proxies?.let { put("proxies", it) }
             },
         ),
     )

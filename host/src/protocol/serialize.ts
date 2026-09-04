@@ -42,6 +42,7 @@ function event(body: Event): Json {
         payload: {
           agents: body.agents.map((agent) => ({ agentId: agent.agentId, state: agent.state })),
           loginMethods: body.loginMethods,
+          proxies: body.proxies,
         },
       }
 

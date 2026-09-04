@@ -2,14 +2,15 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { Bot as Agent, Crosshair, Server, Share2 } from 'lucide-vue-next'
+import { Bot as Agent, Crosshair, Globe, Route, Server, Share2 } from 'lucide-vue-next'
 import { fleetGraph, type GraphLink, type GraphNode, type LinkHealth } from '../lib/fleetGraph'
 import { prefersReducedMotion } from '../lib/motion'
 import { fit, IDENTITY, panBy, zoomAt, type View } from '../lib/panZoom'
 import { useAgentStore } from '../stores/agents'
 
 /**
- * The deployment as a picture: Osmium, the hosts dialled into it, the agents each host runs.
+ * The deployment as a picture: Osmium, the hosts dialled into it, the agents each host runs, and
+ * where each of those agents' sessions goes.
  *
  * **SVG rather than canvas**, unlike the voxel viewer. There are tens of nodes here, not tens of
  * thousands, and every one of them wants to be a link, carry a tooltip and be reachable by keyboard
@@ -207,6 +208,22 @@ function href(node: GraphNode): string | undefined {
   return undefined
 }
 
+/**
+ * Whether a node is drawn as a square rather than a circle.
+ *
+ * The shape carries the distinction the file header of `fleetGraph.ts` makes: circles are things
+ * Osmium holds a connection to and would notice losing, squares are the places an agent's session
+ * goes — real, and nobody's to report on.
+ */
+function square(node: GraphNode): boolean {
+  return node.kind === 'proxy' || node.kind === 'server'
+}
+
+/** How big each tier is drawn. Agents and the route tiers are the small ones. */
+function radius(node: GraphNode): number {
+  return node.kind === 'osmium' || node.kind === 'host' ? 9 : 6
+}
+
 function open(event: MouseEvent, node: GraphNode) {
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
   const to = href(node)
@@ -331,21 +348,38 @@ const legend: Array<{ health: LinkHealth; label: string }> = [
 
         <g v-for="node in graph.nodes" :key="node.id">
           <!--
-            Hosts and agents go somewhere; Osmium is the page you are already on. A `<g>` that is
-            not a link still gets the same shape, so the tiers read as one family.
+            Hosts and agents go somewhere; Osmium is the page you are already on, and a proxy or a
+            server has no page at all. A `<g>` that is not a link still gets the same shape, so the
+            tiers read as one family.
           -->
           <component
-            :is="node.kind === 'osmium' ? 'g' : 'a'"
+            :is="href(node) ? 'a' : 'g'"
             :href="href(node)"
             class="group"
-            :class="node.kind === 'osmium' ? '' : 'cursor-pointer'"
+            :class="href(node) ? 'cursor-pointer' : ''"
             @click="open($event, node)"
           >
             <title>{{ node.label }}{{ node.detail ? ` · ${node.detail}` : '' }}</title>
+            <!--
+              A square for the two outer tiers. They are the one part of this picture that is not a
+              connection Osmium holds, and the shape says so without a legend having to.
+            -->
+            <rect
+              v-if="square(node)"
+              :x="node.at.x - radius(node)"
+              :y="node.at.y - radius(node)"
+              :width="radius(node) * 2"
+              :height="radius(node) * 2"
+              rx="2"
+              class="fill-base-100 group-hover:fill-base-300 transition-colors"
+              :class="RING[node.health]"
+              stroke-width="2"
+            />
             <circle
+              v-else
               :cx="node.at.x"
               :cy="node.at.y"
-              :r="node.kind === 'agent' ? 6 : 9"
+              :r="radius(node)"
               class="fill-base-100 group-hover:fill-base-300 transition-colors"
               :class="RING[node.health]"
               stroke-width="2"
@@ -356,7 +390,7 @@ const legend: Array<{ health: LinkHealth; label: string }> = [
               belongs to, and neither side writes its names back over the middle of the diagram.
             -->
             <text
-              :x="node.at.x + (mirrored(node) ? -1 : 1) * (node.kind === 'agent' ? 12 : 16)"
+              :x="node.at.x + (mirrored(node) ? -1 : 1) * (radius(node) + 6)"
               :y="node.at.y + 4"
               :text-anchor="mirrored(node) ? 'end' : 'start'"
               class="fill-base-content text-xs select-none"
@@ -381,6 +415,8 @@ const legend: Array<{ health: LinkHealth; label: string }> = [
     <p class="flex flex-wrap items-center gap-4 text-xs opacity-50">
       <span class="flex items-center gap-1.5"><Server class="size-3.5" /> {{ t('hosts.title') }}</span>
       <span class="flex items-center gap-1.5"><Agent class="size-3.5" /> {{ t('nav.agents') }}</span>
+      <span class="flex items-center gap-1.5"><Route class="size-3.5" /> {{ t('resources.tabProxies') }}</span>
+      <span class="flex items-center gap-1.5"><Globe class="size-3.5" /> {{ t('graph.servers') }}</span>
       <span v-if="still">{{ t('graph.reducedMotion') }}</span>
     </p>
   </div>

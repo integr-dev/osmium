@@ -53,6 +53,7 @@ import {
 import { AgentViewer } from './viewer.ts'
 
 import { log, reason } from '../log.ts'
+import { routed, type Proxies, type ProxyEntry } from './proxy.ts'
 import type { CommandBody, Event, SetupResult, Vitals } from '../protocol/message.ts'
 import { ActivityScope, ChatScope, LoginState, type Player, Severity, type Vec3 } from '../protocol/wire.ts'
 import { identify, type Identity, type LinkCode, NotSignedIn, signIn } from '../token/auth.ts'
@@ -211,6 +212,9 @@ export class Agent {
   /** The version to speak, when an operator has pinned one. Undefined means ask the server, which
    * is what an unconfigured agent does - see `negotiate`. */
   private version: string | undefined
+  /** The name of the proxy to route through, when an operator has picked one. Undefined connects
+   * from this machine's own address, which is what an unconfigured agent does - see `connect`. */
+  private proxy: string | undefined
   /** Whether to undo mineflayer's velocity scaling. Undefined means decide from the version, which
    * is what an unconfigured agent does - see `absoluteVelocity`. */
   private knockback: boolean | undefined
@@ -266,6 +270,8 @@ export class Agent {
     private readonly credential: Credential,
     private readonly store: AccountStore,
     private readonly cacheDirectory: string,
+    /** Every proxy this host holds. Which one this agent uses is a setting - see `configure`. */
+    private readonly proxies: Proxies,
     private readonly hooks: AgentHooks,
   ) {
     this.queue = this.begin().catch((err) => log.error(`Agent ${id} fell over while starting: ${reason(err)}`))
@@ -445,10 +451,34 @@ export class Agent {
     if (this.abandoned()) return
     if (this.version) log.debug(`Agent ${this.id}: speaking ${this.version} to ${address}, as configured`)
 
-    const version = this.version ?? (await negotiate(endpoint, this.id))
+    /*
+     * **Resolved before the first packet, and refused rather than fallen back from.**
+     *
+     * A proxy that is named and missing is the one case where carrying on is worse than failing:
+     * the reason to route an agent through somewhere else is that this machine's own address must
+     * not appear on that server, and a silent direct connection is exactly the thing being
+     * prevented. So a name this host does not hold ends the attempt here.
+     */
+    let route: ProxyEntry | undefined
+    if (this.proxy) {
+      route = this.proxies.find(this.proxy)
+      if (!route) {
+        log.warn(`Agent ${this.id} names proxy '${this.proxy}', which this host does not hold`)
+        this.activity(
+          ActivityScope.System,
+          Severity.Error,
+          `Not connecting: this host has no proxy called '${this.proxy}'`,
+        )
+        this.report({ state: LoginState.FailedConnection })
+        return
+      }
+      log.debug(`Agent ${this.id}: routing ${address} through '${route.name}' (${route.kind})`)
+    }
+
+    const version = this.version ?? (await negotiate(endpoint, this.id, route))
     if (this.abandoned()) return
 
-    this.open(address, endpoint, version)
+    this.open(address, endpoint, version, route)
   }
 
   /**
@@ -471,8 +501,8 @@ export class Agent {
     return true
   }
 
-  /** Opens one session, on an endpoint and a version already decided. */
-  private open(address: string, endpoint: Endpoint, version: string): void {
+  /** Opens one session, on an endpoint and a version already decided, through a proxy or not. */
+  private open(address: string, endpoint: Endpoint, version: string, route: ProxyEntry | undefined): void {
     if (!this.entry || !this.identity) return
 
     let bot: Bot
@@ -489,6 +519,10 @@ export class Agent {
         // otherwise, so anybody who asked for debug gets them.
         hideErrors: !log.debugging(),
         ...credentials(this.entry, this.identity, this.cacheDirectory),
+        // Two options, one for each connection a join makes: `connect` opens the game socket and
+        // `agent` carries the session-server call that proves the account is joining. Spread last
+        // so neither can be written over by anything above.
+        ...(route ? routed(route, endpoint.host, endpoint.port) : {}),
       } as BotOptions)
     } catch (err) {
       // Failing to resolve the address refuses us as surely as a whitelist would, and reads the same
@@ -820,10 +854,16 @@ export class Agent {
       'util.autoEat',
       'util.autoTotem',
       'util.fleeDistance',
+      'connect.proxy',
     ])
     const unknown = Object.keys(values).filter((key) => !known.has(key))
 
     if (unknown.length) log.debug(`Agent ${this.id} was sent settings it does not know: ${unknown.join(', ')}`)
+
+    // The name of a proxy this host holds, or nothing for a direct connection. Resolved when a
+    // session opens rather than here: the file is read once at startup, and a name that is not in
+    // it has to fail the connection loudly rather than be quietly forgotten at configuration time.
+    this.proxy = values['connect.proxy']?.trim() || undefined
 
     this.chatSender = compile(values['chat.sender'], `Agent ${this.id}'s chat sender pattern`)
     this.chatWhisper = compile(values['chat.whisper'], `Agent ${this.id}'s whisper pattern`)
@@ -1804,12 +1844,12 @@ function separation(from: Vec3, to: Vec3): number {
  * Both are ordinary servers that a fixed-version client joins without trouble. So the ping happens
  * here, where failing it is survivable, and the session is always opened on a version we chose.
  */
-async function negotiate(endpoint: Endpoint, id: number): Promise<string> {
+async function negotiate(endpoint: Endpoint, id: number, route: ProxyEntry | undefined): Promise<string> {
   const address = `${endpoint.host}:${endpoint.port}`
 
   let response: Awaited<ReturnType<typeof status>>
   try {
-    response = await status(endpoint)
+    response = await status(endpoint, route)
   } catch (err) {
     log.info(`Agent ${id}: ${address} would not answer a version check (${reason(err)}), assuming ${ASSUMED}`)
     return ASSUMED
@@ -1833,11 +1873,24 @@ async function negotiate(endpoint: Endpoint, id: number): Promise<string> {
 
 /** A status ping, bounded. `ping` waits on a socket that a filtered server may simply never answer,
  * and nothing else here would ever time that out. */
-function status(endpoint: Endpoint): Promise<{ version?: { protocol?: number } } | undefined> {
+/**
+ * Asks a server what it is, through the proxy the session will use.
+ *
+ * **Through the same route, deliberately.** This is a real connection to the server - it opens a
+ * socket, sends a handshake and reads a reply - so a ping that went direct would put this machine's
+ * address in front of the very server the proxy exists to keep it away from, seconds before the
+ * agent joined from somewhere else entirely.
+ */
+function status(
+  endpoint: Endpoint,
+  route: ProxyEntry | undefined,
+): Promise<{ version?: { protocol?: number } } | undefined> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('no answer')), PING)
 
-    minecraftProtocol.ping({ host: endpoint.host, port: endpoint.port }, (err, result) => {
+    const through = route ? { connect: routed(route, endpoint.host, endpoint.port).connect } : {}
+
+    minecraftProtocol.ping({ host: endpoint.host, port: endpoint.port, ...through }, (err, result) => {
       clearTimeout(timer)
 
       if (err) reject(err)

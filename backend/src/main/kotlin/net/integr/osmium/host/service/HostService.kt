@@ -4,6 +4,7 @@ import net.integr.osmium.host.dto.CreateHostRequest
 import net.integr.osmium.host.dto.HostEnrolledResponse
 import net.integr.osmium.host.dto.HostResponse
 import net.integr.osmium.host.dto.LoginMethodResponse
+import net.integr.osmium.host.dto.ProxyResponse
 import net.integr.osmium.host.dto.UpdateHostRequest
 import net.integr.osmium.host.dto.toResponse
 import net.integr.osmium.audit.model.AuditAction
@@ -16,6 +17,7 @@ import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.LoginMethod
+import net.integr.osmium.hostlink.HostProxy
 import org.slf4j.LoggerFactory
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -220,6 +222,18 @@ class HostService(
         hostRepository.findById(hostId).ifPresent(::publish)
     }
 
+    /**
+     * The same, for the proxies it says it can route through.
+     *
+     * Announced rather than merely recorded, because the interface offers them: a configuration
+     * page already open on an agent would otherwise show an empty proxy chooser for a host that has
+     * just said which ones it holds.
+     */
+    fun recordProxies(hostId: Long, proxies: List<HostProxy>) {
+        registry.advertiseProxies(hostId, proxies)
+        hostRepository.findById(hostId).ifPresent(::publish)
+    }
+
     private fun publish(host: Host) = broker.publish(
         LiveUpdateEvent(type = LiveUpdateType.HOST_CHANGED, data = host.toResponse()),
     )
@@ -232,6 +246,11 @@ class HostService(
         agentCount = id?.let { agentRepository.countByHostId(it) } ?: 0,
         loginMethods = id?.let { hostId ->
             registry.loginMethodsOf(hostId).map { LoginMethodResponse(it.id, it.label, it.description) }
+        } ?: emptyList(),
+        proxies = id?.let { hostId ->
+            registry.proxiesOf(hostId).map {
+                ProxyResponse(it.name, it.kind, it.host, it.port, it.authenticated)
+            }
         } ?: emptyList(),
     )
 

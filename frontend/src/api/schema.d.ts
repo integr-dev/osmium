@@ -941,6 +941,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/map/last-seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where everybody was, the last time any agent could see them.
+         * @description One entry per person per world: the fleet's agents, and every player who has stood near
+         *                 one of them. What is stored is the **last** position known, not a history - a trail of
+         *                 where somebody has been belongs to the screen watching them move.
+         *
+         *                 This is what a map draws in grey. Somebody in it may well be standing in front of an
+         *                 agent right now, in which case telemetry describes them better and this entry is simply
+         *                 older; `at` is what says which.
+         *
+         *                 Nothing here expires. It is deleted from the storage screen and by nothing else, so the
+         *                 newest 500 are answered rather than all of them - a server that has been busy for a year
+         *                 holds every account that has ever walked past an agent.
+         */
+        get: operations["lastSeen"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -1446,7 +1476,7 @@ export interface components {
         /** @description What a purge removed. */
         PurgeResponse: {
             /** @enum {string} */
-            area?: "CHAT" | "ACTIVITY" | "MAP" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
+            area?: "CHAT" | "ACTIVITY" | "MAP" | "POSITIONS" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
             /**
              * Format: int32
              * @description Rows deleted. Exact, unlike the estimate on the way in.
@@ -1628,6 +1658,8 @@ export interface components {
             agentCount?: number;
             /** @description What this host can log in with, from its handshake. Empty while it is disconnected, and empty for a host that advertises nothing - which can then set nothing up. */
             loginMethods?: components["schemas"]["LoginMethodResponse"][];
+            /** @description What this host can route an agent's session through, from its handshake. Empty while it is disconnected, and empty for a host holding no proxies - whose agents then connect from the machine's own address. */
+            proxies?: components["schemas"]["ProxyResponse"][];
         };
         /** @description A login mechanism the host advertised in its handshake. The id is opaque to the backend and is relayed to the host verbatim; the copy describes a mechanism, never an account. */
         LoginMethodResponse: {
@@ -1635,6 +1667,29 @@ export interface components {
             id?: string;
             label?: string | null;
             description?: string | null;
+        };
+        /** @description A proxy the host advertised in its handshake, which an agent can be routed through by name. The address is shown because choosing between proxies means choosing between places; the credential it may need never leaves the host. */
+        ProxyResponse: {
+            /**
+             * @description What an agent's `connect.proxy` setting holds.
+             * @example resi-eu-1
+             */
+            name?: string;
+            /**
+             * @description The host's own word for it, relayed uninterpreted.
+             * @example socks5
+             */
+            kind?: string;
+            /** @example 10.0.0.9 */
+            host?: string;
+            /**
+             * Format: int32
+             * @description Any port; providers use whatever they like.
+             * @example 1080
+             */
+            port?: number;
+            /** @description Whether it wants a credential. What that credential is stays on the host. */
+            authenticated?: boolean;
         };
         /** @description Creates a build. Placement and substitutions can both be settled later. */
         CreateBuildRequest: {
@@ -1794,7 +1849,7 @@ export interface components {
         /** @description One kind of stored data, and what it is costing. */
         StorageAreaResponse: {
             /** @enum {string} */
-            area?: "CHAT" | "ACTIVITY" | "MAP" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
+            area?: "CHAT" | "ACTIVITY" | "MAP" | "POSITIONS" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
             /**
              * Format: int64
              * @description Everything it costs on disk: the rows, their indexes and their out-of-line storage.
@@ -1932,6 +1987,22 @@ export interface components {
             minZ?: number;
             /** Format: int32 */
             maxZ?: number;
+            /** Format: date-time */
+            at?: string;
+        };
+        /** @description Where somebody was the last time any agent could see them. One entry per person per world - the last thing known, not a history of where they have been. */
+        LastSeenResponse: {
+            /** @enum {string} */
+            kind?: "AGENT" | "PLAYER";
+            subject?: string;
+            label?: string;
+            face?: string | null;
+            /** Format: double */
+            x?: number;
+            /** Format: double */
+            y?: number;
+            /** Format: double */
+            z?: number;
             /** Format: date-time */
             at?: string;
         };
@@ -2395,7 +2466,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                area: "CHAT" | "ACTIVITY" | "MAP" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
+                area: "CHAT" | "ACTIVITY" | "MAP" | "POSITIONS" | "AUDIT" | "SCHEMATICS" | "BUILDS" | "FLEET" | "ACCOUNTS" | "OTHER";
             };
             cookie?: never;
         };
@@ -4464,6 +4535,46 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["MapExtentResponse"][];
+                };
+            };
+        };
+    };
+    lastSeen: {
+        parameters: {
+            query: {
+                /**
+                 * @description The server to read sightings from.
+                 * @example mc.example.com
+                 */
+                server: string;
+                /**
+                 * @description Which world, without its `minecraft:` prefix.
+                 * @example overworld
+                 */
+                dimension: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The newest sightings in that world. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LastSeenResponse"][];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LastSeenResponse"][];
                 };
             };
         };

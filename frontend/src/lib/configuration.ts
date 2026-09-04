@@ -22,7 +22,7 @@ import type { FleetAgent } from '../stores/agents'
 export interface SettingField {
   key: string
   /** Chosen by what the value *is*, so the view never switches on the key itself. */
-  type: 'regex' | 'text' | 'switch' | 'choice' | 'players'
+  type: 'regex' | 'text' | 'switch' | 'choice' | 'players' | 'proxy'
   /** Filled into the box when an operator asks for a starting point, and what the host falls back
    * to when nothing is set. Shown rather than silently applied. */
   default?: string
@@ -156,6 +156,16 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         key: 'connect.rejoin',
         type: 'switch',
+      },
+      {
+        /*
+         * A `proxy` rather than a `choice`, because the options are not this file's to declare.
+         * What a host can route through is a file on that machine, announced in its handshake — so
+         * the values come from the fleet, and the labels are the operator's own names for them
+         * rather than copy keyed here.
+         */
+        key: 'connect.proxy',
+        type: 'proxy',
       },
     ],
   },

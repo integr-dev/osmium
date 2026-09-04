@@ -1,12 +1,22 @@
 import type { AgentResponse, HostResponse } from '../api/client'
 
 /**
- * The fleet as a graph: Osmium, the hosts dialled into it, and the agents each host runs.
+ * The fleet as a graph: Osmium, the hosts dialled into it, the agents each host runs, and where
+ * those agents' sessions actually go.
  *
- * Three tiers rather than four. Every edge here is a **process relationship** — a WebSocket, or a
- * client the host owns — so an edge means one party can reach the other and would notice if it
- * could not. A Minecraft server would have been a fourth tier and a different kind of line
- * entirely: nothing on that link reports to Osmium, so its health would have been invented.
+ * **The first three tiers are process relationships** — a WebSocket, or a client the host owns — so
+ * an edge means one party can reach the other and would notice if it could not.
+ *
+ * **The last two are routes.** They were left out for a long time on the grounds that nothing along
+ * them reports to Osmium, so their health would have to be invented. That objection was about
+ * health rather than about the tiers, and it has an answer: an agent that is ONLINE has proved the
+ * whole path it took, because it could not be in the game otherwise. So a proxy and a server are
+ * drawn with the health of the agents that reach them and nothing else is guessed — a route nobody
+ * is taking is not drawn at all, rather than drawn as working or as broken.
+ *
+ * A server reached from both sides of the picture is drawn on each of them. It is one machine and
+ * two nodes, which is the honest way round here: what this draws is the route an agent takes, and
+ * an edge crossing the middle of the diagram to a shared node would say less about either.
  *
  * Layout and health are here rather than in the component because they are the part that can be
  * silently wrong. A misplaced node still renders, as a picture of a fleet that does not exist.
@@ -29,9 +39,14 @@ export type LinkHealth = 'live' | 'stale' | 'down'
 export interface GraphNode {
   /** Unique across tiers, because a host and an agent can share a numeric id. */
   id: string
-  kind: 'osmium' | 'host' | 'agent'
+  kind: 'osmium' | 'host' | 'agent' | 'proxy' | 'server'
   label: string
-  /** The row this stands for, so a click can navigate. Absent on Osmium itself. */
+  /**
+   * The row this stands for, so a click can navigate.
+   *
+   * Absent on Osmium itself, and on the two outer tiers: a proxy is a line in a file on a host and
+   * a Minecraft server is not Osmium's at all, so neither has a page to open.
+   */
   ref?: number
   at: Point
   /** Of the link that feeds it. Osmium is always `live`: it is the thing doing the asking. */
@@ -63,6 +78,16 @@ export interface FleetGraph {
 const HOST_REACH = 200
 const AGENT_REACH = 400
 const COLUMN_STEP = 200
+
+/**
+ * And how far past the outermost agent column the two route tiers sit.
+ *
+ * Measured from the agents rather than from Osmium, because how far out the agents got depends on
+ * how many columns the widest host needed — a fixed distance would put a proxy inside the fleet on
+ * a busy deployment.
+ */
+const PROXY_STEP = 220
+const SERVER_STEP = 440
 
 /**
  * Vertical pitch between agent slots, at its tightest and at its loosest.
@@ -108,6 +133,21 @@ const LABEL_ROOM = 150
 
 /** Live is three packets, faltering is one, dead is none. */
 const PACKETS: Record<LinkHealth, number> = { live: 3, stale: 1, down: 0 }
+
+/** Best first, for {@link reached}. */
+const RANK: Record<LinkHealth, number> = { live: 2, stale: 1, down: 0 }
+
+/**
+ * How a route is doing, given everyone taking it.
+ *
+ * The **best** of them, deliberately. An agent sitting at LINKED says nothing about a proxy, while
+ * one agent ONLINE through it has proved the whole path — so a route with a live agent on it is
+ * live however many of its neighbours are not, and only a route nobody has got through is drawn as
+ * dead.
+ */
+function reached(healths: LinkHealth[]): LinkHealth {
+  return healths.reduce<LinkHealth>((best, health) => (RANK[health] > RANK[best] ? health : best), 'down')
+}
 
 /**
  * How an agent's link to its host is doing.
@@ -163,6 +203,126 @@ export function hostHealth(host: Pick<HostResponse, 'reachable' | 'lastSeenAt'>)
  * Deterministic, and positioned from nothing but the two lists: the same fleet draws the same
  * picture on every machine, which is what makes a layout something a test can hold.
  */
+/**
+ * Where each agent's session goes: the proxy it is routed through, if it names one, and the server
+ * it plays on.
+ *
+ * **Only what an agent actually named.** One with no server has nowhere to draw to, and one on no
+ * proxy is drawn straight to its server rather than through an invented "direct" node — the absence
+ * of a middle tier *is* the picture of a direct connection.
+ *
+ * A proxy belongs to the host that holds it, so two machines offering the same name are two nodes.
+ * A server belongs to nobody, so it is keyed by address, per side, for the reason the file header
+ * gives.
+ *
+ * Each stop sits at the mean height of whatever reaches it, which is what keeps a route inside the
+ * group of agents taking it rather than beside them.
+ */
+function routes(
+  placed: Array<{ agent: AgentResponse; seat: GraphNode; side: number }>,
+  reach: number,
+  nodes: GraphNode[],
+  links: GraphLink[],
+): void {
+  /** One node per key, with everything that arrives at it. */
+  interface Stop {
+    node: GraphNode
+    /** Which half of the picture it belongs to, taken from the agents that reach it. */
+    side: number
+    ys: number[]
+    healths: LinkHealth[]
+  }
+
+  const stops = new Map<string, Stop>()
+
+  const stop = (
+    node: Omit<GraphNode, 'at' | 'health'>,
+    side: number,
+    y: number,
+    health: LinkHealth,
+  ): Stop => {
+    const held = stops.get(node.id)
+    if (held) {
+      held.ys.push(y)
+      held.healths.push(health)
+      return held
+    }
+
+    const made: Stop = {
+      node: { ...node, at: { x: 0, y: 0 }, health: 'down' },
+      side,
+      ys: [y],
+      healths: [health],
+    }
+    stops.set(node.id, made)
+    return made
+  }
+
+  /** From, to, and how it is doing — drawn once every stop knows where it sits. */
+  const pending: Array<{ id: string; from: GraphNode; to: GraphNode; health: LinkHealth }> = []
+
+  for (const { agent, seat, side } of placed) {
+    const server = agent.serverAddress
+    if (!server) continue
+
+    const destination = stop(
+      { id: `server-${side}-${server}`, kind: 'server', label: server },
+      side,
+      seat.at.y,
+      seat.health,
+    )
+
+    const named = agent.settings?.['connect.proxy']?.trim()
+    if (!named) {
+      pending.push({ id: `route-${seat.id}`, from: seat, to: destination.node, health: seat.health })
+      continue
+    }
+
+    const through = stop(
+      { id: `proxy-${agent.hostId}-${named}`, kind: 'proxy', label: named },
+      side,
+      seat.at.y,
+      seat.health,
+    )
+
+    pending.push({ id: `route-${seat.id}`, from: seat, to: through.node, health: seat.health })
+    // Keyed by both ends: one proxy serving two servers is two lines, and one line discovered by
+    // four agents is still one line - drawn twice, it would carry double the packets.
+    pending.push({
+      id: `route-${through.node.id}-${destination.node.id}`,
+      from: through.node,
+      to: destination.node,
+      health: seat.health,
+    })
+  }
+
+  for (const held of stops.values()) {
+    held.node.at = {
+      x: held.side * (reach + (held.node.kind === 'proxy' ? PROXY_STEP : SERVER_STEP)),
+      y: held.ys.reduce((total, y) => total + y, 0) / held.ys.length,
+    }
+    held.node.health = reached(held.healths)
+    nodes.push(held.node)
+  }
+
+  // After the stops, so both ends are where they finally are. A line found by several agents is
+  // drawn once, at the health of the best of them - which is what the node itself already carries.
+  const drawn = new Set<string>()
+  for (const link of pending) {
+    if (drawn.has(link.id)) continue
+    drawn.add(link.id)
+
+    const health = link.from.kind === 'agent' ? link.health : link.from.health
+    links.push({
+      id: link.id,
+      from: link.from.at,
+      to: link.to.at,
+      health,
+      packets: PACKETS[health],
+    })
+  }
+}
+
 export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): FleetGraph {
   const nodes: GraphNode[] = []
   const links: GraphLink[] = []
@@ -204,6 +364,9 @@ export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): Flee
 
   // Spread to fill, then held: past `ROW_MAX` the rows are no longer laid out, they are adrift.
   const pitch = Math.min(ROW_MAX, Math.max(ROW_MIN, span / ASPECT / rows))
+
+  /** Every agent that was placed, with where it went and which way it faces. */
+  const placed: Array<{ agent: AgentResponse; seat: GraphNode; side: number }> = []
 
   for (const { host, owned, top, side } of planned) {
     const health = hostHealth(host)
@@ -252,7 +415,7 @@ export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): Flee
       packets: PACKETS[health],
     })
 
-    for (const seat of seats) {
+    for (const [place, seat] of seats.entries()) {
       nodes.push(seat)
       links.push({
         id: `${host.id}-${seat.ref}`,
@@ -261,8 +424,13 @@ export function fleetGraph(hosts: HostResponse[], agents: AgentResponse[]): Flee
         health: seat.health,
         packets: PACKETS[seat.health],
       })
+
+      const agent = owned[place]
+      if (agent) placed.push({ agent, seat, side })
     }
   }
+
+  routes(placed, reach, nodes, links)
 
   // Halfway down the taller side, so every edge leaves one point and the two sides balance on it.
   osmium.y = (rows * pitch) / 2

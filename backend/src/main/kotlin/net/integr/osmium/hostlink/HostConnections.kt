@@ -30,10 +30,20 @@ class HostConnections(private val objectMapper: ObjectMapper) {
      */
     private val advertised = ConcurrentHashMap<Long, List<LoginMethod>>()
 
+    /**
+     * And what each says it can route a session through, from the same handshake.
+     *
+     * Kept the same way and for the same reason: a proxy is a file on a machine, and a list left
+     * over from a build that has since been restarted would have an operator picking a route that
+     * no longer exists. See [HostProxy].
+     */
+    private val routes = ConcurrentHashMap<Long, List<HostProxy>>()
+
     fun register(hostId: Long, session: WebSocketSession) {
         // A fresh socket has not said anything yet, and what the last one advertised was a claim
         // about a process that may since have been replaced by a different build.
         advertised.remove(hostId)
+        routes.remove(hostId)
 
         // A reconnect before the old socket was reaped would otherwise leave two live sessions.
         sessions.put(hostId, session)?.let { previous ->
@@ -45,7 +55,10 @@ class HostConnections(private val objectMapper: ObjectMapper) {
     fun unregister(hostId: Long, session: WebSocketSession) {
         // Only drop it if it is still the session we know about, so a late close from a superseded
         // socket cannot evict the live one - nor take the new one's advertisement with it.
-        if (sessions.remove(hostId, session)) advertised.remove(hostId)
+        if (sessions.remove(hostId, session)) {
+            advertised.remove(hostId)
+            routes.remove(hostId)
+        }
     }
 
     fun isConnected(hostId: Long): Boolean = sessions[hostId]?.isOpen == true
@@ -53,6 +66,18 @@ class HostConnections(private val objectMapper: ObjectMapper) {
     fun advertise(hostId: Long, methods: List<LoginMethod>) {
         advertised[hostId] = methods
     }
+
+    fun advertiseProxies(hostId: Long, proxies: List<HostProxy>) {
+        routes[hostId] = proxies
+    }
+
+    /**
+     * What this host can route through. Empty when it is not connected, which is the truthful
+     * answer for the same reason the login methods are: nothing has told us, and an agent could not
+     * be sent to it to try anyway.
+     */
+    fun proxiesOf(hostId: Long): List<HostProxy> =
+        if (isConnected(hostId)) routes[hostId].orEmpty() else emptyList()
 
     /**
      * What this host can log in with. Empty when it is not connected, which is the truthful answer:
@@ -67,6 +92,7 @@ class HostConnections(private val objectMapper: ObjectMapper) {
      */
     fun disconnect(hostId: Long) {
         advertised.remove(hostId)
+        routes.remove(hostId)
         sessions.remove(hostId)?.let { session ->
             log.info("Closing session for host {} after token rotation", hostId)
             runCatching { session.close() }

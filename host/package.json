@@ -25,6 +25,7 @@
     "minecraft-protocol": "^1.68.0",
     "mineflayer": "^4.38.0",
     "prismarine-auth": "^3.1.1",
+    "socks": "^2.8.10",
     "ws": "^8.18.3"
   },
   "devDependencies": {

@@ -15,6 +15,7 @@ function host(id: number, over: Partial<HostResponse> = {}): HostResponse {
     reachable: true,
     agentCount: 0,
     loginMethods: [],
+    proxies: [],
     ...over,
   }
 }
@@ -159,6 +160,96 @@ describe('fleetGraph', () => {
     expect(link('osmium-1').packets).toBeGreaterThan(0)
     expect(link('osmium-2').packets).toBe(0)
     expect(link('2-20').packets).toBe(0)
+  })
+
+  /**
+   * The two outer tiers. An agent with a server reaches it; one with a proxy reaches it through
+   * that proxy; and neither node is invented for an agent that named neither.
+   */
+  it('draws an agent straight to its server when it names no proxy', () => {
+    const graph = fleetGraph([host(1)], [agent(10, 1)])
+
+    const server = graph.nodes.find((node) => node.kind === 'server')
+    expect(server?.label).toBe('mc.example.com:25565')
+    expect(graph.nodes.some((node) => node.kind === 'proxy')).toBe(false)
+
+    // Straight from the agent, because a direct connection has no middle to draw.
+    const seat = graph.nodes.find((node) => node.kind === 'agent')!
+    expect(graph.links.some((link) => link.from.x === seat.at.x && link.to.x === server!.at.x)).toBe(true)
+  })
+
+  it('puts a proxy between an agent and its server when one is named', () => {
+    const graph = fleetGraph(
+      [host(1)],
+      [agent(10, 1, { settings: { 'connect.proxy': 'resi-eu' } } as Partial<AgentResponse>)],
+    )
+
+    const proxy = graph.nodes.find((node) => node.kind === 'proxy')!
+    const server = graph.nodes.find((node) => node.kind === 'server')!
+    const seat = graph.nodes.find((node) => node.kind === 'agent')!
+
+    expect(proxy.label).toBe('resi-eu')
+    // Outward in order: the agent, then the proxy, then the server, all on the same side.
+    expect(Math.abs(proxy.at.x)).toBeGreaterThan(Math.abs(seat.at.x))
+    expect(Math.abs(server.at.x)).toBeGreaterThan(Math.abs(proxy.at.x))
+    expect(Math.sign(proxy.at.x - seat.at.x)).toBe(Math.sign(server.at.x - proxy.at.x))
+  })
+
+  /** An agent assigned nowhere has nowhere to draw to, rather than a node saying so. */
+  it('draws no route for an agent with no server', () => {
+    const graph = fleetGraph([host(1)], [agent(10, 1, { serverAddress: null })])
+
+    expect(graph.nodes.some((node) => node.kind === 'server')).toBe(false)
+    expect(graph.nodes.some((node) => node.kind === 'proxy')).toBe(false)
+  })
+
+  /** Two agents on one server is one server node, at the mean of the two. */
+  it('gathers agents onto one stop rather than drawing it twice', () => {
+    const graph = fleetGraph([host(1)], [agent(10, 1), agent(11, 1)])
+
+    const servers = graph.nodes.filter((node) => node.kind === 'server')
+    const seats = graph.nodes.filter((node) => node.kind === 'agent')
+
+    expect(servers).toHaveLength(1)
+    expect(servers[0].at.y).toBeCloseTo((seats[0].at.y + seats[1].at.y) / 2)
+  })
+
+  /**
+   * The health rule for the route tiers, and the reason they can be drawn at all: an agent that is
+   * ONLINE has proved the path, so one live agent makes the route live however many of its
+   * neighbours are sitting at LINKED.
+   */
+  it('takes a route as proved by the best agent on it', () => {
+    const graph = fleetGraph(
+      [host(1)],
+      [agent(10, 1, { state: 'LINKED' }), agent(11, 1, { state: 'ONLINE' })],
+    )
+
+    expect(graph.nodes.find((node) => node.kind === 'server')!.health).toBe('live')
+  })
+
+  it('draws a route nobody has got through as dead rather than as working', () => {
+    const graph = fleetGraph([host(1)], [agent(10, 1, { state: 'LINKED' })])
+
+    expect(graph.nodes.find((node) => node.kind === 'server')!.health).toBe('down')
+  })
+
+  /** One proxy serving two agents on one server is one line onward, not two stacked on each other. */
+  it('draws the proxy-to-server line once however many agents take it', () => {
+    const graph = fleetGraph(
+      [host(1)],
+      [
+        agent(10, 1, { settings: { 'connect.proxy': 'resi-eu' } } as Partial<AgentResponse>),
+        agent(11, 1, { settings: { 'connect.proxy': 'resi-eu' } } as Partial<AgentResponse>),
+      ],
+    )
+
+    const proxy = graph.nodes.find((node) => node.kind === 'proxy')!
+    const onward = graph.links.filter(
+      (link) => link.from.x === proxy.at.x && link.from.y === proxy.at.y,
+    )
+
+    expect(onward).toHaveLength(1)
   })
 
   it('puts Osmium first and halfway down, so every edge leaves one point', () => {

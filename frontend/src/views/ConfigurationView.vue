@@ -97,6 +97,33 @@ const primary = computed(() => agentStore.byId(selected.value[0]))
 const targets = computed(() => selected.value.map((id) => agentStore.byId(id)).filter((a) => a !== undefined))
 
 /**
+ * The proxies the selected agents could be routed through.
+ *
+ * **Gathered from their hosts rather than declared with the setting.** A proxy is a file on a
+ * machine, announced in that machine's handshake, so the list belongs to the fleet and changes when
+ * a host reconnects — which is also why an empty list is shown as a sentence rather than as a picker
+ * with one option in it.
+ *
+ * Named by the host when the selection spans more than one, because two machines may well hold
+ * proxies under the same name and the value written to an agent is the name alone. A proxy that its
+ * own host does not hold refuses the connection outright; the host says so in the agent's activity.
+ */
+const routes = computed(() => {
+  const hosts = [...new Set(targets.value.map((agent) => agent.hostId))]
+  const several = hosts.length > 1
+
+  return hosts.flatMap((hostId) => {
+    const host = agentStore.hostById(hostId)
+    return (host?.proxies ?? []).map((proxy) => ({
+      key: `${hostId}:${proxy.name}`,
+      name: proxy.name,
+      label: several ? t('configuration.settings.connect_proxy.onHost', { name: proxy.name, host: host?.name ?? '' }) : proxy.name,
+      detail: `${proxy.kind} · ${proxy.host}:${proxy.port}`,
+    }))
+  })
+})
+
+/**
  * Boolean views onto the switch settings, since every setting is a string and a checkbox is not.
  *
  * **Off is `''`, not `'false'`.** An absent key is what both the backend and a host already read as
@@ -353,6 +380,27 @@ async function update() {
                         v-else-if="field.type === 'players'"
                         v-model="settings[field.key] as string"
                       />
+
+                      <!--
+                        A select over what the fleet is offering, plus the empty option, which is
+                        not "off" but "as it is": an agent with no proxy connects from its host's
+                        own address, which is what every agent did before this existed.
+                      -->
+                      <template v-else-if="field.type === 'proxy'">
+                        <select
+                          v-if="routes.length"
+                          v-model="settings[field.key]"
+                          class="select select-sm w-full max-w-xs"
+                        >
+                          <option value="">{{ t('configuration.settings.connect_proxy.direct') }}</option>
+                          <option v-for="route in routes" :key="route.key" :value="route.name">
+                            {{ route.label }} · {{ route.detail }}
+                          </option>
+                        </select>
+                        <p v-else class="text-xs opacity-60">
+                          {{ t('configuration.settings.connect_proxy.none') }}
+                        </p>
+                      </template>
 
                       <select
                         v-else-if="field.type === 'choice'"

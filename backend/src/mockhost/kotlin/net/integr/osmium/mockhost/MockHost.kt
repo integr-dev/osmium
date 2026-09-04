@@ -110,6 +110,48 @@ private val LOGIN_METHODS = listOf(
     ),
 )
 
+/**
+ * What this mock says it can route a session through.
+ *
+ * Four, because the interesting cases are all in the differences: two kinds of SOCKS, an HTTP proxy
+ * on a port nothing would guess, and one that wants a credential. A real host reads these from a
+ * file; the mock has no file, and inventing them here is the same claim — **an address and whether
+ * it authenticates, never what with.**
+ *
+ * The names are what an operator picks in `connect.proxy`, and they are deliberately the shape of
+ * real ones: somewhere, and which one.
+ */
+private val PROXIES = listOf(
+    mapOf(
+        "name" to "resi-eu-1",
+        "kind" to "socks5",
+        "host" to "10.20.0.11",
+        "port" to 1080,
+        "authenticated" to true,
+    ),
+    mapOf(
+        "name" to "resi-eu-2",
+        "kind" to "socks5",
+        "host" to "10.20.0.12",
+        "port" to 1080,
+        "authenticated" to true,
+    ),
+    mapOf(
+        "name" to "datacentre",
+        "kind" to "http",
+        "host" to "proxy.internal",
+        "port" to 8443,
+        "authenticated" to false,
+    ),
+    mapOf(
+        "name" to "tor-exit",
+        "kind" to "socks4",
+        "host" to "127.0.0.1",
+        "port" to 9050,
+        "authenticated" to false,
+    ),
+)
+
 class MockHost(private val url: String, private val token: String) {
 
     private val mapper: ObjectMapper = jacksonObjectMapper()
@@ -321,7 +363,8 @@ class MockHost(private val url: String, private val token: String) {
      *
      * The login methods are the mock's whole contribution to the setup path: the backend offers
      * exactly what a host advertises and nothing else, so a mock that said nothing here could not
-     * set up an agent at all. They are fictional mechanisms with real shapes — a device code flow
+     * set up an agent at all. The proxies work the same way one tier down — an agent can only be
+     * routed through a name its own host has advertised. They are fictional mechanisms with real shapes — a device code flow
      * and a token paste are the two ways this actually gets done — and, like a real host's, they
      * name a mechanism and never an account.
      */
@@ -335,6 +378,9 @@ class MockHost(private val url: String, private val token: String) {
                         .filterValues { it.online }
                         .map { (agentId, _) -> mapOf("agentId" to agentId, "state" to "ONLINE") },
                     "loginMethods" to LOGIN_METHODS,
+                    // Re-sent on every connect, like the methods: both describe a process that is
+                    // running now rather than a row anybody stored.
+                    "proxies" to PROXIES,
                 ),
             ),
         ),

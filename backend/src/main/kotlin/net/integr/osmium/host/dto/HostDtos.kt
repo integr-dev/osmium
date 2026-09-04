@@ -32,6 +32,24 @@ data class LoginMethodResponse(
     val description: String?,
 )
 
+@Schema(
+    description = "A proxy the host advertised in its handshake, which an agent can be routed " +
+        "through by name. The address is shown because choosing between proxies means choosing " +
+        "between places; the credential it may need never leaves the host.",
+)
+data class ProxyResponse(
+    @field:Schema(description = "What an agent's `connect.proxy` setting holds.", example = "resi-eu-1")
+    val name: String,
+    @field:Schema(description = "The host's own word for it, relayed uninterpreted.", example = "socks5")
+    val kind: String,
+    @field:Schema(example = "10.0.0.9")
+    val host: String,
+    @field:Schema(description = "Any port; providers use whatever they like.", example = "1080")
+    val port: Int,
+    @field:Schema(description = "Whether it wants a credential. What that credential is stays on the host.")
+    val authenticated: Boolean,
+)
+
 @Schema(description = "A host. Reachability is derived from the heartbeat, not stored.")
 data class HostResponse(
     val id: Long,
@@ -47,6 +65,12 @@ data class HostResponse(
             "nothing up.",
     )
     val loginMethods: List<LoginMethodResponse>,
+    @field:Schema(
+        description = "What this host can route an agent's session through, from its handshake. " +
+            "Empty while it is disconnected, and empty for a host holding no proxies - whose " +
+            "agents then connect from the machine's own address.",
+    )
+    val proxies: List<ProxyResponse>,
 )
 
 @Schema(description = "A freshly enrolled host, with its enrolment token shown exactly once.")
@@ -63,6 +87,7 @@ data class HostEnrolledResponse(
 fun Host.toResponse(
     agentCount: Long,
     loginMethods: List<LoginMethodResponse> = emptyList(),
+    proxies: List<ProxyResponse> = emptyList(),
 ): HostResponse = HostResponse(
     id = checkNotNull(id) { "Host has not been persisted yet" },
     name = name,
@@ -71,6 +96,7 @@ fun Host.toResponse(
     reachable = isReachable(),
     agentCount = agentCount,
     loginMethods = loginMethods,
+    proxies = proxies,
 )
 
 const val HOST_NAME_MAX_LENGTH = 64

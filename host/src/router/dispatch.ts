@@ -3,6 +3,7 @@ import { log } from '../log.ts'
 import type { AgentSnapshot, Command, Event, Outbound, SetupResult } from '../protocol/message.ts'
 import { ActivityScope, LoginState, Severity } from '../protocol/wire.ts'
 import { advertised, isInteractive, kindFromId, LoginKind, type StoredKind } from '../token/login.ts'
+import type { Proxies } from '../agent/proxy.ts'
 import type { AccountStore } from '../token/store.ts'
 
 interface Running {
@@ -25,6 +26,8 @@ export class Dispatcher {
   constructor(
     private readonly store: AccountStore,
     private readonly cacheDirectory: string,
+    /** What this host can route a session through. Named in a setting, resolved here. */
+    private readonly proxies: Proxies,
     private readonly send: (message: Outbound) => void,
     /** World updates. They ride the same socket as a binary frame, and are relayed rather than
      * read - nothing between here and the browser has any use for what is in them. */
@@ -59,7 +62,10 @@ export class Dispatcher {
   announce(): void {
     const agents: AgentSnapshot[] = [...this.agents].map(([agentId, running]) => ({ agentId, state: running.state }))
 
-    this.send({ kind: 'event', body: { type: 'handshake', agents, loginMethods: advertised() } })
+    this.send({
+      kind: 'event',
+      body: { type: 'handshake', agents, loginMethods: advertised(), proxies: this.proxies.advertised() },
+    })
 
     // Everything the backend holds only in memory has to be said again, because a new socket may
     // well be a new backend - and one that has never heard of this host's agents. Inventories are
@@ -144,7 +150,7 @@ export class Dispatcher {
     // runs.
     let running: Running
 
-    const agent = new Agent(agentId, credential, this.store, this.cacheDirectory, {
+    const agent = new Agent(agentId, credential, this.store, this.cacheDirectory, this.proxies, {
       event: (event) => this.forward(agentId, event),
       viewer: (frame) => this.stream(frame),
       result: (setup) => {

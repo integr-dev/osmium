@@ -497,6 +497,7 @@
                 "CHAT",
                 "ACTIVITY",
                 "MAP",
+                "POSITIONS",
                 "AUDIT",
                 "SCHEMATICS",
                 "BUILDS",
@@ -3182,6 +3183,66 @@
         }
       }
     },
+    "/api/map/last-seen": {
+      "get": {
+        "tags": [
+          "Map"
+        ],
+        "summary": "Where everybody was, the last time any agent could see them.",
+        "description": "\n            One entry per person per world: the fleet's agents, and every player who has stood near\n            one of them. What is stored is the **last** position known, not a history - a trail of\n            where somebody has been belongs to the screen watching them move.\n\n            This is what a map draws in grey. Somebody in it may well be standing in front of an\n            agent right now, in which case telemetry describes them better and this entry is simply\n            older; `at` is what says which.\n\n            Nothing here expires. It is deleted from the storage screen and by nothing else, so the\n            newest 500 are answered rather than all of them - a server that has been busy for a year\n            holds every account that has ever walked past an agent.\n        ",
+        "operationId": "lastSeen",
+        "parameters": [
+          {
+            "name": "server",
+            "in": "query",
+            "description": "The server to read sightings from.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "mc.example.com"
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "description": "Which world, without its `minecraft:` prefix.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "overworld"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The newest sightings in that world.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LastSeenResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing node `agent.read`.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LastSeenResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs": {
       "get": {
         "tags": [
@@ -4462,6 +4523,7 @@
               "CHAT",
               "ACTIVITY",
               "MAP",
+              "POSITIONS",
               "AUDIT",
               "SCHEMATICS",
               "BUILDS",
@@ -4850,6 +4912,13 @@
             "items": {
               "$ref": "#/components/schemas/LoginMethodResponse"
             }
+          },
+          "proxies": {
+            "type": "array",
+            "description": "What this host can route an agent's session through, from its handshake. Empty while it is disconnected, and empty for a host holding no proxies - whose agents then connect from the machine's own address.",
+            "items": {
+              "$ref": "#/components/schemas/ProxyResponse"
+            }
           }
         }
       },
@@ -4872,6 +4941,36 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ProxyResponse": {
+        "type": "object",
+        "description": "A proxy the host advertised in its handshake, which an agent can be routed through by name. The address is shown because choosing between proxies means choosing between places; the credential it may need never leaves the host.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What an agent's `connect.proxy` setting holds.",
+            "example": "resi-eu-1"
+          },
+          "kind": {
+            "type": "string",
+            "description": "The host's own word for it, relayed uninterpreted.",
+            "example": "socks5"
+          },
+          "host": {
+            "type": "string",
+            "example": "10.0.0.9"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Any port; providers use whatever they like.",
+            "example": 1080
+          },
+          "authenticated": {
+            "type": "boolean",
+            "description": "Whether it wants a credential. What that credential is stays on the host."
           }
         }
       },
@@ -5343,6 +5442,7 @@
               "CHAT",
               "ACTIVITY",
               "MAP",
+              "POSITIONS",
               "AUDIT",
               "SCHEMATICS",
               "BUILDS",
@@ -5647,6 +5747,47 @@
           "maxZ": {
             "type": "integer",
             "format": "int32"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LastSeenResponse": {
+        "type": "object",
+        "description": "Where somebody was the last time any agent could see them. One entry per person per world - the last thing known, not a history of where they have been.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "AGENT",
+              "PLAYER"
+            ]
+          },
+          "subject": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "face": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "z": {
+            "type": "number",
+            "format": "double"
           },
           "at": {
             "type": "string",
