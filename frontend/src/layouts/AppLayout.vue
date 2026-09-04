@@ -764,7 +764,13 @@ async function logout() {
           is inside, so a list that holds its own padding would put the mark at the sidebar's edge
           rather than at the row's.
         -->
-        <div v-if="auth.can('chat.read')" class="px-3 pb-3">
+        <!--
+          `mt-2` rather than the gap the fleet happens to leave. With the agents open, the list ends
+          somewhere above this and the space between reads as a break between two kinds of thing;
+          folded shut, the reveal collapses to nothing and the chat row landed against the Agents
+          header as though it were the next item in that list.
+        -->
+        <div v-if="auth.can('chat.read')" class="mt-2 px-3 pb-3">
           <NavRail>
             <ul class="menu w-full gap-0.5 p-0">
               <li>

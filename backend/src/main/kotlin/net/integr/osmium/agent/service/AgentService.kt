@@ -400,6 +400,18 @@ class AgentService(
             target = agent.label,
             detail = agent.serverAddress,
         )
+
+        /*
+         * **Said out loud, like every other change to an agent.** This was the one mutation that
+         * only answered its caller, and for an agent in the game it looked fine: the host reports
+         * having left a moment later, and that report publishes.
+         *
+         * There is no host round trip for the third case. Cancelling a rejoin that is waiting out a
+         * backoff sends nothing and is over the instant it is asked for - so nothing published,
+         * every open page went on showing an agent that was still trying, and the button offering
+         * to stop it stayed live over a backend that would answer "it is not trying to be".
+         */
+        publish(agent)
         return agent.toResponse(telemetryStore.find(agent.id))
     }
 

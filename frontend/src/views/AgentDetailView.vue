@@ -205,6 +205,25 @@ function formatPosition(at: { x: number; y: number; z: number }): string {
 }
 
 /** Every command can legitimately fail with 503 while no agent is connected to the host. */
+/**
+ * Ends the session, or gives up on the attempt to open one.
+ *
+ * One button and one request either way; what differs is that an attempt in flight does not stop
+ * the moment the request returns, so the press is remembered until the agent leaves CONNECTING.
+ * Set before the call rather than after it: the round trip is the part an operator is watching.
+ */
+async function stop(): Promise<void> {
+  const target = agent.value
+  if (!target) return
+
+  if (target.state === 'CONNECTING') cancelling.value = true
+  await run(() => agentStore.disconnect(target.id))
+
+  // A refusal leaves the attempt exactly where it was, so the button has to come back rather than
+  // sit greyed out saying it is cancelling something nobody asked to be cancelled.
+  if (error.value) cancelling.value = false
+}
+
 async function run(action: () => Promise<void>) {
   busy.value = true
   error.value = null
@@ -276,8 +295,35 @@ const serverBlocked = computed<string | null>(() => {
   return null
 })
 
+/**
+ * Whether this operator has asked for the current attempt to stop, and it has not stopped yet.
+ *
+ * **Held here because nothing on the wire says it.** Cancelling is not a state an agent can be in:
+ * the backend clears `wanted` and sends the host a disconnect, and the agent stays CONNECTING until
+ * the host reports having given up — which takes as long as whatever it was waiting on, because the
+ * attempt is only abandoned where it next gives up the thread. A DNS lookup and a version ping are
+ * both round trips, so several seconds is ordinary.
+ *
+ * Without this the button did the whole thing and then said nothing: the request returned, the state
+ * did not move, and the only reading available to an operator was that the press had been ignored.
+ */
+const cancelling = ref(false)
+
+// Cleared by the agent leaving the state it was asked to leave, whatever took it out of there -
+// this host reporting, another operator, or the attempt failing on its own.
+watch(
+  () => agent.value?.state,
+  (state) => {
+    if (state !== 'CONNECTING') cancelling.value = false
+  },
+)
+
 const disconnectBlocked = computed<string | null>(() => {
   if (!agent.value) return null
+
+  // Asked for and still going. Blocked rather than merely relabelled: pressing it again sends a
+  // second disconnect for an attempt that is already being abandoned.
+  if (cancelling.value) return t('agents.cancelling')
 
   const live = isOnline(agent.value) || agent.value.state === 'CONNECTING'
   if (!live && !agent.value.rejoining) return t('agents.blockedNotConnected')
@@ -287,6 +333,7 @@ const disconnectBlocked = computed<string | null>(() => {
 
 /** What the button is about to do, which is not the same in all three cases. */
 const disconnectLabel = computed(() => {
+  if (cancelling.value) return t('agents.cancelling')
   if (agent.value?.state === 'CONNECTING') return t('agents.cancelConnect')
   if (agent.value && !isOnline(agent.value) && agent.value.rejoining) return t('agents.stopRejoining')
   return t('agents.disconnect')
@@ -582,7 +629,7 @@ async function confirmRemove() {
                   class="btn btn-soft btn-sm gap-2"
                   :disabled="busy || disconnectBlocked !== null"
                   :title="disconnectBlocked ?? ''"
-                  @click="run(() => agentStore.disconnect(agent!.id))"
+                  @click="stop()"
                 >
                   <Power class="size-4" />
                   {{ disconnectLabel }}

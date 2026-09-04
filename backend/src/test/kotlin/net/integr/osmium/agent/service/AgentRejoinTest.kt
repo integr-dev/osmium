@@ -7,9 +7,16 @@ import net.integr.osmium.host.model.Host
 import net.integr.osmium.hostlink.CommandType
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.HostEnvelope
+import net.integr.osmium.agent.dto.AgentResponse
+import net.integr.osmium.audit.repository.AuditEntryRepository
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateType
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.WebSocketExtension
 import org.springframework.web.socket.WebSocketMessage
@@ -41,6 +48,8 @@ import kotlin.test.assertTrue
 class AgentRejoinTest : AbstractRestTest() {
 
     @Autowired private lateinit var agentService: AgentService
+    @Autowired private lateinit var auditEntries: AuditEntryRepository
+    @Autowired private lateinit var broker: LiveUpdateBroker
     @Autowired private lateinit var connections: HostConnections
     @Autowired private lateinit var objectMapper: ObjectMapper
 
@@ -165,6 +174,57 @@ class AgentRejoinTest : AbstractRestTest() {
         assertNull(left.rejoinAt)
         assertEquals(AgentState.LINKED, left.state)
         assertTrue(socket.commands(CommandType.CONNECT).isEmpty())
+    }
+
+    /**
+     * Cancelling a rejoin has to reach the browser, and it is the one disconnect nothing else does.
+     *
+     * An agent in the game leaves and its host reports having left, and that report publishes; an
+     * agent waiting out a backoff has no host round trip at all. Without a push of its own, every
+     * page open on it went on offering to stop something that had already stopped - and the second
+     * press came back "it is not connected and is not trying to be".
+     *
+     * Not transactional, because the broker defers delivery until after commit: inside a rolled-back
+     * test transaction nothing is ever delivered.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `stopping a rejoin is pushed to the browser`() {
+        val host = reachableHost("host-push")
+        val agent = agentRepository.saveAndFlush(
+            Agent(
+                label = "Mason_push",
+                host = host,
+                serverAddress = "mc.example.com",
+                state = AgentState.LINKED,
+                wanted = true,
+                rejoinAttempts = 2,
+                rejoinAt = Instant.now().plusSeconds(30),
+            ),
+        )
+
+        val seen = CopyOnWriteArrayList<LiveUpdateEvent>()
+        broker.subscribe { seen += it }
+
+        try {
+            agentService.disconnect(checkNotNull(agent.id))
+
+            val pushed = seen.lastOrNull {
+                it.type == LiveUpdateType.AGENT_CHANGED && it.agentId == agent.id
+            }
+            assertNotNull(pushed, "cancelling a rejoin never reached the browser")
+            assertFalse(
+                (pushed.data as AgentResponse).rejoining,
+                "the browser was told about an agent that is still trying",
+            )
+        } finally {
+            // Everything this test committed, the audit line included: it runs outside the
+            // transaction the rest are rolled back with, so what it writes is what the next test
+            // reads. The trail is walked whole by the audit tests, and one stray row fails them.
+            agentRepository.deleteById(checkNotNull(agent.id))
+            hostRepository.deleteById(checkNotNull(host.id))
+            auditEntries.deleteAll(auditEntries.findAll().filter { it.target == agent.label })
+        }
     }
 
     /** And the other direction: pressing Connect is what records the wish in the first place. */

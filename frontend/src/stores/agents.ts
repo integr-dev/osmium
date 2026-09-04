@@ -233,12 +233,34 @@ export const useAgentStore = defineStore('agents', () => {
   let connection: LiveUpdateHandle | null = null
   const liveUpdatesConnected = ref(false)
 
+  /**
+   * Whether the stream has been up before in this session.
+   *
+   * The first connect follows the load that opened the screen, and refetching on top of it would be
+   * the same three requests twice. Every connect after it is a reconnect - see below.
+   */
+  let streamed = false
+
   function connectLiveUpdates(): void {
     if (connection) return
     connection = openLiveUpdates('/api/stream', {
       onEvent: applyEvent,
       onConnect() {
         liveUpdatesConnected.value = true
+
+        /*
+         * **A reconnect refetches, because the stream carries no backlog.** Events published while
+         * it was down are simply gone: the backend broadcasts to whoever is attached, and a client
+         * that was not gets nothing on its return. Every one of them was a change to what is on
+         * screen, and nothing else would ever correct it - the fleet is applied in place precisely
+         * so that it does not poll.
+         *
+         * What that looked like: a backend restart, or a laptop that slept, and the page carried on
+         * showing an agent as still trying to rejoin long after it had given up - with the button
+         * to stop it enabled, over a backend that answered "it is not trying to be".
+         */
+        if (streamed) void refresh()
+        streamed = true
       },
       onDisconnect() {
         liveUpdatesConnected.value = false

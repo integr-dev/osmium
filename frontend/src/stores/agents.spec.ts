@@ -14,9 +14,10 @@ const HOSTS: HostResponse[] = [
     reachable: true,
     agentCount: 4,
     loginMethods: [{ id: 'device_code', label: 'Device code', description: null }],
+    proxies: [],
   },
   // Unreachable, so it advertises nothing: the list goes with the connection that claimed it.
-  { id: 2, name: 'eu-2', hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1, loginMethods: [] },
+  { id: 2, name: 'eu-2', hostVersion: null, lastSeenAt: null, reachable: false, agentCount: 1, loginMethods: [], proxies: [] },
 ]
 
 /**
