@@ -3,11 +3,16 @@ import {
   CHAT_COMMANDS,
   COMMAND_NAMES,
   elevated,
+  groupLabel,
   playersFrom,
   playersTo,
+  settingHint,
+  settingLabel,
   settingsOf,
   KNOWN_KEYS,
+  SETTING_GROUPS,
 } from './configuration'
+import { LOCALES } from '../i18n'
 import type { FleetAgent } from '../stores/agents'
 
 /**
@@ -164,6 +169,48 @@ describe('the settings a form binds to', () => {
 
     expect(settingsOf(agent)['from.the.future']).toBe('keep me')
     expect(settingsOf(agent)['chat.sender']).toBe('^x')
+  })
+})
+
+/**
+ * Every field an operator can see has something to read beside it.
+ *
+ * The schema is declared in one file and the copy in another, so adding a setting is two edits and
+ * forgetting the second one ships a form labelled with its own message keys. Both locales, because
+ * a German operator meeting `configuration.settings.path_dig.label` is the same failure.
+ */
+describe('the copy behind the form', () => {
+  const locales = ['en', 'de'] as const
+
+  /** Walks the dotted key by hand: what is missing is the question, and `t` answers with the key. */
+  function copy(locale: (typeof locales)[number], key: string): unknown {
+    return key.split('.').reduce<unknown>(
+      (held, part) => (held && typeof held === 'object' ? (held as Record<string, unknown>)[part] : undefined),
+      LOCALES[locale],
+    )
+  }
+
+  /** That the walker above can actually fail. A lookup that always answers is a test that never does. */
+  it('finds nothing where there is nothing', () => {
+    expect(copy('en', settingLabel('path.notASetting'))).toBeUndefined()
+    expect(copy('en', groupLabel('notAGroup'))).toBeUndefined()
+  })
+
+  it('names every group', () => {
+    for (const locale of locales) {
+      for (const group of SETTING_GROUPS) {
+        expect(copy(locale, groupLabel(group.key)), `${locale}: ${group.key}`).toBeTypeOf('string')
+      }
+    }
+  })
+
+  it('labels and explains every field', () => {
+    for (const locale of locales) {
+      for (const field of SETTING_GROUPS.flatMap((group) => group.fields)) {
+        expect(copy(locale, settingLabel(field.key)), `${locale}: ${field.key}`).toBeTypeOf('string')
+        expect(copy(locale, settingHint(field.key)), `${locale}: ${field.key}`).toBeTypeOf('string')
+      }
+    }
   })
 })
 

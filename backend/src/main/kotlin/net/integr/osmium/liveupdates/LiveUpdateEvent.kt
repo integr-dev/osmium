@@ -66,6 +66,15 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      */
     AGENT_INVENTORY("inventory", Nodes.AGENT_READ),
 
+    /**
+     * Where an agent is going, on its own event for the same reasons the vitals and the inventory
+     * are - and one more: most of these carry nothing but how far along it has got. The line itself
+     * rides only the updates that redrew it, so a client holds the path and moves along it.
+     *
+     * Forwarded as it arrives. The host already reports at the rate a person can read.
+     */
+    AGENT_PATH("path", Nodes.AGENT_READ),
+
     USER_CHANGED("user", Nodes.USER_READ),
     USER_REMOVED("user-removed", Nodes.USER_READ),
 

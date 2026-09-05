@@ -1,6 +1,8 @@
 package net.integr.osmium.agent.service
 
 import net.integr.osmium.agent.dto.AgentInventoryResponse
+import net.integr.osmium.agent.dto.AgentPathResponse
+import net.integr.osmium.agent.dto.PathToRequest
 import net.integr.osmium.agent.dto.AgentResponse
 import net.integr.osmium.agent.dto.AgentSettingsRequest
 import net.integr.osmium.agent.dto.ChatRequest
@@ -52,6 +54,7 @@ class AgentService(
     private val telemetryStore: AgentTelemetryStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val inventoryStore: AgentInventoryStore,
+    private val pathStore: AgentPathStore,
     private val objectMapper: ObjectMapper,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
@@ -188,6 +191,7 @@ class AgentService(
         telemetryStore.forget(id)
         telemetryPublisher.forget(id)
         inventoryStore.forget(id)
+        pathStore.forget(id)
         auditService.record(
             action = AuditAction.AGENT_DELETE,
             target = label,
@@ -564,6 +568,82 @@ class AgentService(
      * Fire and forget by design. The host is the source of truth about its agents, so state advances
      * when it reports back, not when the command is accepted here.
      */
+    /**
+     * Every journey in progress, for a screen that has just been opened.
+     *
+     * Read straight out of the store rather than asked for, the same bargain the inventory makes.
+     * A path is reported while it is being walked, so it is already there by the time anybody looks
+     * - and there is no command that means "tell me again", because a host that would answer one is
+     * a host that has already sent it.
+     */
+    fun paths(): List<AgentPathResponse> = pathStore.all()
+
+    /**
+     * Sends an agent somewhere.
+     *
+     * Online only: a route is about the world the agent is standing in, and one held for a session
+     * that has not started would be walked in whichever world it eventually joins.
+     *
+     * **Nothing is echoed back.** The path does not exist yet - only the host can see the blocks, so
+     * it plans and then says what it found. Recording a journey here first would draw a straight
+     * line to the destination and then replace it with the real one, which reads as the agent
+     * changing its mind about a route it never had.
+     */
+    @Transactional
+    fun pathTo(id: Long, request: PathToRequest): AgentResponse {
+        val agent = require(id)
+        check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
+
+        dispatch(
+            agent,
+            CommandType.PATH_TO,
+            // The height only when there is one. An absent `y` is what tells the host to aim at the
+            // column rather than the point, and sending a null would be a number it has to interpret.
+            mapOf(
+                "waypoints" to request.waypoints.map { point ->
+                    buildMap {
+                        put("x", point.x)
+                        point.y?.let { put("y", it) }
+                        put("z", point.z)
+                    }
+                },
+            ),
+        )
+
+        val destination = request.waypoints.last()
+        auditService.record(
+            action = AuditAction.AGENT_PATH,
+            target = agent.label,
+            // The destination, and how many hops were asked for. Not the path: that is planned on
+            // the host and is not what the operator decided.
+            detail = "sent to ${destination.x.toInt()} ${destination.y?.toInt() ?: "any"} ${destination.z.toInt()}" +
+                if (request.waypoints.size > 1) " by way of ${request.waypoints.size - 1} waypoint(s)" else "",
+        )
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
+    /**
+     * Stops an agent where it is.
+     *
+     * Not refused for one that is going nowhere, and not refused while it is building: stopping is
+     * what an operator presses when they have seen enough, and the one command that undoes a
+     * journey must not be the one that is unavailable. Online only, because there is nobody to tell
+     * otherwise.
+     */
+    @Transactional
+    fun pathStop(id: Long): AgentResponse {
+        val agent = require(id)
+        check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
+
+        dispatch(agent, CommandType.PATH_STOP)
+        auditService.record(
+            action = AuditAction.AGENT_PATH,
+            target = agent.label,
+            detail = "told to stop where it is",
+        )
+        return agent.toResponse(telemetryStore.find(agent.id))
+    }
+
     private fun dispatch(agent: Agent, type: String, payload: Map<String, Any?> = emptyMap()) {
         refuseIfBuilding(agent, type)
         if (!offer(agent, type, payload)) throw HostUnreachableException(agent.host.name)

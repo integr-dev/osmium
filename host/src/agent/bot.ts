@@ -1,8 +1,16 @@
 import minecraftData from 'minecraft-data'
 import minecraftProtocol from 'minecraft-protocol'
 import mineflayer, { type Bot, type BotOptions } from 'mineflayer'
+import pathfinder from 'mineflayer-pathfinder'
+
+// Aliased: `Vec3` in this file already means the wire shape, which is three plain numbers on a
+// message. This is the runtime class the world API takes - a different thing that shares a name.
+import { Vec3 as WorldVec } from 'vec3'
 
 import { type Endpoint, locate } from './address.ts'
+import { type Box, CLEARANCE, freed, hullAt, HULL_HEIGHT, HULL_WIDTH } from './unembed.ts'
+import { AgentNavigator, type Waypoint } from './path/navigator.ts'
+import { type PathSettings, pathSettingsFrom } from './path/settings.ts'
 import { type Component, componentsOf } from './chat.ts'
 import {
   addressedTo,
@@ -10,7 +18,10 @@ import {
   allows,
   coinFlip,
   commandIn,
+  COMMANDS,
+  PREFIX,
   eightBall,
+  gotoOrder,
   grantFrom,
   grantLabel,
   helpLine,
@@ -66,6 +77,23 @@ import { VERSION } from '../version.ts'
  * The backend holds them in memory and lets them go stale after thirty seconds, so this is the rate
  * that keeps them current rather than a rate anything is waiting on. */
 const VITALS = 5_000
+
+/**
+ * And how often while it is walking somewhere.
+ *
+ * **How often an agent says where it is follows how fast it is moving.** Five seconds is the right
+ * baseline for a fleet standing about: a position that has not changed is not worth a packet, and
+ * the whole reason the backend coalesces telemetry onto a tick is that this is the high-volume
+ * thing. But an agent on its way somewhere is precisely the one whose position *is* the news.
+ *
+ * It is also what makes the map read correctly. A journey reports how far along it is every second,
+ * so at five the drawn line slid five times for every jump of the head at the end of it - two facts
+ * about one agent, arriving at different rates, and looking from the outside like the marker was
+ * lagging behind its own path. Matching the two rates fixes it everywhere at once, which drawing the
+ * marker at a path node would not: that would snap the head to the line and leave it disagreeing
+ * with the coordinates in the sidebar and the body in the 3D view.
+ */
+const VITALS_WALKING = 1_000
 
 /** How long a server gets to say anything at all before the attempt is given up on.
  *
@@ -231,6 +259,11 @@ export class Agent {
 
   /** Attached per session, like the mapper and the inventory reporter. */
   private utilities: AgentUtilities | undefined
+
+  /** How it gets from one place to another. Read per plan, like the utility settings. */
+  private pathing: PathSettings = pathSettingsFrom({})
+
+  private navigator: AgentNavigator | undefined
   /** The server's own command for sending a private message, as a template. Undefined means `/msg`,
    * which is what vanilla and most plugin suites answer to - see `WHISPER_COMMAND`. */
   private whisperCommand: string | undefined
@@ -259,6 +292,8 @@ export class Agent {
   /** What the server said about the last death, if it said anything. Cleared as it is reported. */
   private obituary: string | undefined
   private vitals: NodeJS.Timeout | undefined
+  /** When vitals last went out, for thinning the sampler back down while the agent is still. */
+  private sampled = 0
   private done = false
 
   /** Commands queue behind the login. A device code sign-in takes minutes, and a `connect` that
@@ -399,6 +434,18 @@ export class Agent {
         this.segments.delete(command.segmentId)
         return
 
+      // Walking the agent off its segment is exactly the corruption `busy` exists to prevent, and
+      // the block it goes to place next is wherever it happens to be standing.
+      case 'path_to':
+        if (this.busy('path_to')) return
+        return this.travel(command.waypoints)
+
+      // Never refused. Stopping is what an operator presses when they have seen enough, and a
+      // refusal would leave the agent walking away with nothing that could call it back.
+      case 'path_stop':
+        this.navigator?.halt()
+        return
+
       case 'delete_agent':
         return this.remove()
     }
@@ -533,6 +580,11 @@ export class Agent {
       return
     }
 
+    // Loaded here rather than passed to `createBot`: mineflayer defers injection until the bot is
+    // ready for it either way, and a plugin named in the options is one more thing to get past the
+    // spread that routes the connection.
+    bot.loadPlugin(pathfinder.pathfinder)
+
     this.bot = bot
     this.leaving = false
     this.kicked = false
@@ -601,6 +653,7 @@ export class Agent {
         this.begin_mapping()
         this.begin_carrying()
         this.begin_utilities()
+        this.begin_pathing()
 
         // Only the first one, and only one sampler. `spawn` fires again on every respawn and every
         // dimension change, and an agent that died has not rejoined the server.
@@ -619,7 +672,10 @@ export class Agent {
           `Joined ${address} as ${this.identity?.username ?? 'this agent'} on ${bot.version}` +
             (place ? `, at ${place}` : ''),
         )
-        this.vitals = setInterval(() => this.sample(), VITALS)
+        // At the faster rate always, and thinned back down inside `sample` - the alternative is
+        // re-arming a timer every time a journey starts or ends, from two places that would both
+        // have to remember to.
+        this.vitals = setInterval(() => this.sample(), VITALS_WALKING)
 
         // Whether the world arrived, not just the login. Mineflayer runs no physics at all while the
         // block under an agent is unknown, and an agent without physics stands still through
@@ -730,6 +786,7 @@ export class Agent {
     )
 
     unscaleVelocity(bot, this.id, () => ({ take: this.takeKnockback, correct: this.knockback }))
+    keepOutOfBlocks(bot, this.id)
   }
 
   /** Settles one session, whichever of the several endings arrived first. */
@@ -748,6 +805,7 @@ export class Agent {
     this.unmap()
     this.uncarry()
     this.unutilities()
+    this.unpath()
     // Whatever it was holding is the backend's again: leaving the game releases every segment, and
     // a set that outlived the session would refuse commands on behalf of work nobody is doing.
     this.segments.clear()
@@ -855,6 +913,11 @@ export class Agent {
       'util.autoTotem',
       'util.fleeDistance',
       'connect.proxy',
+      'path.range',
+      'path.dig',
+      'path.bridge',
+      'path.parkour',
+      'path.maxDrop',
     ])
     const unknown = Object.keys(values).filter((key) => !known.has(key))
 
@@ -904,6 +967,20 @@ export class Agent {
       running.length
         ? `Agent ${this.id} runs ${running.join(', ')}`
         : `Agent ${this.id} runs no utility modules`,
+    )
+
+    // Read per plan by the navigator, so a toggle applies to the next search rather than the next
+    // session. What is already being walked is left alone: re-planning under an agent because a box
+    // was ticked is a surprise, and the path it is on was legal when it was drawn.
+    this.pathing = pathSettingsFrom(values)
+
+    log.info(
+      `Agent ${this.id} paths within ${this.pathing.range} blocks, ` +
+        `${this.pathing.dig ? 'digging' : 'without digging'}, ` +
+        `${this.pathing.bridge ? 'bridging' : 'without bridging'}, ` +
+        `${this.pathing.parkour ? 'jumping gaps' : 'without jumping gaps'}, ` +
+        `dropping at most ${this.pathing.maxDrop} blocks, ` +
+        `${this.pathing.sprint ? 'sprinting' : 'without sprinting - anti-hunger is careful'}`,
     )
 
     this.trusted = trustedFrom(values['players.whitelist'])
@@ -1245,6 +1322,46 @@ export class Agent {
         return
       }
 
+      /*
+       * Where to stand, from in game.
+       *
+       * The one command here that is answered on failure. Everything else either succeeds or says
+       * nothing, and both of those are wrong for this: a route that does not exist is the ordinary
+       * outcome of pointing at somewhere across a ravine, and an operator standing in the world
+       * watching a bot not move deserves to be told which of the two happened.
+       */
+      case 'goto': {
+        const order = gotoOrder(command.args)
+        if (!order) {
+          this.answer(`Agent ${this.id}: ${PREFIX} goto ${COMMANDS.goto.args}`, back)
+          return
+        }
+
+        const navigator = this.navigator
+        if (!navigator) {
+          this.answer(`Agent ${this.id} is not standing in a world yet`, back)
+          return
+        }
+
+        if (order.kind === 'stop') {
+          navigator.halt()
+          this.activity(ActivityScope.System, Severity.Info, `${speaker} stopped this agent from chat`)
+          this.answer(`Agent ${this.id} stopping where it is`, back)
+          return
+        }
+
+        log.info(`Agent ${this.id} was sent to ${order.x} ${order.y} ${order.z} by ${speaker}`)
+        this.activity(
+          ActivityScope.System,
+          Severity.Info,
+          `${speaker} sent this agent to ${order.x} ${order.y} ${order.z} from chat`,
+        )
+
+        navigator.goto([order])
+        this.answer(`Agent ${this.id} heading for ${order.x} ${order.y} ${order.z}`, back)
+        return
+      }
+
       case 'run': {
         const typed = runnable(command.args)
         if (!typed) return
@@ -1316,6 +1433,11 @@ export class Agent {
   private sample(): void {
     const bot = this.bot
     if (!bot?.entity) return
+
+    // Standing still, and not due yet. See {@link VITALS_WALKING}.
+    const now = Date.now()
+    if (this.navigator?.moving() !== true && now - this.sampled < VITALS) return
+    this.sampled = now
 
     const position = point(bot.entity.position)
 
@@ -1467,6 +1589,66 @@ export class Agent {
     })
 
     this.handle({ type: 'disconnect' })
+  }
+
+  /**
+   * Sends the agent somewhere, if it is anywhere.
+   *
+   * Refused rather than queued when there is no session. A path is about the world the agent is
+   * standing in, and one held for a session that has not started yet would be walked in whichever
+   * world it eventually joins.
+   */
+  private travel(waypoints: Waypoint[]): void {
+    if (!this.navigator) {
+      log.warn(`Agent ${this.id} cannot go anywhere: it is not in a world`)
+      return
+    }
+
+    this.navigator.goto(waypoints)
+  }
+
+  /** Starts this session's navigator, replacing any left over from the last one. */
+  private begin_pathing(): void {
+    const bot = this.bot
+    if (!bot?.entity) return
+
+    this.unpath()
+    this.navigator = new AgentNavigator(
+      this.id,
+      bot,
+      () => this.pathing,
+      (update) => {
+        const dimension = worldOf(bot, this.level) || undefined
+
+        this.hooks.event({
+          type: 'path',
+          agentId: this.id,
+          state: update.state,
+          ...(dimension ? { dimension } : {}),
+          ...(update.goal ? { goal: update.goal } : {}),
+          ...(update.nodes ? { nodes: update.nodes } : {}),
+          ...(update.progress !== undefined ? { progress: update.progress } : {}),
+          ...(update.reason ? { reason: update.reason } : {}),
+        })
+      },
+    )
+    this.navigator.start()
+  }
+
+  /**
+   * Puts the navigator down, and says so.
+   *
+   * The `idle` matters. A path is live state the backend holds only in memory, and an agent that
+   * left the game while walking would otherwise leave a line drawn across the map to a place
+   * nobody is going any more.
+   */
+  private unpath(): void {
+    const walking = this.navigator?.moving() === true
+
+    this.navigator?.stop()
+    this.navigator = undefined
+
+    if (walking) this.hooks.event({ type: 'path', agentId: this.id, state: 'idle' })
   }
 
   private unutilities(): void {
@@ -1898,6 +2080,108 @@ function status(
     })
   })
 }
+
+/**
+ * Puts the agent back outside any block it has ended up inside, once per tick.
+ *
+ * **Upstream bug, worked around here** - see `unembed.ts` for the six lines of
+ * `prismarine-physics` that cause it. The short version: its collision resolution only clamps a
+ * movement when the hull is *already clear* of the box, so an overlap of any size is permanent and
+ * the agent goes on sinking. Every position it then sends is inside a block, and a server refuses
+ * all of them - answering with a teleport back several times a second, which cancels whatever the
+ * agent was trying to do. From outside it is an agent stuck to a wall, free to move only in the one
+ * direction nothing is blocking.
+ *
+ * Costs a hull-sized block scan per tick and changes nothing in the ordinary case: flush contact is
+ * not overlap, and standing against a wall is what an agent does all day.
+ *
+ * Buried is left alone deliberately. A wall built through an agent is not a rounding error, and
+ * `freed` answers with nothing rather than guessing which way it should have gone - so it is
+ * reported instead, which is the only thing this can honestly do about it.
+ */
+function keepOutOfBlocks(bot: Bot, id: number): void {
+  let toldAt = 0
+
+  bot.on('physicsTick', () => {
+    const at = bot.entity?.position
+    if (!at) return
+
+    const out = freed({ x: at.x, y: at.y, z: at.z }, solidsAround(bot, at), CLEARANCE)
+
+    // Almost every tick: the hull is clear and there is nothing to do.
+    if (!out) return
+
+    // In place: mineflayer holds this very object and reads it again on the next tick, so replacing
+    // it would leave the physics working from the one it still has.
+    at.x = out.at.x
+    at.y = out.at.y
+    at.z = out.at.z
+
+    // Once a second at most. A correction is usually a single event, but an agent being shoved into
+    // a wall repeatedly would otherwise write a line per tick.
+    const now = Date.now()
+    if (now - toldAt < UNEMBED_REPORT_MS) return
+    toldAt = now
+
+    log.debug(
+      `Agent ${id} was resting on a block face and was moved ${out.by.toFixed(4)} blocks clear, to ` +
+        `${out.at.x.toFixed(3)} ${out.at.y.toFixed(3)} ${out.at.z.toFixed(3)}`,
+    )
+  })
+}
+
+/**
+ * The collision boxes of every block the agent's hull could be touching.
+ *
+ * The block's own shapes rather than a cube per block: a slab, a fence and a set of stairs are each
+ * a different thing to be inside, and treating them all as full blocks would push an agent standing
+ * on a slab a whole block into the air.
+ *
+ * **A block wider than the hull, in every direction.** The hull is 0.6 across and a wall it is
+ * pressed against is the block *next* to the one it stands in - flush contact puts its edge exactly
+ * on the boundary, so both edges floor to the same column and a scan of the hull's own columns sees
+ * nothing at all. That is not "there is no wall", it is "the wall was never looked at", and the two
+ * are indistinguishable in a count of zero. Costs a couple of dozen lookups a tick and makes the
+ * answer mean something.
+ */
+function solidsAround(bot: Bot, at: { x: number; y: number; z: number }): Box[] {
+  const half = HULL_WIDTH / 2 + REACH
+  const boxes: Box[] = []
+
+  for (let x = Math.floor(at.x - half); x <= Math.floor(at.x + half); x++) {
+    for (let y = Math.floor(at.y - REACH); y <= Math.floor(at.y + HULL_HEIGHT + REACH); y++) {
+      for (let z = Math.floor(at.z - half); z <= Math.floor(at.z + half); z++) {
+        const block = bot.blockAt(new WorldVec(x, y, z))
+        if (!block?.shapes?.length) continue
+
+        for (const [x0, y0, z0, x1, y1, z1] of block.shapes) {
+          boxes.push({
+            minX: x + (x0 ?? 0),
+            minY: y + (y0 ?? 0),
+            minZ: z + (z0 ?? 0),
+            maxX: x + (x1 ?? 0),
+            maxY: y + (y1 ?? 0),
+            maxZ: z + (z1 ?? 0),
+          })
+        }
+      }
+    }
+  }
+
+  return boxes
+}
+
+/** How often a correction is worth a line. */
+const UNEMBED_REPORT_MS = 1_000
+
+/**
+ * How far past the hull to look for blocks.
+ *
+ * A whole one, so the block a flush hull is touching is inspected rather than missed by a rounding
+ * boundary. Anything found out here cannot overlap the hull and so cannot cause a correction - it is
+ * only there to make the inspection honest.
+ */
+const REACH = 1
 
 /**
  * Undoes mineflayer's scaling of entity velocity, on the versions where it is wrong.

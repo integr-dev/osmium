@@ -120,6 +120,7 @@ export const COMMANDS = {
   roll: { args: '[sides]', needs: 'chat', disrupts: false },
   say: { args: '<message>', needs: 'commands', disrupts: false },
   run: { args: '<command>', needs: 'commands', disrupts: true },
+  goto: { args: '<x> <y> <z> | stop', needs: 'commands', disrupts: true },
   disconnect: { args: '', needs: 'commands', disrupts: true },
   reconnect: { args: '', needs: 'commands', disrupts: true },
 } as const satisfies Record<string, { args: string; needs: Trust; disrupts: boolean }>
@@ -234,6 +235,51 @@ export function runnable(words: string[]): string | undefined {
   if (!typed) return undefined
 
   return (typed.startsWith('/') ? typed : `/${typed}`).slice(0, SAY_MAX)
+}
+
+/** What `goto` was asked for. */
+export type GotoOrder = { kind: 'stop' } | { kind: 'go'; x: number; y: number; z: number }
+
+/**
+ * Minecraft's own limits, which is what makes a typo a refusal rather than a search.
+ *
+ * A world runs to thirty million blocks either way and about two thousand up and down. A number
+ * outside that names nowhere, and a fat-fingered exponent would otherwise have the agent planning
+ * towards a coordinate no server has - which fails eventually, having spent a budget getting there.
+ */
+const FAR = 30_000_000
+const HIGH = 2_048
+
+/**
+ * Where an agent has been told to go, or nothing when that is not what was said.
+ *
+ * Three whole coordinates, or the word `stop`. Deliberately not a shorthand for "come here": that
+ * would need the speaker to be in view, so it would work in the open and quietly fail in a base,
+ * which is a worse thing to offer than not offering it.
+ *
+ * Answered rather than ignored when it does not parse - unlike `say`, where a refusal has to be
+ * silent because answering is itself a way to make the agent talk. Anybody who can reach this is
+ * already trusted with the account, so telling them how to spell it costs nothing.
+ */
+export function gotoOrder(words: string[]): GotoOrder | undefined {
+  const [first, ...rest] = words
+
+  if (first?.toLowerCase() === 'stop' && rest.length === 0) return { kind: 'stop' }
+  if (words.length !== 3) return undefined
+
+  // Blank first: `Number('')` is zero, so a word with nothing in it would otherwise arrive as a
+  // coordinate somebody could plausibly have meant and did not type.
+  if (words.some((word) => word.trim() === '')) return undefined
+
+  const [x, y, z] = words.map((word) => Number(word))
+
+  if (x === undefined || y === undefined || z === undefined) return undefined
+  if (![x, y, z].every((value) => Number.isFinite(value))) return undefined
+  if (Math.abs(x) > FAR || Math.abs(z) > FAR || Math.abs(y) > HIGH) return undefined
+
+  // Whole blocks. A coordinate copied off F3 carries five decimals of where somebody happened to be
+  // standing, and none of them survive a search that works in blocks anyway.
+  return { kind: 'go', x: Math.round(x), y: Math.round(y), z: Math.round(z) }
 }
 
 export interface ChatCommand {

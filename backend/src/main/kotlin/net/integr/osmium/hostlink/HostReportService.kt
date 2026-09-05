@@ -3,6 +3,9 @@ package net.integr.osmium.hostlink
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import net.integr.osmium.agent.dto.AgentInventoryResponse
+import net.integr.osmium.agent.dto.AgentPathResponse
+import net.integr.osmium.agent.dto.AgentPathState
+import net.integr.osmium.agent.dto.PathGoalResponse
 import net.integr.osmium.agent.dto.AgentTelemetryResponse
 import net.integr.osmium.agent.dto.InventorySlotResponse
 import net.integr.osmium.agent.dto.NearbyPlayerResponse
@@ -10,6 +13,7 @@ import net.integr.osmium.agent.dto.PositionResponse
 import net.integr.osmium.agent.dto.toResponse
 import net.integr.osmium.agent.model.Agent
 import net.integr.osmium.agent.service.AgentInventoryStore
+import net.integr.osmium.agent.service.AgentPathStore
 import net.integr.osmium.agent.service.AgentTelemetryPublisher
 import net.integr.osmium.agent.service.AgentService
 import net.integr.osmium.agent.service.AgentTelemetryStore
@@ -56,6 +60,7 @@ class HostReportService(
     private val telemetryStore: AgentTelemetryStore,
     private val lastSeenService: LastSeenService,
     private val inventoryStore: AgentInventoryStore,
+    private val pathStore: AgentPathStore,
     private val telemetryPublisher: AgentTelemetryPublisher,
     private val broker: LiveUpdateBroker,
     private val mapService: MapService,
@@ -102,6 +107,8 @@ class HostReportService(
             EventType.MAP_TILE -> recordMapTile(hostId, envelope)
 
             EventType.INVENTORY -> recordInventory(hostId, envelope)
+
+            EventType.PATH -> recordPath(hostId, envelope)
 
             // Forward compatible by design: a newer host reporting something this backend has not
             // learned about yet is normal, so it is logged and dropped rather than fatal.
@@ -334,6 +341,10 @@ class HostReportService(
             // there is nothing to go stale, only a session to end. It says so again on its next
             // spawn.
             if (state != AgentState.ONLINE) agent.id?.let { inventoryStore.forget(it) }
+            // And it is not walking anywhere. The host says so itself when it stops cleanly; this
+            // is what covers the host that was killed rather than stopped, whose last word on the
+            // subject was a line drawn across the map to a place nobody is going.
+            if (state != AgentState.ONLINE) agent.id?.let { pathStore.forget(it) }
             // And it has stopped building. The segment goes back to the pool rather than to FAILED:
             // losing the builder is not failure of the work.
             if (state != AgentState.ONLINE) buildJobs.releaseSegmentsOf(agent)
@@ -648,6 +659,78 @@ class HostReportService(
                 agentId = agentId,
             ),
         )
+    }
+
+    /**
+     * Where an agent has got to on its way somewhere.
+     *
+     * **Merged rather than replaced**, because most of these carry only how far along it is: the
+     * line is sent when it is drawn and again on every re-plan, and a few hundred points a second
+     * would be bandwidth spent redrawing something that moved by one node. [AgentPathStore] holds
+     * the merge for whoever opens the page next.
+     *
+     * What goes out on the stream is the update as it arrived, not the merge - a browser merges it
+     * the same way, and sending the merge would undo the saving.
+     */
+    private fun recordPath(hostId: Long, envelope: HostEnvelope) {
+        val agent = resolve(hostId, envelope) ?: return
+        val agentId = agent.id ?: return
+        val payload = envelope.payload ?: return
+
+        val state = enumOrNull<AgentPathState>(payload.get("state")?.asString())
+        if (state == null) {
+            log.debug("Ignoring a path with no state from host {}", hostId)
+            return
+        }
+
+        val update = AgentPathResponse(
+            agentId = agentId,
+            state = state,
+            dimension = payload.get("dimension")?.asString()?.takeIf { it.isNotBlank() },
+            goal = goalFrom(payload.get("goal")),
+            // Absent means the line has not changed, which is not the same as a path with no nodes
+            // in it, so this is all or nothing - see [nodesFrom].
+            nodes = nodesFrom(payload.get("nodes")),
+            progress = payload.get("progress")?.takeIf { it.isNumber }?.asInt(),
+            reason = payload.get("reason")?.asString()?.takeIf { it.isNotBlank() },
+        )
+
+        pathStore.record(update)
+        broker.publish(
+            LiveUpdateEvent(
+                type = LiveUpdateType.AGENT_PATH,
+                data = update,
+                agentId = agentId,
+            ),
+        )
+    }
+
+    /**
+     * Where a journey ends, which may be a column rather than a point.
+     *
+     * Only `x` and `z` are required. A host reporting a goal with no height is reporting the one an
+     * operator gave it, from a part of the map nobody has walked - and filling that in here would
+     * invent a destination somewhere in the void.
+     */
+    private fun goalFrom(node: JsonNode?): PathGoalResponse? {
+        val x = node?.get("x")?.asDouble() ?: return null
+        val z = node.get("z")?.asDouble() ?: return null
+        return PathGoalResponse(x = x, y = node.get("y")?.takeIf { it.isNumber }?.asDouble(), z = z)
+    }
+
+    /**
+     * A whole path, or null.
+     *
+     * **All of it or none of it.** An absent `nodes` already means something - the line has not
+     * changed since the last update - so a list with a bad point dropped out of it would be read as
+     * a real path, and drawn with a corner cut across whatever the missing point went round.
+     */
+    private fun nodesFrom(node: JsonNode?): List<PositionResponse>? {
+        if (node == null || !node.isArray) return null
+
+        val points = mutableListOf<PositionResponse>()
+        for (point in node) points.add(positionFrom(point) ?: return null)
+        return points
     }
 
     /** One square, or null when it does not carry the four things every square needs. */

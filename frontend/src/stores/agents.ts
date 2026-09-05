@@ -4,6 +4,7 @@ import {
   api,
   errorMessage,
   type AgentInventoryResponse,
+  type AgentPathResponse,
   type AgentResponse,
   type HostResponse,
   type UserResponse,
@@ -54,6 +55,15 @@ export type AgentTelemetry = NonNullable<AgentResponse['telemetry']>
  * not a blank screen but a wrong answer.
  */
 export type AgentInventory = AgentInventoryResponse
+
+/**
+ * Where an agent is going, while it is going somewhere.
+ *
+ * **Live only.** An old position is still the only answer there is about where somebody was; an old
+ * path is simply wrong about where somebody is going. The backend holds one for exactly as long as
+ * the journey lasts, so an agent that is not walking has none rather than a stale one.
+ */
+export type AgentPath = AgentPathResponse
 export type NearbyPlayer = AgentTelemetry['nearby'][number]
 
 /**
@@ -119,7 +129,7 @@ export const useAgentStore = defineStore('agents', () => {
     loading.value = true
     error.value = null
     try {
-      await Promise.all([loadHosts(), loadAgents(), loadJobs()])
+      await Promise.all([loadHosts(), loadAgents(), loadJobs(), loadPaths()])
     } finally {
       loading.value = false
       loaded.value = true
@@ -287,7 +297,13 @@ export const useAgentStore = defineStore('agents', () => {
       case 'agent-removed': {
         const gone = (data as { id: number }).id
         agents.value = agents.value.filter((agent) => agent.id !== gone)
-        // Otherwise the map keeps an inventory per agent that has ever existed in this tab.
+        // Otherwise the maps keep an inventory and a journey per agent that has ever existed in
+        // this tab.
+        if (paths.value.has(gone)) {
+          const without = new Map(paths.value)
+          without.delete(gone)
+          paths.value = without
+        }
         if (inventories.value.has(gone)) {
           const without = new Map(inventories.value)
           without.delete(gone)
@@ -309,6 +325,9 @@ export const useAgentStore = defineStore('agents', () => {
         break
       case 'telemetry':
         applyTelemetry(data as { agentId: number; telemetry: AgentTelemetry })
+        break
+      case 'path':
+        applyPath(data as AgentPath)
         break
       case 'inventory': {
         const incoming = data as { agentId: number; inventory: AgentInventory }
@@ -463,6 +482,88 @@ export const useAgentStore = defineStore('agents', () => {
   /** What an agent is carrying, or null when it has not reported. */
   function inventoryOf(id: number): AgentInventory | null {
     return inventories.value.get(id) ?? null
+  }
+
+  /**
+   * Where each agent is going, for whoever is watching.
+   *
+   * Here rather than on the agent itself, for the reason the inventory is: a journey arrives on its
+   * own event several times a second while a change to the agent is rare and meaningful, and folding
+   * one into the other would turn the second into the first.
+   */
+  const paths = ref(new Map<number, AgentPath>())
+
+  /** The journey this agent is on, or null when it is not on one. */
+  function pathOf(id: number): AgentPath | null {
+    return paths.value.get(id) ?? null
+  }
+
+  /**
+   * Every journey in progress, for a screen that has just opened.
+   *
+   * The fleet's in one request rather than one per agent: the map draws every agent in a world, and
+   * asking per agent to learn that most of them are standing still is a request per agent too many.
+   */
+  async function loadPaths(): Promise<void> {
+    const { data, error: failure } = await api.GET('/api/agents/paths')
+    if (failure) {
+      error.value = errorMessage(failure, t('errors.loadPaths'))
+      return
+    }
+    paths.value = new Map(((data ?? []) as AgentPath[]).map((path) => [path.agentId, path]))
+  }
+
+  /**
+   * Applies one journey update.
+   *
+   * **Merged, not replaced.** Most of these carry only how far along the agent has got: the line is
+   * sent when it is drawn and again on every re-plan, because a few hundred points a second would be
+   * bandwidth spent redrawing something that moved by one node. Replacing would blank the path on
+   * the first progress report - which is the update immediately after it.
+   *
+   * A journey that has ended is dropped rather than kept in its final state. The line stops being
+   * drawn, which is the point; what happened to it is the caller's to say, from this same event.
+   */
+  function applyPath(incoming: AgentPath): void {
+    const next = new Map(paths.value)
+
+    if (incoming.state !== 'PLANNING' && incoming.state !== 'MOVING') {
+      next.delete(incoming.agentId)
+      paths.value = next
+      return
+    }
+
+    const held = next.get(incoming.agentId)
+    next.set(incoming.agentId, {
+      ...incoming,
+      dimension: incoming.dimension ?? held?.dimension ?? null,
+      goal: incoming.goal ?? held?.goal ?? null,
+      nodes: incoming.nodes ?? held?.nodes ?? null,
+    })
+    paths.value = next
+  }
+
+  /**
+   * Sends an agent somewhere.
+   *
+   * Nothing is written here. The path does not exist yet - only the host can see the blocks, so it
+   * plans and then says what it found. Drawing a straight line to the destination now and replacing
+   * it a moment later reads as the agent changing its mind about a route it never had.
+   */
+  async function sendTo(id: number, waypoints: Array<{ x: number; y?: number; z: number }>): Promise<void> {
+    const { error: failure } = await api.POST('/api/agents/{id}/path', {
+      params: { path: { id } },
+      body: { waypoints },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.sendTo')))
+  }
+
+  /** Stops an agent where it is. The host answers with an `IDLE`, which is what clears the line. */
+  async function stopPath(id: number): Promise<void> {
+    const { error: failure } = await api.DELETE('/api/agents/{id}/path', {
+      params: { path: { id } },
+    })
+    if (failure) throw new Error(errorMessage(failure, t('errors.stopPath')))
   }
 
   /**
@@ -878,6 +979,11 @@ export const useAgentStore = defineStore('agents', () => {
     say,
     inventoryOf,
     loadInventory,
+    paths,
+    pathOf,
+    loadPaths,
+    sendTo,
+    stopPath,
     moveItem,
     dropItem,
     holdItem,

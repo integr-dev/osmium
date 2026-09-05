@@ -50,6 +50,24 @@ export type InventorySlotResponse = Required<components['schemas']['InventorySlo
   maxDamage: number | null
 }
 
+/**
+ * Every field here is genuinely nullable, and each null means something different from empty.
+ *
+ * `nodes` absent says the line has not changed since the last update - it rides only the ones that
+ * redrew it - which is not the same as a path with no nodes in it. `goal` and `dimension` are
+ * absent once a journey has ended, and `reason` only ever appears on one that failed.
+ */
+export type AgentPathResponse = Omit<
+  Required<components['schemas']['AgentPathResponse']>,
+  'goal' | 'nodes'
+> & {
+  goal: (Omit<Required<components['schemas']['PathGoalResponse']>, 'y'> & { y: number | null }) | null
+  nodes: Array<Required<components['schemas']['PositionResponse']>> | null
+  dimension: string | null
+  progress: number | null
+  reason: string | null
+}
+
 export type AgentInventoryResponse = Omit<
   Required<components['schemas']['AgentInventoryResponse']>,
   'slots'

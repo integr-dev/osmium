@@ -164,6 +164,28 @@ object CommandType {
     const val INVENTORY_HOLD = "inventory_hold"
 
     /**
+     * Go there: `{ "waypoints": [ { "x": 128, "y": 64, "z": -340 } ] }`.
+     *
+     * The last waypoint is the destination and anything before it is the route to take. A list
+     * rather than a point because a route may be handed down whole - the interface sends one entry,
+     * and a coarse pass over the map tiles the fleet has already charted sends the shape of a
+     * journey no host's loaded chunks can see all of at once.
+     *
+     * **The path is not the backend's.** Only the host can see the blocks, so it plans and walks;
+     * this says where, and nothing about how. Fire and forget, like [BUILD_SEGMENT]: what came of it
+     * arrives as [EventType.PATH] events.
+     */
+    const val PATH_TO = "path_to"
+
+    /**
+     * Stop where you are: `{}`.
+     *
+     * Not an error for an agent going nowhere - it says stop, which having stopped already
+     * satisfies - and never refused, which is why it is not in [DISRUPTS_BUILDING].
+     */
+    const val PATH_STOP = "path_stop"
+
+    /**
      * Every command this backend can send.
      *
      * Written down for the same reason [net.integr.osmium.security.Nodes.ALL] is: something has to
@@ -183,6 +205,8 @@ object CommandType {
         INVENTORY_MOVE,
         INVENTORY_DROP,
         INVENTORY_HOLD,
+        PATH_TO,
+        PATH_STOP,
         DELETE_AGENT,
     )
 
@@ -211,6 +235,11 @@ object CommandType {
         INVENTORY_MOVE,
         INVENTORY_DROP,
         INVENTORY_HOLD,
+        // Walking a builder away from its segment leaves it placing the next block wherever it
+        // happens to be standing, which is the same corruption as taking the stack out of its hand.
+        // [PATH_STOP] is deliberately not here: stopping is what an operator presses when they have
+        // seen enough, and a refusal would leave the agent walking away with nothing to call it back.
+        PATH_TO,
     )
 
     /**
@@ -235,6 +264,25 @@ object CommandType {
 /** Events the backend understands. Anything else is logged and ignored, never fatal. */
 object EventType {
     const val HEARTBEAT = "heartbeat"
+
+    /**
+     * Where an agent is going, and how far along it has got:
+     *
+     * ```jsonc
+     * { "state": "moving", "dimension": "overworld",
+     *   "goal": { "x": 128, "y": 64, "z": -340 },
+     *   "nodes": [ { "x": 0.5, "y": 64, "z": 0.5 } ], "progress": 0 }
+     * ```
+     *
+     * **Never stored.** A path is current by definition: an old position is still the only answer
+     * there is about where somebody was, and an old path is simply wrong about where somebody is
+     * going. So it is held in memory for as long as the journey lasts and an agent that reconnects
+     * plans again rather than resuming.
+     *
+     * `nodes` rides only the updates that redrew the line - the first of a journey, and every
+     * re-plan after it. The ones in between carry `progress` alone, which is most of them.
+     */
+    const val PATH = "path"
     const val AGENT_STATUS = "agent_status"
     const val SETUP_RESULT = "setup_result"
 

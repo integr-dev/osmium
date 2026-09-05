@@ -35,6 +35,11 @@ declare module 'three' {
     BoxGeometry: new (width: number, height: number, depth: number) => { translate(x: number, y: number, z: number): void }
     EdgesGeometry: new (geometry: unknown) => unknown
     ClampToEdgeWrapping: number
+    /** Asks what is under the cursor. Only ever pointed at the world's own section meshes. */
+    Raycaster: new () => {
+      setFromCamera(coords: { x: number; y: number }, camera: unknown): void
+      intersectObjects(objects: unknown[], recursive?: boolean): unknown[]
+    }
     WebGLRenderer: new (parameters: { canvas: HTMLCanvasElement }) => {
       domElement: HTMLCanvasElement
       setPixelRatio(ratio: number): void
@@ -85,12 +90,21 @@ declare module 'three/examples/jsm/lines/LineSegments2.js' {
 declare module 'three/examples/jsm/lines/LineSegmentsGeometry.js' {
   export class LineSegmentsGeometry {
     fromEdgesGeometry(geometry: unknown): LineSegmentsGeometry
+    /** Segment endpoints, flat: x1 y1 z1 x2 y2 z2, six numbers per segment. */
+    setPositions(points: number[]): LineSegmentsGeometry
   }
 }
 
 declare module 'three/examples/jsm/lines/LineMaterial.js' {
   export class LineMaterial {
-    constructor(parameters: { color: number; linewidth: number; depthTest: boolean; transparent: boolean })
+    constructor(parameters: {
+      color: number
+      linewidth: number
+      depthTest: boolean
+      transparent: boolean
+      /** Only read while `transparent`, which is the only way any of these are built. */
+      opacity?: number
+    })
     resolution: { set(width: number, height: number): void }
   }
 }

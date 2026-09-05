@@ -72,12 +72,32 @@ function agent(
   }
 }
 
-function fleet(agents: AgentResponse[] = AGENTS) {
+function fleet(agents: AgentResponse[] = AGENTS, paths: unknown[] = []) {
   respondWith((call) => {
     if (call.url.endsWith('/api/hosts')) return { body: HOSTS }
+    // Before the bare list: the literal segment wins on the backend's router too, and matching the
+    // shorter one first would answer a request for the journeys with the whole fleet.
+    if (call.url.endsWith('/api/agents/paths')) return { body: paths }
     if (call.url.endsWith('/api/agents')) return { body: agents }
     throw new Error(`Unexpected request to ${call.url}`)
   })
+}
+
+/** One journey, as the backend sends one. */
+function journey(fields: Record<string, unknown>) {
+  return {
+    agentId: 6,
+    state: 'MOVING',
+    dimension: 'overworld',
+    goal: { x: 128, y: 64, z: -340 },
+    nodes: [
+      { x: 0.5, y: 64, z: 0.5 },
+      { x: 1.5, y: 64, z: 0.5 },
+    ],
+    progress: 0,
+    reason: null,
+    ...fields,
+  }
 }
 
 describe('fleet store', () => {
@@ -358,6 +378,92 @@ describe('live updates', () => {
 
     expect(() => store.applyEvent('something-new', { whatever: true })).not.toThrow()
     expect(store.agents).toHaveLength(AGENTS.length)
+  })
+})
+
+/**
+ * A journey is **live only**, and updates about one are **partial**.
+ *
+ * The line rides only the updates that redrew it - the first of a journey, and every re-plan after
+ * it - because a few hundred nodes a second would be bandwidth spent redrawing something that moved
+ * by one. Every update in between carries progress alone, so a store that replaced rather than
+ * merged would blank the path on the very next message.
+ */
+describe('journeys', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('loads the journeys in progress with the rest of the fleet', async () => {
+    fleet(AGENTS, [journey({})])
+    const store = useAgentStore()
+    await store.refresh()
+
+    expect(store.pathOf(6)?.nodes).toHaveLength(2)
+    expect(store.pathOf(12)).toBeNull()
+  })
+
+  it('keeps the line when an update only says how far along it is', async () => {
+    fleet(AGENTS, [journey({})])
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('path', {
+      agentId: 6,
+      state: 'MOVING',
+      dimension: null,
+      goal: null,
+      nodes: null,
+      progress: 1,
+      reason: null,
+    })
+
+    expect(store.pathOf(6)?.nodes).toHaveLength(2)
+    expect(store.pathOf(6)?.progress).toBe(1)
+    // The world and the destination are held for the same reason the nodes are.
+    expect(store.pathOf(6)?.dimension).toBe('overworld')
+    expect(store.pathOf(6)?.goal).toEqual({ x: 128, y: 64, z: -340 })
+  })
+
+  it('replaces the line when the host has re-planned', async () => {
+    fleet(AGENTS, [journey({})])
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('path', journey({ nodes: [{ x: 9.5, y: 64, z: 9.5 }], progress: 0 }))
+
+    expect(store.pathOf(6)?.nodes).toHaveLength(1)
+  })
+
+  it('stops drawing a journey however it ended', async () => {
+    for (const ending of ['ARRIVED', 'FAILED', 'IDLE']) {
+      setActivePinia(createPinia())
+      fleet(AGENTS, [journey({})])
+      const store = useAgentStore()
+      await store.refresh()
+
+      store.applyEvent('path', journey({ state: ending, nodes: null, goal: null }))
+
+      expect(store.pathOf(6), ending).toBeNull()
+    }
+  })
+
+  it('starts drawing one for an agent that was going nowhere', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('path', journey({ agentId: 12 }))
+
+    expect(store.pathOf(12)?.nodes).toHaveLength(2)
+  })
+
+  it('forgets the journey of an agent that was deleted', async () => {
+    fleet(AGENTS, [journey({})])
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('agent-removed', { id: 6 })
+
+    expect(store.pathOf(6)).toBeNull()
   })
 })
 

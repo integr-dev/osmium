@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Eye, Orbit, TriangleAlert } from 'lucide-vue-next'
+import { Eye, Footprints, LocateFixed, Orbit, TriangleAlert } from 'lucide-vue-next'
 
 import { api } from '../api/client'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { Emitter, FrameError, readFrame, type ViewerEvent } from '../lib/viewerStream'
 import { agentDetail, playerVitals } from '../lib/vitals'
 import { skinFor, type Skin } from '../lib/skins'
+import ActionMenu from './ActionMenu.vue'
+import AgentTargets from './AgentTargets.vue'
+import { useAuthStore } from '../stores/auth'
+import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
 
 /**
@@ -25,6 +29,8 @@ const props = defineProps<{ agentId: number }>()
 
 const { t } = useI18n()
 const agentStore = useAgentStore()
+const auth = useAuthStore()
+const toasts = useToastStore()
 
 /** The agent as the fleet knows it, which is how this screen learns it has left the game. */
 const agent = computed(() => agentStore.byId(props.agentId))
@@ -45,6 +51,15 @@ const canvas = ref<HTMLCanvasElement>()
 /** Free orbit, or looking through the agent's own eyes. Purely a camera choice: both read the same
  * stream, and neither sends anything to the agent. */
 const firstPerson = ref(false)
+
+/**
+ * Whether the free camera travels with the agent.
+ *
+ * Only meaningful outside first person, where the camera already *is* the agent. On, the orbit keeps
+ * whatever angle and distance somebody dragged it to and the whole arrangement moves - which is what
+ * makes an agent walking four hundred blocks watchable without a hand on the mouse.
+ */
+const follow = ref(false)
 const status = ref<'connecting' | 'watching' | 'failed'>('connecting')
 const failure = ref('')
 
@@ -103,6 +118,8 @@ interface Scene {
   filters: { linear: number; clamp: number }
   /** Where the agent was last seen, so a jump can be told from a walk. See {@link frameCamera}. */
   lastAt?: { x: number; y: number; z: number }
+  /** Where it was on the last followed frame, which is what a step is measured from. */
+  followed?: { x: number; y: number; z: number }
   /**
    * The world's vertical range, as the current stream stated it.
    *
@@ -119,6 +136,36 @@ interface Scene {
   /** Where each entity is, for the distance on its label. */
   /** How big each is, for the box drawn around it. */
   sizes: Map<number, { width: number; height: number }>
+  /**
+   * The two halves of the path the agent is walking, when it is walking one.
+   *
+   * Two objects rather than one, because they are drawn differently: what is behind the agent is
+   * faint and what is ahead is solid, which is what makes the direction of travel readable without
+   * an arrowhead. Rebuilt whole on every change - a path arrives a few hundred nodes at a time and
+   * only when it has been re-planned, so there is nothing to update in place.
+   */
+  pathLines?: Mesh[]
+  /** Their widths are in pixels, so they are told the canvas size like the boxes are. */
+  pathMaterials?: Array<{ resolution: { set(width: number, height: number): void } }>
+  /** Builds one half. `spent` picks the faint material. */
+  buildPath?: (points: number[], spent: boolean) => Mesh | undefined
+  /**
+   * The box drawn around the block the cursor is over.
+   *
+   * One object, moved, rather than one per frame: a hover box is rebuilt sixty times a second by
+   * definition, and building geometry at that rate is how a viewer starts dropping frames.
+   */
+  hover?: Mesh
+  buildHover?: () => Mesh | undefined
+  /** Where the pointer last was on the canvas, in normalised device coordinates. */
+  over?: { nx: number; ny: number }
+  /**
+   * What block is under a point on the canvas, in normalised device coordinates.
+   *
+   * Held on the scene, like every other three-shaped thing here, so the component needs no imports
+   * of its own - the renderer and its `THREE` are loaded once, inside the init closure.
+   */
+  pick?: (nx: number, ny: number) => { x: number; y: number; z: number } | undefined
   /** Builds an outline in the entity mesh's own units. Held so the decoration needs no imports. */
   buildOutline?: (width: number, height: number, tone: Tone) => Mesh | undefined
   buildNametag?: (height: number) => Mesh | undefined
@@ -128,6 +175,14 @@ interface Scene {
 }
 
 interface Mesh {
+  /**
+   * What the mesh is made of, for releasing it.
+   *
+   * Optional because half the things typed as one here are not meshes: a nametag is a sprite and an
+   * entity's mount is a bare `Object3D`. A path is, which is why it is on the interface at all -
+   * several hundred segments rebuilt on every re-plan is real memory to hand back.
+   */
+  geometry?: GeometryLike
   position: { set(x: number, y: number, z: number): void }
   scale: { set(x: number, y: number, z: number): void }
   rotation: { y: number }
@@ -176,16 +231,16 @@ interface TextureLike {
   dispose?(): void
 }
 
-/** One vertex stream of a section mesh. `onUpload` fires once three has handed it to the GPU. */
-interface AttributeLike {
-  onUpload(callback: (this: { array: unknown }) => void): unknown
-}
-
+/**
+ * As much of a `THREE.BufferGeometry` as this file touches.
+ *
+ * The vertex streams themselves are no longer named here. They were, for the pass that shed them
+ * after upload; a ray reads them now and it reads them through three own types, inside the closure
+ * that has them.
+ */
 interface GeometryLike {
   dispose(): void
   computeBoundingSphere(): void
-  attributes: Record<string, AttributeLike | undefined>
-  index?: AttributeLike | null
 }
 
 interface WorkerLike {
@@ -208,7 +263,12 @@ interface WorldLike {
 }
 
 interface ViewerLike {
-  camera: { position: { set(x: number, y: number, z: number): void }; aspect: number; updateProjectionMatrix(): void }
+  camera: {
+    /** Read as well as written: following moves it by the same step the agent took. */
+    position: { x: number; y: number; z: number; set(x: number, y: number, z: number): void }
+    aspect: number
+    updateProjectionMatrix(): void
+  }
   scene: { add(object: unknown): void }
   world: WorldLike
   entities?: { entities?: Record<string, Mesh | undefined> }
@@ -220,6 +280,14 @@ interface ViewerLike {
 
 onMounted(() => void connect())
 onBeforeUnmount(teardown)
+
+// Cleared rather than kept: the step measured from a position several minutes old would throw the
+// camera across the world on the frame following it being switched back on.
+watch(follow, (on) => {
+  const current = scene.value
+  if (current) delete current.followed
+  if (!on) return
+})
 
 watch(firstPerson, (on) => {
   const current = scene.value
@@ -442,32 +510,38 @@ const NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
  */
 const WORKERS = 3
 
-/** Sets `array` to null. Called by three with the attribute as `this`. */
-function shed(this: { array: unknown }): void {
-  this.array = null
+/**
+ * Settles a finished section mesh: gives it the bounds the renderer needs on its first frame.
+ *
+ * **This used to shed the vertex data as well**, and no longer can. `BufferAttribute` keeps the
+ * `Float32Array` it was built from alive for as long as the mesh is in the scene, so every section
+ * is held twice over - once in the GPU buffer that draws it and once on the JS heap - and an
+ * `onUpload` callback that nulled the second was worth real memory: the renderer does no greedy
+ * meshing, so a section is four vertices of eleven floats per visible face, 24 sections a column
+ * across 144 columns.
+ *
+ * What changed is that something now reads the vertices back. Clicking the world casts a ray at
+ * these very meshes - see `Scene.pick` - and a ray needs the positions and the index to say which
+ * face it hit. Shedding them left every click answering with nothing, which is exactly what the
+ * comment here used to promise could not happen: it said raycasting was the one thing that would
+ * want this copy, and that nothing here raycast.
+ *
+ * The bounds are still computed here, while the data exists, because frustum culling needs them
+ * before the first frame is drawn.
+ */
+function settleGeometry(mesh: { geometry?: GeometryLike } | undefined): void {
+  mesh?.geometry?.computeBoundingSphere()
 }
 
 /**
- * Lets a finished section mesh drop its vertex data once the GPU has it.
+ * Hands a geometry back for good, for something being taken out of the scene.
  *
- * `BufferAttribute` keeps the `Float32Array` it was built from alive for as long as the mesh is in
- * the scene, so every section is held twice over - once in the GPU buffer that draws it and once in
- * a copy on the JS heap that nothing reads. It is not nothing: the renderer does no greedy meshing,
- * so a section is four vertices of eleven floats for every visible face, and there are 24 of them
- * per column across 144 columns.
- *
- * The copy is only worth keeping for something that reads vertices back - raycasting, or recomputing
- * bounds. Neither happens here: `Viewer.listen` raycasts nothing (its pointer handler emits the ray
- * rather than intersecting with it), and the bounds are computed here, while the data still exists,
- * because frustum culling needs them on the first frame.
+ * Not the same act as {@link settleGeometry}: that one is about a mesh which stays and is being
+ * tidied, this one is about a mesh which is going. `dispose` is what frees the GPU buffer, and
+ * nothing else here does.
  */
-function releaseGeometry(mesh: { geometry?: GeometryLike } | undefined): void {
-  const geometry = mesh?.geometry
-  if (!geometry) return
-
-  geometry.computeBoundingSphere()
-  for (const attribute of Object.values(geometry.attributes)) attribute?.onUpload(shed)
-  geometry.index?.onUpload(shed)
+function disposeGeometry(mesh: { geometry?: GeometryLike } | undefined): void {
+  mesh?.geometry?.dispose()
 }
 
 /**
@@ -1161,6 +1235,26 @@ const TONES: readonly Tone[] = ['ours', 'theirs', 'gone']
 const OUTLINE_WIDTH = 2
 
 /**
+ * How thick a path is drawn, in pixels.
+ *
+ * Thicker than a box, because it is read at a distance and along its length rather than looked at.
+ * A box surrounds something already visible; a line four hundred blocks long is the only thing
+ * saying where the agent is headed.
+ */
+const PATH_WIDTH = 3
+
+/** How much of the line is left where the agent has already walked. */
+const PATH_SPENT = 0.3
+
+/**
+ * How far above the node a path is drawn.
+ *
+ * A walk node is where the agent's feet are, which is inside the block it is standing on as far as
+ * a line is concerned - drawn at the node itself, most of a path disappears into the floor.
+ */
+const PATH_LIFT = 0.15
+
+/**
  * What a name is drawn onto.
  *
  * Upstream's is 500x100 - two lines of text and nothing else. The face sits above them, so this is
@@ -1424,6 +1518,32 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
  * Only on a jump. Following continuously would wrench the view back every time the operator orbited
  * away from a walking agent to look at something.
  */
+/**
+ * Carries the free camera along with the agent.
+ *
+ * **By the step the agent took, rather than to a fixed place behind it.** Setting the camera to an
+ * offset would take the orbit away from whoever is holding it: every drag would be undone on the
+ * next frame. Moving both the camera and what it orbits by the same vector leaves the angle and the
+ * distance exactly where they were put, and the agent stays in the middle of the screen.
+ *
+ * The first frame after it is switched on moves nothing - there is no previous position to have
+ * stepped from - so the camera stays where it is and simply starts pointing at the agent.
+ */
+function followAgent(current: Scene): void {
+  const at = current.position?.pos
+  if (!at) return
+
+  const before = current.followed
+  current.followed = { x: at.x, y: at.y, z: at.z }
+
+  if (before) {
+    const camera = current.viewer.camera.position
+    camera.set(camera.x + (at.x - before.x), camera.y + (at.y - before.y), camera.z + (at.z - before.z))
+  }
+
+  current.controls?.target.set(at.x, at.y, at.z)
+}
+
 function frameCamera(current: Scene): void {
   const at = current.position?.pos
   if (!at) return
@@ -1446,6 +1566,90 @@ function frameCamera(current: Scene): void {
  * most - well inside this, and a sprint or a boat still is.
  */
 const TELEPORT = 32
+
+/**
+ * Draws where the agent is going, or takes the line away.
+ *
+ * **Rebuilt rather than updated.** A path arrives whole, and only when it has been drawn or
+ * re-planned - the updates in between move the agent along one that has not changed. So this runs a
+ * handful of times per journey, and the geometry it throws away is released rather than left for
+ * three to collect: a line of several hundred segments is real memory, and a viewer left open
+ * through a long walk would accumulate one per re-plan.
+ */
+/**
+ * Puts the box on the block the cursor is over.
+ *
+ * **Driven from the render loop, not from `pointermove`.** A ray against every loaded section is
+ * cheap once a frame and wasteful several times one, and a mouse dragged across a canvas fires
+ * pointer events far faster than the screen is redrawn.
+ *
+ * Frozen while the panel is open: the box is then showing the block that was picked, which is what
+ * the panel is about, and letting it wander would leave the two disagreeing.
+ */
+function showHover(current: Scene): void {
+  if (!current.hover) {
+    const built = current.buildHover?.()
+    if (!built) return
+
+    current.hover = built
+    current.viewer.scene.add(built)
+  }
+
+  const box = current.hover
+  const over = current.over
+
+  if (!over || firstPerson.value) {
+    box.visible = false
+    return
+  }
+
+  const at = picked.value ?? current.pick?.(over.nx, over.ny)
+  if (!at) {
+    box.visible = false
+    return
+  }
+
+  // The middle of the cell, because a box is one block wide and centred on its own origin.
+  box.position.set(at.x + 0.5, at.y + 0.5, at.z + 0.5)
+  box.visible = true
+}
+
+function showPath(current: Scene, nodes: ReadonlyArray<{ x: number; y: number; z: number }>, progress: number): void {
+  for (const line of current.pathLines ?? []) {
+    current.viewer.world.scene.remove(line)
+    disposeGeometry(line)
+  }
+  current.pathLines = undefined
+
+  if (nodes.length < 2) return
+
+  // Split at the node the agent has reached, and shared with it: the segment being walked belongs to
+  // both halves, or the line has a gap in it exactly where the eye is.
+  const at = Math.min(Math.max(progress, 0), nodes.length - 1)
+  const halves: Array<{ from: number; to: number; spent: boolean }> = [
+    { from: 0, to: at, spent: true },
+    { from: at, to: nodes.length - 1, spent: false },
+  ]
+
+  const built: Mesh[] = []
+
+  for (const half of halves) {
+    const points: number[] = []
+    for (let index = half.from; index < half.to; index++) {
+      const a = nodes[index]!
+      const b = nodes[index + 1]!
+      points.push(a.x, a.y + PATH_LIFT, a.z, b.x, b.y + PATH_LIFT, b.z)
+    }
+
+    const line = current.buildPath?.(points, half.spent)
+    if (!line) continue
+
+    current.viewer.scene.add(line)
+    built.push(line)
+  }
+
+  if (built.length) current.pathLines = built
+}
 
 function showAgent(current: Scene): void {
   const { pos, yaw } = current.position ?? {}
@@ -1564,14 +1768,32 @@ async function mount(world: { version: string; minY?: number; height?: number },
     worker.onmessage = (event) => {
       built?.(event)
       // After upstream has built the mesh and put it in the scene, before three has drawn it.
-      if (event.data.type === 'geometry') releaseGeometry(viewer.world.sectionMeshs?.[event.data.key ?? ''])
+      if (event.data.type === 'geometry') settleGeometry(viewer.world.sectionMeshs?.[event.data.key ?? ''])
     }
   }
 
   viewer.world.texturesDataUrl = `${ASSETS}/textures/${version}.png`
+
+  /*
+   * **A 404 is not the only way this file can be absent.**
+   *
+   * Vite answers a missing path under the site root by serving `index.html`, because that is what a
+   * single-page app needs of a dev server - so an unstaged version comes back 200 with a page in it,
+   * the status check passes, and the failure surfaces several frames later as
+   * `Unexpected token '<', "<!doctype "... is not valid JSON`. Which is a true statement about a
+   * string and tells nobody anything about Minecraft versions.
+   *
+   * So the body is what decides, not the status: something that will not parse as JSON is something
+   * that is not the block states, whichever of the two ways it went missing.
+   */
   const states = await fetch(`${ASSETS}/blocksStates/${version}.json`)
   if (!states.ok) return fail(t('viewer.unstaged', { version }))
-  viewer.world.blockStatesData = await states.json()
+
+  try {
+    viewer.world.blockStatesData = await states.json()
+  } catch {
+    return fail(t('viewer.unstaged', { version }))
+  }
 
   if (!viewer.setVersion(version)) return fail(t('viewer.unstaged', { version }))
 
@@ -1615,6 +1837,35 @@ async function mount(world: { version: string; minY?: number; height?: number },
       }),
   )
   for (const material of outlineMaterials) material.resolution.set(element.clientWidth, element.clientHeight)
+
+  // The fleet's own colour, which is what the map draws a path in too. Depth-tested off for the
+  // same reason the boxes are: a route is worth seeing through the hill it goes round.
+  const pathMaterials = [false, true].map(
+    (spent) =>
+      new LineMaterial({
+        color: tones.ours,
+        linewidth: PATH_WIDTH,
+        depthTest: false,
+        transparent: true,
+        opacity: spent ? PATH_SPENT : 1,
+      }),
+  )
+  for (const material of pathMaterials) material.resolution.set(element.clientWidth, element.clientHeight)
+
+  const raycaster = new THREE.Raycaster()
+
+  // The page's own text colour, which is what vanilla's own selection box amounts to: a neutral
+  // that is not one of the two colours already meaning "ours" and "theirs".
+  const hoverMaterial = new LineMaterial({
+    color: themeColour('--color-base-content', 0x111111),
+    linewidth: 1.5,
+    // Depth tested, unlike the boxes around bodies. A selection box that showed through the hill in
+    // front of it would say the cursor was on something it is not.
+    depthTest: true,
+    transparent: true,
+    opacity: 0.9,
+  })
+  hoverMaterial.resolution.set(element.clientWidth, element.clientHeight)
 
   const models = await import('prismarine-viewer/viewer/lib/entity/entities.json')
   const built: Scene = {
@@ -1687,6 +1938,58 @@ async function mount(world: { version: string; minY?: number; height?: number },
       return outline
     },
     /**
+     * Which block somebody pointed at.
+     *
+     * **Only the world's own meshes.** Casting against the whole scene would hit the bodies, the
+     * nametag sprites, the boxes around players and the path lines - and the last three are drawn
+     * with depth testing off, so they win against terrain they are behind and a click near an agent
+     * would answer with a point floating in the air in front of it.
+     *
+     * The half-block step along the face normal is what turns the surface into somewhere to stand:
+     * the ray lands exactly on the boundary between the ground and the air above it, and flooring
+     * that raw is a coin toss between the two.
+     */
+    pick: (nx: number, ny: number) => {
+      raycaster.setFromCamera({ x: nx, y: ny } as never, viewer.camera as never)
+
+      const world = Object.values(viewer.world.sectionMeshs ?? {}).filter((mesh) => mesh !== undefined)
+      const hit = raycaster.intersectObjects(world as never[], false)[0] as
+        | { point: { x: number; y: number; z: number }; face?: { normal: { x: number; y: number; z: number } } }
+        | undefined
+
+      if (!hit) return undefined
+
+      const away = hit.face?.normal ?? { x: 0, y: 0, z: 0 }
+      return {
+        x: Math.floor(hit.point.x + away.x * 0.5),
+        y: Math.floor(hit.point.y + away.y * 0.5),
+        z: Math.floor(hit.point.z + away.z * 0.5),
+      }
+    },
+    buildHover: () => {
+      const box = new THREE.BoxGeometry(1, 1, 1)
+      const line = new LineSegments2(
+        new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(box)),
+        hoverMaterial,
+      ) as unknown as Mesh
+
+      line.frustumCulled = false
+      line.visible = false
+      return line
+    },
+    buildPath: (points: number[], spent: boolean) => {
+      // Six floats is one segment. Fewer than that is a path with nowhere to go.
+      if (points.length < 6) return undefined
+
+      const geometry = new LineSegmentsGeometry()
+      geometry.setPositions(points)
+
+      const line = new LineSegments2(geometry, pathMaterials[spent ? 1 : 0]) as unknown as Mesh
+      line.renderOrder = NAMETAG_ORDER
+      line.frustumCulled = false
+      return line
+    },
+    /**
      * A nametag for a body the stream never announced.
      *
      * Upstream builds one only inside `getEntityMesh`, and only when the update carries a username -
@@ -1709,6 +2012,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
     bounds,
     received: 0,
     outlineMaterials,
+    pathMaterials: [...pathMaterials, hoverMaterial],
     seen: new Map(),
     names: new Map(),
     sizes: new Map(),
@@ -1723,7 +2027,13 @@ async function mount(world: { version: string; minY?: number; height?: number },
 
   const draw = () => {
     built.frame = requestAnimationFrame(draw)
-    if (!firstPerson.value) built.controls?.update()
+    if (!firstPerson.value) {
+      // Before `update`, which is what applies the target to the camera. After it, the frame would
+      // be drawn one step behind and the agent would sit slightly off centre the whole way.
+      if (follow.value) followAgent(built)
+      built.controls?.update()
+    }
+    showHover(built)
     viewer.update()
     renderer.render(viewer.scene, viewer.camera)
   }
@@ -1736,6 +2046,224 @@ async function mount(world: { version: string; minY?: number; height?: number },
   built.watcher.observe(element)
 }
 
+/**
+ * Redraws the line whenever the store's copy of the journey changes.
+ *
+ * Off the store rather than off the world stream, and deliberately: a path is what the planner
+ * decided, not something in the world, so it travels on the ordinary live channel and the binary
+ * stream stays what it is - blocks and bodies, opaque to everything in between.
+ */
+watch(
+  () => {
+    const path = agentStore.pathOf(props.agentId)
+    // Depended on by value rather than by reference: the store replaces the map on every update, so
+    // watching the object alone would redraw a few hundred segments once a second for a line that
+    // has not moved.
+    return path?.nodes ? { nodes: path.nodes, progress: path.progress ?? 0 } : null
+  },
+  (journey) => {
+    const current = scene.value
+    if (!current) return
+
+    showPath(current, journey?.nodes ?? [], journey?.progress ?? 0)
+  },
+  { deep: true },
+)
+
+/**
+ * Where somebody clicked in the world, until they act on it or click elsewhere.
+ *
+ * The same bargain the map makes, and it matters more here: this canvas is *orbited*, so almost
+ * every press is the start of a drag. A click that sent the agent walking would turn every stopped
+ * rotation into an order nobody gave.
+ */
+const picked = ref<{ x: number; y: number; z: number; px: number; py: number } | null>(null)
+
+/** Where the press began, and whether it turned into an orbit. */
+let pressed: { x: number; y: number; moved: boolean } | null = null
+
+/** Pixels of travel before a press stops being a click. */
+const SLOP = 4
+
+/**
+ * Who a click in this world can be about.
+ *
+ * The whole fleet standing in the same place, not only the agent being watched. A point in this view
+ * is a point in a world, and "send these four to that doorway" is the same decision as sending one -
+ * which is the argument the map already makes, so it is the same list and the same panel here.
+ *
+ * Filtered by world as well as by server: the dimensions share a coordinate system, so an agent in
+ * the Nether sent to a spot seen in the Overworld would walk to somewhere eight times too far away.
+ */
+const sendable = computed(() => {
+  const watched = agent.value
+  if (!auth.can('agent.run') || !watched) return []
+
+  const world = watched.telemetry?.dimension
+  const here = agentStore.agents.filter(
+    (other) =>
+      isOnline(other) &&
+      other.serverAddress === watched.serverAddress &&
+      (!world || !other.telemetry?.dimension || other.telemetry.dimension === world),
+  )
+
+  // The one being watched first. It is what the screen is about, and it is what somebody clicking
+  // in its view almost always means.
+  return here.some((other) => other.id === watched.id)
+    ? [watched, ...here.filter((other) => other.id !== watched.id)]
+    : here
+})
+
+/**
+ * Who the click is for, kept while the panel is open.
+ *
+ * The watched agent is ticked when the panel opens - unlike the map, which starts from nobody. This
+ * screen is *about* one agent, so sending it where you just pointed should be one click; the map is
+ * about a fleet and has no such default to draw on.
+ */
+const sending = ref<number[]>([])
+const sendingBusy = ref(false)
+
+function onPointerDown(event: PointerEvent): void {
+  pressed = { x: event.clientX, y: event.clientY, moved: false }
+}
+
+function onPointerMove(event: PointerEvent): void {
+  const current = scene.value
+  const box = canvas.value?.getBoundingClientRect()
+
+  // Recorded, not acted on. What is under the cursor is worked out once a frame - see `showHover`.
+  if (current && box) {
+    current.over = {
+      nx: ((event.clientX - box.left) / box.width) * 2 - 1,
+      ny: -((event.clientY - box.top) / box.height) * 2 + 1,
+    }
+  }
+
+  if (!pressed || pressed.moved) return
+  if (Math.abs(event.clientX - pressed.x) + Math.abs(event.clientY - pressed.y) > SLOP) pressed.moved = true
+}
+
+/** The cursor left the canvas, so there is nothing under it. */
+function onPointerLeave(): void {
+  const current = scene.value
+  if (current) delete current.over
+}
+
+function onPointerUp(event: PointerEvent): void {
+  const press = pressed
+  pressed = null
+
+  const current = scene.value
+  const element = canvas.value
+  const box = element?.getBoundingClientRect()
+
+  if (!press || press.moved || !current || !box || firstPerson.value) return
+
+  // This press already did its job on the way down.
+  if (dismissing) {
+    dismissing = false
+    return
+  }
+
+  const px = event.clientX - box.left
+  const py = event.clientY - box.top
+
+  // Normalised device coordinates: the middle of the canvas is the origin and the edges are ±1,
+  // with y running up rather than down.
+  const at = current.pick?.((px / box.width) * 2 - 1, -(py / box.height) * 2 + 1)
+  if (!at) return
+
+  sending.value = agent.value ? [agent.value.id] : []
+  picked.value = { ...at, px, py }
+}
+
+async function sendThere(): Promise<void> {
+  const at = picked.value
+  const who = [...sending.value]
+  if (!at || who.length === 0) return
+
+  // The middle of the block rather than its corner, which is where a body stands. The corner is
+  // shared by four columns and the search would round it to whichever one it liked.
+  const to = { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }
+
+  sendingBusy.value = true
+  let failed = 0
+
+  // One request each, and the failures counted rather than thrown: a fleet of four where the third
+  // host has gone away must still send the other three, and say how many did not go.
+  for (const id of who) {
+    try {
+      await agentStore.sendTo(id, [to])
+    } catch {
+      failed++
+    }
+  }
+
+  sendingBusy.value = false
+  close()
+
+  if (failed) toasts.notify('error', 'errors.sendTo', { params: { count: failed } })
+}
+
+/** The open panel, so a click can be asked whether it landed inside it. See `ActionMenu.root`. */
+const menu = ref<InstanceType<typeof ActionMenu> | null>(null)
+
+function close(): void {
+  picked.value = null
+  sending.value = []
+}
+
+/**
+ * Whether the press now in flight was the one that put a panel away.
+ *
+ * **A click in the world does two things at once**, and that is why "click outside to close" looked
+ * broken: the panel was dismissed on the way down and a new one opened on the way up, at whatever
+ * the pointer happened to be over. The panel had closed - it just never stayed closed long enough to
+ * see.
+ *
+ * So a press either dismisses or picks, never both. The first click puts the panel away and the
+ * second one opens a new one, which is what dismissing means everywhere else in the interface.
+ *
+ * Set on every press that reaches the dismiss handler, which is all of them, so it can never be read
+ * stale by a later click.
+ */
+let dismissing = false
+
+function elsewhere(event: PointerEvent): void {
+  dismissing = false
+
+  // Not while a request is in flight: the panel is what is being waited on, and taking it away
+  // mid-send would leave an operator watching nothing.
+  if (sendingBusy.value) return
+
+  // `composedPath` rather than `contains`, so a click on something the click handler removes is
+  // still recognised as having been inside.
+  const inside = menu.value?.root
+  if (inside && event.composedPath().includes(inside as EventTarget)) return
+
+  dismissing = picked.value !== null
+  close()
+}
+
+function dismiss(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && !sendingBusy.value) close()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', elsewhere, true)
+  document.addEventListener('keydown', dismiss)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', elsewhere, true)
+  document.removeEventListener('keydown', dismiss)
+})
+
+// There is nothing to point at through the agent's own eyes, and nothing to point at in a world
+// that has gone.
+watch([firstPerson, () => status.value], () => close())
+
 function resize(): void {
   const current = scene.value
   const element = canvas.value
@@ -1745,7 +2273,7 @@ function resize(): void {
   current.viewer.camera.updateProjectionMatrix()
   current.renderer.setSize(element.clientWidth, element.clientHeight, false)
   // The box's width is a number of pixels, which means nothing without knowing how many there are.
-  for (const material of current.outlineMaterials ?? []) {
+  for (const material of [...(current.outlineMaterials ?? []), ...(current.pathMaterials ?? [])]) {
     material.resolution.set(element.clientWidth, element.clientHeight)
   }
 }
@@ -1770,6 +2298,15 @@ function teardown(): void {
   if (!current) return
 
   current.watcher?.disconnect()
+  // Before the renderer goes, while there is still a scene to take them out of.
+  if (current.hover) {
+    current.viewer.world.scene.remove(current.hover)
+    disposeGeometry(current.hover)
+  }
+  for (const line of current.pathLines ?? []) {
+    current.viewer.world.scene.remove(line)
+    disposeGeometry(line)
+  }
   clearTimeout(current.summary)
   cancelAnimationFrame(current.frame)
   current.emitter.removeAllListeners()
@@ -1784,7 +2321,48 @@ const ASSETS = '/viewer'
 
 <template>
   <div class="bg-base-300 relative min-h-0 flex-1 overflow-hidden">
-    <canvas ref="canvas" class="size-full" />
+    <canvas
+      ref="canvas"
+      class="size-full"
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointerleave="onPointerLeave"
+    />
+
+    <!--
+      Anchored where the click landed, over the canvas. The block it names is the one the ray came
+      out at, so the panel and the highlight are the same answer said twice.
+    -->
+    <ActionMenu
+      v-if="picked && sendable.length"
+      ref="menu"
+      placement="at"
+      :x="picked.px"
+      :y="picked.py"
+      :title="t('viewer.sendHere')"
+      :note="`${picked.x}, ${picked.y}, ${picked.z}`"
+    >
+      <!-- The fleet's own picker, exactly as the map opens it: one agent and four are one decision. -->
+      <div class="w-64 max-w-[70vw] px-2 py-1.5">
+        <AgentTargets v-model="sending" :agents="sendable" />
+      </div>
+
+      <!--
+        Solid rather than soft, and the panel wide: this is the one thing the panel is for, and it
+        acts in the world. Everything else here is a choice about what it will act on.
+      -->
+      <button
+        type="button"
+        class="btn btn-primary btn-sm mx-2 mb-2 justify-center gap-2 shadow-sm"
+        :disabled="sendingBusy || sending.length === 0"
+        @click="sendThere()"
+      >
+        <span v-if="sendingBusy" class="loading loading-spinner loading-xs"></span>
+        <Footprints v-else class="size-4" />
+        {{ t('map.sendCount', { count: sending.length }) }}
+      </button>
+    </ActionMenu>
 
     <!--
       The world stays on screen when the agent leaves it, because it is the only picture of where it
@@ -1803,7 +2381,16 @@ const ASSETS = '/viewer'
       </p>
     </Transition>
 
-    <div class="absolute top-3 right-3 z-10">
+    <div class="absolute top-3 right-3 z-10 flex gap-2">
+      <!--
+        Only outside first person. There, the camera is the agent's own head and following it is
+        what it is already doing, so the toggle would be a switch with one position.
+      -->
+      <label v-if="!firstPerson" class="btn btn-sm gap-2 shadow-md" :class="follow ? 'btn-primary' : ''">
+        <input v-model="follow" type="checkbox" class="hidden" />
+        <LocateFixed class="size-4" />
+        {{ t('viewer.follow') }}
+      </label>
       <label class="btn btn-sm gap-2 shadow-md" :class="firstPerson ? 'btn-primary' : ''">
         <input v-model="firstPerson" type="checkbox" class="hidden" />
         <component :is="firstPerson ? Eye : Orbit" class="size-4" />

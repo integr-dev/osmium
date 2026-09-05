@@ -46,6 +46,7 @@ enum class AuditAction {
      * in five minutes, and nothing else in Osmium would ever say who threw it.
      */
     AGENT_INVENTORY,
+    AGENT_PATH,
 
     HOST_ENROL,
     HOST_RENAME,

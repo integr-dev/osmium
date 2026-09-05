@@ -151,6 +151,39 @@ export const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
+    /*
+     * How an agent gets from one place to another.
+     *
+     * After the utility modules and before connecting, which is roughly when an operator meets
+     * them: what a bot does for itself, then how it moves about, then whether it stays.
+     *
+     * **Three of these are permissions rather than preferences**, and they are permissions over
+     * somebody else's world. Upstream's pathfinder will happily dig through a wall, pillar into the
+     * air and jump a four block gap to save nine blocks of walking, because it is written for a bot
+     * somebody is watching. None of that is undoable on a server an operator does not own, so each
+     * is off until it is turned on and a route that needs one is simply not found.
+     */
+    key: 'path',
+    fields: [
+      {
+        // A search cannot see past the chunks the server has sent, which is a dozen wide at most -
+        // so a bigger number here does not find longer routes, it spends the budget looking at
+        // ground the host has not got. Long journeys are walked as a run of short ones.
+        key: 'path.range',
+        type: 'text',
+        placeholder: '128',
+      },
+      { key: 'path.dig', type: 'switch' },
+      { key: 'path.bridge', type: 'switch' },
+      { key: 'path.parkour', type: 'switch' },
+      {
+        key: 'path.maxDrop',
+        type: 'text',
+        placeholder: '3',
+      },
+    ],
+  },
+  {
     key: 'connect',
     fields: [
       {
@@ -251,6 +284,7 @@ export const COMMANDS = {
   roll: TRUST.chat,
   say: TRUST.commands,
   run: TRUST.commands,
+  goto: TRUST.commands,
   disconnect: TRUST.commands,
   reconnect: TRUST.commands,
 } as const satisfies Record<string, Trust>

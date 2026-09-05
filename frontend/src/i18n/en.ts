@@ -344,6 +344,10 @@ export const en = {
     blockedNoServer: 'Assigned to no server, so there is nowhere to connect to.',
     blockedNotOnline: 'Not in game, so there is no session to end.',
     blockedNotConnected: 'Not connected, and not trying to be.',
+    blockedNotOnlineWalk: 'Not in game, so there is nowhere to walk.',
+    blockedBuildingWalk: 'Building — walking it away would leave blocks wherever it ended up.',
+    blockedNoDestination: 'Type a destination first.',
+    blockedNotWalking: 'Going nowhere.',
     /** Where an agent plays decides what its *next* connection targets, so it is an offline edit. */
     blockedOnlineServer: 'Disconnect this agent before changing the server it plays on.',
     cancelConnect: 'Cancel',
@@ -379,6 +383,26 @@ export const en = {
     buildingOn: "Segment {ordinal} of '{build}'",
     setServer: 'Change server',
     actionsSession: 'Session',
+    actionsWalk: 'Movement',
+    walkX: 'X',
+    walkY: 'Y',
+    /** The placeholder, which is where the box says it may be left alone. */
+    walkYAny: 'Y — any',
+    walkYHint: 'Leave blank to reach that spot at whatever height the ground turns out to be.',
+    walkZ: 'Z',
+    walkHere: 'Here',
+    walkHereHint: 'Fill the boxes with where the agent is standing.',
+    walkGo: 'Go',
+    walkStop: 'Stop',
+    /** Said while the host is still searching, when there is a goal and no path yet. */
+    walkPlanning: 'Finding a route to {goal}…',
+    /** The node count rather than a percentage: a re-plan changes the length, and a percentage
+     * that went backwards would read as the agent losing ground it had already walked. */
+    walkMoving: 'Walking to {goal} — {at} of {of}',
+    /** When a host reported a journey without saying where it ends, which an older one may. */
+    walkSomewhere: 'somewhere',
+    /** A destination that names a column rather than a point. */
+    walkAnyHeight: '{x}, any, {z}',
     actionsPlacement: 'Placement',
     actionsOpen: 'Open',
     setServerTitle: 'Where should {name} play?',
@@ -430,6 +454,9 @@ export const en = {
     outdated: 'This agent has left the game. What you are seeing is the world as it last was.',
     ours: 'ours',
     firstPerson: 'First person',
+    /** The free camera travelling with the agent. Only offered outside first person. */
+    follow: 'Follow',
+    sendHere: 'Send here',
     connecting: 'Waiting for the world…',
     refused: 'You are not allowed to watch this agent.',
     lost: 'The connection to this agent ended.',
@@ -484,6 +511,11 @@ export const en = {
     lastSeen: 'Last seen {when}',
     /** Under the pointer, in the coordinates F3 shows. */
     at: '{x}, {z}',
+    sendHere: 'Send here',
+    /** A click where the fleet has charted nothing, so the height of the ground is unknown. */
+    pickUncharted: '{x}, ?, {z}',
+    pickNoGround: 'Nobody has walked here, so the agent is sent to this spot at whatever height the ground is.',
+    sendCount: 'Send {count} | Send 1 agent | Send {count} agents',
     scale: '{n} px per block',
     recentre: 'Centre on the fleet',
     agents: 'Agents',
@@ -815,6 +847,7 @@ export const en = {
       chat: 'Chat',
       mc: 'Minecraft',
       util: 'Utility modules',
+      path: 'Movement',
       connect: 'Connection',
       players: 'Players',
     },
@@ -914,6 +947,26 @@ export const en = {
           careful: 'Careful — never sprint',
           spoof: 'Spoof — sprint undeclared',
         },
+      },
+      path_range: {
+        label: 'Search distance',
+        hint: 'How far from the agent a route may be searched for, in blocks. A search cannot see past the chunks the server has sent — a dozen wide at most — so a larger number does not find longer routes, it spends the search on ground the host has not got. Long journeys are walked as a run of short ones. Default 128.',
+      },
+      path_dig: {
+        label: 'May dig',
+        hint: 'Lets the agent break blocks to get through rather than walking around. Faster, and it changes somebody else\'s world: a route that saves nine blocks by tunnelling through a wall leaves the wall with a hole in it. Off, a route that needs digging is simply not found.',
+      },
+      path_bridge: {
+        label: 'May bridge',
+        hint: 'Lets the agent place blocks from its own inventory to cross a gap or pillar up. Only what it is carrying, so an empty inventory is the same as this being off — and what it places stays where it put it.',
+      },
+      path_parkour: {
+        label: 'May jump gaps',
+        hint: 'Lets the agent take running jumps across gaps of up to four blocks instead of going round. Quicker and less reliable: a missed jump is a fall, and a fall near lava or a ravine is the end of the session.',
+      },
+      path_maxDrop: {
+        label: 'Longest drop',
+        hint: 'The furthest the agent will step off, in blocks. Four is where fall damage starts, so the default of three is the drop that costs nothing. Higher trades health for shorter routes.',
       },
       util_noFall: {
         label: 'No fall',
@@ -1186,6 +1239,7 @@ export const en = {
     AGENT_DISCONNECT: 'Disconnect',
     AGENT_CHAT: 'Chat',
     AGENT_INVENTORY: 'Items moved',
+    AGENT_PATH: 'Sent somewhere',
     HOST_ENROL: 'Host enrolled',
     HOST_RENAME: 'Host renamed',
     HOST_ROTATE_TOKEN: 'Token rotated',
@@ -1315,6 +1369,9 @@ export const en = {
     disconnectAgent: 'Could not disconnect.',
     sendMessage: 'Could not send the message.',
     loadInventory: 'Could not read what the agent is carrying.',
+    loadPaths: 'Could not read where the fleet is going.',
+    sendTo: 'Could not send the agent there. | Could not send 1 agent. | Could not send {count} agents.',
+    stopPath: 'Could not stop the agent.',
     loadStorage: 'Could not read what is stored.',
     purgeStorage: 'Could not delete that data.',
     reclaimStorage: 'Could not return the space.',

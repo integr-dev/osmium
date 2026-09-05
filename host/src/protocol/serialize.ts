@@ -129,6 +129,20 @@ function event(body: Event): Json {
         },
       }
 
+    case 'path': {
+      const payload: Json = { state: body.state }
+
+      put(payload, 'dimension', body.dimension)
+      put(payload, 'goal', body.goal)
+      // Only on the updates that redrew it. An absent `nodes` says the line has not changed, which
+      // is not the same as a path with no nodes in it.
+      put(payload, 'nodes', body.nodes)
+      put(payload, 'progress', body.progress)
+      put(payload, 'reason', body.reason)
+
+      return { kind: 'event', type: 'path', agentId: body.agentId, payload }
+    }
+
     case 'build_progress': {
       const payload: Json = { segmentId: body.segmentId }
 

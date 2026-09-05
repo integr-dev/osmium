@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import net.integr.osmium.agent.dto.AgentInventoryResponse
+import net.integr.osmium.agent.dto.AgentPathResponse
 import net.integr.osmium.agent.dto.AgentResponse
 import net.integr.osmium.agent.dto.AgentSettingsRequest
 import net.integr.osmium.agent.dto.AssignServerRequest
@@ -14,6 +15,7 @@ import net.integr.osmium.agent.dto.CreateAgentRequest
 import net.integr.osmium.agent.dto.DropItemRequest
 import net.integr.osmium.agent.dto.HoldItemRequest
 import net.integr.osmium.agent.dto.MoveItemRequest
+import net.integr.osmium.agent.dto.PathToRequest
 import net.integr.osmium.agent.dto.SetupAgentRequest
 import net.integr.osmium.agent.dto.UpdateAgentRequest
 import net.integr.osmium.agent.service.AgentService
@@ -338,4 +340,74 @@ class AgentController(private val agentService: AgentService) {
         @PathVariable id: Long,
         @Valid @RequestBody request: HoldItemRequest,
     ): AgentResponse = agentService.holdItem(id, request)
+
+    /**
+     * Every journey in progress, in one request.
+     *
+     * The fleet's rather than one agent's, because that is the question the map asks: it draws every
+     * agent in a world, and one request per agent to learn that most of them are standing still is
+     * a request per agent too many. A screen for a single agent filters the same answer.
+     *
+     * Live only. The store holds a journey for exactly as long as it lasts, so this never answers
+     * with a line to somewhere nobody is going any more.
+     */
+    @GetMapping("/paths")
+    @PreAuthorize("hasAuthority('agent.read')")
+    @Operation(
+        summary = "Read every journey in progress.",
+        description = "Never stored: a path is current by definition, so one that has finished is " +
+            "not here. Kept up to date by the `path` live update, which carries the nodes only " +
+            "when the line was redrawn.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "The journeys in progress, which may be none."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.read`."),
+    )
+    fun paths(): List<AgentPathResponse> = agentService.paths()
+
+    /**
+     * `agent.run`, the same authority that moves what an agent is carrying.
+     *
+     * Walking is what an agent does, not impersonation - nobody reads a bot walking past as a person
+     * having done something. Anyone trusted to put an agent in the game is trusted to move it around
+     * once it is there.
+     */
+    @PostMapping("/{id}/path")
+    @PreAuthorize("hasAuthority('agent.run')")
+    @Operation(
+        summary = "Send the agent somewhere.",
+        description = "The last waypoint is the destination; anything before it is the route. Fire " +
+            "and forget: the path is planned on the host, which is the only side that can see the " +
+            "blocks, and arrives as `path` live updates. Refused while the agent is holding a " +
+            "build segment - walking a builder away leaves it placing blocks wherever it stands.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Command accepted."),
+        ApiResponse(responseCode = "400", description = "No waypoints, or too many."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online, or is building."),
+        ApiResponse(responseCode = "503", description = "The owning host is not connected."),
+    )
+    fun pathTo(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: PathToRequest,
+    ): AgentResponse = agentService.pathTo(id, request)
+
+    @DeleteMapping("/{id}/path")
+    @PreAuthorize("hasAuthority('agent.run')")
+    @Operation(
+        summary = "Stop the agent where it is.",
+        description = "Not an error for an agent going nowhere, and not refused while it is " +
+            "building: the one command that undoes a journey must not be the one that is " +
+            "unavailable when it is most wanted.",
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Command accepted."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
+        ApiResponse(responseCode = "404", description = "No such agent."),
+        ApiResponse(responseCode = "409", description = "The agent is not online."),
+        ApiResponse(responseCode = "503", description = "The owning host is not connected."),
+    )
+    fun pathStop(@PathVariable id: Long): AgentResponse = agentService.pathStop(id)
 }

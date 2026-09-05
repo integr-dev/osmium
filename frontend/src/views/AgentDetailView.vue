@@ -13,6 +13,8 @@ import {
   Hammer,
   Heart,
   ChevronLeft,
+  Crosshair,
+  Footprints,
   KeyRound,
   Layers,
   MapPin,
@@ -21,6 +23,7 @@ import {
   RotateCw,
   Server,
   Signal,
+  Square,
   SquarePen,
   Trash2,
   TriangleAlert,
@@ -204,6 +207,19 @@ function formatPosition(at: { x: number; y: number; z: number }): string {
   return `${Math.round(at.x)}, ${Math.round(at.y)}, ${Math.round(at.z)}`
 }
 
+/**
+ * A destination, which may be a column rather than a point.
+ *
+ * Separate from {@link formatPosition} because the missing height is the whole difference: a
+ * position always has one and a goal may not, and printing `null` in the middle of three numbers
+ * would read as a fault rather than as an answer.
+ */
+function formatGoal(at: { x: number; y: number | null; z: number }): string {
+  return at.y === null
+    ? t('agents.walkAnyHeight', { x: Math.round(at.x), z: Math.round(at.z) })
+    : formatPosition({ x: at.x, y: at.y, z: at.z })
+}
+
 /** Every command can legitimately fail with 503 while no agent is connected to the host. */
 /**
  * Ends the session, or gives up on the attempt to open one.
@@ -223,6 +239,100 @@ async function stop(): Promise<void> {
   // sit greyed out saying it is cancelling something nobody asked to be cancelled.
   if (error.value) cancelling.value = false
 }
+
+/**
+ * Where the operator has typed, as three boxes rather than one.
+ *
+ * Strings, because they are what an input holds and because an empty box has to stay empty: bound to
+ * numbers, clearing one puts a zero in it, and a zero is a coordinate somebody might have meant.
+ */
+const goTo = ref({ x: '', y: '', z: '' })
+
+/** The journey this agent is on, or null. Held by the store, which the live stream keeps current. */
+const journey = computed(() => (agent.value ? agentStore.pathOf(agent.value.id) : null))
+
+/**
+ * What is in the boxes, or null when it is not somewhere.
+ *
+ * **X and Z are the destination; Y is optional and its absence means something.** Left blank, the
+ * agent is told to get to that column at whatever height the ground turns out to be - which is the
+ * only useful instruction for a spot somebody read off a map rather than off an F3 screen. Filled
+ * in, it is a point, and a difference of one storey is a difference.
+ */
+const destination = computed<{ x: number; y?: number; z: number } | null>(() => {
+  const x = Number(goTo.value.x)
+  const z = Number(goTo.value.z)
+
+  if (!goTo.value.x.trim() || !goTo.value.z.trim()) return null
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null
+
+  const written = goTo.value.y.trim()
+  if (!written) return { x, z }
+
+  const y = Number(written)
+  return Number.isFinite(y) ? { x, y, z } : null
+})
+
+const walkBlocked = computed<string | null>(() => {
+  if (!agent.value) return null
+  if (!isOnline(agent.value)) return t('agents.blockedNotOnlineWalk')
+  if (!hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
+  if (agentStore.isBuilding(agent.value.id)) return t('agents.blockedBuildingWalk')
+  if (!destination.value) return t('agents.blockedNoDestination')
+  return null
+})
+
+/**
+ * Fills the boxes with where the agent is standing.
+ *
+ * The most common thing to want is somewhere near here, and typing three coordinates that are on
+ * screen a few centimetres away is the kind of work an interface should not ask for.
+ */
+function hereNow(): void {
+  const at = agent.value?.telemetry?.position
+  if (!at) return
+
+  goTo.value = { x: String(Math.round(at.x)), y: String(Math.round(at.y)), z: String(Math.round(at.z)) }
+}
+
+/**
+ * Sends the agent to what is in the boxes.
+ *
+ * Nothing is drawn here. The path does not exist yet - only the host can see the blocks, so it plans
+ * and then says what it found, and a straight line drawn now would be replaced a moment later by the
+ * real one. What appears in the meantime is the state, which says it is planning.
+ */
+async function walk(): Promise<void> {
+  const target = agent.value
+  const at = destination.value
+  if (!target || !at) return
+
+  await run(() => agentStore.sendTo(target.id, [at]))
+}
+
+async function halt(): Promise<void> {
+  const target = agent.value
+  if (!target) return
+
+  await run(() => agentStore.stopPath(target.id))
+}
+
+/** What the agent is doing about getting somewhere, in one line. */
+const journeyLine = computed<string | null>(() => {
+  const path = journey.value
+  if (!path) return null
+
+  const goal = path.goal ? formatGoal(path.goal) : t('agents.walkSomewhere')
+
+  if (path.state === 'PLANNING') return t('agents.walkPlanning', { goal })
+  // The count rather than a percentage: the path grows as it is re-planned, so a percentage would
+  // go backwards on its own and read as the agent losing ground it had walked.
+  return t('agents.walkMoving', {
+    goal,
+    at: (path.progress ?? 0) + 1,
+    of: path.nodes?.length ?? 0,
+  })
+})
 
 async function run(action: () => Promise<void>) {
   busy.value = true
@@ -635,6 +745,69 @@ async function confirmRemove() {
                   {{ disconnectLabel }}
                 </button>
               </div>
+            </div>
+
+            <!--
+              Where to go. Its own group, under the session it needs: a destination is only a
+              destination while the agent is in a world, and the line under the boxes is the only
+              place this page says what came of it.
+            -->
+            <div v-if="auth.can('agent.run')" class="flex flex-col gap-2">
+              <div class="text-xs uppercase opacity-50">{{ t('agents.actionsWalk') }}</div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="join">
+                  <input
+                    v-model="goTo.x"
+                    class="input input-sm join-item w-20 text-center"
+                    inputmode="numeric"
+                    :placeholder="t('agents.walkX')"
+                    :aria-label="t('agents.walkX')"
+                  />
+                  <input
+                    v-model="goTo.y"
+                    class="input input-sm join-item w-20 text-center"
+                    inputmode="numeric"
+                    :placeholder="t('agents.walkYAny')"
+                    :aria-label="t('agents.walkY')"
+                    :title="t('agents.walkYHint')"
+                  />
+                  <input
+                    v-model="goTo.z"
+                    class="input input-sm join-item w-20 text-center"
+                    inputmode="numeric"
+                    :placeholder="t('agents.walkZ')"
+                    :aria-label="t('agents.walkZ')"
+                  />
+                </div>
+                <button
+                  class="btn btn-ghost btn-sm gap-2"
+                  :disabled="!agent.telemetry"
+                  :title="t('agents.walkHereHint')"
+                  @click="hereNow()"
+                >
+                  <Crosshair class="size-4" />
+                  {{ t('agents.walkHere') }}
+                </button>
+                <button
+                  class="btn btn-soft btn-sm gap-2"
+                  :disabled="busy || walkBlocked !== null"
+                  :title="walkBlocked ?? ''"
+                  @click="walk()"
+                >
+                  <Footprints class="size-4" />
+                  {{ t('agents.walkGo') }}
+                </button>
+                <button
+                  class="btn btn-soft btn-sm gap-2"
+                  :disabled="busy || journey === null"
+                  :title="journey === null ? t('agents.blockedNotWalking') : ''"
+                  @click="halt()"
+                >
+                  <Square class="size-4" />
+                  {{ t('agents.walkStop') }}
+                </button>
+              </div>
+              <p v-if="journeyLine" class="text-xs opacity-70">{{ journeyLine }}</p>
             </div>
 
             <!-- Where it plays. Its own group because it is the one thing here that is not a session. -->

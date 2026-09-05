@@ -3,6 +3,7 @@ import type { Inventory } from '../agent/inventory.ts'
 import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { AdvertisedProxy } from '../agent/proxy.ts'
+import type { PathNode, PathState, Waypoint } from '../agent/path/navigator.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
 
 /** A command the backend sent. Only commands arrive; results and events travel the other way. */
@@ -76,6 +77,18 @@ export type CommandBody =
    * square the same way, and the one index in this protocol is `held`, which is a field the game
    * itself defines as one. Refused for anything outside the hotbar. */
   | { type: 'inventory_hold'; slot: number }
+  /** Go to the last of these, by way of the rest.
+   *
+   * A list rather than a point, because a route may be handed down whole. The interface sends one
+   * entry; a coarse pass over the map tiles the fleet has already charted sends the shape of a
+   * journey no host's loaded chunks can see all of at once.
+   *
+   * Fire and forget, like `build_segment`. What came of it arrives as `path` events, because where
+   * an agent has got to is something only the host can say. */
+  | { type: 'path_to'; waypoints: Waypoint[] }
+  /** Stop where you are. Not an error for an agent going nowhere: it says stop, which having
+   * stopped already satisfies. */
+  | { type: 'path_stop' }
   /** This agent is gone. Release everything held for it.
    *
    * Not an error for an agent this host has never heard of - it asks us to hold nothing for it,
@@ -179,6 +192,26 @@ export type Event =
    * Carries block names and not colours - see `agent/map.ts`. The backend stores this verbatim and
    * holds no opinion about what any of it looks like. */
   | { type: 'map_tile'; agentId: number; tile: MapTile }
+  /** Where this agent is going, and how far along it has got.
+   *
+   * Not stored anywhere. A path is current by definition - an old one is not a weaker answer the
+   * way an old position is, it is a wrong one - so it lives in memory on the backend and dies with
+   * the session. An agent that reconnects plans again rather than resuming.
+   *
+   * `nodes` rides only the updates that redrew the line - the first of a journey, and every re-plan
+   * after it. The ones in between carry `progress` alone, which is most of them. */
+  | {
+      type: 'path'
+      agentId: number
+      state: PathState
+      /** Which world it is walking through, so a map of somewhere else does not draw it. */
+      dimension?: string
+      /** A column rather than a point when the operator had no height to give - see `Waypoint`. */
+      goal?: Waypoint
+      nodes?: PathNode[]
+      progress?: number
+      reason?: string
+    }
   /** How far through a segment we are. A total placed by *us* since being handed it, never a delta:
    * the backend reports the higher of this and what was standing when we took the piece. */
   | {

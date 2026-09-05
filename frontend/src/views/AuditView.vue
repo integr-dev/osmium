@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Backpack,
+  Footprints,
   Bot as Agent,
   Download,
   Hammer,
@@ -69,6 +70,7 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
   AGENT_DISCONNECT: Power,
   AGENT_CHAT: MessageSquare,
   AGENT_INVENTORY: Backpack,
+  AGENT_PATH: Footprints,
   HOST_ENROL: Server,
   HOST_RENAME: SquarePen,
   HOST_ROTATE_TOKEN: KeyRound,
@@ -118,6 +120,10 @@ const ACTION_BADGE: Record<AuditAction, string> = {
   // Warning rather than error: most of these are an item moved from one square to another, which
   // undoes by moving it back. A dropped stack does not, and the detail is where that shows.
   AGENT_INVENTORY: 'badge-warning badge-soft',
+  // Ghost, like a disconnect. Sending an agent somewhere changes where it is standing and nothing
+  // else - what it does when it gets there is whatever the operator does next, and that has its own
+  // entry.
+  AGENT_PATH: 'badge-ghost',
   HOST_ENROL: 'badge-info badge-soft',
   HOST_RENAME: 'badge-ghost',
   HOST_ROTATE_TOKEN: 'badge-error badge-soft',

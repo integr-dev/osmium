@@ -10,6 +10,7 @@ import {
   commandIn,
   EIGHT_BALL,
   eightBall,
+  gotoOrder,
   grantFrom,
   helpLine,
   PREFIX,
@@ -471,6 +472,88 @@ describe('commands that would disturb a build', () => {
  * has something to do with it — so what is worth pinning is that they are fair, that they are bounded,
  * and that they never put somebody else's words in an agent's mouth.
  */
+/**
+ * Where an agent has been told to go, read out of what somebody typed in chat.
+ *
+ * Total against anything: a command from a trusted player is still a command typed by a person, and
+ * every answer that is not three coordinates or the word `stop` has to be the same answer - nothing,
+ * so the caller can say how to spell it.
+ */
+describe('reading a destination out of chat', () => {
+  it('takes three whole coordinates', () => {
+    expect(gotoOrder(['128', '64', '-340'])).toEqual({ kind: 'go', x: 128, y: 64, z: -340 })
+  })
+
+  /** What is on an F3 screen, which is what somebody copies. */
+  it('rounds off the decimals a position is actually reported with', () => {
+    expect(gotoOrder(['128.523', '64.0', '-339.51'])).toEqual({ kind: 'go', x: 129, y: 64, z: -340 })
+  })
+
+  it('takes a stop, in whatever case it was typed', () => {
+    expect(gotoOrder(['stop'])).toEqual({ kind: 'stop' })
+    expect(gotoOrder(['STOP'])).toEqual({ kind: 'stop' })
+  })
+
+  it('refuses a stop with anything after it, which means something else', () => {
+    expect(gotoOrder(['stop', 'now'])).toBeUndefined()
+  })
+
+  it('refuses anything that is not three numbers', () => {
+    for (const words of [[], ['128'], ['128', '64'], ['128', '64', '-340', '5'], ['here']]) {
+      expect(gotoOrder(words), words.join(' ')).toBeUndefined()
+    }
+  })
+
+  it('refuses words that are not numbers at all', () => {
+    expect(gotoOrder(['x', 'y', 'z'])).toBeUndefined()
+    expect(gotoOrder(['128', 'sixty', '-340'])).toBeUndefined()
+    // `Number('')` is zero, which is a coordinate somebody could have meant and did not type.
+    expect(gotoOrder(['128', '', '-340'])).toBeUndefined()
+  })
+
+  /**
+   * The point of the bounds. A search towards a coordinate no world has fails eventually, having
+   * spent its whole budget getting there - so a fat-fingered exponent is refused at the keyboard.
+   */
+  it('refuses a coordinate no world has', () => {
+    expect(gotoOrder(['1e30', '64', '0'])).toBeUndefined()
+    expect(gotoOrder(['0', '99999', '0'])).toBeUndefined()
+    expect(gotoOrder(['0', '64', '-40000000'])).toBeUndefined()
+  })
+
+  it('takes the far corner of a real world', () => {
+    expect(gotoOrder(['29999984', '319', '-29999984'])).toEqual({
+      kind: 'go',
+      x: 29999984,
+      y: 319,
+      z: -29999984,
+    })
+  })
+
+  /** Walking a builder off its box leaves it placing blocks wherever it ended up. */
+  it('is refused while a build is in progress', () => {
+    expect(disruptsBuilding('goto')).toBe(true)
+  })
+
+  it('is offered only to somebody trusted with commands', () => {
+    expect(allows(tier(TRUST.chat), 'goto')).toBe(false)
+    expect(allows(tier(TRUST.commands), 'goto')).toBe(true)
+  })
+
+  it('lists itself in help for whoever may use it', () => {
+    expect(helpLine(tier(TRUST.commands))).toContain('goto <x> <y> <z> | stop')
+    expect(helpLine(tier(TRUST.chat))).not.toContain('goto')
+  })
+
+  it('is read off a whole line the way every other command is', () => {
+    expect(commandIn(`${PREFIX} goto 128 64 -340`)).toEqual({
+      account: undefined,
+      name: 'goto',
+      args: ['128', '64', '-340'],
+    })
+  })
+})
+
 describe('the toys', () => {
   it('gives one of the twenty answers, whatever the roll', () => {
     for (let i = 0; i < 1000; i++) {

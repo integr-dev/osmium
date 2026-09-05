@@ -514,6 +514,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{id}/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send the agent somewhere.
+         * @description The last waypoint is the destination; anything before it is the route. Fire and forget: the path is planned on the host, which is the only side that can see the blocks, and arrives as `path` live updates. Refused while the agent is holding a build segment - walking a builder away leaves it placing blocks wherever it stands.
+         */
+        post: operations["pathTo"];
+        /**
+         * Stop the agent where it is.
+         * @description Not an error for an agent going nowhere, and not refused while it is building: the one command that undoes a journey must not be the one that is unavailable when it is most wanted.
+         */
+        delete: operations["pathStop"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agents/{id}/inventory/move": {
         parameters: {
             query?: never;
@@ -1208,6 +1232,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/paths": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read every journey in progress.
+         * @description Never stored: a path is current by definition, so one that has finished is not here. Kept up to date by the `path` live update, which carries the nodes only when the line was redrawn.
+         */
+        get: operations["paths"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/activity": {
         parameters: {
             query?: never;
@@ -1787,6 +1831,23 @@ export interface components {
              */
             method: string;
         };
+        /** @description A point to walk to. */
+        PathPointRequest: {
+            /** Format: double */
+            x?: number;
+            /**
+             * Format: double
+             * @description Leave this out to name a column rather than a point: the agent gets to that spot at whatever height the ground is. Do not send 0 to mean 'anywhere'.
+             */
+            y?: number | null;
+            /** Format: double */
+            z?: number;
+        };
+        /** @description Sends an agent somewhere. The last waypoint is the destination; anything before it is the route to take. The path itself is planned on the host, which is the only side that can see the blocks. */
+        PathToRequest: {
+            /** @description In order, destination last. */
+            waypoints: components["schemas"]["PathPointRequest"][];
+        };
         /** @description Moves what is in one square onto another, as two clicks would. Fire and forget: where the item ended up arrives on the next inventory report. */
         MoveItemRequest: {
             /** Format: int32 */
@@ -2061,7 +2122,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "AGENT_INVENTORY" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "STORAGE_PURGE" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "AGENT_INVENTORY" | "AGENT_PATH" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "STORAGE_PURGE" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -2116,6 +2177,48 @@ export interface components {
              * @example 1561
              */
             maxDamage?: number | null;
+        };
+        /** @description An agent's current journey. Live only: it is held in memory for as long as the journey lasts and is never written down. */
+        AgentPathResponse: {
+            /** Format: int64 */
+            agentId?: number;
+            /**
+             * @description How far a journey has got.
+             * @enum {string}
+             */
+            state?: "PLANNING" | "MOVING" | "ARRIVED" | "FAILED" | "IDLE";
+            /**
+             * @description Which world it is walking through, so a map of somewhere else does not draw it. Null when the host did not say.
+             * @example overworld
+             */
+            dimension?: string | null;
+            /** @description Where the journey ends. Null once it has ended. */
+            goal?: components["schemas"]["PathGoalResponse"] | null;
+            /** @description The whole path, oldest first. Sent when the line is drawn and again on every re-plan; an update that only moved along it leaves this out rather than resending a few hundred points a second. */
+            nodes?: components["schemas"]["PositionResponse"][] | null;
+            /**
+             * Format: int32
+             * @description How far along `nodes` the agent has got.
+             * @example 37
+             */
+            progress?: number | null;
+            /**
+             * @description Why it gave up, for FAILED.
+             * @example there is no route there
+             */
+            reason?: string | null;
+        };
+        /** @description Where a journey ends. Unlike a point on the path, this may name a column: an operator picking somewhere off an uncharted part of the map has no height to give. */
+        PathGoalResponse: {
+            /** Format: double */
+            x?: number;
+            /**
+             * Format: double
+             * @description Null when the destination is a column rather than a point.
+             */
+            y?: number | null;
+            /** Format: double */
+            z?: number;
         };
         /** @description Something that happened to an agent: kicked, died, connected, relink needed. */
         ActivityEntryResponse: {
@@ -3324,6 +3427,135 @@ export interface operations {
             };
             /** @description No setup is in progress. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    pathTo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PathToRequest"];
+            };
+        };
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No waypoints, or too many. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is not online, or is building. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+        };
+    };
+    pathStop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Command accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description No such agent. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The agent is not online. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentResponse"];
+                };
+            };
+            /** @description The owning host is not connected. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5034,6 +5266,35 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["AgentInventoryResponse"];
+                };
+            };
+        };
+    };
+    paths: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The journeys in progress, which may be none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentPathResponse"][];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AgentPathResponse"][];
                 };
             };
         };

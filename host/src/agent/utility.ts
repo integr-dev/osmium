@@ -1022,6 +1022,9 @@ export class AgentUtilities {
 /** The packets that carry `onGround`, which is the field NoFall is about. */
 const MOVES = new Set(['position', 'position_look', 'look', 'flying'])
 
+/** `hasHorizontalCollision` in the `MovementFlags` bitfield, which is its second flag. */
+const COLLIDED_BIT = 0b10
+
 /** mineflayer's `entity_action` for starting a sprint, which is what the server prices movement by. */
 const START_SPRINTING = 3
 

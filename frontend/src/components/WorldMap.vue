@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { fetchTiles } from '../api/map'
 import { loadPalette } from '../lib/mapPalette'
-import { TILE, paintTile, tileKey, type DecodedTile, type Palette } from '../lib/mapTiles'
+import { EMPTY, TILE, paintTile, tileKey, type DecodedTile, type Palette } from '../lib/mapTiles'
 import { IDENTITY, panBy, zoomAt, type Limits, type View } from '../lib/panZoom'
 
 /**
@@ -25,7 +25,57 @@ const props = defineProps<{
   dimension: string
   /** Where the fleet is right now, in block coordinates. Drawn over the terrain. */
   marks: Mark[]
+  /** Where the fleet is going. Drawn under the marks, so a line never covers a face. */
+  paths: PathLine[]
 }>()
+
+/**
+ * One agent's journey, as this screen draws it.
+ *
+ * Live only: a path that has ended is not a weaker answer the way an old position is, it is a wrong
+ * one, so there is nothing here for an agent standing still.
+ */
+export interface PathLine {
+  id: string
+  /** In block coordinates, oldest first. */
+  points: Array<{ x: number; y: number; z: number }>
+  /** How far along {@link points} the agent has got. What is behind it is drawn spent. */
+  progress: number
+  /**
+   * Where the journey ends, which is not always the last node of a path still being planned.
+   *
+   * No height, and not because it is unknown: this map is drawn from above, and the square marking a
+   * destination is in the same place at every one. A goal may genuinely have no height anyway - a
+   * spot picked off uncharted ground names a column - so asking for one here would be asking the
+   * caller to invent it for a marker that would not use it.
+   */
+  goal?: { x: number; z: number }
+}
+
+/**
+ * Somewhere on the map that was clicked rather than dragged over.
+ *
+ * Carries where it is in the world *and* where it is on the screen, because whoever acts on it has
+ * to draw a panel there. Working that out again from the block coordinate would mean a second copy
+ * of the projection, in a component that has no business owning one.
+ */
+const emit = defineEmits<{ pick: [Picked] }>()
+
+export interface Picked {
+  x: number
+  /**
+   * The ground at that column, from the same heights the shading is drawn from.
+   *
+   * Null where nothing has been charted there. A map is drawn from what agents have walked past, so
+   * clicking a blank corner of it is an ordinary thing to do and answering with a zero would be a
+   * destination at the bottom of the world.
+   */
+  y: number | null
+  z: number
+  /** Where on the canvas, for the panel that opens about it. */
+  px: number
+  py: number
+}
 
 /** Something to draw on top of the terrain: an agent, or somebody near one. */
 export interface Mark {
@@ -137,6 +187,28 @@ function blockAt(px: number, py: number): { x: number; z: number } {
   return { x: (px - view.value.x) / view.value.k, z: (py - view.value.y) / view.value.k }
 }
 
+/**
+ * How high the ground is at one column, or null where nothing has been charted.
+ *
+ * The same numbers the shading is drawn from, so the height a panel offers is the height the map is
+ * already showing - and it comes free, because the tile is loaded for having been drawn.
+ *
+ * One above the surface, which is where a body stands rather than where the ground is. A destination
+ * is somewhere to be, and the block itself is somewhere to be inside.
+ */
+function groundAt(bx: number, bz: number): number | null {
+  const tile = tiles.value.get(tileKey(Math.floor(bx / TILE), Math.floor(bz / TILE)))
+  if (!tile) return null
+
+  // Modulo twice, because a negative coordinate's remainder is negative and a tile has no such cell.
+  const lx = ((bx % TILE) + TILE) % TILE
+  const lz = ((bz % TILE) + TILE) % TILE
+  const height = tile.heights[lz * TILE + lx]
+
+  if (height === undefined || height === EMPTY) return null
+  return height + 1
+}
+
 /** The rectangle of world the canvas is currently showing, in blocks. */
 function visible(): { west: number; north: number; east: number; south: number } {
   const { width, height } = size()
@@ -233,6 +305,7 @@ function draw(): void {
     }
   }
 
+  drawPaths(context)
   drawMarks(context)
 }
 
@@ -241,6 +314,29 @@ function draw(): void {
 /** Big enough to find on a map, and the same size at every zoom - it is a label, not a thing. */
 const DOT = 4
 const TRAIL_WIDTH = 2
+
+/** Thicker than a trail: where an agent is going is the thing being read, not the background. */
+const PATH_WIDTH = 2.5
+
+/** What is already walked, kept faintly so the whole journey still reads as one line. */
+const PATH_SPENT = 0.25
+const PATH_ALPHA = 0.85
+
+/**
+ * How far off the agent's own height a segment has to be before it is dashed.
+ *
+ * A map seen from above draws a path over a mountain and a path through a tunnel as the same
+ * straight line, which is a lie of omission - and it becomes a loud one as soon as an agent can
+ * fly. Dashing says "this part is not at your eye level" without needing a second view to say it.
+ *
+ * Three blocks, because a staircase is not worth marking and a storey is.
+ */
+const PATH_HEIGHT = 3
+
+const PATH_DASH = [6, 4]
+
+/** The square drawn where a journey ends. Hollow, so the terrain under it is still readable. */
+const GOAL_SIZE = 9
 
 /**
  * How solid the freshest end of a trail is drawn.
@@ -354,6 +450,76 @@ function themeInks(): Ink {
     ground: read('--color-base-100', '#ffffff'),
   }
   return inks
+}
+
+/**
+ * Where the fleet is going.
+ *
+ * Under the marks and over the terrain: a journey is context for the agent walking it, and a line
+ * drawn over a face would hide the thing it is about.
+ *
+ * Two passes over one line rather than two lines. What is behind the agent is drawn faint and what
+ * is ahead is drawn solid, so the direction of travel is readable without an arrowhead - the same
+ * idea the trails already use, running the other way.
+ */
+function drawPaths(context: CanvasRenderingContext2D): void {
+  const { ours, ink, ground } = themeInks()
+
+  for (const path of props.paths) {
+    const points = path.points
+    if (points.length > 1) {
+      // The height everything is compared against. An agent walks its own path, so the part of it
+      // at the agent's level is the part that is where it looks like it is.
+      const eye = points[Math.min(Math.max(path.progress, 0), points.length - 1)]?.y ?? 0
+
+      context.lineWidth = PATH_WIDTH
+      context.lineJoin = 'round'
+      context.lineCap = 'round'
+      context.strokeStyle = ours
+
+      for (let at = 1; at < points.length; at++) {
+        const from = points[at - 1]!
+        const to = points[at]!
+
+        context.globalAlpha = at <= path.progress ? PATH_SPENT : PATH_ALPHA
+        // Set per segment rather than per line: a journey that climbs has both kinds in it, and
+        // the point of the dash is to say which parts of this one line are which.
+        context.setLineDash(Math.abs(to.y - eye) > PATH_HEIGHT ? PATH_DASH : [])
+
+        context.beginPath()
+        context.moveTo(view.value.x + from.x * view.value.k, view.value.y + from.z * view.value.k)
+        context.lineTo(view.value.x + to.x * view.value.k, view.value.y + to.z * view.value.k)
+        context.stroke()
+      }
+
+      context.setLineDash([])
+      context.globalAlpha = 1
+    }
+
+    // The destination, whether or not a line reaches it yet - a search still running has a goal and
+    // no path, and that is exactly the moment somebody wants to see where the agent was sent.
+    const goal = path.goal
+    if (!goal) continue
+
+    const atX = view.value.x + goal.x * view.value.k
+    const atY = view.value.y + goal.z * view.value.k
+    const half = GOAL_SIZE / 2
+
+    // Haloed in the page's ground the way every label here is, so it holds on any terrain.
+    context.lineWidth = LABEL_HALO
+    context.strokeStyle = ground
+    context.strokeRect(atX - half, atY - half, GOAL_SIZE, GOAL_SIZE)
+    context.lineWidth = 1.5
+    context.strokeStyle = ours
+    context.strokeRect(atX - half, atY - half, GOAL_SIZE, GOAL_SIZE)
+
+    // A dot in the middle, in the text colour rather than the accent, so the square reads as a
+    // marker on the map rather than as one more agent.
+    context.fillStyle = ink
+    context.beginPath()
+    context.arc(atX, atY, 1.5, 0, Math.PI * 2)
+    context.fill()
+  }
 }
 
 function drawMarks(context: CanvasRenderingContext2D): void {
@@ -587,8 +753,21 @@ function schedule(): void {
 
 let dragging: { x: number; y: number } | null = null
 
+/**
+ * Where the press started, and whether it has travelled far enough to be a pan.
+ *
+ * The map is dragged far more often than it is clicked, and every drag ends with a pointerup over
+ * some coordinate - so without this, panning across the world would open a panel about wherever the
+ * hand happened to stop.
+ */
+let pressed: { x: number; y: number; moved: boolean } | null = null
+
+/** Pixels of travel before a press stops being a click. About the slop in a firm mouse click. */
+const SLOP = 4
+
 function onPointerDown(event: PointerEvent): void {
   dragging = { x: event.clientX, y: event.clientY }
+  pressed = { x: event.clientX, y: event.clientY, moved: false }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
@@ -597,6 +776,11 @@ function onPointerMove(event: PointerEvent): void {
   if (box) {
     const at = blockAt(event.clientX - box.left, event.clientY - box.top)
     pointer.value = { x: Math.floor(at.x), z: Math.floor(at.z) }
+  }
+
+  if (pressed && !pressed.moved) {
+    const travelled = Math.abs(event.clientX - pressed.x) + Math.abs(event.clientY - pressed.y)
+    if (travelled > SLOP) pressed.moved = true
   }
 
   if (!dragging) return
@@ -609,6 +793,20 @@ function onPointerMove(event: PointerEvent): void {
 function onPointerUp(event: PointerEvent): void {
   dragging = null
   ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
+
+  const press = pressed
+  pressed = null
+
+  const box = canvas.value?.getBoundingClientRect()
+  if (!press || press.moved || !box) return
+
+  const px = event.clientX - box.left
+  const py = event.clientY - box.top
+  const at = blockAt(px, py)
+  const x = Math.floor(at.x)
+  const z = Math.floor(at.z)
+
+  emit('pick', { x, y: groundAt(x, z), z, px, py })
 }
 
 function onWheel(event: WheelEvent): void {
@@ -687,6 +885,7 @@ watch(
 )
 
 watch(() => props.marks, schedule, { deep: true })
+watch(() => props.paths, schedule, { deep: true })
 
 const scale = computed(() => {
   const k = view.value.k

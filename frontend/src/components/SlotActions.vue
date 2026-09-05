@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Hand, Trash2 } from 'lucide-vue-next'
 import { t } from '../i18n'
+import ActionMenu from './ActionMenu.vue'
 import type { InventorySlotResponse } from '../api/client'
 
 /**
@@ -10,6 +11,9 @@ import type { InventorySlotResponse } from '../api/client'
  * of the card is a long way from the square somebody just clicked, and on a thirty-six square grid
  * it is not obvious which one it is about. Anchored to the square, the answer to "which slot?" is
  * where the panel is.
+ *
+ * The panel itself is {@link ActionMenu}, which the map and the 3D view also open. What is left here
+ * is what is true of a square and of nothing else.
  */
 defineProps<{
   /** What is in the square, or nothing — an empty hotbar square can still be put in hand. */
@@ -30,20 +34,7 @@ defineEmits<{
 </script>
 
 <template>
-  <!--
-    Over the square and clear of it, with the arrow of colour on top so it reads as belonging to the
-    square rather than floating above the grid. `w-max` because the labels decide the width; the
-    square is nowhere near wide enough to lay them out in.
-  -->
-  <div
-    class="border-base-300 bg-base-100 absolute top-full left-1/2 z-20 mt-1.5 flex w-max -translate-x-1/2 flex-col gap-1 rounded-lg border p-1.5 shadow-lg"
-    role="group"
-    :aria-label="item ? item.displayName : t('inventory.empty')"
-  >
-    <span class="truncate px-1 text-xs font-medium">
-      {{ item ? item.displayName : t('inventory.empty') }}
-    </span>
-
+  <ActionMenu :title="item ? item.displayName : t('inventory.empty')">
     <button
       v-if="holdable && !held"
       type="button"
@@ -82,8 +73,10 @@ defineEmits<{
       is a drag, and somebody who has just clicked a square is exactly the person who does not know
       that yet.
     -->
-    <span class="text-base-content/50 max-w-40 px-1 text-[0.65rem] leading-tight">
-      {{ t('inventory.dragToMove') }}
-    </span>
-  </div>
+    <template #footer>
+      <span class="text-base-content/50 max-w-40 px-1 text-[0.65rem] leading-tight">
+        {{ t('inventory.dragToMove') }}
+      </span>
+    </template>
+  </ActionMenu>
 </template>

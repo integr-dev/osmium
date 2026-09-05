@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 // Aliased: `Map` is a JavaScript built-in, and shadowing it is a trap for whoever needs one here.
-import { Crosshair, Map as MapIcon, Navigation } from 'lucide-vue-next'
+import { Crosshair, Footprints, Map as MapIcon, Navigation } from 'lucide-vue-next'
 
 import PlayerHead from '../components/PlayerHead.vue'
-import WorldMap, { type Mark } from '../components/WorldMap.vue'
+import WorldMap, { type Mark, type PathLine, type Picked } from '../components/WorldMap.vue'
+import ActionMenu from '../components/ActionMenu.vue'
+import AgentTargets from '../components/AgentTargets.vue'
 import { fetchLastSeen, listMappedServers, type MapExtentResponse } from '../api/map'
 import { isOnline, useAgentStore } from '../stores/agents'
+import { useAuthStore } from '../stores/auth'
+import { useToastStore } from '../stores/toasts'
 import { atShort } from '../lib/time'
 import { parsePlace } from '../lib/mapCoords'
 import { agentDot, agentStateLabel } from '../lib/agentState'
@@ -32,6 +36,8 @@ import { agentDetail, agentVitals, dimensionLabel, playerVitals } from '../lib/v
 const { t } = useI18n()
 const route = useRoute()
 const agentStore = useAgentStore()
+const auth = useAuthStore()
+const toasts = useToastStore()
 
 /**
  * The agent the map was opened on, from `?agent=`.
@@ -469,6 +475,190 @@ const marks = computed<Mark[]>(() => {
 })
 
 /**
+ * Where the fleet on this map is going.
+ *
+ * Filtered by world the same way the markers are, and for a stronger reason: a path is a list of
+ * coordinates in one dimension, and the dimensions share a coordinate system - so a journey through
+ * the Nether drawn on the Overworld is not merely misplaced, it is eight times too short.
+ *
+ * An agent whose journey has no dimension on it is drawn anyway. That is a host too old to say, and
+ * a line in the wrong place is the same smaller lie a dot in the wrong place already is.
+ */
+const paths = computed<PathLine[]>(() =>
+  shown.value
+    .map((agent) => agentStore.pathOf(agent.id))
+    .filter((path) => path !== null)
+    .filter((path) => !path.dimension || path.dimension === world.value)
+    .map((path) => ({
+      id: `path-${path.agentId}`,
+      points: path.nodes ?? [],
+      progress: path.progress ?? 0,
+      ...(path.goal ? { goal: { x: path.goal.x, z: path.goal.z } } : {}),
+    })),
+)
+
+/**
+ * Where somebody clicked, until they act on it or click elsewhere.
+ *
+ * **Nothing happens on the click itself.** A map is dragged and zoomed far more than it is pointed
+ * at, and a click that sent an agent walking would make every misjudged pan an order nobody gave.
+ * So a click is a question - this place, which of these agents? - and the panel is where it is
+ * answered.
+ */
+const picked = ref<Picked | null>(null)
+
+/**
+ * The agents this click could be about: in the game, in this world, and ours to move.
+ *
+ * The one the map was opened on comes first when there is one. A link that says "show me where this
+ * is" is a link somebody followed while watching that agent, so it is the one they mean.
+ */
+const sendable = computed(() => {
+  if (!auth.can('agent.run')) return []
+
+  const here = shown.value.filter(isOnline)
+  const first = asked.value
+
+  return first && here.some((agent) => agent.id === first.id)
+    ? [first, ...here.filter((agent) => agent.id !== first.id)]
+    : here
+})
+
+/**
+ * What the panel says it is about.
+ *
+ * A question mark where the height is, rather than a number. The map is drawn from what agents have
+ * walked past, so a blank corner is an ordinary thing to click - and what is being offered there is
+ * genuinely different: get to that column, at whatever height the ground is.
+ */
+const pickedAt = computed(() => {
+  const at = picked.value
+  if (!at) return ''
+  return at.y === null ? t('map.pickUncharted', { x: at.x, z: at.z }) : `${at.x}, ${at.y}, ${at.z}`
+})
+
+/**
+ * Who the click is about, kept while the panel is open.
+ *
+ * Several, because sending one agent somewhere and sending six are the same decision made once -
+ * and this is the screen that shows a fleet rather than an agent. Cleared with the panel, so the
+ * next click starts from nobody rather than from whoever the last one happened to be about.
+ */
+const sending = ref<number[]>([])
+
+const busy = ref(false)
+
+async function sendThere(): Promise<void> {
+  const at = picked.value
+  const who = [...sending.value]
+  if (!at || who.length === 0) return
+
+  // The middle of the block rather than its corner, which is where a body stands. The corner is
+  // shared by four columns and the search would round it to whichever one it liked.
+  //
+  // The height only when the map knows it. Left out, the agent is told to reach that column at
+  // whatever height the ground turns out to be - see `PathPointRequest` - which is the only honest
+  // instruction for ground nobody has walked.
+  const to = at.y === null ? { x: at.x + 0.5, z: at.z + 0.5 } : { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }
+
+  busy.value = true
+  let failed = 0
+
+  // One request each, and the failures counted rather than thrown: a fleet of six where the fifth
+  // host has gone away must still send the other five, and say how many did not go.
+  for (const id of who) {
+    try {
+      await agentStore.sendTo(id, [to])
+    } catch {
+      failed++
+    }
+  }
+
+  busy.value = false
+  picked.value = null
+  sending.value = []
+
+  // The generic notice rather than each failure's own words: the toast store speaks in message
+  // keys, and everything specific one could say - not online, building - is already why the agent
+  // was not offered. What is left is a host that went away between the two.
+  if (failed) toasts.notify('error', 'errors.sendTo', { params: { count: failed } })
+}
+
+/**
+ * Anywhere else is an unambiguous "not that, then" - the same rule the inventory panel follows.
+ *
+ * On the document and in the capture phase, because the point is the clicks this component never
+ * sees, including the one that lands back on the map itself.
+ */
+function close(): void {
+  picked.value = null
+  sending.value = []
+}
+
+/** The open panel, so a click can be asked whether it landed inside it. */
+const menu = ref<InstanceType<typeof ActionMenu> | null>(null)
+
+/**
+ * Whether the press now in flight was the one that put a panel away.
+ *
+ * **A click in the world does two things at once**, and that is why "click outside to close" looked
+ * broken: the panel was dismissed on the way down and a new one opened on the way up, at whatever
+ * the pointer happened to be over. The panel had closed - it just never stayed closed long enough to
+ * see.
+ *
+ * So a press either dismisses or picks, never both. The first click puts the panel away and the
+ * second one opens a new one, which is what dismissing means everywhere else in the interface.
+ *
+ * Set on every press that reaches the dismiss handler, which is all of them, so it can never be read
+ * stale by a later click.
+ */
+let dismissing = false
+
+/** A click that landed on the map, once it is known not to have been a dismissal or a pan. */
+function onPick(at: Picked): void {
+  if (dismissing) {
+    dismissing = false
+    return
+  }
+
+  picked.value = at
+}
+
+function elsewhere(event: PointerEvent): void {
+  dismissing = false
+
+  // Not while a request is in flight: the panel is what is being waited on, and taking it away
+  // mid-send would leave an operator watching nothing.
+  if (busy.value) return
+
+  // `composedPath` rather than `contains`, so a click on something the click handler removes - a
+  // checkbox, once the panel closes - is still recognised as having been inside.
+  const inside = menu.value?.root
+  if (inside && event.composedPath().includes(inside as EventTarget)) return
+
+  dismissing = picked.value !== null
+  close()
+}
+
+function dismiss(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && !busy.value) close()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', elsewhere, true)
+  document.addEventListener('keydown', dismiss)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', elsewhere, true)
+  document.removeEventListener('keydown', dismiss)
+})
+
+// A click that lands where nothing is charted has no height to send, and the map that opened the
+// panel can be panned out from under it.
+watch([server, world], () => close())
+
+/**
  * Appends to each trail as positions arrive.
  *
  * Only when the agent has actually moved: telemetry ticks whether or not anything changed, and a
@@ -592,12 +782,60 @@ const worldName = dimensionLabel
       :server="server"
       :dimension="world"
       :marks="marks"
+      :paths="paths"
+      @pick="onPick($event)"
     />
 
     <div v-else class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
       <MapIcon class="size-8 opacity-20" />
       <p class="max-w-md text-sm opacity-50">{{ t('map.unmapped') }}</p>
     </div>
+
+    <!--
+      Over the map, anchored where the click landed. Rendered here rather than inside `WorldMap`
+      because it is about the fleet: the map knows where the ground is and nothing at all about
+      which agents there are or who may move one.
+    -->
+    <ActionMenu
+      v-if="picked && sendable.length"
+      ref="menu"
+      placement="at"
+      :x="picked.px"
+      :y="picked.py"
+      :title="t('map.sendHere')"
+      :note="pickedAt"
+    >
+      <!-- Who to send. Its own list rather than the fleet picker: see AgentTargets. -->
+      <div class="w-64 max-w-[70vw] px-2 py-1.5">
+        <AgentTargets v-model="sending" :agents="sendable" />
+      </div>
+
+      <!--
+        Solid rather than soft, and the panel wide: this is the one thing the panel is for, and it
+        acts in the world. Everything else here is a choice about what it will act on.
+      -->
+      <button
+        type="button"
+        class="btn btn-primary btn-sm mx-2 mb-2 justify-center gap-2 shadow-sm"
+        :disabled="busy || sending.length === 0"
+        @click="sendThere()"
+      >
+        <span v-if="busy" class="loading loading-spinner loading-xs"></span>
+        <Footprints v-else class="size-4" />
+        {{ t('map.sendCount', { count: sending.length }) }}
+      </button>
+
+      <!--
+        Said rather than refused. The ground here has never been walked, so there is no height to
+        send - and the agent is told to reach the column instead, which is a real instruction and
+        not the same one, so it is worth a line.
+      -->
+      <template v-if="picked.y === null" #footer>
+        <span class="text-base-content/50 max-w-64 px-1 text-[0.65rem] leading-tight">
+          {{ t('map.pickNoGround') }}
+        </span>
+      </template>
+    </ActionMenu>
 
     <!--
       One panel, over the map rather than above it, built from the same card the rest of the app

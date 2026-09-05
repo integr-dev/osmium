@@ -54,12 +54,23 @@ class CommandSafetyTest {
     }
 
     @Test
+    fun `walking a builder away from its segment is refused`() {
+        // The same corruption as taking the stack out of its hand: the agent places the next block
+        // wherever it has ended up, and the failure surfaces minutes later as a wall with a hole in
+        // it, nowhere near the click that caused it.
+        assertTrue(CommandType.PATH_TO in CommandType.DISRUPTS_BUILDING)
+    }
+
+    @Test
     fun `stopping is not disrupting`() {
         // A disconnect ends the build cleanly - the segment goes back to the pool and somebody else
         // takes it - and an operator who presses it has decided to stop with the state in front of
         // them. Refusing that would be refusing to let them stop.
         assertTrue(CommandType.DISCONNECT !in CommandType.DISRUPTS_BUILDING)
         assertTrue(CommandType.DELETE_AGENT !in CommandType.DISRUPTS_BUILDING)
+        // And the one that calls a walking agent back. Refusing it would make the state an operator
+        // most wants out of the one they cannot leave.
+        assertTrue(CommandType.PATH_STOP !in CommandType.DISRUPTS_BUILDING)
     }
 
     @Test

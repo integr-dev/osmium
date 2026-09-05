@@ -1,3 +1,4 @@
+import type { Waypoint } from '../agent/path/navigator.ts'
 import type { Command, CommandBody } from './message.ts'
 import type { BlockPos } from './wire.ts'
 
@@ -133,6 +134,24 @@ function body(name: string, payload: Json): CommandBody {
         segmentId: num(payload, 'segmentId', 'payload.segmentId'),
       }
 
+    // The route, in order, with the destination last. An empty list is refused rather than read as
+    // "go nowhere": nothing means it, and a host that quietly did nothing would look like one that
+    // never got the command.
+    case 'path_to': {
+      const waypoints = payload['waypoints']
+      if (!Array.isArray(waypoints) || waypoints.length === 0) {
+        throw new MessageError("missing or ill-typed 'payload.waypoints'")
+      }
+
+      return {
+        type: 'path_to',
+        waypoints: waypoints.map((point, at) => waypoint(point, `payload.waypoints[${at}]`)),
+      }
+    }
+
+    case 'path_stop':
+      return { type: 'path_stop' }
+
     case 'delete_agent':
       return { type: 'delete_agent' }
 
@@ -151,6 +170,30 @@ function num(source: Json, key: string, path: string): number {
   const value = source[key]
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new MessageError(`missing or ill-typed '${path}'`)
   return value
+}
+
+/**
+ * Somewhere to go, which may name a column rather than a point.
+ *
+ * **An absent `y` is a value, not an omission.** It says the height is unknown - a spot picked off
+ * a part of the map nobody has charted - and the agent is to get to that column at whatever height
+ * the ground turns out to be. Defaulting it to zero here would send an agent to the bottom of the
+ * world, which is a destination nobody ever means.
+ */
+function waypoint(source: unknown, path: string): Waypoint {
+  if (typeof source !== 'object' || source === null) throw new MessageError(`missing or ill-typed '${path}'`)
+  const raw = source as Json
+
+  const y = raw['y']
+  if (y !== undefined && y !== null && (typeof y !== 'number' || !Number.isFinite(y))) {
+    throw new MessageError(`missing or ill-typed '${path}.y'`)
+  }
+
+  return {
+    x: num(raw, 'x', path),
+    ...(typeof y === 'number' ? { y } : {}),
+    z: num(raw, 'z', path),
+  }
 }
 
 function blockPos(source: unknown, path: string): BlockPos {

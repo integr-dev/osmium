@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, type Component, type WritableComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Blocks, Check, MessageSquare, Plug, RotateCcw, SlidersHorizontal, Users, Wrench } from 'lucide-vue-next'
+import { Blocks, Check, Footprints, MessageSquare, Plug, RotateCcw, SlidersHorizontal, Users, Wrench } from 'lucide-vue-next'
 import {
   groupLabel,
   optionLabel,
@@ -52,6 +52,9 @@ const ICONS: Record<string, Component> = {
   chat: MessageSquare,
   mc: Blocks,
   util: Wrench,
+  // The same glyph the Go button and the audit trail use, so the three places that mean
+  // "movement" are recognisable as one another.
+  path: Footprints,
   connect: Plug,
   players: Users,
 }
