@@ -126,7 +126,7 @@ function widened(hull: Box, gap: number): Box {
 }
 
 /** Whether two boxes genuinely overlap. Touching is not overlapping. */
-function overlaps(hull: Box, box: Box): boolean {
+export function overlaps(hull: Box, box: Box): boolean {
   return (
     hull.maxX - box.minX > LEAST &&
     box.maxX - hull.minX > LEAST &&

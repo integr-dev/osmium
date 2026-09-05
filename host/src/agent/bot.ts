@@ -8,7 +8,7 @@ import pathfinder from 'mineflayer-pathfinder'
 import { Vec3 as WorldVec } from 'vec3'
 
 import { type Endpoint, locate } from './address.ts'
-import { type Box, CLEARANCE, freed, hullAt, HULL_HEIGHT, HULL_WIDTH } from './unembed.ts'
+import { type Box, CLEARANCE, freed, hullAt, HULL_HEIGHT, HULL_WIDTH, overlaps } from './unembed.ts'
 import { AgentNavigator, type Waypoint } from './path/navigator.ts'
 import { type PathSettings, pathSettingsFrom } from './path/settings.ts'
 import { type Component, componentsOf } from './chat.ts'
@@ -787,6 +787,7 @@ export class Agent {
 
     unscaleVelocity(bot, this.id, () => ({ take: this.takeKnockback, correct: this.knockback }))
     keepOutOfBlocks(bot, this.id)
+    placeBlocksProperly(bot, this.id)
   }
 
   /** Settles one session, whichever of the several endings arrived first. */
@@ -2127,6 +2128,204 @@ function keepOutOfBlocks(bot: Bot, id: number): void {
       `Agent ${id} was resting on a block face and was moved ${out.by.toFixed(4)} blocks clear, to ` +
         `${out.at.x.toFixed(3)} ${out.at.y.toFixed(3)} ${out.at.z.toFixed(3)}`,
     )
+  })
+}
+
+/**
+ * The six faces of a block, in the order the protocol numbers them.
+ *
+ * A placement names the block it was aimed at and which of its faces; the block that appears is one
+ * step off that face. The same table as mineflayer's `vectorToDirection`, read the other way.
+ */
+const FACES = [
+  { x: 0, y: -1, z: 0 },
+  { x: 0, y: 1, z: 0 },
+  { x: 0, y: 0, z: -1 },
+  { x: 0, y: 0, z: 1 },
+  { x: -1, y: 0, z: 0 },
+  { x: 1, y: 0, z: 0 },
+] as const
+
+/**
+ * How long after the server says it has processed a placement to wait for the block to appear.
+ *
+ * The change confirming a placement lands within a tick or two of the acknowledgement - they are the
+ * same round trip. Well past that and no block has arrived, the answer was no.
+ */
+const SETTLED_MS = 400
+
+/**
+ * Settles a placement on what the server actually did, rather than on waiting for a timeout.
+ *
+ * **The acknowledgement is not a yes.** From 1.19 a placement carries a sequence number and is
+ * answered with `acknowledge_player_digging`, which says only "everything up to here is processed".
+ * A refused placement is acknowledged exactly like an accepted one - a real client uses it to *drop*
+ * the guesses the server has not confirmed, not to keep them. Writing the block on it invents one:
+ * the tower is four high for the agent and three for everyone else, and it stands on the difference.
+ *
+ * **So it is read the other way round.** The acknowledgement says the answer is in, and the block
+ * either turned up or it did not. If it did, mineflayer's own wait has already ended and there is
+ * nothing to do. If it did not, the placement failed, and saying so now costs a fraction of a second
+ * instead of the five seconds `place_block.js` spends waiting for an update that is never coming.
+ *
+ * Nothing here writes to the world. What the agent believes about the world stays exactly what the
+ * server told it.
+ */
+function placeBlocksProperly(bot: Bot, id: number): void {
+  /** Where the placement now in flight was aimed, once the gate has vouched for it. */
+  let aimed: WorldVec | undefined
+  /** How to tell the pending placement it failed. Present only while one is in flight. */
+  let giveUp: (() => void) | undefined
+  let vouched = false
+
+  const answers = bot.supportFeature('blockPlaceHasInsideBlock')
+
+  if (answers) {
+    const client = bot._client as unknown as {
+      write(name: string, params: unknown): void
+      on(name: string, handler: () => void): void
+    }
+    const send = client.write.bind(client)
+
+    client.write = (name: string, params: unknown) => {
+      // Only a placement the gate cleared. Anything else is somebody else's business.
+      if (name === 'block_place') aimed = vouched ? aimedAt(params) : undefined
+      send(name, params)
+    }
+
+    client.on('acknowledge_player_digging', () => {
+      const at = aimed
+      const tell = giveUp
+      if (!at || !tell) return
+
+      setTimeout(() => {
+        // Somebody else's placement by now, or the block turned up after all.
+        if (aimed !== at || giveUp !== tell) return
+        if (bot.blockAt(at)?.boundingBox !== 'empty') return
+
+        log.debug(`Agent ${id} was not given the block it asked for at ${at.x} ${at.y} ${at.z}`)
+        tell()
+      }, SETTLED_MS)
+    })
+  }
+
+  bot.once('inject_allowed', () => {
+    const place = bot.placeBlock?.bind(bot)
+    if (!place) return
+
+    bot.placeBlock = async (reference, face) => {
+      await roomFor(bot, reference.position.plus(face), id)
+
+      vouched = true
+
+      const sent = place(reference, face)
+      // Answered by the race below rather than by Node: a rejection arriving after the race has
+      // settled has nobody waiting on it, and an unhandled one takes the process down.
+      sent.catch(() => {})
+
+      const refused = new Promise<never>((_, reject) => {
+        giveUp = () => reject(new Error('the server did not place it'))
+      })
+      refused.catch(() => {})
+
+      try {
+        return await Promise.race([sent, refused])
+      } finally {
+        vouched = false
+        aimed = undefined
+        giveUp = undefined
+      }
+    }
+  })
+}
+
+/** Where a placement request would put a block, from the packet as it goes out. */
+function aimedAt(params: unknown): WorldVec | undefined {
+  const request = params as { location?: { x: number; y: number; z: number }; direction?: number }
+  const face = FACES[request.direction ?? -1]
+  if (!request.location || !face) return undefined
+
+  return new WorldVec(request.location.x + face.x, request.location.y + face.y, request.location.z + face.z)
+}
+
+/**
+ * How many ticks a placement waits for the agent to get out of its own way.
+ *
+ * A jump is airborne for about eleven and a whole block clear for seven of them, so anything that
+ * has not come clear in twenty was never going to.
+ */
+const PLACE_TICKS = 20
+
+/**
+ * Whether the agent's own body is in the way of a block going in at `at`.
+ *
+ * **The acknowledgement is not a yes.** It carries a sequence number and nothing else: it says the
+ * server has processed everything up to that point, which is what lets a real client stop holding
+ * on to its guesses - a client uses it to *drop* a misprediction, not to commit one. A refused
+ * placement is acknowledged exactly like an accepted one.
+ *
+ * So the one refusal worth predicting is the one that is certain, and for a tower it is the whole
+ * problem: nobody may place a block inside themselves. Upstream asks for the block under its feet as
+ * soon as a jump has left the ground at all, which is 0.42 blocks up while the hull still fills
+ * three quarters of the square. The server says no, the acknowledgement comes back anyway, and
+ * writing it puts a block inside the agent - which is then shoved out of it, cannot jump properly,
+ * and asks for the same block again.
+ */
+function standingIn(bot: Bot, at: WorldVec): boolean {
+  const stood = bot.entity?.position
+  if (!stood) return false
+
+  return overlaps(hullAt({ x: stood.x, y: stood.y, z: stood.z }), {
+    minX: at.x,
+    minY: at.y,
+    minZ: at.z,
+    maxX: at.x + 1,
+    maxY: at.y + 1,
+    maxZ: at.z + 1,
+  })
+}
+
+/**
+ * Settles on the first tick the agent is not in the way of the block at `at`.
+ *
+ * Gives up rather than waiting for ever, and says why: a placement still blocked after a jump's
+ * worth of ticks is not waiting on an arc, and how far the agent rose is what tells the two apart.
+ * A jump is 1.25 blocks and the square needs 1, so anything short of that never left the ground.
+ */
+function roomFor(bot: Bot, at: WorldVec, id: number): Promise<void> {
+  if (!standingIn(bot, at)) return Promise.resolve()
+
+  const from = bot.entity?.position.y ?? 0
+  let most = from
+
+  return new Promise((resolve, reject) => {
+    let ticks = 0
+
+    const watch = (): void => {
+      most = Math.max(most, bot.entity?.position.y ?? most)
+
+      if (!standingIn(bot, at)) {
+        bot.removeListener('physicsTick', watch)
+        resolve()
+        return
+      }
+
+      if (++ticks < PLACE_TICKS) return
+
+      bot.removeListener('physicsTick', watch)
+      log.debug(
+        `Agent ${id} never got clear of ${at.x} ${at.y} ${at.z} in ${PLACE_TICKS} ticks, so it did ` +
+          `not ask to place there: it rose ${(most - from).toFixed(3)} blocks at its highest, ` +
+          `${bot.entity?.onGround ? 'on the ground' : 'airborne'}, ` +
+          `${bot.getControlState('jump') ? 'holding jump' : 'not holding jump'}, ` +
+          `moving ${(bot.entity?.velocity.y ?? 0).toFixed(4)} vertically, ` +
+          `head in ${bot.blockAt(new WorldVec(at.x, at.y + 2, at.z))?.name ?? 'unknown'}, ` +
+          `feet on ${bot.blockAt(new WorldVec(at.x, at.y - 1, at.z))?.name ?? 'unknown'}`,
+      )
+      reject(new Error('the agent is standing where the block would go'))
+    }
+
+    bot.on('physicsTick', watch)
   })
 }
 
