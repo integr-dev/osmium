@@ -19,22 +19,78 @@ const require = createRequire(import.meta.url)
 const here = path.dirname(fileURLToPath(import.meta.url))
 const out = path.resolve(here, '../public/viewer')
 
-/**
- * The versions the viewer can render.
- *
- * One entry per *major* is enough: prismarine-viewer resolves an unknown patch to the newest one it
- * holds of the same major, so `1.21.9` finds `1.21.4`. A major with no entry at all resolves to
- * nothing and the viewer refuses to start, which is why the list is explicit rather than inferred -
- * a fleet on a major nobody staged should fail loudly at build time, not per browser.
- */
-const VERSIONS = (process.env['OSMIUM_VIEWER_VERSIONS'] ?? '1.21.4,26.1').split(',').map((v) => v.trim())
-
 /** Entities are rendered at a fixed version upstream, so only that one's textures are needed. */
 const ENTITY_VERSION = '1.16.4'
 
 const force = process.argv.includes('--force')
 const viewerRoot = path.dirname(require.resolve('prismarine-viewer/package.json'))
 const shipped = path.join(viewerRoot, 'public')
+
+/**
+ * The versions the viewer can render.
+ *
+ * One entry per *major* is enough: prismarine-viewer resolves an unknown patch to the newest one it
+ * holds of the same major, so `1.21.9` finds `1.21.4`. A major with no entry at all resolves to
+ * nothing and the viewer refuses to start.
+ *
+ * **Everything upstream ships, plus whatever has to be generated.** This was two versions, which was
+ * enough for a fleet playing where it usually plays and wrong the moment anybody pinned
+ * `mc.version` to something else - and pinning it is exactly what an operator does when a server
+ * misreports its protocol, which is the case the setting exists for. Staging a version upstream
+ * already has is a file copy out of `node_modules`; only one newer than upstream's newest costs the
+ * ~14 MB of building an atlas.
+ *
+ * Read off upstream's own directory rather than written out here, for the reason
+ * {@link versionsHardcodedInRenderer} is read out of its source: a list copied to this file goes
+ * stale the first time upstream adds a release, and goes stale silently.
+ */
+const GENERATED = ['26.1']
+
+/**
+ * The prebuilt majors worth staging, newest last.
+ *
+ * **Not simply everything upstream ships.** Staging runs the same post-processing over every
+ * version, and some of it needs blocks that did not exist yet: `boxBlockEntities` builds the chest
+ * and shulker models, shulker boxes arrive in 1.11, and 1.10.2 fails the build outright. Rather than
+ * teach every pass how to be absent, the floor is drawn where the script works and where an operator
+ * might plausibly pin a fleet. Measured rather than guessed: 1.17.1 and older fail one pass or another
+ * - 1.10.2 has no shulker boxes to model and 1.16.4 leaves a modelled block with no map colour - and
+ * 1.18.1 up all stage clean.
+ *
+ * Named rather than read off upstream's directory, because which of those the rest of this file can
+ * actually process is a fact about this file. Checked against that directory below, so a version
+ * upstream renames fails the build instead of going quietly missing.
+ */
+const PREBUILT = ['1.18.1', '1.19', '1.20.1', '1.21.1', '1.21.4']
+
+/** What upstream actually has, so the list above cannot drift away from it in silence. */
+function shippedVersions() {
+  const states = path.join(shipped, 'blocksStates')
+  if (!existsSync(states)) return []
+
+  return readdirSync(states)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => name.slice(0, -'.json'.length))
+}
+
+function defaultVersions() {
+  const available = new Set(shippedVersions())
+  const missing = PREBUILT.filter((version) => !available.has(version))
+
+  if (missing.length) {
+    throw new Error(
+      `viewer-assets: prismarine-viewer no longer ships ${missing.join(', ')}. ` +
+        'Update PREBUILT to what it has now.',
+    )
+  }
+
+  return [...PREBUILT, ...GENERATED]
+}
+
+const VERSIONS = (process.env['OSMIUM_VIEWER_VERSIONS'] ?? defaultVersions().join(','))
+  .split(',')
+  .map((version) => version.trim())
+  .filter((version) => version.length > 0)
 
 /**
  * Versions the renderer reads regardless of what is being rendered.
@@ -78,6 +134,39 @@ function needed(target) {
   return force || !existsSync(target)
 }
 
+/** Records which versions the worker on disk was built for. See {@link staleWorker}. */
+const WORKER_STAMP = 'worker.versions.json'
+
+/**
+ * Whether the meshing worker has to be built again.
+ *
+ * **Existing is not the same as being current**, and this is the one artifact where the difference
+ * bites. Every other file here is per version, so a version that has not been staged simply has no
+ * file and `needed` answers correctly. The worker is one bundle for all of them: `onlyMeshingData`
+ * strips `minecraft-data` down to what meshing reads *of the versions being staged*, so adding a
+ * version leaves a worker on disk that is present, valid, and missing the data for it.
+ *
+ * What that looks like is not a missing file. The worker starts, takes its `version` message,
+ * throws inside it where nobody is listening, and leaves its world null - so the first section to be
+ * meshed fails with `Cannot read properties of null (reading 'getColumn')`, several messages later,
+ * inside a Web Worker, naming nothing that has anything to do with versions.
+ *
+ * So the versions it was built for are written down beside it, and a change to the list rebuilds it.
+ */
+function staleWorker() {
+  if (needed(staged('worker.js'))) return true
+
+  const stamp = staged(WORKER_STAMP)
+  if (!existsSync(stamp)) return true
+
+  try {
+    const built = JSON.parse(readFileSync(stamp, 'utf8'))
+    return JSON.stringify(built) !== JSON.stringify(VERSIONS)
+  } catch {
+    return true
+  }
+}
+
 function copy(from, to) {
   mkdirSync(path.dirname(to), { recursive: true })
   cpSync(from, to, { recursive: true })
@@ -96,7 +185,7 @@ function copy(from, to) {
  * meshing does not read left out - and this is a bundler the project can carry as one devDependency.
  */
 async function stageWorker() {
-  if (!needed(staged('worker.js'))) return
+  if (!staleWorker()) return
 
   const esbuild = await import('esbuild')
   await esbuild.build({
@@ -121,9 +210,10 @@ async function stageWorker() {
     plugins: [onlyMeshingData(), stub('zlib'), upstreamPatches()],
     logLevel: 'error',
   })
-  console.log('viewer-assets: built worker.js')
+  console.log(`viewer-assets: built worker.js for ${VERSIONS.join(', ')}`)
   await verifyMeshingData(esbuild)
   verifyWorker()
+  writeFileSync(staged(WORKER_STAMP), JSON.stringify(VERSIONS))
 }
 
 /**
