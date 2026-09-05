@@ -120,6 +120,10 @@ interface Scene {
   lastAt?: { x: number; y: number; z: number }
   /** Where it was on the last followed frame, which is what a step is measured from. */
   followed?: { x: number; y: number; z: number }
+  /** Where the body is actually drawn, which trails {@link position} rather than snapping to it. */
+  shown?: { x: number; y: number; z: number; yaw: number }
+  /** When the last frame was drawn, so the trailing does not depend on the frame rate. */
+  drawnAt?: number
   /**
    * The world's vertical range, as the current stream stated it.
    *
@@ -1519,6 +1523,57 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
  * away from a walking agent to look at something.
  */
 /**
+ * How long the drawn position takes to cover most of the distance to the reported one.
+ *
+ * Positions arrive coalesced onto a tenth of a second and the view redraws sixty times a second, so
+ * an agent drawn where it was last said to be moves in six visible jerks a second - and in follow
+ * mode the whole world jerks with it. A little longer than the gap between updates: any shorter and
+ * the catching up finishes before the next one lands, which is the stepping back again.
+ */
+const SETTLE_MS = 120
+
+const TAU = Math.PI * 2
+
+/** An angle folded into the half turn either side of straight ahead. */
+function shortestTurn(angle: number): number {
+  return ((((angle + Math.PI) % TAU) + TAU) % TAU) - Math.PI
+}
+
+/**
+ * Moves the drawn position a little of the way towards the reported one.
+ *
+ * **Per millisecond, not per frame.** The same fraction of the remaining distance every frame
+ * smooths twice as hard on a 120Hz screen as on a 60Hz one, which is a look that depends on the
+ * monitor. Taking the elapsed time through an exponential gives the same motion on both.
+ *
+ * A jump is not a walk: a correction bigger than anything an agent could have travelled between two
+ * updates is drawn where it actually is, so a teleport does not sail across the world.
+ */
+function settle(current: Scene, now: number): void {
+  const at = current.position?.pos
+  const yaw = current.position?.yaw
+  if (!at || yaw === undefined) return
+
+  const before = current.drawnAt
+  current.drawnAt = now
+
+  const shown = current.shown
+  if (!shown || before === undefined || Math.hypot(at.x - shown.x, at.y - shown.y, at.z - shown.z) > TELEPORT) {
+    current.shown = { x: at.x, y: at.y, z: at.z, yaw }
+    return
+  }
+
+  const step = 1 - Math.exp(-(now - before) / SETTLE_MS)
+
+  shown.x += (at.x - shown.x) * step
+  shown.y += (at.y - shown.y) * step
+  shown.z += (at.z - shown.z) * step
+  // The short way round. Yaw wraps, so a turn from just under a half circle to just over it would
+  // otherwise be drawn as most of a full one.
+  shown.yaw += shortestTurn(yaw - shown.yaw) * step
+}
+
+/**
  * Carries the free camera along with the agent.
  *
  * **By the step the agent took, rather than to a fixed place behind it.** Setting the camera to an
@@ -1530,7 +1585,10 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
  * stepped from - so the camera stays where it is and simply starts pointing at the agent.
  */
 function followAgent(current: Scene): void {
-  const at = current.position?.pos
+  // The drawn position rather than the reported one, so the camera moves with the body it is
+  // watching. Following the reported one would step the whole world six times a second under an
+  // agent that is gliding, which is worse than either on its own.
+  const at = current.shown
   if (!at) return
 
   const before = current.followed
@@ -1674,12 +1732,25 @@ function showAgent(current: Scene): void {
     if (tag) built.add(tag)
   }
 
-  current.body.position.set(pos.x, pos.y, pos.z)
-  current.body.rotation.y = yaw
-
-  // Every frame the agent moves, so its own label keeps up with its own vitals the way the others
-  // do.
+  // Every update the agent moves, so its own label keeps up with its own vitals the way the others
+  // do. Not per frame: it redraws a canvas, and sixty of those a second is a texture upload for a
+  // number that changes once a second.
   labelOne(current, current.body, agent.value?.mcUsername ?? undefined, 'ours')
+}
+
+/**
+ * Puts the body where it is drawn, which is a frame's job rather than an update's.
+ *
+ * Split off {@link showAgent} because the two run at different rates. Building the mesh, fetching
+ * the skin and redrawing the label belong to an update; where it stands belongs to the frame, or
+ * the smoothing in {@link settle} would have nothing to show for itself.
+ */
+function placeAgent(current: Scene): void {
+  const shown = current.shown
+  if (!current.body || !shown) return
+
+  current.body.position.set(shown.x, shown.y, shown.z)
+  current.body.rotation.y = shown.yaw
 }
 
 /**
@@ -2028,6 +2099,9 @@ async function mount(world: { version: string; minY?: number; height?: number },
   const draw = () => {
     built.frame = requestAnimationFrame(draw)
     if (!firstPerson.value) {
+      settle(built, performance.now())
+      placeAgent(built)
+
       // Before `update`, which is what applies the target to the camera. After it, the frame would
       // be drawn one step behind and the agent would sit slightly off centre the whole way.
       if (follow.value) followAgent(built)
