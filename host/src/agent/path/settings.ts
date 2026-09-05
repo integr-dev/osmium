@@ -46,7 +46,19 @@ export const MOST_RANGE = 512
 /** Vanilla's own safe step-off: four blocks is where fall damage starts. */
 export const DEFAULT_DROP = 3
 
-export const MOST_DROP = 16
+/**
+ * The furthest a drop may be set to, which is the whole world rather than a judgement.
+ *
+ * **Sixteen was ours and it was wrong.** An operator who writes a hundred here has said something
+ * definite - usually because no-fall is on and the drop costs nothing - and quietly holding them to
+ * sixteen makes the agent refuse routes for a reason nothing reports. The two settings do not know
+ * about each other, so this number is the only thing deciding, and it should mean what it says.
+ *
+ * A world is 384 blocks tall from the bottom of the overworld to the build limit, so the cap stops
+ * being reachable inside one; it is here to keep a typo from becoming an infinity, not to have an
+ * opinion about heights.
+ */
+export const MOST_DROP = 384
 
 /**
  * Everything under `path.`, from the flat map the backend relays.
