@@ -81,9 +81,70 @@ export function movementsFor(bot: Bot, wanted: PathSettings, avoid: readonly Ref
   // up, which is the same permission spent on a different shape; leaving it on with nothing to place
   // from would be a route planned around materials the agent has not got.
   movements.allow1by1towers = wanted.bridge
-  if (!wanted.bridge) movements.scafoldingBlocks = []
+  movements.scafoldingBlocks = wanted.bridge ? buildableWith(bot) : []
 
   return movements
+}
+
+/**
+ * Blocks that are a full cube and still no good to build with.
+ *
+ * Each of these would be picked up by the rule below and then let the agent down in its own way, so
+ * they are named rather than reasoned about.
+ */
+const AWKWARD = new Set([
+  // Slippery. An agent slides off the pillar it is standing on, which is the one place it cannot
+  // afford to.
+  'ice',
+  'packed_ice',
+  'blue_ice',
+  'frosted_ice',
+  // A jump off these is not a jump, so none of the arithmetic a tower depends on holds.
+  'slime_block',
+  'honey_block',
+  // Hurts to stand on, and a tower is a lot of standing.
+  'magma_block',
+  // A full box that is not a full height: the agent lands lower than it planned to.
+  'soul_sand',
+])
+
+/**
+ * What the agent may build with, as item ids.
+ *
+ * **Upstream's list is dirt and cobblestone and nothing else.** So an agent carrying two hundred
+ * wool and nothing else reports that it has nothing left to build with and gives up on the route,
+ * which is a strange thing to say while standing on a stack of the stuff.
+ *
+ * What matters is not what the block is called. It has to be a full cube, so the agent can stand on
+ * it and jump off it, and it has to behave like one once it is down. **One block state is the cheap
+ * test for the first**: a slab, a set of stairs, a chest and a log all carry states that change
+ * their shape, and a block with a single state has a single shape. It turns down a few blocks that
+ * would have done - logs and deepslate among them - and that is the right way round for a decision
+ * an unattended agent spends somebody else's inventory on.
+ *
+ * **Upstream's two stay at the front**, because the order is the order they are reached for: dirt
+ * and cobblestone are what a player fills a spare slot with precisely because losing them costs
+ * nothing, and an agent that pillars up through somebody's wool when it has dirt on it has spent
+ * the wrong thing.
+ */
+function buildableWith(bot: Bot): number[] {
+  const registry = bot.registry
+  const first: number[] = []
+  const rest: number[] = []
+
+  for (const block of registry.blocksArray) {
+    if (block.boundingBox !== 'block') continue
+    if (block.minStateId !== block.maxStateId) continue
+    if (AWKWARD.has(block.name)) continue
+
+    const item = registry.itemsByName[block.name]
+    if (!item) continue
+
+    if (block.name === 'dirt' || block.name === 'cobblestone') first.push(item.id)
+    else rest.push(item.id)
+  }
+
+  return [...first, ...rest]
 }
 
 /**

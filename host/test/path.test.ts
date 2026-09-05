@@ -123,6 +123,44 @@ describe('movementsFor', () => {
     expect(allowed.scafoldingBlocks.length).toBeGreaterThan(0)
   })
 
+  /**
+   * Upstream offers dirt and cobblestone. An agent carrying nothing but wool would be told it has
+   * nothing left to build with, on a stack of two hundred blocks.
+   */
+  describe('what it will build with', () => {
+    const registry = registryFor('1.20.4')
+    const allowed = movementsFor(fakeBot(), pathSettingsFrom({ 'path.bridge': 'true' })).scafoldingBlocks
+    const named = (name: string) => allowed.includes(registry.itemsByName[name]!.id)
+
+    it('takes any full block it is carrying', () => {
+      expect(named('white_wool')).toBe(true)
+      expect(named('oak_planks')).toBe(true)
+      expect(named('white_concrete')).toBe(true)
+      expect(named('stone')).toBe(true)
+      expect(named('glass')).toBe(true)
+    })
+
+    /** Nothing an agent could stand on the wrong part of, or fail to jump from. */
+    it('leaves out what is not a full cube', () => {
+      expect(named('oak_slab')).toBe(false)
+      expect(named('oak_stairs')).toBe(false)
+      expect(named('chest')).toBe(false)
+    })
+
+    it('leaves out the full cubes that would still let it down', () => {
+      expect(named('ice')).toBe(false)
+      expect(named('slime_block')).toBe(false)
+      expect(named('magma_block')).toBe(false)
+    })
+
+    /** The order is the order they are reached for, and these are the ones worth losing. */
+    it('reaches for dirt and cobblestone first', () => {
+      expect(allowed.slice(0, 2).sort()).toEqual(
+        [registry.itemsByName['dirt']!.id, registry.itemsByName['cobblestone']!.id].sort(),
+      )
+    })
+  })
+
   it('carries the sprint anti-hunger decided', () => {
     expect(movementsFor(fakeBot(), pathSettingsFrom({})).allowSprinting).toBe(true)
     expect(movementsFor(fakeBot(), pathSettingsFrom({ 'util.antiHunger': 'careful' })).allowSprinting).toBe(false)
