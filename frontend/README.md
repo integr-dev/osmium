@@ -1346,6 +1346,34 @@ falls through to a box sized from a width and height that a movement update does
 Those are filtered out rather than shown as the magenta box upstream substitutes. Entity *models*
 are no longer among them: the six that could not be assembled now build — see above.
 
+### Sending an agent somewhere
+
+A click on the map or in the 3D view opens the same panel an inventory square opens — `ActionMenu`,
+which grew out of that one rather than being invented beside it. It names the coordinate before
+anything happens, because a map is dragged and zoomed far more often than it is pointed at, and a
+click that sent an agent walking would make every misjudged pan an order nobody gave.
+
+**A press either dismisses or picks, never both.** The first click puts an open panel away and the
+second opens one somewhere new. Doing both at once is why "click outside to close" appeared not to
+work at all: the panel closed on the way down and a new one opened on the way up, at whatever the
+pointer happened to be over.
+
+The 3D view raycasts against the world's own section meshes and nothing else. Casting at the whole
+scene would hit the bodies, the nametags, the boxes around players and the path lines — and the last
+three draw with depth testing off, so a click near an agent would answer with a point floating in
+front of it.
+
+The map reads the destination's height out of the same heightmap the shading is drawn from. Where
+nothing has been charted there is no height to send, and the agent is told to reach that *column* at
+whatever height the ground turns out to be — which is a real instruction, not a refusal.
+
+### Paths are drawn in both views
+
+Remaining solid, walked faint, a hollow square at the destination. On the map, **segments more than
+three blocks off the agent's own height are dashed**: a view from above draws a route over a
+mountain and a route through a tunnel identically, and that becomes a loud lie as soon as an agent
+can fly. In the 3D view they reuse the same `LineSegments2` machinery the ESP boxes already use.
+
 ## The map
 
 The ground the fleet has charted, at `/map`, drawn one pixel per block column — vanilla's zoom

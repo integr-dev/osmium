@@ -336,6 +336,11 @@ one would otherwise run on defaults with nothing saying so.
 | `util.antiHunger` | `careful`, `spoof`, or unset for off. Exhaustion is charged by distance at a rate that depends on whether the server believes the agent is sprinting. `careful` gives up the sprint. `spoof` keeps the speed and drops the packet that declares it. Read per packet and per tick. |
 | `util.noFall` | `true` to report standing on the ground on every movement packet that says otherwise, which resets the fall distance the server accumulates. Read per packet. |
 | `util.fleeDistance` | Blocks. A player who is not on `players.whitelist` coming this close makes the agent raise a `system`/`error` activity entry, send `stand_down`, and leave. Blank or anything that is not a positive number is off. The agent's own account is not a stranger to it; **every other agent in the fleet is**, so agents sharing a server go on each other's lists. |
+| `path.range` | How far from the agent a route may be searched for, in blocks. A search cannot see past the chunks the server has sent — a dozen wide at most — so a larger number does not find longer routes, it spends the search on ground the host has not got. Unset means 128. |
+| `path.dig` | `true` to break blocks to get through rather than going round. Off by default, and deliberately: an unattended agent that tunnels through somebody's wall to save nine blocks has done something the operator cannot undo and did not ask for. |
+| `path.bridge` | `true` to place blocks from its own inventory to cross a gap or pillar up. Only what it is carrying, so an empty inventory is the same as off. |
+| `path.parkour` | `true` to take running jumps across gaps instead of walking round. Quicker and less reliable; a missed jump near lava is the end of the session. |
+| `path.maxDrop` | The furthest the agent will step off, in blocks. Four is where fall damage starts, so the default of three is the drop that costs nothing. |
 | `connect.proxy` | The name of one of this host's proxies — see **Proxies** below. Blank connects from this machine's own address. A name this host does not hold is **not** a fallback to a direct connection: the attempt is refused, an activity entry says why, and the agent reports `failed_connection`. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
 
@@ -602,6 +607,40 @@ and the one index in this protocol is `held` on the `inventory` event (§4.7), w
 game itself defines as one. Translate at the edge; do not let either numbering leak into the other.
 
 Report nothing. The new hand goes out as `held` on the next `inventory` event.
+
+### `path_to`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "path_to", "agentId": 42,
+  "payload": { "waypoints": [ { "x": 128, "y": 64, "z": -340 } ] } }
+```
+
+Fire and forget. Walk to the last waypoint, by way of the ones before it.
+
+**A list, not a point.** The interface sends one entry; a route worked out from the map tiles the
+fleet has already charted sends the shape of a journey no host's loaded chunks can see all of at
+once. Walk them in order and report arrival only at the last.
+
+**`y` is optional, and leaving it out means something.** A destination picked off a part of the map
+nobody has charted has no height to give, and the agent should reach that *column* at whatever height
+the ground turns out to be. Do not default it to zero; that is the bottom of the world.
+
+Refuse it for an agent that is not in a world — a route is about the world it is standing in, and one
+held for a session that has not started would be walked in whichever world it eventually joins. It is
+also refused while the agent is holding a build segment: walking a builder away leaves it placing the
+next block wherever it ended up.
+
+What came of it arrives as `path` events (§4.8), because how it gets there is yours to decide.
+
+### `path_stop`
+
+```jsonc
+{ "id": "cmd-…", "kind": "command", "type": "path_stop", "agentId": 42, "payload": {} }
+```
+
+Stop where you are. Not an error for an agent going nowhere — it says stop, which having stopped
+already satisfies — and never refused, including while building. The one command that undoes a
+journey must not be the one that is unavailable when it is most wanted.
 
 ### `delete_agent`
 
@@ -1147,14 +1186,64 @@ clock on it, deliberately — see the Charting section's neighbour in FLEET_CONN
 
 ### Commands wait for a build
 
-A host that is holding a segment refuses `run`, `disconnect` and `reconnect` from chat. `run` hands
+A host that is holding a segment refuses `run`, `disconnect`, `reconnect` and `goto` from chat. `run` hands
 whoever typed it an arbitrary server command, so a `/tp` from a trusted player takes a builder off
 its box mid-segment; the other two end the session under it. Everything else only reads or talks.
 
 **Silently, like every other refusal here.** Answering would tell the room that the account is a bot
 with work queued, which is the thing §5.1 spends its length avoiding.
 
-## 4.8 Proxies
+## 4.8 Where an agent is going
+
+```jsonc
+{ "kind": "event", "type": "path", "agentId": 42,
+  "payload": { "state": "moving", "dimension": "overworld",
+               "goal": { "x": 128, "y": 64, "z": -340 },
+               "nodes": [ { "x": 0.5, "y": 64, "z": 0.5 } ],
+               "progress": 0 } }
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `state` | yes | `planning`, `moving`, `arrived`, `failed` or `idle` |
+| `dimension` | no | so a map of somewhere else does not draw the line |
+| `goal` | no | where the journey ends; `y` absent means a column — see `path_to` |
+| `nodes` | no | the whole path, oldest first. **Absent means it has not changed** |
+| `progress` | no | how far along `nodes` the agent is |
+| `reason` | no | why it gave up, for `failed` |
+
+**Never stored.** A path is current by definition: an old position is still the only answer there is
+about where somebody was, and an old path is simply *wrong* about where somebody is going. The
+backend holds it in memory for as long as the journey lasts, so an agent that reconnects plans again
+rather than resuming.
+
+**`nodes` rides only the updates that redrew the line** — the first of a journey, and every re-plan
+after it. The ones in between carry `progress` alone, which is most of them: a few hundred points a
+second is bandwidth spent redrawing something that moved by one node.
+
+`idle` is both the resting state and what a stop reports. An agent going nowhere and an agent told
+to stop going somewhere are the same agent, and giving the second one a state of its own leaves an
+interface with a banner nothing ever clears.
+
+### Keep the hull off the faces it touches
+
+**The one thing about walking that is not obvious, and it is not optional.**
+`prismarine-physics` resolves a collision to `this.maxX - other.minX` — exactly touching, no
+epsilon — so a hull it stops always lands *dead on* the block boundary. Paper counts that as being
+inside the block and refuses the movement: `PlayerFailMoveEvent` reports `CLIPPED_INTO_BLOCK`, and
+the server sets the agent back to the last position it accepted, several times a second. That
+cancels jumps and knockback arcs alike, and from outside it is an agent welded to a wall, able to
+move only in the one direction with nothing in it.
+
+Vanilla accepts the same packets, which is why it only shows up on Paper — and a human player never
+trips it, because a real client's physics does not land exactly on the boundary either.
+
+So keep the hull a couple of millimetres clear of any face it would otherwise rest against.
+**Sideways only.** A hull rests on the floor with its underside flush against the top face, and
+lifting that leaves an agent hovering, never landing, never reading as grounded. Standing on
+something is not what gets refused; walking into it is.
+
+## 4.9 Proxies
 
 An agent can be routed through a proxy, chosen per agent by name. The names — and only the names —
 travel: what each one *is* lives in `OSMIUM_PROXIES` (default `/agent/proxies.json`) on this
@@ -1270,7 +1359,10 @@ from a newer Osmium must never quietly grant more than it says.
   is read as a list of one**, never as a tier guessed at — so `name:everything` from some future
   Osmium grants nothing here rather than silently falling back to chat. A command a host cannot name
   is refused, on any grant, which is what makes that safe.
-- **commands** — also `run`, `disconnect` and `reconnect`. `run` sends a server command under
+- **commands** — also `goto`, `run`, `disconnect` and `reconnect`. `goto <x> <y> <z>` walks the
+  agent somewhere and `goto stop` halts it; it is the one command here that answers on failure,
+  because "there is no route there" is the ordinary outcome of pointing across a ravine and an
+  operator standing in the world deserves to know which happened. `run` sends a server command under
   whatever permissions the agent's Minecraft account holds; on an operator account this is close to
   handing the account over, since whoever holds it can `/op` themselves and nothing here can tell
   that apart from an intended `/tp`.

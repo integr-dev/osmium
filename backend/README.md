@@ -908,6 +908,17 @@ the state. `HostReportService` splits the two halves on receipt, because they be
   repeating `ONLINE` every few seconds costs nothing.
 - **Telemetry** is a continuous sample. Taken from every report, kept in `AgentTelemetryStore`, and
   published on its own lightweight `telemetry` event rather than re-sending the whole agent.
+- **A journey** is the same shape again, in `AgentPathStore`, and kept out of Postgres for a stronger
+  reason than telemetry is. An old position is still the only answer there is about where somebody
+  was; an old path is simply *wrong* about where somebody is going. So it lives for exactly as long
+  as the journey does — the three states that end one clear the entry rather than replacing it — and
+  an agent that reconnects plans again rather than resuming.
+
+  Its updates are **merged, not replaced**. Most carry only how far along the agent has got: the line
+  itself rides the first update of a journey and every re-plan after it, because a few hundred points
+  a second is bandwidth spent redrawing something that moved by one node. What goes on the stream is
+  the update as it arrived — a browser merges it the same way, and sending the merge would undo the
+  saving.
 
 Treating them alike would give either an `agent` event per report — the whole resource, several
 times a minute per agent, to carry a few numbers — or vitals that only update when an agent

@@ -22,15 +22,17 @@ what needs attention, and what is being said in game.
 > everyone in view with their health — and where each of them *was*, kept past the moment they
 > went, so the map can say who was standing there an hour ago. An agent's connection can be routed
 > through one of its host's proxies, chosen by name, with the credential for it never leaving that
-> machine. An administrator can see what all of that costs on disk, and free it.
+> machine. **An agent can be sent somewhere** — clicked on the map or in the 3D view, typed as a
+> coordinate, or asked for in game — and the route it takes is drawn in both views as it walks. An
+> administrator can see what all of that costs on disk, and free it.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 605 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 476 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 371 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 627 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 485 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 440 tests |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
@@ -121,9 +123,9 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 605 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 476 tests
-cd host && npm test              # 371 tests
+cd backend && ./gradlew test     # 627 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 485 tests
+cd host && npm test              # 440 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
