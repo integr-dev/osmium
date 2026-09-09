@@ -35,6 +35,15 @@ export interface UtilityHooks {
   trusted: (name: string) => boolean
   /** Somebody it will not stand next to is here. Reported, and the session ended. */
   flee: (who: string, distance: number) => void
+  /**
+   * Whether the agent is partway through building something.
+   *
+   * Asked before housekeeping takes the hands. A tower is one job per rung and the queue only sees
+   * the rung it is on, so between two of them there is nothing queued and anything less important is
+   * free to step in - which it did, for the best part of a second, every third block, while the
+   * agent stood on a half-built pillar waiting to jump again.
+   */
+  building: () => boolean
 }
 
 /**
@@ -196,6 +205,18 @@ const STOCK_MAX = 32
  * half second.
  */
 const TICK = 500
+
+/**
+ * How long the hands are held after `/dupe` goes out, before anything else may touch them.
+ *
+ * **The command is fire and forget, and the plugin reads the hand when it runs it, not when it is
+ * sent.** Every check before it is about the hand at the moment of sending; the server looks a round
+ * trip later. Letting go in between hands the agent to whatever is next in the queue - which, on a
+ * route that is being built, is the pathfinder putting a stack of dirt in the main hand. The command
+ * then lands on a player holding dirt and copies that, over and over, which is neither what was
+ * asked for nor something anybody notices until the inventory is full of it.
+ */
+const DUPE_LANDS_MS = 600
 
 /** The server's word for "that entity just used a totem", which is the moment the hand goes empty. */
 const TOTEM_POPPED = 35
@@ -704,6 +725,10 @@ export class AgentUtilities {
    * looking for it will look.
    */
   private async restock(name: string | undefined, target: number): Promise<void> {
+    // Not while it is building. Copying a stack is never so urgent that it cannot wait for the agent
+    // to finish the tower it is standing on - see [UtilityHooks.building].
+    if (this.hooks.building()) return
+
     /*
      * **No `busy` or `filling` check here.** Those were meant to keep the restock out of the way of
      * eating and refilling, and in a fight they kept it out of the way of everything: eating sets one
@@ -881,6 +906,10 @@ export class AgentUtilities {
 
       // Marked once the command has actually gone out, so the next pass waits for its answer.
       this.sent = Date.now()
+
+      // Still holding the hands. See {@link DUPE_LANDS_MS}: the command has left, and what it copies
+      // has not been decided yet.
+      await new Promise((settle) => setTimeout(settle, DUPE_LANDS_MS))
       // Both hands and the selected square. What the plugin copies is decided by those, not by what
       // this code meant to copy - and when the two disagree, this line is the only thing that says so.
       log.debug(

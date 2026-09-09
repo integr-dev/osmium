@@ -125,6 +125,14 @@ const TELEPORT_REPORT_MS = 1_000
 const REFUSALS = 8
 
 /**
+ * How far up counts as being stood on something, in blocks.
+ *
+ * Half a block: more than any disagreement about where a surface is, and less than the block-sized
+ * lift that follows every placement the agent makes under itself.
+ */
+const LIFTED = 0.5
+
+/**
  * How long a refused spot stays refused.
  *
  * It expires because the reason usually does: a block breaks, a door opens, a player moves. A
@@ -313,6 +321,11 @@ export class AgentNavigator {
     return this.waypoints.length > 0
   }
 
+  /** Whether the route it is walking still has blocks to lay or break. See `Driver.building`. */
+  building(): boolean {
+    return this.driver.building()
+  }
+
   /**
    * The server moved the agent itself, rather than accepting where the agent said it was.
    *
@@ -327,6 +340,21 @@ export class AgentNavigator {
    */
   private putBack(): void {
     this.forced++
+
+    /*
+     * **Being stood on top of your own block is not a refusal.**
+     *
+     * Every rung of a tower ends with the server moving the agent about a block *upward*: it has the
+     * block that was just placed and the agent standing on it, and this side is still falling towards
+     * where the top used to be. That is the two sides agreeing about the placement and disagreeing
+     * about the timing - the opposite of a step being turned down.
+     *
+     * Counted as refusals they reach the limit in eight rungs, and the agent writes off the square it
+     * is standing on and re-plans from halfway up its own tower. Which is why a tall tower used to
+     * restart in the middle for no visible reason.
+     */
+    if (this.liftedOntoSomething()) return
+
     this.refusedHere++
 
     // A run of them at one spot is the server refusing this step rather than correcting a drift.
@@ -351,6 +379,24 @@ export class AgentNavigator {
         ` (moved ${dx.toFixed(3)} ${dy.toFixed(3)} ${dz.toFixed(3)}, ` +
         `${Math.hypot(dx, dy, dz).toFixed(3)} blocks)`,
     )
+  }
+
+  /**
+   * Whether the server just stood the agent on top of something rather than turning a step down.
+   *
+   * Upward, and not sideways: a refusal puts the agent back where it was, which is a correction of
+   * nothing at all or a few tenths in the direction it was trying to go. A whole block straight up is
+   * the server placing it on a surface this side has not caught up with yet.
+   */
+  private liftedOntoSomething(): boolean {
+    const from = this.before
+    const to = this.bot.entity?.position
+    if (!from || !to) return false
+
+    const up = to.y - from.y
+    const sideways = Math.hypot(to.x - from.x, to.z - from.z)
+
+    return up > LIFTED && sideways < LIFTED
   }
 
   /**
@@ -479,7 +525,10 @@ export class AgentNavigator {
     this.nodes = nodesOf(steps.map(standsAt))
     this.work = workOf(steps)
 
-    if (settled) {
+    // An empty route is not a drawn one. A search that has not got anywhere yet reports one on every
+    // slice, and `every` on no stretches at all answers true - so this said "drew a route of 0 nodes"
+    // two hundred times while the agent stood there thinking.
+    if (settled && this.nodes.length > 0) {
       log.debug(
         `Agent ${this.id} drew a route of ${this.nodes.length} nodes with ${this.work.length} blocks to change`,
       )

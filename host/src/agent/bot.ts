@@ -1,6 +1,7 @@
 import minecraftData from 'minecraft-data'
 import minecraftProtocol from 'minecraft-protocol'
 import mineflayer, { type Bot, type BotOptions } from 'mineflayer'
+import type { Block } from 'prismarine-block'
 
 // Aliased: `Vec3` in this file already means the wire shape, which is three plain numbers on a
 // message. This is the runtime class the world API takes - a different thing that shares a name.
@@ -1578,6 +1579,7 @@ export class Agent {
         // the agent will stand next to, and keeping one list means there is one thing to get right.
         trusted: (name) => this.trusted.has(name.toLowerCase()),
         flee: (who, distance) => this.retreat(who, distance),
+        building: () => this.navigator?.building() === true,
       },
       this.hands,
     )
@@ -2250,10 +2252,15 @@ const FACES = [
 /**
  * How long after the server says it has processed a placement to wait for the block to appear.
  *
- * The change confirming a placement lands within a tick or two of the acknowledgement - they are the
- * same round trip. Well past that and no block has arrived, the answer was no.
+ * **A shortcut, not the judgement.** mineflayer already waits for the block, for five seconds; this
+ * exists only so a refusal - which arrives as silence - does not cost all five of them. The success
+ * case is decided by the block turning up rather than by this clock, so the number only has to be
+ * longer than a slow confirmation, and being wrong about it costs nothing but a late verdict.
+ *
+ * It used to be the judgement, at four hundred milliseconds, and a confirmation slower than that was
+ * read as a refusal - so the agent jumped again and asked for a block it had already been given.
  */
-const SETTLED_MS = 400
+const SETTLED_MS = 1_500
 
 /**
  * Settles a placement on what the server actually did, rather than on waiting for a timeout.
@@ -2278,6 +2285,8 @@ function placeBlocksProperly(bot: Bot, id: number, building: Building): void {
   /** How to tell the pending placement it failed. Present only while one is in flight. */
   let giveUp: (() => void) | undefined
   let vouched = false
+  /** What to put back at the square if the placement turns out to have been refused. */
+  let undo: { at: WorldVec; was: number | undefined } | undefined
 
   const answers = bot.supportFeature('blockPlaceHasInsideBlock')
 
@@ -2299,23 +2308,104 @@ function placeBlocksProperly(bot: Bot, id: number, building: Building): void {
       const tell = giveUp
       if (!at || !tell) return
 
+      const asked = Date.now()
+
+      // **The block turning up is the answer, and it is watched for rather than sampled.** On these
+      // versions the acknowledgement says only that the server processed the request - it reads the
+      // same whether the block went in or not - so the block change is the only thing that tells
+      // them apart. Sampling once on a timer got that wrong in one direction only: a confirmation
+      // slower than the sample was called a refusal, and the agent went round again for a block it
+      // already had.
+      const landed = (before: { position?: WorldVec } | null): void => {
+        if (aimed !== at || giveUp !== tell) return
+        const where = before?.position
+        if (!where || where.x !== at.x || where.y !== at.y || where.z !== at.z) return
+        if (bot.blockAt(at)?.boundingBox === 'empty') return
+
+        log.debug(`Agent ${id} got its block at ${at.x} ${at.y} ${at.z} after ${Date.now() - asked}ms`)
+        bot.removeListener('blockUpdate', landed as never)
+      }
+
+      bot.on('blockUpdate', landed as never)
+
       setTimeout(() => {
+        bot.removeListener('blockUpdate', landed as never)
+
         // Somebody else's placement by now, or the block turned up after all.
         if (aimed !== at || giveUp !== tell) return
         if (bot.blockAt(at)?.boundingBox !== 'empty') return
 
         log.debug(`Agent ${id} was not given the block it asked for at ${at.x} ${at.y} ${at.z}`)
+
+        // Taking the guess back. The agent believed in this block for a moment and has to stop.
+        const putBack = undo
+        if (putBack && putBack.at.equals(at) && putBack.was !== undefined) {
+          setBlock(bot, putBack.at, putBack.was)
+          log.debug(`Agent ${id} took back the block it had assumed at ${at.x} ${at.y} ${at.z}`)
+        }
+
         tell()
       }, SETTLED_MS)
     })
   }
 
   bot.once('inject_allowed', () => {
-    const place = bot.placeBlock?.bind(bot)
-    if (!place) return
+    /*
+     * **Aimed by whoever knows where the agent is standing, which is not mineflayer.**
+     *
+     * `placeBlock` turns to look at the middle of the face it is building on. For a block going
+     * down or up that is the right thing and it is left alone. For one going *sideways* - a bridge -
+     * it is wrong: the agent has deliberately backed onto the edge facing away from the gap, which
+     * is the only stance the side of the block underfoot is reachable from, and mineflayer spins it
+     * round to face forwards over the drop. The turn undoes the stance, the agent is still pressing
+     * back, and it walks off the edge it just placed from.
+     *
+     * So a sideways placement keeps the aim it arrived with. Every other one is mineflayer's.
+     */
+    /*
+     * **Sending, rather than sending and then waiting to be told.**
+     *
+     * `placeBlock` sends the request and then waits for the server to send the block back before it
+     * answers - a round trip, at the top of every jump, spent falling through a square this side
+     * still believes is empty. `_genericPlace` is the half that sends, which is all this wants: the
+     * block is written in below on the assumption it worked, and the acknowledgement handler above
+     * takes it back on the rare occasion it did not.
+     *
+     * Falls back to the waiting version when the internal is not there, which keeps this working
+     * against a mineflayer that renames it.
+     */
+    const sending = (bot as unknown as { _genericPlace?: Placing })._genericPlace
+    const plain = bot.placeBlock?.bind(bot)
+    if (!plain) return
+
+    const place = (reference: Block, face: WorldVec, own: boolean): Promise<void> =>
+      sending
+        ? sending.call(bot, reference, face, { swingArm: 'right', ...(own ? { forceLook: 'ignore' as const } : {}) })
+        : plain(reference, face)
 
     bot.placeBlock = async (reference, face) => {
       const going = reference.position.plus(face)
+
+      /*
+       * **Aimed here, or not aimed at all, for the two kinds that mineflayer cannot aim.**
+       *
+       * It turns to look at the middle of the face being built on, and works the angle out with
+       * `atan2` over the horizontal distance to that point. Two placements make that distance nothing:
+       *
+       * - *A tower.* The face is the top of the block directly underfoot, so the agent is standing
+       *   over its own target. The angle to a point directly below is meaningless and swings the
+       *   whole way round on floating point noise - and because the turn is animated, and mineflayer
+       *   waits for its own turn before sending, a heading that changes every tick is a placement
+       *   that never goes out. Straight down, keeping whatever heading it has, is the answer.
+       * - *A bridge.* Covered below: the agent has deliberately backed onto an edge facing away, and
+       *   being spun to face forwards over the drop undoes the one stance it can build from.
+       */
+      const under = face.y === 1 && standingIn(bot, going)
+
+      if (under) {
+        // Negative pitch is down: mineflayer works pitch out as `atan2(dy, horizontal)`.
+        bot.look(bot.entity.yaw, -Math.PI / 2, true)
+      }
 
       // **Held for the whole placement and a moment past it.** Clearing this the instant the agent
       // was clear of the square was too early by exactly the interesting part: the block then goes
@@ -2328,7 +2418,26 @@ function placeBlocksProperly(bot: Bot, id: number, building: Building): void {
 
       vouched = true
 
-      const sent = place(reference, face)
+      /*
+       * **Put the block in straight away, and take it out again if the server disagrees.**
+       *
+       * This is what a real client does, and until now this host did the opposite: it sent the
+       * request and then *waited* for the server to send the block back before believing in it. On a
+       * remote server that is a round trip per block - the agent hangs at the top of every jump, and
+       * worse, it spends that time falling through a square its own world still says is empty, which
+       * is why the server kept having to lift it back onto its own tower.
+       *
+       * Being wrong is cheap and detectable: a refusal is already noticed - see the acknowledgement
+       * handler above - and what was there before is put back. Being right, which is almost always,
+       * costs nothing and saves the round trip.
+       */
+      const guessing = predictable(bot, going)
+      const sent = place(reference, face, under || face.y === 0)
+
+      if (guessing !== undefined) {
+        undo = { at: going, was: bot.blockAt(going)?.stateId }
+        setBlock(bot, going, guessing)
+      }
       // Answered by the race below rather than by Node: a rejection arriving after the race has
       // settled has nobody waiting on it, and an unhandled one takes the process down.
       sent.catch(() => {})
@@ -2344,6 +2453,7 @@ function placeBlocksProperly(bot: Bot, id: number, building: Building): void {
         vouched = false
         aimed = undefined
         giveUp = undefined
+        undo = undefined
 
         // Long enough for the landing to settle. Cleared by identity, so a placement that has since
         // started somewhere else keeps its own.
@@ -2364,6 +2474,40 @@ function placeBlocksProperly(bot: Bot, id: number, building: Building): void {
  */
 const LANDING_MS = 500
 
+/** mineflayer's own placement, with the options its convenience wrapper does not pass on. */
+type Placing = (
+  reference: Block,
+  face: WorldVec,
+  options: { swingArm: 'right'; forceLook?: boolean | 'ignore' },
+) => Promise<void>
+
+/**
+ * The block the agent is about to lay, as a state to write into its own world.
+ *
+ * Read off what is in its hand rather than from the route, because the hand is what the server will
+ * actually place. Answers nothing when the item does not name a block this version knows, which is
+ * the honest outcome for a bucket or a bed: no guess is made and the old waiting behaviour stands.
+ */
+function predictable(bot: Bot, at: WorldVec): number | undefined {
+  const holding = bot.heldItem?.name
+  if (!holding) return undefined
+
+  // Only into space. Guessing over something already there would hide whatever it is.
+  if (bot.blockAt(at)?.boundingBox !== 'empty') return undefined
+
+  const block = bot.registry?.blocksByName?.[holding]
+  return block?.defaultState
+}
+
+/** Writes a block into the agent's own view of the world. */
+function setBlock(bot: Bot, at: WorldVec, state: number): void {
+  try {
+    ;(bot.world as unknown as { setBlockStateId(at: WorldVec, state: number): void }).setBlockStateId(at, state)
+  } catch (err) {
+    log.debug(`Agent could not write a block into its own world: ${(err as Error).message}`)
+  }
+}
+
 /** Where a placement request would put a block, from the packet as it goes out. */
 function aimedAt(params: unknown): WorldVec | undefined {
   const request = params as { location?: { x: number; y: number; z: number }; direction?: number }
@@ -2380,6 +2524,15 @@ function aimedAt(params: unknown): WorldVec | undefined {
  * has not come clear in twenty was never going to.
  */
 const PLACE_TICKS = 20
+
+/**
+ * How long to keep rising once the square is clear, before asking anyway.
+ *
+ * The apex is where this wants to be and the velocity says when that is, so this is only the guard
+ * against never getting one - an agent lifted by something other than its own jump, or a tick where
+ * the velocity reads oddly. Four ticks is longer than the rise from first-clear to apex ever is.
+ */
+const WINDOW = 4
 
 /**
  * Whether the agent's own body is in the way of a block going in at `at`.
@@ -2431,12 +2584,35 @@ function roomFor(bot: Bot, at: WorldVec, id: number): Promise<void> {
 
   return new Promise((resolve, reject) => {
     let ticks = 0
+    /** Ticks spent clear of the square while still going up, waiting for the top of the jump. */
+    let clear = 0
 
     const watch = (): void => {
       most = Math.max(most, bot.entity?.position.y ?? most)
 
       if (!standingIn(bot, at)) {
+        /*
+         * **Clear is not the moment to ask. The top of the jump is.**
+         *
+         * A block goes into the square the agent is standing in, which spans a whole block, and the
+         * agent is 1.8 tall - so it is only out of the way once it has risen a *full* block, and a
+         * jump only reaches 1.25. That leaves about three ticks in eleven where the placement is
+         * legal, and resolving on the first of them asks at the very edge of it: a tick of lag, or
+         * any disagreement between where this side and the server think the agent is, and the
+         * window has already shut by the time the request is read.
+         *
+         * The apex is the middle of that window - the highest the agent will get, with as much room
+         * either side as there is to have. Waiting for it costs two ticks and is the difference
+         * between a placement that usually lands and one that usually does not.
+         */
+        const rising = (bot.entity?.velocity.y ?? 0) > 0
+        if (rising && ++clear < WINDOW) return
+
         bot.removeListener('physicsTick', watch)
+        log.debug(
+          `Agent ${id} asked for ${at.x} ${at.y} ${at.z} at ${(bot.entity?.position.y ?? 0).toFixed(3)}, ` +
+            `${((bot.entity?.position.y ?? 0) - from).toFixed(3)} above where it jumped from`,
+        )
         resolve()
         return
       }
