@@ -94,6 +94,7 @@ function journey(fields: Record<string, unknown>) {
       { x: 0.5, y: 64, z: 0.5 },
       { x: 1.5, y: 64, z: 0.5 },
     ],
+    work: [{ x: 1, y: 64, z: 0, kind: 'PLACE' }],
     progress: 0,
     reason: null,
     ...fields,
@@ -412,12 +413,16 @@ describe('journeys', () => {
       dimension: null,
       goal: null,
       nodes: null,
+      work: null,
       progress: 1,
       reason: null,
     })
 
     expect(store.pathOf(6)?.nodes).toHaveLength(2)
     expect(store.pathOf(6)?.progress).toBe(1)
+    // The boxes on blocks the route means to change ride the same updates the line does, so they
+    // are held the same way - otherwise they blank on the first progress report after being drawn.
+    expect(store.pathOf(6)?.work).toHaveLength(1)
     // The world and the destination are held for the same reason the nodes are.
     expect(store.pathOf(6)?.dimension).toBe('overworld')
     expect(store.pathOf(6)?.goal).toEqual({ x: 128, y: 64, z: -340 })

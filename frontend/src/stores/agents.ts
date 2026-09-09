@@ -539,6 +539,9 @@ export const useAgentStore = defineStore('agents', () => {
       dimension: incoming.dimension ?? held?.dimension ?? null,
       goal: incoming.goal ?? held?.goal ?? null,
       nodes: incoming.nodes ?? held?.nodes ?? null,
+      // Held for the same reason the line is: most updates carry only how far along the agent has
+      // got, and the spread above would blank the boxes on the first progress report after them.
+      work: incoming.work ?? held?.work ?? null,
     })
     paths.value = next
   }

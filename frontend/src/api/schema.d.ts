@@ -2196,6 +2196,8 @@ export interface components {
             goal?: components["schemas"]["PathGoalResponse"] | null;
             /** @description The whole path, oldest first. Sent when the line is drawn and again on every re-plan; an update that only moved along it leaves this out rather than resending a few hundred points a second. */
             nodes?: components["schemas"]["PositionResponse"][] | null;
+            /** @description Blocks the route still means to lay or break, in the order it means to. Sent with `nodes` and again whenever one is finished, so what is drawn is what is left to do rather than what was planned when the journey started. */
+            work?: components["schemas"]["PathWorkResponse"][] | null;
             /**
              * Format: int32
              * @description How far along `nodes` the agent has got.
@@ -2219,6 +2221,25 @@ export interface components {
             y?: number | null;
             /** Format: double */
             z?: number;
+        };
+        /** @description What the route means to do to one block. */
+        PathWorkResponse: {
+            /**
+             * Format: int32
+             * @description The block itself, not a standing position.
+             * @example -534038
+             */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+            /**
+             * @description Whether the block is going in or coming out.
+             * @example PLACE
+             * @enum {string}
+             */
+            kind?: "PLACE" | "BREAK";
         };
         /** @description Something that happened to an agent: kicked, died, connected, relink needed. */
         ActivityEntryResponse: {

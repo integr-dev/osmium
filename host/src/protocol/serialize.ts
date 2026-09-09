@@ -137,6 +137,7 @@ function event(body: Event): Json {
       // Only on the updates that redrew it. An absent `nodes` says the line has not changed, which
       // is not the same as a path with no nodes in it.
       put(payload, 'nodes', body.nodes)
+      put(payload, 'work', body.work)
       put(payload, 'progress', body.progress)
       put(payload, 'reason', body.reason)
 

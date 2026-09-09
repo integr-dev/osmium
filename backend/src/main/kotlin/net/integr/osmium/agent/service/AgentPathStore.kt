@@ -44,6 +44,7 @@ class AgentPathStore {
             dimension = update.dimension ?: held?.dimension,
             goal = update.goal ?: held?.goal,
             nodes = update.nodes ?: held?.nodes,
+            work = update.work ?: held?.work,
         )
 
         paths[update.agentId] = merged

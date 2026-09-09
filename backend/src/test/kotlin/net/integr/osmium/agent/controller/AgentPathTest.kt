@@ -49,6 +49,7 @@ class AgentPathTest : AbstractRestTest() {
         dimension = "overworld",
         goal = PathGoalResponse(128.0, 64.0, -340.0),
         nodes = listOf(PositionResponse(0.5, 64.0, 0.5), PositionResponse(1.5, 64.0, 0.5)),
+        work = null,
         progress = 0,
         reason = null,
     )

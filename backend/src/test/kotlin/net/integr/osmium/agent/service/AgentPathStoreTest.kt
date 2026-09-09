@@ -1,6 +1,7 @@
 package net.integr.osmium.agent.service
 
 import net.integr.osmium.agent.dto.AgentPathResponse
+import net.integr.osmium.agent.dto.PathWorkResponse
 import net.integr.osmium.agent.dto.AgentPathState
 import net.integr.osmium.agent.dto.PathGoalResponse
 import net.integr.osmium.agent.dto.PositionResponse
@@ -30,6 +31,7 @@ class AgentPathStoreTest {
         nodes: List<PositionResponse>? = null,
         goal: PathGoalResponse? = null,
         dimension: String? = null,
+        work: List<PathWorkResponse>? = null,
         progress: Int? = null,
         reason: String? = null,
     ) = AgentPathResponse(
@@ -38,6 +40,7 @@ class AgentPathStoreTest {
         dimension = dimension,
         goal = goal,
         nodes = nodes,
+        work = work,
         progress = progress,
         reason = reason,
     )

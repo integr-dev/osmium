@@ -6,6 +6,8 @@ import net.integr.osmium.agent.dto.AgentInventoryResponse
 import net.integr.osmium.agent.dto.AgentPathResponse
 import net.integr.osmium.agent.dto.AgentPathState
 import net.integr.osmium.agent.dto.PathGoalResponse
+import net.integr.osmium.agent.dto.PathWorkKind
+import net.integr.osmium.agent.dto.PathWorkResponse
 import net.integr.osmium.agent.dto.AgentTelemetryResponse
 import net.integr.osmium.agent.dto.InventorySlotResponse
 import net.integr.osmium.agent.dto.NearbyPlayerResponse
@@ -691,6 +693,7 @@ class HostReportService(
             // Absent means the line has not changed, which is not the same as a path with no nodes
             // in it, so this is all or nothing - see [nodesFrom].
             nodes = nodesFrom(payload.get("nodes")),
+            work = workFrom(payload.get("work")),
             progress = payload.get("progress")?.takeIf { it.isNumber }?.asInt(),
             reason = payload.get("reason")?.asString()?.takeIf { it.isNotBlank() },
         )
@@ -731,6 +734,28 @@ class HostReportService(
         val points = mutableListOf<PositionResponse>()
         for (point in node) points.add(positionFrom(point) ?: return null)
         return points
+    }
+
+    /**
+     * Every block a route means to change, or null.
+     *
+     * All of it or none of it, like [nodesFrom] and for the same reason: an absent `work` means the
+     * route has not been redrawn, so a list with an unreadable entry dropped out of it would be read
+     * as a complete plan that happens not to touch that block.
+     */
+    private fun workFrom(node: JsonNode?): List<PathWorkResponse>? {
+        if (node == null || !node.isArray) return null
+
+        val planned = mutableListOf<PathWorkResponse>()
+        for (entry in node) {
+            val x = entry.get("x")?.takeIf { it.isNumber }?.asInt() ?: return null
+            val y = entry.get("y")?.takeIf { it.isNumber }?.asInt() ?: return null
+            val z = entry.get("z")?.takeIf { it.isNumber }?.asInt() ?: return null
+            val kind = enumOrNull<PathWorkKind>(entry.get("kind")?.asString()) ?: return null
+            planned.add(PathWorkResponse(x = x, y = y, z = z, kind = kind))
+        }
+
+        return planned
     }
 
     /** One square, or null when it does not carry the four things every square needs. */

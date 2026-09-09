@@ -3,7 +3,7 @@ import type { Inventory } from '../agent/inventory.ts'
 import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { AdvertisedProxy } from '../agent/proxy.ts'
-import type { PathNode, PathState, Waypoint } from '../agent/path/navigator.ts'
+import type { PathNode, PathState, PathWork, Waypoint } from '../agent/path/navigator.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
 
 /** A command the backend sent. Only commands arrive; results and events travel the other way. */
@@ -209,6 +209,8 @@ export type Event =
       /** A column rather than a point when the operator had no height to give - see `Waypoint`. */
       goal?: Waypoint
       nodes?: PathNode[]
+      /** Blocks the route still means to lay or break. Rides the same updates `nodes` does. */
+      work?: PathWork[]
       progress?: number
       reason?: string
     }

@@ -163,6 +163,16 @@ interface Scene {
    */
   hover?: Mesh
   buildHover?: () => Mesh | undefined
+  /**
+   * A box on every block the route still means to lay or break.
+   *
+   * The same outline as the one under the cursor, in green: what an operator is looking at is "what
+   * is this agent about to do to the world", and the shape they already read as "this block" is the
+   * right shape to say it with. Rebuilt whole, like the path, and for the same reason - the list
+   * only changes when the route is redrawn or a block is finished.
+   */
+  workBoxes?: Mesh[]
+  buildWork?: () => Mesh | undefined
   /** Where the pointer last was on the canvas, in normalised device coordinates. */
   over?: { nx: number; ny: number }
   /**
@@ -1686,6 +1696,37 @@ function showHover(current: Scene): void {
   box.visible = true
 }
 
+/**
+ * Puts a box on every block the route still means to change.
+ *
+ * **Blocks, not standing positions.** These arrive as the squares themselves, so they are centred
+ * the way the hover box is and not lifted the way the path line is - see `standsAt` on the host for
+ * the half-block that separates the two.
+ */
+function showWork(current: Scene, work: ReadonlyArray<{ x: number; y: number; z: number }>): void {
+  for (const box of current.workBoxes ?? []) {
+    current.viewer.world.scene.remove(box)
+    disposeGeometry(box)
+  }
+  current.workBoxes = undefined
+
+  if (work.length === 0) return
+
+  const built: Mesh[] = []
+
+  for (const spot of work) {
+    const box = current.buildWork?.()
+    if (!box) break
+
+    // The middle of the cell, because a box is one block wide and centred on its own origin.
+    box.position.set(spot.x + 0.5, spot.y + 0.5, spot.z + 0.5)
+    current.viewer.scene.add(box)
+    built.push(box)
+  }
+
+  if (built.length) current.workBoxes = built
+}
+
 function showPath(current: Scene, nodes: ReadonlyArray<{ x: number; y: number; z: number }>, progress: number): void {
   for (const line of current.pathLines ?? []) {
     current.viewer.world.scene.remove(line)
@@ -2029,6 +2070,17 @@ async function mount(world: { version: string; minY?: number; height?: number },
   })
   hoverMaterial.resolution.set(element.clientWidth, element.clientHeight)
 
+  // Green, and the page's own if it has one: this is the only marker on the map that means
+  // "about to happen" rather than "is", and it should not be mistakable for either agent colour.
+  const workMaterial = new LineMaterial({
+    color: themeColour('--color-success', 0x22c55e),
+    linewidth: 1.5,
+    depthTest: true,
+    transparent: true,
+    opacity: 0.9,
+  })
+  workMaterial.resolution.set(element.clientWidth, element.clientHeight)
+
   const models = await import('prismarine-viewer/viewer/lib/entity/entities.json')
   const built: Scene = {
     viewer,
@@ -2139,6 +2191,16 @@ async function mount(world: { version: string; minY?: number; height?: number },
       line.visible = false
       return line
     },
+    buildWork: () => {
+      const box = new THREE.BoxGeometry(1, 1, 1)
+      const line = new LineSegments2(
+        new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(box)),
+        workMaterial,
+      ) as unknown as Mesh
+
+      line.frustumCulled = false
+      return line
+    },
     buildPath: (points: number[], spent: boolean, anchor: { x: number; y: number; z: number }) => {
       // Six floats is one segment. Fewer than that is a path with nowhere to go.
       if (points.length < 6) return undefined
@@ -2237,13 +2299,25 @@ watch(
     // Depended on by value rather than by reference: the store replaces the map on every update, so
     // watching the object alone would redraw a few hundred segments once a second for a line that
     // has not moved.
-    return path?.nodes ? { nodes: path.nodes, progress: path.progress ?? 0 } : null
+    if (!path?.nodes) return null
+
+    // The generated schema leaves every coordinate optional, because springdoc does not mark a
+    // non-null Kotlin `Int` as required. One without a position is not a block anybody can draw, so
+    // it is dropped here rather than defaulted to the origin.
+    const work = (path.work ?? []).flatMap((spot) =>
+      spot.x === undefined || spot.y === undefined || spot.z === undefined
+        ? []
+        : [{ x: spot.x, y: spot.y, z: spot.z }],
+    )
+
+    return { nodes: path.nodes, work, progress: path.progress ?? 0 }
   },
   (journey) => {
     const current = scene.value
     if (!current) return
 
     showPath(current, journey?.nodes ?? [], journey?.progress ?? 0)
+    showWork(current, journey?.work ?? [])
   },
   { deep: true },
 )
@@ -2504,6 +2578,10 @@ function teardown(): void {
   for (const line of current.pathLines ?? []) {
     current.viewer.world.scene.remove(line)
     disposeGeometry(line)
+  }
+  for (const box of current.workBoxes ?? []) {
+    current.viewer.world.scene.remove(box)
+    disposeGeometry(box)
   }
   clearTimeout(current.summary)
   cancelAnimationFrame(current.frame)

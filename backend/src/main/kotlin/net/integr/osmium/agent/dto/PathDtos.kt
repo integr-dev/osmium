@@ -62,12 +62,39 @@ data class AgentPathResponse(
     )
     val nodes: List<PositionResponse>?,
 
+    @field:Schema(
+        description = "Blocks the route still means to lay or break, in the order it means to. " +
+            "Sent with `nodes` and again whenever one is finished, so what is drawn is what is " +
+            "left to do rather than what was planned when the journey started.",
+    )
+    val work: List<PathWorkResponse>?,
+
     @field:Schema(description = "How far along `nodes` the agent has got.", example = "37")
     val progress: Int?,
 
     @field:Schema(description = "Why it gave up, for FAILED.", example = "there is no route there")
     val reason: String?,
 )
+
+@Schema(description = "What the route means to do to one block.")
+data class PathWorkResponse(
+    @field:Schema(description = "The block itself, not a standing position.", example = "-534038")
+    val x: Int,
+    val y: Int,
+    val z: Int,
+
+    @field:Schema(description = "Whether the block is going in or coming out.", example = "PLACE")
+    val kind: PathWorkKind,
+)
+
+@Schema(description = "Which way a planned change goes.")
+enum class PathWorkKind {
+    @Schema(description = "A block the agent will lay, out of what it is carrying.")
+    PLACE,
+
+    @Schema(description = "A block the agent will break to get through.")
+    BREAK,
+}
 
 @Schema(
     description = "Sends an agent somewhere. The last waypoint is the destination; anything before " +

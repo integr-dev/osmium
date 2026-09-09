@@ -349,4 +349,32 @@ describe('deserialize', () => {
   it('reports malformed json rather than throwing something else', () => {
     expect(() => deserialize('{')).toThrow(MessageError)
   })
+
+describe('a path on the wire', () => {
+  it('carries the blocks the route means to change', () => {
+    const framed = parse(
+      serialize({
+        kind: 'event',
+        body: {
+          type: 'path',
+          agentId: 7,
+          state: 'moving',
+          nodes: [{ x: 0.5, y: 64, z: 0.5 }],
+          work: [{ x: 0, y: 64, z: 1, kind: 'place' }],
+          progress: 0,
+        },
+      }),
+    )
+
+    // **This was silently dropped.** The payload is built field by field rather than spread, so a
+    // new one that nobody adds here never reaches the backend - and nothing fails, it just is not
+    // there. The host computed the blocks, the viewer was ready to draw them, and the wire ate them.
+    expect(framed).toMatchObject({
+      kind: 'event',
+      type: 'path',
+      agentId: 7,
+      payload: { work: [{ x: 0, y: 64, z: 1, kind: 'place' }] },
+    })
+  })
+})
 })
