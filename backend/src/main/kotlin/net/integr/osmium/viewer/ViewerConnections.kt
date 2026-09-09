@@ -62,10 +62,22 @@ class ViewerConnections(
     @Transactional(readOnly = true)
     fun join(agentId: Long, session: WebSocketSession) {
         val sessions = watchers.computeIfAbsent(agentId) { ConcurrentHashMap.newKeySet() }
-        val first = sessions.isEmpty()
         sessions += ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT, BUFFER_LIMIT)
 
-        if (first) start(agentId)
+        /*
+         * Every watcher, not only the first one.
+         *
+         * A host sends the world when it is asked to start streaming and not again - so a browser
+         * that joins a stream already running is sent movements for a world it was never given, and
+         * waits for a version announcement that has already happened. Which is what navigating
+         * between two agents does: the arriving screen opens its socket before the leaving one has
+         * closed, the set is not empty, and the second watcher waits for ever.
+         *
+         * Asking again costs the watchers already there a fresh fill, which is the case
+         * `AgentViewer.restream` exists for - it is the same thing that happens when a host
+         * reconnects and is told about the streams it was serving before.
+         */
+        start(agentId)
     }
 
     fun leave(agentId: Long, session: WebSocketSession) {
