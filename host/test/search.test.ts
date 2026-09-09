@@ -171,6 +171,43 @@ describe('Search', () => {
     expect(settle(new Search(start, openGround(), goalAt(60, 0), { reach: 2 })).outcome).toBe('found')
   })
 
+  it('does not spread across the ground before it will climb', () => {
+    // Ground at every level, and a goal straight up. Climbing costs two - one to move and one for
+    // the block laid to stand on - so an estimate that charges one for it makes every square on the
+    // ground look better than the first rung, and the search floods the plane before it goes up.
+    const start = { x: 0, y: 64, z: 0, hash: '0,64,0', cost: 0 }
+
+    const anywhere: Neighbours = (from) => {
+      const out: Step[] = []
+      for (const [dx, dy, dz, cost] of [
+        [1, 0, 0, 1],
+        [-1, 0, 0, 1],
+        [0, 0, 1, 1],
+        [0, 0, -1, 1],
+        [0, 1, 0, 2],
+      ] as const) {
+        const x = from.x + dx
+        const y = from.y + dy
+        const z = from.z + dz
+        out.push({ x, y, z, hash: `${x},${y},${z}`, cost })
+      }
+      return out
+    }
+
+    const climbing: Goal = {
+      reached: (at) => at.x === 0 && at.y === 89 && at.z === 0,
+      // The same shape `ground.ts` uses: height priced at close to what a rung really costs.
+      estimate: (at) => Math.abs(0 - at.x) + Math.abs(0 - at.z) + Math.abs(89 - at.y) * 1.8,
+    }
+
+    const route = settle(new Search(start, anywhere, climbing))
+
+    expect(route.outcome).toBe('found')
+    expect(route.steps).toHaveLength(25)
+    // Twenty-five rungs. Charging height at one instead expanded thousands.
+    expect(route.looked).toBeLessThan(200)
+  })
+
   it('expands far fewer squares than an untied search would', () => {
     // A tight heuristic leaves a plateau of equally good squares. Breaking the tie on the estimate
     // walks it end-first instead of spreading sideways across it: an untied A* visits the whole

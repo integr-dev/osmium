@@ -139,7 +139,7 @@ export function within(x: number, y: number, z: number, range: number): Goal {
       const dz = z - at.z
       return dx * dx + dy * dy + dz * dz <= rangeSq
     },
-    estimate: (at) => octile(x - at.x, z - at.z) + Math.abs(y - at.y),
+    estimate: (at) => octile(x - at.x, z - at.z) + Math.abs(y - at.y) * CLIMB,
   }
 }
 
@@ -163,6 +163,24 @@ export function over(x: number, z: number, range: number): Goal {
     estimate: (at) => octile(x - at.x, z - at.z),
   }
 }
+
+/**
+ * What a block of height is worth to the estimate.
+ *
+ * **Going up is the one thing the estimate was lying about.** A step along the ground costs 1 and
+ * takes 1 off the estimate, so on open ground the estimate is exactly right. A step upwards costs 2 -
+ * one to move, one for the block that has to be laid to stand on - and used to take only 1 off. So
+ * the first rung of a tower always looked worse than any square on the ground, and the search spread
+ * out across the whole plane before it would climb: measured, 3901 squares expanded for a route that
+ * was 25 straight up.
+ *
+ * Charging most of what a rung really costs puts that right, and it does it *only* for height -
+ * leaning on the whole estimate instead would make going round something look more expensive than it
+ * is and start cutting corners through walls. Slightly over the cheapest way up, which is a ladder or
+ * a slope at 1, so a route with stairs in it can come back a step longer than the shortest. Nobody
+ * watching can tell; everybody notices five seconds of standing still.
+ */
+const CLIMB = 1.8
 
 /** Diagonal-aware distance, priced the way the neighbour source prices its steps. */
 function octile(dx: number, dz: number): number {
