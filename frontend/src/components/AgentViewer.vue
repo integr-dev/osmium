@@ -60,6 +60,38 @@ const firstPerson = ref(false)
  * makes an agent walking four hundred blocks watchable without a hand on the mouse.
  */
 const follow = ref(false)
+
+/**
+ * How fast a drag moves the world, as a multiple of upstream's rate.
+ *
+ * Upstream's is worked out from how far the camera is from what it orbits, which is not the same
+ * thing as how far away what you are looking at is. A little more than one is enough for a drag to
+ * keep up with the cursor at the distances this viewer is used at.
+ */
+const PAN_SPEED = 1.6
+
+/**
+ * How fast a wheel notch moves the camera.
+ *
+ * A notch multiplies the distance rather than subtracting from it, so close in each one covers very
+ * little ground - which is right for lining up on a block and slow for everything else.
+ */
+const ZOOM_SPEED = 1.6
+
+/**
+ * The closest the camera is treated as being, in blocks, when working out how far a drag moves.
+ *
+ * **Panning collapses at close range**, because upstream measures a drag against the distance from
+ * the camera to what it orbits - a few blocks, when the target is the agent right in front of it -
+ * and moves the world by that much. Pushed right up to a wall it moves almost nothing.
+ *
+ * Below this the camera is treated as if it were here. Far out nothing changes, which is where
+ * distance-proportional panning is doing something useful; up close a drag stays worth making.
+ */
+const PAN_REACH = 10
+
+/** Which mouse button pans. The middle one orbits and the left one picks; this is the right. */
+const PANNING = 2
 const status = ref<'connecting' | 'watching' | 'failed'>('connecting')
 const failure = ref('')
 
@@ -1608,6 +1640,28 @@ function settle(current: Scene, now: number): void {
  * The first frame after it is switched on moves nothing - there is no previous position to have
  * stepped from - so the camera stays where it is and simply starts pointing at the agent.
  */
+/**
+ * Keeps a drag worth making when the camera is close to what it is looking at.
+ *
+ * Upstream multiplies a drag by the distance from the camera to its target, so the closer in, the
+ * less a pan moves - and at the range this viewer is actually used at, following an agent from a few
+ * blocks away, that is almost nothing. Undoing the multiplication near to is exactly cancelling it,
+ * so the rate is what it would be at {@link PAN_REACH} blocks and no closer. Further out the
+ * proportional behaviour is left alone: out there it is what makes a drag keep up with the cursor.
+ */
+function keepPanUseful(current: Scene): void {
+  const controls = current.controls as unknown as
+    | { panSpeed: number; target: { x: number; y: number; z: number } }
+    | undefined
+  if (!controls) return
+
+  const eye = current.viewer.camera.position
+  const at = controls.target
+  const away = Math.hypot(eye.x - at.x, eye.y - at.y, eye.z - at.z)
+
+  controls.panSpeed = PAN_SPEED * Math.max(1, PAN_REACH / Math.max(away, 0.001))
+}
+
 function followAgent(current: Scene): void {
   // The drawn position rather than the reported one, so the camera moves with the body it is
   // watching. Following the reported one would step the whole world six times a second under an
@@ -2000,6 +2054,25 @@ async function mount(world: { version: string; minY?: number; height?: number },
   // the same class, imported the way the rest of this app imports anything.
   const controls = new OrbitControls(viewer.camera as never, element)
 
+  /*
+   * **Panning in the plane of the screen, at a fixed rate.**
+   *
+   * Upstream works the pan out against the distance from the camera to whatever it is orbiting - so
+   * a view pushed far out over a landscape, with its target still on an agent right in front of it,
+   * pans at the rate of something an arm's length away. The further out the less it moves, which is
+   * the opposite of what dragging a picture should feel like.
+   *
+   * `screenSpacePanning` moves along the camera's own axes rather than the ground plane, so a drag
+   * takes the world with the cursor whichever way the view is tilted.
+   */
+  // Both are set by the class and neither is in its type declarations, which describe an older
+  // shape than the code in the same package. Narrowed to the two fields rather than cast away
+  // wholesale, so everything else about the controls stays typed.
+  const panning = controls as unknown as { screenSpacePanning: boolean; panSpeed: number; zoomSpeed: number }
+  panning.screenSpacePanning = true
+  panning.panSpeed = PAN_SPEED
+  panning.zoomSpeed = ZOOM_SPEED
+
   // Two of them are the two the map paints its markers with: the fleet in `--color-primary` and
   // everybody else in `--color-error`. The third is nobody's, and is not a theme colour at all -
   // see `OUTLINE_GONE`.
@@ -2271,6 +2344,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       // Before `update`, which is what applies the target to the camera. After it, the frame would
       // be drawn one step behind and the agent would sit slightly off centre the whole way.
       if (follow.value) followAgent(built)
+      keepPanUseful(built)
       built.controls?.update()
     }
     showHover(built)
@@ -2378,6 +2452,17 @@ const sendingBusy = ref(false)
 
 function onPointerDown(event: PointerEvent): void {
   pressed = { x: event.clientX, y: event.clientY, moved: false }
+
+  /*
+   * **Panning takes the camera off the agent, which means letting go of it.**
+   *
+   * Following works by putting the orbit target back on the agent every frame. That is what keeps
+   * the body in the middle of the screen, and it is also why dragging the view somewhere else did
+   * nothing: the pan landed and was overwritten before the next frame drew, so the harder the agent
+   * was moving the more there was to fight. Asking to look somewhere else is a clear enough
+   * statement that the answer is to stop following rather than to argue with it.
+   */
+  if (event.button === PANNING && follow.value) follow.value = false
 }
 
 function onPointerMove(event: PointerEvent): void {
