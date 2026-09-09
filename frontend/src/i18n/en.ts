@@ -464,19 +464,6 @@ export const en = {
     broken: 'The renderer could not start: {reason}',
     unsupported: 'This host is streaming a format this page cannot read. Update Osmium.',
     unstaged: "The renderer has no block data for Minecraft {version}. Stage it with OSMIUM_VIEWER_VERSIONS and rebuild.",
-
-    /** Offered when the assets for a version are missing but this server can build them. */
-    staging: {
-      title: 'Renderer data for Minecraft {version}',
-      explain:
-        'This version has not been prepared yet. Building it downloads the textures and block shapes for it, which takes a minute or so and about 14 MB on disk.',
-      load: 'Prepare it',
-      cancel: 'Not now',
-      working: 'Preparing Minecraft {version}',
-      downloading: 'Loading block shapes',
-      failed: 'Could not prepare it: {reason}',
-      retry: 'Try again',
-    },
   },
 
   /** The agent's own inventory screen, laid out the way Minecraft lays one out. */

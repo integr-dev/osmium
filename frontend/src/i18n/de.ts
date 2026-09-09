@@ -383,18 +383,6 @@ export const de: Copy = {
     broken: 'Der Renderer konnte nicht starten: {reason}',
     unsupported: 'Dieser Host sendet ein Format, das diese Seite nicht lesen kann. Aktualisiere Osmium.',
     unstaged: 'Für Minecraft {version} liegen keine Blockdaten bereit. Mit OSMIUM_VIEWER_VERSIONS bereitstellen und neu bauen.',
-
-    staging: {
-      title: 'Renderer-Daten für Minecraft {version}',
-      explain:
-        'Diese Version wurde noch nicht vorbereitet. Das Erstellen lädt Texturen und Blockformen dafür, dauert etwa eine Minute und belegt rund 14 MB.',
-      load: 'Vorbereiten',
-      cancel: 'Jetzt nicht',
-      working: 'Minecraft {version} wird vorbereitet',
-      downloading: 'Blockformen werden geladen',
-      failed: 'Vorbereiten fehlgeschlagen: {reason}',
-      retry: 'Erneut versuchen',
-    },
   },
 
   inventory: {

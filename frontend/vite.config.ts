@@ -2,10 +2,10 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
-import { viewerStaging } from './vite/viewer-staging.js'
+import { viewerServing } from './vite/viewer-serving.js'
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss(), viewerStaging()],
+  plugins: [vue(), tailwindcss(), viewerServing()],
   define: {
     // prismarine-viewer's world renderer picks its worker path with
     //   `let src = __dirname; if (typeof window !== 'undefined') src = 'worker.js'`
