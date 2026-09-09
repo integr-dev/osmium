@@ -13,15 +13,18 @@
  * three on it whatever the reader made of the source.
  */
 import type { Bot } from 'mineflayer'
-import plugin from 'mineflayer-pathfinder'
+import type { Movements } from 'mineflayer-pathfinder'
 
 import { log } from '../../log.ts'
+import type { Schedule } from '../schedule.ts'
+import { Driver, type Rules } from './drive.ts'
+import { over, standsAt, type Walk, within } from './ground.ts'
 import type { PathSettings } from './settings.ts'
-import { advanced, nodesOf, type PathNode } from './track.ts'
-import { failureOf, movementsFor, type Refused } from './walk.ts'
+import { advanced, nodesOf, type PathNode, type PathWork } from './track.ts'
+import { movementsFor, type Refused } from './walk.ts'
 
 /** Re-exported so the protocol names one module for the whole shape of a path. */
-export type { PathNode } from './track.ts'
+export type { PathNode, PathWork } from './track.ts'
 
 /**
  * One agent's answer to "go there".
@@ -29,8 +32,8 @@ export type { PathNode } from './track.ts'
  * **The one owner of a journey**, sitting above whichever engine does the walking. Everything the
  * rest of Osmium sees - the goal, the path, how far along it the agent is, why it stopped - is this
  * file's, and the engine underneath is an implementation detail that changes per mode. Walking is
- * mineflayer-pathfinder's; flying will be ours. Neither is allowed to reach past here, which is what
- * keeps one wire event, one pair of renderers and one notion of being stuck.
+ * `drive.ts`; flying will be its own. Neither is allowed to reach past here, which is what keeps one
+ * wire event, one pair of renderers and one notion of being stuck.
  */
 
 /**
@@ -62,6 +65,8 @@ export interface PathUpdate {
   goal?: Waypoint
   /** The whole path, sent when it is drawn and again whenever it is redrawn. */
   nodes?: PathNode[]
+  /** Blocks the route still means to lay or break, sent with {@link nodes}. */
+  work?: PathWork[]
   /** How far along {@link nodes} the agent is. */
   progress?: number
   /** Why it stopped, for `failed`. */
@@ -140,32 +145,36 @@ const REFUSALS_MOST = 5
 /** Every control an agent can be holding, for saying which it was. mineflayer's own names. */
 const CONTROLS = ['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'] as const
 
-/**
- * The one thing upstream sets but does not declare.
- *
- * `searchRadius` is assigned on the pathfinder instance beside `thinkTimeout` and `tickTimeout`,
- * and its type only names the other two - so it is reachable, and not through the type. Narrowed to
- * the single field rather than cast away wholesale, so the rest of the plugin stays typed.
- */
-function radius(bot: Bot, blocks: number): void {
-  ;(bot.pathfinder as unknown as { searchRadius: number }).searchRadius = blocks
-}
-
 export class AgentNavigator {
   /** Where it is going, in order. The last is the destination; the rest are the route to it. */
   private waypoints: Waypoint[] = []
   private at = 0
 
   private nodes: PathNode[] = []
+  private work: PathWork[] = []
   private progress = 0
   /** Whether {@link nodes} has changed since the last report. */
   private redrawn = false
 
   private ticker: NodeJS.Timeout | undefined
 
-  private readonly onPath: (results: { status: string; path: Array<{ x: number; y: number; z: number }> }) => void
-  private readonly onReached: () => void
-  private readonly onReset: (why: string) => void
+  /**
+   * The engine, which walks.
+   *
+   * Ours rather than the plugin's - see `drive.ts` for why. Held here because this class is the one
+   * owner of a journey, and the engine under it is an implementation detail that changes per mode:
+   * this one walks, and the one flight brings will meet the same interface.
+   */
+  private readonly driver: Driver
+
+  /**
+   * The rules the engine walks by, built once per waypoint rather than per search.
+   *
+   * Building a `Movements` reads the whole block table, and the engine asks for these every time it
+   * thinks about a stretch again - which, with mending, is often.
+   */
+  private rules: Rules | undefined
+
   private readonly onForced: () => void
   private readonly onTick: () => void
 
@@ -203,11 +212,25 @@ export class AgentNavigator {
     private readonly bot: Bot,
     private readonly wanted: () => PathSettings,
     private readonly report: (update: PathUpdate) => void,
+    /** Handed straight to the engine: walking is this class's business, the hands are not. */
+    hands: Schedule,
   ) {
-    this.onPath = (results) => this.planned(results.status, results.path)
-    this.onReached = () => this.reached()
-    this.onReset = (why) => this.reset(why)
     this.onForced = () => this.putBack()
+
+    this.driver = new Driver(
+      id,
+      bot,
+      // Read per search rather than captured: an operator flipping a switch while an agent walks
+      // should reach the next stretch it thinks about, not the next journey it is sent on.
+      () => this.rules ?? this.ruleset(),
+      {
+        route: (steps, settled) => this.routed(steps, settled),
+        arrived: () => this.reached(),
+        lost: (why) => this.finish('failed', why),
+        stalled: () => log.debug(`Agent ${this.id} was stuck ${this.physics()}`),
+      },
+      hands,
+    )
 
     // Cheap: three numbers copied twenty times a second, which is what makes a teleport measurable
     // at all - by the time `forcedMove` is raised, the position it replaced is already gone.
@@ -218,19 +241,14 @@ export class AgentNavigator {
   }
 
   start(): void {
-    this.bot.pathfinder.thinkTimeout = THINK_MS
-    this.bot.pathfinder.tickTimeout = SLICE
+    this.driver.start()
 
-    // Typed through the plugin's own augmentation of mineflayer's events, which declares its payload
-    // types without importing them - so they arrive here as `any` and are given a shape at the edge.
+    // Typed through mineflayer's own augmentation of its events, which declares its payload types
+    // without importing them - so they arrive here as `any` and are given a shape at the edge.
     const bot = this.bot as unknown as {
       on(event: string, handler: (...args: never[]) => void): void
-      removeListener(event: string, handler: (...args: never[]) => void): void
     }
 
-    bot.on('path_update', this.onPath as (...args: never[]) => void)
-    bot.on('goal_reached', this.onReached as (...args: never[]) => void)
-    bot.on('path_reset', this.onReset as (...args: never[]) => void)
     bot.on('forcedMove', this.onForced as (...args: never[]) => void)
     bot.on('physicsTick', this.onTick as (...args: never[]) => void)
   }
@@ -247,9 +265,6 @@ export class AgentNavigator {
       removeListener(event: string, handler: (...args: never[]) => void): void
     }
 
-    bot.removeListener('path_update', this.onPath as (...args: never[]) => void)
-    bot.removeListener('goal_reached', this.onReached as (...args: never[]) => void)
-    bot.removeListener('path_reset', this.onReset as (...args: never[]) => void)
     bot.removeListener('forcedMove', this.onForced as (...args: never[]) => void)
     bot.removeListener('physicsTick', this.onTick as (...args: never[]) => void)
 
@@ -260,10 +275,9 @@ export class AgentNavigator {
 
     // Best effort. The bot may already be gone, in which case there is nothing left to tell.
     try {
-      this.bot.pathfinder.setGoal(null)
-      this.bot.pathfinder.stop()
+      this.driver.stop()
     } catch (err) {
-      log.debug(`Agent ${this.id} could not stop its pathfinder: ${(err as Error).message}`)
+      log.debug(`Agent ${this.id} could not stop its engine: ${(err as Error).message}`)
     }
   }
 
@@ -384,6 +398,25 @@ export class AgentNavigator {
     this.seek()
   }
 
+  /**
+   * What the operator's settings come down to, as the engine wants them.
+   *
+   * The refusals go in as a cost rather than a wall - see `walk.ts` - so a route whose only way
+   * home runs through a spot the server will not accept is still found, and still fails there,
+   * rather than being reported as impossible.
+   */
+  private ruleset(): Rules {
+    const wanted = this.wanted()
+
+    return {
+      movements: movementsFor(this.bot, wanted, this.refused) as Movements,
+      reach: wanted.range,
+      sprint: wanted.sprint,
+      slice: SLICE,
+      budget: THINK_MS,
+    }
+  }
+
   /** Sets the engine at the waypoint it is on. */
   private seek(): void {
     const target = this.waypoints[this.at]
@@ -394,6 +427,7 @@ export class AgentNavigator {
     const near = last ? GOAL_NEAR : WAYPOINT_NEAR
 
     this.nodes = []
+    this.work = []
     this.progress = 0
     this.redrawn = false
 
@@ -403,15 +437,13 @@ export class AgentNavigator {
     this.refused = this.refused.filter((spot) => spot.until > now)
     this.refusedHere = 0
 
-    radius(this.bot, wanted.range)
-    this.bot.pathfinder.setMovements(movementsFor(this.bot, wanted, this.refused))
-    // A column when no height was given, a point when one was. Upstream has a goal for each, and
-    // the difference is exactly the one worth keeping: `GoalNearXZ` is satisfied by standing over
-    // the spot, which is what "somewhere around there" means when the ground is unknown.
-    this.bot.pathfinder.setGoal(
-      target.y === undefined
-        ? new plugin.goals.GoalNearXZ(target.x, target.z, near)
-        : new plugin.goals.GoalNear(target.x, target.y, target.z, near),
+    this.rules = this.ruleset()
+
+    // A column when no height was given, a point when one was, and the difference is the one worth
+    // keeping: a column is satisfied by standing over the spot, which is what "somewhere around
+    // there" means when nobody has charted the ground.
+    this.driver.go(
+      target.y === undefined ? over(target.x, target.z, near) : within(target.x, target.y, target.z, near),
     )
 
     log.info(
@@ -430,30 +462,34 @@ export class AgentNavigator {
   }
 
   /**
-   * A search finished, or got far enough to be worth walking.
+   * The engine drew a route, or redrew one.
    *
-   * Held rather than sent. Upstream emits this every tick while an incremental search grows, and a
-   * three hundred node path down the wire at twenty hertz is a lot of bandwidth spent redrawing a
-   * line that has moved by one node. {@link tick} sends it, at the rate anybody can read it - except
+   * Held rather than sent. A route is redrawn every slice while a search grows and again whenever a
+   * stretch is mended, and three hundred nodes down the wire at twenty hertz is a lot of bandwidth
+   * spent moving a line by one node. {@link tick} sends it, at the rate anybody can read it - except
    * the first, which goes at once so the map draws the moment the agent starts walking.
    */
-  private planned(status: string, path: ReadonlyArray<{ x: number; y: number; z: number }>): void {
+  private routed(steps: readonly Walk[], settled: boolean): void {
     if (this.waypoints.length === 0) return
-
-    const failure = failureOf(status, path.length)
-    if (failure) {
-      log.warn(`Agent ${this.id} cannot get there: ${failure}`)
-      this.finish('failed', failure)
-      return
-    }
 
     const first = this.nodes.length === 0
 
-    this.nodes = nodesOf(path)
+    // Standing positions, not blocks. `PathNode` has always meant the middle of a block - see
+    // `track.ts` - and a line drawn through block corners sits half a block off the agent walking it.
+    this.nodes = nodesOf(steps.map(standsAt))
+    this.work = workOf(steps)
+
+    if (settled) {
+      log.debug(
+        `Agent ${this.id} drew a route of ${this.nodes.length} nodes with ${this.work.length} blocks to change`,
+      )
+    }
     this.progress = 0
     this.redrawn = true
 
-    if (first) this.tick()
+    // Unsettled routes are guesses that change every slice; drawing each one would be a line
+    // flickering across the map for no information. The settled one that follows is the answer.
+    if (first && settled) this.tick()
   }
 
   /** Progress, and the path itself when it has been redrawn since the last one. */
@@ -469,7 +505,7 @@ export class AgentNavigator {
       state: 'moving',
       progress: this.progress,
       ...(goal ? { goal } : {}),
-      ...(this.redrawn ? { nodes: this.nodes } : {}),
+      ...(this.redrawn ? { nodes: this.nodes, work: this.work } : {}),
     })
 
     this.redrawn = false
@@ -489,26 +525,6 @@ export class AgentNavigator {
     const target = this.destination()
     log.info(`Agent ${this.id} arrived at ${target?.x} ${target?.y ?? 'any'} ${target?.z}`)
     this.finish('arrived')
-  }
-
-  /**
-   * The engine threw its path away.
-   *
-   * Not reported and not a failure: it re-plans from where it stands, which is what should happen
-   * when a door closes in front of an agent or a chunk it was counting on arrives. Logged because
-   * `stuck` is upstream saying a node took longer than it should have to reach, and an operator
-   * asking why an agent is standing still deserves to find that written down somewhere.
-   */
-  private reset(why: string): void {
-    if (this.waypoints.length === 0) return
-
-    if (why !== 'stuck') {
-      log.debug(`Agent ${this.id} is planning again: ${why}`)
-      return
-    }
-
-    log.warn(`Agent ${this.id} stopped making progress and is planning again`)
-    log.debug(`Agent ${this.id} was stuck ${this.physics()}`)
   }
 
   /**
@@ -586,10 +602,9 @@ export class AgentNavigator {
     this.clear()
 
     try {
-      this.bot.pathfinder.setGoal(null)
-      this.bot.pathfinder.stop()
+      this.driver.halt()
     } catch (err) {
-      log.debug(`Agent ${this.id} could not stop its pathfinder: ${(err as Error).message}`)
+      log.debug(`Agent ${this.id} could not stop its engine: ${(err as Error).message}`)
     }
 
     this.report({ state, ...(goal ? { goal } : {}), ...(reason ? { reason } : {}) })
@@ -604,6 +619,7 @@ export class AgentNavigator {
     this.refused = []
     this.refusedHere = 0
     this.nodes = []
+    this.work = []
     this.progress = 0
     this.redrawn = false
   }
@@ -611,4 +627,25 @@ export class AgentNavigator {
   private destination(): Waypoint | undefined {
     return this.waypoints[this.waypoints.length - 1]
   }
+}
+
+/**
+ * Every block a route still means to change, in the order it means to.
+ *
+ * Taken from the steps rather than from the engine's own bookkeeping, because a step has its work
+ * shifted off it as it is done: what comes out here is what is *left*, which is what somebody
+ * watching wants to see. A placement names the block it builds against and a face, so the square
+ * that actually changes is one step off it.
+ */
+function workOf(steps: readonly Walk[]): PathWork[] {
+  const planned: PathWork[] = []
+
+  for (const step of steps) {
+    for (const spot of step.toBreak) planned.push({ x: spot.x, y: spot.y, z: spot.z, kind: 'break' })
+    for (const spot of step.toPlace) {
+      planned.push({ x: spot.x + spot.dx, y: spot.y + spot.dy, z: spot.z + spot.dz, kind: 'place' })
+    }
+  }
+
+  return planned
 }

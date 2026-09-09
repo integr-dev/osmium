@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { advanced, nodesOf } from '../src/agent/path/track.ts'
 import { DEFAULT_DROP, DEFAULT_RANGE, MOST_DROP, MOST_RANGE, pathSettingsFrom } from '../src/agent/path/settings.ts'
-import { failureOf, movementsFor, type Refused } from '../src/agent/path/walk.ts'
+import { movementsFor, type Refused } from '../src/agent/path/walk.ts'
 
 /**
  * A bot with nothing on it but the block table.
@@ -235,28 +235,6 @@ describe('going around somewhere the server refused', () => {
  * loaded world gets walked at all, and a search that found nothing while the agent is already on its
  * way is upstream re-planning around something that moved.
  */
-describe('failureOf', () => {
-  it('says nothing about a search that worked', () => {
-    expect(failureOf('success', 12)).toBeUndefined()
-  })
-
-  it('treats a partial path as the journey it is', () => {
-    expect(failureOf('partial', 12)).toBeUndefined()
-    expect(failureOf('timeout', 12)).toBeUndefined()
-  })
-
-  it('names a route that does not exist', () => {
-    expect(failureOf('noPath', 0)).toBe('there is no route there')
-  })
-
-  it('names a search that ran out of time before it found anything', () => {
-    expect(failureOf('timeout', 0)).toBe('the search ran out of time')
-  })
-
-  it('says what it was told when upstream invents an ending', () => {
-    expect(failureOf('exploded', 0)).toContain('exploded')
-  })
-})
 
 describe('nodesOf', () => {
   it('keeps a node at the centre of its block', () => {

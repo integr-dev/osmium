@@ -2,6 +2,7 @@ import type { Bot } from 'mineflayer'
 import type { Movements } from 'mineflayer-pathfinder'
 import plugin from 'mineflayer-pathfinder'
 
+import { bestFor } from '../tool.ts'
 import type { PathSettings } from './settings.ts'
 
 /** Somewhere the agent tried to step and was put back, and when that stops mattering. */
@@ -26,17 +27,18 @@ function near(at: { x: number; y: number; z: number }, spot: Refused): boolean {
 }
 
 /**
- * The walking engine, which is mineflayer-pathfinder's rather than ours.
+ * The rules of walking, which are mineflayer-pathfinder's rather than ours.
  *
- * **Delegated on purpose.** Walking a Minecraft world is a pile of hard-won geometry - which gaps a
- * jump clears, when a drop hurts, what a slab does to a step, which of the four blocks around a
- * diagonal have to be clear - and upstream has been getting it wrong and fixing it for years. There
- * is no version of writing that here that is not a worse copy of it.
+ * **The one piece of the plugin kept, and kept on purpose.** What a step costs is a pile of hard-won
+ * geometry - which gaps a jump clears, when a drop hurts, what a slab does to a step, which of the
+ * four blocks around a diagonal have to be free - and upstream has been getting it wrong and fixing
+ * it for years. There is no version of writing that here that is not a worse copy of it.
+ *
+ * The search that reads these rules and the executor that acts on them are both ours: see
+ * `search.ts` and `drive.ts` for what was wrong with upstream's.
  *
  * What this file is, then, is a translation: the operator's settings into a `Movements`, and nothing
- * else. Everything about a path that Osmium has an opinion on - what it looks like on the wire, how
- * far along it the agent is, what to do when it stops moving - lives above the driver, where the
- * flying engine will meet it.
+ * else.
  */
 
 /**
@@ -49,6 +51,8 @@ function near(at: { x: number; y: number; z: number }, spot: Refused): boolean {
  * simply is not found, which is a failure somebody can read.
  */
 export function movementsFor(bot: Bot, wanted: PathSettings, avoid: readonly Refused[] = []): Movements {
+  answerToolQuestions(bot)
+
   const movements = new plugin.Movements(bot)
 
   /*
@@ -84,6 +88,30 @@ export function movementsFor(bot: Bot, wanted: PathSettings, avoid: readonly Ref
   movements.scafoldingBlocks = wanted.bridge ? buildableWith(bot) : []
 
   return movements
+}
+
+/**
+ * Answers the one question `Movements` asks the bot that the plugin's own injection used to.
+ *
+ * **The rules are not as free-standing as they look.** `safeOrBreak` prices breaking a block by how
+ * long it would take with the best tool the agent is carrying, and it asks for that tool through
+ * `bot.pathfinder` - a property the plugin adds when it is loaded. This host no longer loads it,
+ * because doing so would run upstream's tick loop beside ours for no reason, so the one method the
+ * rules actually reach for is supplied here instead.
+ *
+ * It is answered with the same autotool the executor reaches for when it comes to actually break
+ * something, which is the right way round: what a route is priced on and what the agent then does
+ * were two different answers before, and that is how a search talks itself into a route it cannot
+ * walk in the time it thought.
+ */
+function answerToolQuestions(bot: Bot): void {
+  const asked = bot as unknown as { pathfinder?: { bestHarvestTool?: unknown } }
+  if (asked.pathfinder?.bestHarvestTool) return
+
+  asked.pathfinder = {
+    ...asked.pathfinder,
+    bestHarvestTool: (block: Parameters<typeof bestFor>[1]) => bestFor(bot, block) ?? null,
+  }
 }
 
 /**
@@ -145,25 +173,4 @@ function buildableWith(bot: Bot): number[] {
   }
 
   return [...first, ...rest]
-}
-
-/**
- * What a finished search means, or nothing when it means the agent is still walking.
- *
- * `partial` is a success. Upstream returns the best prefix it found inside its budget, walks it, and
- * searches again from the end - which is exactly how a path longer than the loaded world gets
- * walked at all. Reading it as a failure would refuse every journey worth taking.
- */
-export function failureOf(status: string, nodes: number): string | undefined {
-  if (status === 'success' || status === 'partial') return undefined
-
-  // A search that found nothing at all, having got somewhere, is upstream re-planning from where it
-  // stands - a door closed in front of the agent looks exactly like this. It is the watchdog's to
-  // judge, not a failure to report on the spot.
-  if (nodes > 0) return undefined
-
-  if (status === 'noPath') return 'there is no route there'
-  if (status === 'timeout') return 'the search ran out of time'
-
-  return `the search ended as '${status}'`
 }

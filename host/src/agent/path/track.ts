@@ -1,9 +1,9 @@
 /**
  * What a path is on the wire, and how far along one an agent has got.
  *
- * Nothing here knows which engine drew the path. Walking is mineflayer-pathfinder's, flying will be
- * ours, and the whole point of the split is that everything above the driver - the wire event, the
- * two renderers, the watchdog - sees one shape and one notion of progress.
+ * Nothing here knows which engine drew the path. Walking is `drive.ts`, flying will be its own, and
+ * the whole point of the split is that everything above the driver - the wire event, the two
+ * renderers, the watchdog - sees one shape and one notion of progress.
  */
 
 /**
@@ -17,6 +17,20 @@ export interface PathNode {
   x: number
   y: number
   z: number
+}
+
+/**
+ * A block the route means to change, and which way.
+ *
+ * **A block, not a standing position.** Unlike {@link PathNode} these are squares in the world, and
+ * they are drawn as the cube they are. The two are half a block apart on two axes and confusing
+ * them is a bug this project has already paid for once - see `standsAt` in `ground.ts`.
+ */
+export interface PathWork {
+  x: number
+  y: number
+  z: number
+  kind: 'place' | 'break'
 }
 
 /** Two decimal places is a centimetre, which is finer than anything drawn from this. */
@@ -39,9 +53,9 @@ export function nodesOf(moves: ReadonlyArray<{ x: number; y: number; z: number }
 /**
  * Which node the agent has reached, measured rather than counted.
  *
- * **Measured**, because the engine is not asked. mineflayer-pathfinder consumes its own path as it
- * walks and a flyer will not, so anything read off an engine is a number that means something
- * different per engine - and progress is drawn by one renderer.
+ * **Measured**, because the engine is not asked. The walking engine consumes its route as it goes
+ * and a flyer will not, so anything read off an engine is a number that means something different
+ * per engine - and progress is drawn by one renderer.
  *
  * **Never backwards.** A path that doubles back comes within a block of a node it left minutes ago,
  * and the nearest node to the agent is then one it has already walked. So the search starts where it

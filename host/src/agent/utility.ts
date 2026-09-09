@@ -1,6 +1,7 @@
 import type { Bot } from 'mineflayer'
 
 import { log } from '../log.ts'
+import { RANK, type Schedule } from './schedule.ts'
 
 /**
  * The utility modules: staying alive, and staying fed, without an operator watching.
@@ -430,9 +431,7 @@ export class AgentUtilities {
     return this.busy
   }
 
-  /**
-   * True while anything is clicking the inventory window.
-   *
+  /*
    * **There is one cursor, and it is shared.** `window.selectedItem` holds whatever a click picked
    * up, and every window operation in mineflayer is pick-up-then-put-down against it. Two of them at
    * once - a totem going into the off hand while a golden apple is being moved into the main hand -
@@ -440,13 +439,11 @@ export class AgentUtilities {
    * not a rare race: eating takes over a second, pops arrive whenever they arrive, and the refill is
    * driven by the pop rather than by the sweep.
    *
-   * So one at a time. A refill that cannot have the window now is remembered rather than dropped -
-   * see [owed] - because the whole point of it is that it happens immediately.
+   * That used to be a boolean here, and one at a time was all it could say: whoever asked first got
+   * the window and everybody else was turned away with a line in the log. One at a time was right
+   * and first-come was not, so both now live in `schedule.ts`, which knows that a totem matters more
+   * than a mouthful and takes the hands off one for the other.
    */
-  private clicking = false
-
-  /** A refill asked for while the window was busy, to run the moment it is free. */
-  private owed = false
 
   /** When the last meal actually went down, so another cannot start on top of it. */
   private fed = 0
@@ -506,6 +503,14 @@ export class AgentUtilities {
     private readonly bot: Bot,
     private readonly wanted: () => Utilities,
     private readonly hooks: UtilityHooks,
+    /**
+     * The one queue for the agent's hands.
+     *
+     * Shared with everything else that touches the inventory, which is the point: these modules used
+     * to turn each other away with a boolean and a `the window was busy` line, so whichever asked
+     * first won regardless of which mattered. See `schedule.ts`.
+     */
+    private readonly hands: Schedule,
   ) {}
 
   start(): void {
@@ -627,19 +632,20 @@ export class AgentUtilities {
     const spare = this.bot.inventory?.items()?.find((item) => item.name === TOTEM)
     if (!spare) return
 
-    // Somebody else is mid-click. Ask again the moment they are done rather than clicking over them.
-    if (this.clicking) {
-      this.owed = true
-      return
-    }
-
     this.filling = true
     try {
-      const moved = await this.claim(() => within(this.bot.equip(spare, 'off-hand' satisfies Hand)))
-
-      if (moved === undefined) log.debug(`Agent ${this.agentId} could not fill its off hand: the window was busy`)
-      else if (moved.ok) log.debug(`Agent ${this.agentId} moved a totem into its off hand`)
-      else log.debug(`Agent ${this.agentId} could not fill its off hand: ${moved.why}`)
+      // Not "if nobody else is busy" any more. An agent with an empty off hand is one hit from the
+      // end of its session, so this takes the hands off whatever had them and gives them back after.
+      await this.hands.add({
+        name: 'putting a totem in the off hand',
+        rank: RANK.TOTEM,
+        key: 'totem',
+        run: async () => {
+          const moved = await within(this.bot.equip(spare, 'off-hand' satisfies Hand))
+          if (moved.ok) log.debug(`Agent ${this.agentId} moved a totem into its off hand`)
+          else log.debug(`Agent ${this.agentId} could not fill its off hand: ${moved.why}`)
+        },
+      })
     } finally {
       this.filling = false
     }
@@ -760,7 +766,7 @@ export class AgentUtilities {
      * between the check and the command - so `/dupe` copied the apple with the multiplier worked out
      * for totems. `Duped item 31 times`, a stack of apples, and an agent that still had two totems.
      */
-    const ran = await this.claim(async () => {
+    const ran = await this.atomically('duping', RANK.TIDY, async () => {
       try {
       /*
        * **A totem is copied out of the off hand, and never out of the main hand.**
@@ -893,7 +899,7 @@ export class AgentUtilities {
     // Said out loud, because a restock that never gets the window looks exactly like one that had
     // nothing to do - and telling those apart from the outside took three fights.
     if (ran === undefined) {
-      log.debug(`Agent ${this.agentId} could not restock ${name ?? 'food'}: the window was busy`)
+      log.debug(`Agent ${this.agentId} could not restock ${name ?? 'food'}`)
     }
   }
 
@@ -947,20 +953,28 @@ export class AgentUtilities {
    * the agent eating, refilling or restocking for the rest of the session - which is a worse failure
    * than the interleaving this prevents.
    */
-  private async claim<T>(work: () => Promise<T>): Promise<T | undefined> {
-    if (this.clicking) return undefined
+  /**
+   * Runs something the queue may not split in half, and answers what it produced.
+   *
+   * {@link Schedule.add} settles with nothing, because most callers only need to know the work is
+   * done. The dupe sequence needs its result, and needs to be indivisible - selecting a square,
+   * checking the hands and sending the command are one thing, and auto-eat putting a golden apple
+   * into the selected slot between the check and the command is how `/dupe` once copied an apple
+   * with the multiplier worked out for totems.
+   */
+  private async atomically<T>(name: string, rank: number, work: () => Promise<T>): Promise<T | undefined> {
+    let made: T | undefined
 
-    this.clicking = true
-    try {
-      return await work()
-    } finally {
-      this.clicking = false
+    await this.hands.add({
+      name,
+      rank,
+      yields: false,
+      run: async () => {
+        made = await work()
+      },
+    })
 
-      if (this.owed) {
-        this.owed = false
-        void this.refill()
-      }
-    }
+    return made
   }
 
   private async refill(): Promise<void> {
@@ -1016,28 +1030,37 @@ export class AgentUtilities {
     try {
       this.bot.clearControlStates()
 
-      await this.claim(async () => {
-        try {
-          const inHand = await within(this.bot.equip(found, 'hand' satisfies Hand))
-          if (!inHand.ok) {
-            log.debug(`Agent ${this.agentId} could not hold ${wanted.name}: ${inHand.why}`)
-            return
-          }
+      await this.hands.add({
+        name: 'eating',
+        rank: RANK.HEAL,
+        run: async (signal) => {
+          try {
+            const inHand = await within(this.bot.equip(found, 'hand' satisfies Hand))
+            if (!inHand.ok) {
+              log.debug(`Agent ${this.agentId} could not hold ${wanted.name}: ${inHand.why}`)
+              return
+            }
 
-          const eaten = await within(this.bot.consume())
-          if (!eaten.ok) {
-            log.debug(`Agent ${this.agentId} could not eat ${wanted.name}: ${eaten.why}`)
-            return
-          }
+            // **The one place worth checking.** Eating is a swap and then a second and a half of
+            // holding still, and a totem wanted in that window cannot wait for the mouthful. There
+            // is no half-eaten apple to preserve: the queue puts this back and it starts again.
+            if (signal.aborted) throw new Error('put down for something that matters more')
 
-          this.fed = Date.now()
-          log.debug(`Agent ${this.agentId} ate ${wanted.name}`)
-        } finally {
-          // Inside the lock. Putting the hotbar back only after letting go left a golden apple in
-          // the selected slot for whatever claimed the hands next - which was the totem restock,
-          // and it copied the apple with the multiplier worked out for totems.
-          this.bot.setQuickBarSlot(held)
-        }
+            const eaten = await within(this.bot.consume())
+            if (!eaten.ok) {
+              log.debug(`Agent ${this.agentId} could not eat ${wanted.name}: ${eaten.why}`)
+              return
+            }
+
+            this.fed = Date.now()
+            log.debug(`Agent ${this.agentId} ate ${wanted.name}`)
+          } finally {
+            // Inside the job. Putting the hotbar back only after letting go left a golden apple in
+            // the selected slot for whatever took the hands next - which was the totem restock, and
+            // it copied the apple with the multiplier worked out for totems.
+            this.bot.setQuickBarSlot(held)
+          }
+        },
       })
     } finally {
       // In a `finally` because the reasons eating fails - a server that refuses it, a stack that ran

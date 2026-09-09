@@ -1,13 +1,14 @@
 import minecraftData from 'minecraft-data'
 import minecraftProtocol from 'minecraft-protocol'
 import mineflayer, { type Bot, type BotOptions } from 'mineflayer'
-import pathfinder from 'mineflayer-pathfinder'
 
 // Aliased: `Vec3` in this file already means the wire shape, which is three plain numbers on a
 // message. This is the runtime class the world API takes - a different thing that shares a name.
 import { Vec3 as WorldVec } from 'vec3'
 
 import { type Endpoint, locate } from './address.ts'
+import { Schedule } from './schedule.ts'
+import { speedUpTools, timeDigsProperly } from './tool.ts'
 import { type Box, CLEARANCE, freed, hullAt, HULL_HEIGHT, HULL_WIDTH, overlaps } from './unembed.ts'
 import { AgentNavigator, type Waypoint } from './path/navigator.ts'
 import { type PathSettings, pathSettingsFrom } from './path/settings.ts'
@@ -264,6 +265,16 @@ export class Agent {
   private pathing: PathSettings = pathSettingsFrom({})
 
   private navigator: AgentNavigator | undefined
+
+  /**
+   * The one queue for this agent's hands.
+   *
+   * **One per agent and not per module**, which is the whole point of it: eating, restocking a totem
+   * and laying a block all need the same pair of hands, and until this existed they turned each
+   * other away with a boolean - so whichever asked first won, regardless of which mattered. See
+   * `schedule.ts`.
+   */
+  private readonly hands: Schedule
   /** The server's own command for sending a private message, as a template. Undefined means `/msg`,
    * which is what vanilla and most plugin suites answer to - see `WHISPER_COMMAND`. */
   private whisperCommand: string | undefined
@@ -309,6 +320,8 @@ export class Agent {
     private readonly proxies: Proxies,
     private readonly hooks: AgentHooks,
   ) {
+    this.hands = new Schedule(id)
+
     this.queue = this.begin().catch((err) => log.error(`Agent ${id} fell over while starting: ${reason(err)}`))
   }
 
@@ -580,11 +593,6 @@ export class Agent {
       return
     }
 
-    // Loaded here rather than passed to `createBot`: mineflayer defers injection until the bot is
-    // ready for it either way, and a plugin named in the options is one more thing to get past the
-    // spread that routes the connection.
-    bot.loadPlugin(pathfinder.pathfinder)
-
     this.bot = bot
     this.leaving = false
     this.kicked = false
@@ -786,8 +794,17 @@ export class Agent {
     )
 
     unscaleVelocity(bot, this.id, () => ({ take: this.takeKnockback, correct: this.knockback }))
-    keepOutOfBlocks(bot, this.id)
-    placeBlocksProperly(bot, this.id)
+
+    // **Shared because these two would otherwise fight.** A tower is built by placing a block in the
+    // square the agent is standing in and jumping out of it, and for a tick or two the agent's own
+    // box and that block are in the same place. One of these modules exists to shove the agent out
+    // of blocks it is inside; the other is deliberately putting it inside one. See `Building`.
+    const building: Building = {}
+
+    keepOutOfBlocks(bot, this.id, building)
+    placeBlocksProperly(bot, this.id, building)
+    timeDigsProperly(bot, this.id)
+    speedUpTools(bot, this.id)
   }
 
   /** Settles one session, whichever of the several endings arrived first. */
@@ -798,6 +815,9 @@ export class Agent {
     clearTimeout(this.watchdog)
     clearInterval(this.vitals)
     this.watchdog = undefined
+
+    // Every queued job is told, rather than left holding a promise for work on a bot that is gone.
+    this.hands.stop()
     this.vitals = undefined
     this.listening = false
     // The stream goes, the subscription stays: a watcher whose agent is reconnecting is still
@@ -1559,6 +1579,7 @@ export class Agent {
         trusted: (name) => this.trusted.has(name.toLowerCase()),
         flee: (who, distance) => this.retreat(who, distance),
       },
+      this.hands,
     )
     this.utilities.start()
   }
@@ -1630,10 +1651,12 @@ export class Agent {
           ...(dimension ? { dimension } : {}),
           ...(update.goal ? { goal: update.goal } : {}),
           ...(update.nodes ? { nodes: update.nodes } : {}),
+          ...(update.work ? { work: update.work } : {}),
           ...(update.progress !== undefined ? { progress: update.progress } : {}),
           ...(update.reason ? { reason: update.reason } : {}),
         })
       },
+      this.hands,
     )
     this.navigator.start()
   }
@@ -2165,14 +2188,27 @@ const GOODBYE = 1_000
  * `freed` answers with nothing rather than guessing which way it should have gone - so it is
  * reported instead, which is the only thing this can honestly do about it.
  */
-function keepOutOfBlocks(bot: Bot, id: number): void {
+/**
+ * The square an agent is deliberately putting a block into, while it is doing it.
+ *
+ * **Two modules have to agree about one square or they undo each other.** `keepOutOfBlocks` shoves
+ * the agent clear of anything solid it finds itself inside, which is right for a block somebody else
+ * dropped on it and exactly wrong for the one it is building a tower out of: the agent is *meant* to
+ * be leaving that square upwards, under its own jump, and being shoved sideways out of it instead
+ * puts it on the edge of its own tower - or off it.
+ */
+interface Building {
+  at?: WorldVec | undefined
+}
+
+function keepOutOfBlocks(bot: Bot, id: number, building: Building): void {
   let toldAt = 0
 
   bot.on('physicsTick', () => {
     const at = bot.entity?.position
     if (!at) return
 
-    const out = freed({ x: at.x, y: at.y, z: at.z }, solidsAround(bot, at), CLEARANCE)
+    const out = freed({ x: at.x, y: at.y, z: at.z }, solidsAround(bot, at, building.at), CLEARANCE)
 
     // Almost every tick: the hull is clear and there is nothing to do.
     if (!out) return
@@ -2236,7 +2272,7 @@ const SETTLED_MS = 400
  * Nothing here writes to the world. What the agent believes about the world stays exactly what the
  * server told it.
  */
-function placeBlocksProperly(bot: Bot, id: number): void {
+function placeBlocksProperly(bot: Bot, id: number, building: Building): void {
   /** Where the placement now in flight was aimed, once the gate has vouched for it. */
   let aimed: WorldVec | undefined
   /** How to tell the pending placement it failed. Present only while one is in flight. */
@@ -2279,7 +2315,16 @@ function placeBlocksProperly(bot: Bot, id: number): void {
     if (!place) return
 
     bot.placeBlock = async (reference, face) => {
-      await roomFor(bot, reference.position.plus(face), id)
+      const going = reference.position.plus(face)
+
+      // **Held for the whole placement and a moment past it.** Clearing this the instant the agent
+      // was clear of the square was too early by exactly the interesting part: the block then goes
+      // in underneath it and the agent lands on top, and for the tick or two before the server's
+      // position update catches up the client has the agent inside its own new block. That is the
+      // shove sideways that leaves it standing on the edge of the tower it just built.
+      building.at = going
+
+      await roomFor(bot, going, id)
 
       vouched = true
 
@@ -2299,10 +2344,25 @@ function placeBlocksProperly(bot: Bot, id: number): void {
         vouched = false
         aimed = undefined
         giveUp = undefined
+
+        // Long enough for the landing to settle. Cleared by identity, so a placement that has since
+        // started somewhere else keeps its own.
+        setTimeout(() => {
+          if (building.at === going) building.at = undefined
+        }, LANDING_MS)
       }
     }
   })
 }
+
+/**
+ * How long a block the agent just laid goes on being its own doing.
+ *
+ * A jump lands about a quarter of a second after the block goes in, and the server's answer about
+ * where the agent ended up arrives after that. Half a second covers both without leaving a real
+ * obstruction ignored for anything like long enough to matter.
+ */
+const LANDING_MS = 500
 
 /** Where a placement request would put a block, from the packet as it goes out. */
 function aimedAt(params: unknown): WorldVec | undefined {
@@ -2363,6 +2423,12 @@ function roomFor(bot: Bot, at: WorldVec, id: number): Promise<void> {
   const from = bot.entity?.position.y ?? 0
   let most = from
 
+  // **Held here, because here is what knows the agent is in the way.** Whether a placement needs a
+  // jump is geometry, not a flag: upstream marks its own pillaring moves and marks nothing else, so
+  // a step that ends up placing into the agent's own square by any other route waited twenty ticks
+  // for room that nothing was making. Standing in the square *is* the reason to jump.
+  bot.setControlState('jump', true)
+
   return new Promise((resolve, reject) => {
     let ticks = 0
 
@@ -2408,13 +2474,16 @@ function roomFor(bot: Bot, at: WorldVec, id: number): Promise<void> {
  * are indistinguishable in a count of zero. Costs a couple of dozen lookups a tick and makes the
  * answer mean something.
  */
-function solidsAround(bot: Bot, at: { x: number; y: number; z: number }): Box[] {
+function solidsAround(bot: Bot, at: { x: number; y: number; z: number }, building?: WorldVec): Box[] {
   const half = HULL_WIDTH / 2 + REACH
   const boxes: Box[] = []
 
   for (let x = Math.floor(at.x - half); x <= Math.floor(at.x + half); x++) {
     for (let y = Math.floor(at.y - REACH); y <= Math.floor(at.y + HULL_HEIGHT + REACH); y++) {
       for (let z = Math.floor(at.z - half); z <= Math.floor(at.z + half); z++) {
+        // The one the agent is building into is its own doing, and it leaves upwards. See `Building`.
+        if (building && building.x === x && building.y === y && building.z === z) continue
+
         const block = bot.blockAt(new WorldVec(x, y, z))
         if (!block?.shapes?.length) continue
 
