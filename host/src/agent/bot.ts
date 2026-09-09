@@ -522,7 +522,7 @@ export class Agent {
       log.debug(`Agent ${this.id}: routing ${address} through '${route.name}' (${route.kind})`)
     }
 
-    const version = this.version ?? (await negotiate(endpoint, this.id, route))
+    const version = this.version ?? (await negotiate(endpoint, this.id, route, () => this.cancelling))
     if (this.abandoned()) return
 
     this.open(address, endpoint, version, route)
@@ -885,6 +885,7 @@ export class Agent {
 
     this.leaving = true
     this.bot.quit()
+    cutShort(this.bot, this.id)
   }
 
   /**
@@ -1412,6 +1413,7 @@ export class Agent {
     if (this.bot) {
       this.leaving = true
       this.bot.quit()
+      cutShort(this.bot, this.id)
     }
 
     clearInterval(this.vitals)
@@ -2027,12 +2029,17 @@ function separation(from: Vec3, to: Vec3): number {
  * Both are ordinary servers that a fixed-version client joins without trouble. So the ping happens
  * here, where failing it is survivable, and the session is always opened on a version we chose.
  */
-async function negotiate(endpoint: Endpoint, id: number, route: ProxyEntry | undefined): Promise<string> {
+async function negotiate(
+  endpoint: Endpoint,
+  id: number,
+  route: ProxyEntry | undefined,
+  giveUp?: () => boolean,
+): Promise<string> {
   const address = `${endpoint.host}:${endpoint.port}`
 
   let response: Awaited<ReturnType<typeof status>>
   try {
-    response = await status(endpoint, route)
+    response = await status(endpoint, route, giveUp)
   } catch (err) {
     log.info(`Agent ${id}: ${address} would not answer a version check (${reason(err)}), assuming ${ASSUMED}`)
     return ASSUMED
@@ -2067,20 +2074,78 @@ async function negotiate(endpoint: Endpoint, id: number, route: ProxyEntry | und
 function status(
   endpoint: Endpoint,
   route: ProxyEntry | undefined,
+  giveUp?: () => boolean,
 ): Promise<{ version?: { protocol?: number } } | undefined> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('no answer')), PING)
+    let watch: NodeJS.Timeout | undefined
+
+    const stop = (): void => {
+      clearTimeout(timer)
+      clearInterval(watch)
+    }
+
+    const timer = setTimeout(() => {
+      stop()
+      reject(new Error('no answer'))
+    }, PING)
+
+    /*
+     * An operator saying stop should not have to wait out a question nobody wants the answer to.
+     *
+     * `ping` gives no way to abandon one: the callback fires when the server answers or when the
+     * socket gives up, and a filtered server does neither. So the cancel is noticed on a timer of
+     * its own, and the attempt fails here rather than eight seconds later - the socket underneath is
+     * left to its own timeout, because by then nothing is waiting on it.
+     */
+    if (giveUp) {
+      watch = setInterval(() => {
+        if (!giveUp()) return
+        stop()
+        reject(new Error('cancelled'))
+      }, GIVING_UP)
+    }
 
     const through = route ? { connect: routed(route, endpoint.host, endpoint.port).connect } : {}
 
     minecraftProtocol.ping({ host: endpoint.host, port: endpoint.port, ...through }, (err, result) => {
-      clearTimeout(timer)
+      stop()
 
       if (err) reject(err)
       else resolve(result as { version?: { protocol?: number } })
     })
   })
 }
+
+/** How often a round trip nobody is waiting on any more checks whether that is so. */
+const GIVING_UP = 100
+
+/**
+ * Closes the socket rather than asking it to close.
+ *
+ * **`quit` is a polite goodbye and it can take half a minute.** mineflayer's `quit` ends the packet
+ * chain, which half-closes the socket and waits for the server to close its side;
+ * `minecraft-protocol` only forces the matter after its own `closeTimeout`, thirty seconds later
+ * (`src/client.js:14`). For a session that never finished opening - a queue holding the socket, a
+ * proxy with nothing behind it - the server's half never closes, so nothing arrives to end the
+ * session, nothing reports, and an operator watches a cancelled connection sit there.
+ *
+ * A short grace first, because a clean goodbye is worth having when the server is listening: the
+ * quit packet has gone, and this only matters when nothing answered it.
+ */
+function cutShort(bot: Bot, id: number): void {
+  const socket = (bot as unknown as { _client?: { socket?: { destroyed?: boolean; destroy(): void } } })._client?.socket
+  if (!socket) return
+
+  setTimeout(() => {
+    if (socket.destroyed) return
+
+    log.debug(`Agent ${id} was still closing, so its socket was cut`)
+    socket.destroy()
+  }, GOODBYE).unref()
+}
+
+/** How long a polite close gets before the socket is taken away from it. */
+const GOODBYE = 1_000
 
 /**
  * Puts the agent back outside any block it has ended up inside, once per tick.
