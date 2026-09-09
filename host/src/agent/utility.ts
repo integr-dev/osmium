@@ -87,6 +87,35 @@ const HEALTH_FULL = 20
 /** The two the game treats as medicine rather than as food. */
 const GOLDEN = new Set(['golden_apple', 'enchanted_golden_apple'])
 
+/**
+ * Food that costs more than it gives, and is therefore not food.
+ *
+ * **The registry cannot tell you this.** `foods` carries `foodPoints` and `saturation` and nothing
+ * about what eating one does to you, so a spider eye reads as two points of dinner and rotten flesh
+ * as four - better than a carrot. An agent eating what it finds would poison itself on the way home,
+ * and auto-eat exists to keep an agent alive rather than to keep a number topped up.
+ *
+ * Named rather than reasoned about, because the reasons do not generalise: poison for the eye and
+ * the potato, hunger for the flesh, poison and nausea and hunger together for the pufferfish, and a
+ * one-in-three chance of the same for raw chicken - which is a coin flip an unattended agent has no
+ * business taking for two points. Chorus fruit does no damage at all and is here anyway: it
+ * teleports whoever eats it up to eight blocks, which for an agent halfway across a bridge it built
+ * is worse than being hungry.
+ *
+ * Suspicious stew is left out on purpose. What it does is in its components rather than its name, so
+ * a bowl of it may be six points of dinner or may be poison, and refusing the good ones is a smaller
+ * loss than this list can honestly avoid.
+ */
+const HARMFUL = new Set([
+  'spider_eye',
+  'poisonous_potato',
+  'rotten_flesh',
+  'pufferfish',
+  'chicken',
+  'chorus_fruit',
+  'suspicious_stew',
+])
+
 const TOTEM = 'totem_of_undying'
 
 /**
@@ -248,7 +277,7 @@ export function edible(
   const hurt = health < HEALTH_LOW
   if (food >= FOOD_LOW && !hurt) return undefined
 
-  const foods = carried.filter((item) => item.foodPoints !== undefined)
+  const foods = carried.filter((item) => item.foodPoints !== undefined && !HARMFUL.has(item.name))
   const plain = foods.filter((item) => !GOLDEN.has(item.name))
   const golden = foods.filter((item) => GOLDEN.has(item.name))
 
@@ -296,7 +325,7 @@ export function edible(
  * Nothing here refuses to *eat* one. This is only about what is counted and what is copied.
  */
 export function stocked(name: string, foodPoints: number | undefined): boolean {
-  return foodPoints !== undefined && !GOLDEN.has(name)
+  return foodPoints !== undefined && !GOLDEN.has(name) && !HARMFUL.has(name)
 }
 
 export function duplication(count: number, held: number, target: number): number | undefined {

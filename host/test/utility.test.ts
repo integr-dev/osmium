@@ -26,6 +26,9 @@ const STEAK = food('cooked_beef', 8)
 const CARROT = food('carrot', 3)
 const GAPPLE = food('golden_apple', 4)
 const NOTCH = food('enchanted_golden_apple', 4)
+const EYE = food('spider_eye', 2)
+const FLESH = food('rotten_flesh', 4)
+const RAW_CHICKEN = food('chicken', 2)
 
 describe('what to eat', () => {
   it('does not eat a fed agent in one piece', () => {
@@ -99,6 +102,35 @@ describe('what to eat', () => {
  * Counting it alike sent the dupe after the valuables, because a gapple stacks to sixty-four and the
  * biggest pile is what gets copied.
  */
+/**
+ * Food that costs more than it gives.
+ *
+ * The registry has no opinion here - it reports a spider eye as two points of dinner and rotten
+ * flesh as four, better than a carrot - so an agent eating by the numbers poisons itself.
+ */
+describe('food that hurts', () => {
+  it('goes hungry rather than eating something that poisons it', () => {
+    expect(edible([EYE], 20, 10)).toBeUndefined()
+    expect(edible([FLESH], 20, 10)).toBeUndefined()
+    expect(edible([RAW_CHICKEN], 20, 10)).toBeUndefined()
+  })
+
+  it('leaves it alone even when it is the larger number', () => {
+    expect(edible([FLESH, CARROT], 20, 10)).toBe(CARROT)
+  })
+
+  /** Being badly hurt is a reason to spend a gapple, not a reason to eat poison. */
+  it('does not reach for it when hurt either', () => {
+    expect(edible([EYE], 5, 5)).toBeUndefined()
+  })
+
+  it('does not count it as food worth keeping in stock', () => {
+    expect(stocked('spider_eye', 2)).toBe(false)
+    expect(stocked('rotten_flesh', 4)).toBe(false)
+    expect(stocked('cooked_beef', 8)).toBe(true)
+  })
+})
+
 describe('what counts as food to keep in stock', () => {
   it('counts ordinary food', () => {
     expect(stocked('cooked_beef', 8)).toBe(true)
