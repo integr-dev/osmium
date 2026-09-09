@@ -63,6 +63,35 @@ const follow = ref(false)
 const status = ref<'connecting' | 'watching' | 'failed'>('connecting')
 const failure = ref('')
 
+/**
+ * A version whose renderer data is missing, and how far along preparing it has got.
+ *
+ * Offered rather than done: building an atlas costs a minute of processor and about 14 MB, and a
+ * mistyped `mc.version` should not spend either. So the operator is told which version is missing
+ * and what it costs, and nothing happens until they say so.
+ */
+const staging = ref<
+  | {
+      version: string
+      /** `asking` until the operator says yes; then the two halves of the work. */
+      phase: 'asking' | 'building' | 'downloading' | 'failed'
+      /** What the staging script has said so far, newest last. */
+      steps: string[]
+      /** Bytes of the block-state file, once that is what is happening. */
+      got: number
+      total: number
+      reason: string
+    }
+  | undefined
+>(undefined)
+
+/** The one number worth drawing a bar from. The build half has steps instead - see {@link stage}. */
+const downloaded = computed(() => {
+  const at = staging.value
+  if (!at || at.phase !== 'downloading' || at.total <= 0) return 0
+  return Math.min(100, Math.round((at.got / at.total) * 100))
+})
+
 /** Held outside Vue's reactivity: three.js objects are large, cyclic graphs and proxying them is
  * both pointless and slow. */
 const scene = shallowRef<Scene>()
@@ -152,7 +181,9 @@ interface Scene {
   /** Their widths are in pixels, so they are told the canvas size like the boxes are. */
   pathMaterials?: Array<{ resolution: { set(width: number, height: number): void } }>
   /** Builds one half. `spent` picks the faint material. */
-  buildPath?: (points: number[], spent: boolean) => Mesh | undefined
+  buildPath?: (points: number[], spent: boolean, anchor: { x: number; y: number; z: number }) => Mesh | undefined
+  /** Marks each node of a path, so a route reads as the steps it is made of. */
+  buildNodes?: (points: number[], spent: boolean, anchor: { x: number; y: number; z: number }) => Mesh | undefined
   /**
    * The box drawn around the block the cursor is over.
    *
@@ -314,6 +345,14 @@ watch(firstPerson, (on) => {
   current.viewer.camera.position.set(at.x, at.y + 20, at.z + 20)
 })
 
+/**
+ * The stream this screen is on, whether or not there is a scene drawing from it yet.
+ *
+ * Kept beside the scene rather than inside it: the two are created at different moments, and the
+ * gap between them is where a version has to be staged.
+ */
+let live: WebSocket | undefined
+
 async function connect(): Promise<void> {
   status.value = 'connecting'
 
@@ -326,6 +365,7 @@ async function connect(): Promise<void> {
   // browser history, and this one stands in for an authorization check.
   const socket = new WebSocket(socketUrl(), [data.protocol, data.ticket])
   socket.binaryType = 'arraybuffer'
+  live = socket
 
   socket.onmessage = (message) => void receive(message.data as ArrayBuffer, socket)
 
@@ -1258,6 +1298,9 @@ const PATH_SPENT = 0.3
  */
 const PATH_LIFT = 0.15
 
+/** How big a node marker is drawn, in pixels. Big enough to find, small enough not to hide the line. */
+const NODE_SIZE = 5
+
 /**
  * What a name is drawn onto.
  *
@@ -1689,21 +1732,50 @@ function showPath(current: Scene, nodes: ReadonlyArray<{ x: number; y: number; z
     { from: at, to: nodes.length - 1, spent: false },
   ]
 
+  /*
+   * Everything is drawn relative to the first node rather than at its own coordinates.
+   *
+   * **A vertex is a 32-bit float, and these are far from the origin.** Out where this fleet plays,
+   * half a million blocks, that leaves about a sixteenth of a block between one representable
+   * position and the next - so a line drawn at absolute coordinates lands on a slightly different
+   * spot each frame as the camera moves, and the whole route shimmers over a world that does not.
+   *
+   * three works the model-view matrix out in double precision on the processor and hands the shader
+   * the combined result, so the large part of the position is carried exactly by the matrix and only
+   * the small remainder ever reaches a float. The world itself is steady for the same reason: every
+   * chunk section is built around its own corner and placed.
+   *
+   * Floored so the anchor is a whole block, which keeps the remainders the same from one redraw to
+   * the next.
+   */
+  const first = nodes[0]!
+  const anchor = { x: Math.floor(first.x), y: Math.floor(first.y), z: Math.floor(first.z) }
+
   const built: Mesh[] = []
 
   for (const half of halves) {
     const points: number[] = []
-    for (let index = half.from; index < half.to; index++) {
-      const a = nodes[index]!
-      const b = nodes[index + 1]!
-      points.push(a.x, a.y + PATH_LIFT, a.z, b.x, b.y + PATH_LIFT, b.z)
+    const dots: number[] = []
+
+    for (let index = half.from; index <= half.to; index++) {
+      const node = nodes[index]!
+      dots.push(node.x - anchor.x, node.y + PATH_LIFT - anchor.y, node.z - anchor.z)
+
+      const next = nodes[index + 1]
+      if (index === half.to || !next) continue
+
+      points.push(
+        node.x - anchor.x, node.y + PATH_LIFT - anchor.y, node.z - anchor.z,
+        next.x - anchor.x, next.y + PATH_LIFT - anchor.y, next.z - anchor.z,
+      )
     }
 
-    const line = current.buildPath?.(points, half.spent)
-    if (!line) continue
+    for (const piece of [current.buildPath?.(points, half.spent, anchor), current.buildNodes?.(dots, half.spent, anchor)]) {
+      if (!piece) continue
 
-    current.viewer.scene.add(line)
-    built.push(line)
+      current.viewer.scene.add(piece)
+      built.push(piece)
+    }
   }
 
   if (built.length) current.pathLines = built
@@ -1777,8 +1849,142 @@ const SELF = { width: 0.6, height: 1.8 }
  * And `supportedVersions` is appended to rather than patched: `getVersion` returns an exact match
  * before it consults the majors table, so pushing the version is enough to have it accepted.
  */
+/**
+ * Reads the block-state file, saying how far along it is.
+ *
+ * **Ten megabytes and more, and every one of them arrives before anything is drawn.** Handed
+ * straight to `json()` that is a silent pause with a blank screen behind it, and the first thing
+ * anybody sees having asked for this version is a wait with no end in sight - so it is read a chunk
+ * at a time and counted against what the server said it was sending.
+ *
+ * Only narrated when somebody is watching: a version already staged comes out of the browser's own
+ * cache in a moment, and a bar for that would be a flash of noise.
+ */
+async function pulled(response: Response, version: string): Promise<string> {
+  const at = staging.value
+  const reader = at ? response.body?.getReader() : undefined
+
+  if (!at || !reader) return response.text()
+
+  at.phase = 'downloading'
+  at.version = version
+  at.got = 0
+  at.total = Number(response.headers.get('content-length') ?? 0)
+
+  const decoder = new TextDecoder()
+  let text = ''
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    at.got += value.length
+    text += decoder.decode(value, { stream: true })
+  }
+
+  text += decoder.decode()
+  staging.value = undefined
+  return text
+}
+
+/** The staged version list, as a token that changes whenever the mesher is rebuilt. */
+async function mesherStamp(): Promise<string> {
+  try {
+    const stamp = await fetch(`${ASSETS}/worker.versions.json`, { cache: 'no-store' })
+    const listed = (await stamp.json()) as string[]
+    return listed.join('-')
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
+ * Whether this server can build the data for a version it does not have.
+ *
+ * Answered by the dev server's staging plugin. A built frontend is static files with no Node behind
+ * them, so the route is simply not there - and a version that is missing is missing, which is what
+ * the failure below already says.
+ */
+async function buildable(version: string): Promise<boolean> {
+  try {
+    const asked = await fetch(`/viewer-staging/status?version=${encodeURIComponent(version)}`)
+    if (!asked.ok) return false
+
+    const answer = (await asked.json()) as { staged?: boolean }
+    return answer.staged === false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Builds the data for one version, narrating what it is doing.
+ *
+ * The server answers with a line of JSON per step rather than a percentage, because the work has no
+ * meaningful one: it fetches an asset pack, builds an atlas out of it and bundles a mesher. Naming
+ * the step being done is honest where a bar moving at an invented rate is not - and the half that
+ * *does* have a number, pulling the block shapes into the browser, gets a real one below.
+ */
+async function stage(version: string): Promise<void> {
+  const at = staging.value
+  if (!at) return
+
+  at.phase = 'building'
+  at.steps = []
+  at.reason = ''
+
+  try {
+    const running = await fetch(`/viewer-staging/stage?version=${encodeURIComponent(version)}`)
+    const reader = running.body?.getReader()
+    if (!reader) throw new Error('no answer')
+
+    const decoder = new TextDecoder()
+    let rest = ''
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      rest += decoder.decode(value, { stream: true })
+      const lines = rest.split('\n')
+      rest = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+
+        const event = JSON.parse(line) as { step?: string; done?: true; error?: string }
+        if (event.error) throw new Error(event.error)
+        if (event.step) at.steps = [...at.steps, event.step]
+      }
+    }
+  } catch (err) {
+    at.phase = 'failed'
+    at.reason = err instanceof Error ? err.message : String(err)
+    return
+  }
+
+  /*
+   * Built. Start over from the top - but put the old attempt down first.
+   *
+   * The socket opened before any of this is still subscribed, and the backend counts watchers: a
+   * second one opened beside it leaves the host streaming to the first, so the new socket waits for
+   * a world snapshot that was already delivered to somebody else and never comes. Which reads, from
+   * the outside, as staging having worked and the viewer having hung.
+   */
+  teardown()
+  staging.value = undefined
+  await connect()
+}
+
 async function mount(world: { version: string; minY?: number; height?: number }, socket: WebSocket): Promise<void> {
   const version = world.version
+
+  // Before any of the renderer is loaded, so a version that cannot be drawn costs no worker and no
+  // atlas fetch - and so the offer to build it is the first thing anybody sees.
+  if (await buildable(version)) {
+    staging.value = { version, phase: 'asking', steps: [], got: 0, total: 0, reason: '' }
+    return
+  }
   // Before the renderer is loaded, not after. `viewer/lib/utils.js` serves both upstream's Node
   // renderer and the browser, and picks between them by reading `process.platform` at call time -
   // with no `process` at all it throws on the first texture instead of handing over to the
@@ -1802,6 +2008,10 @@ async function mount(world: { version: string; minY?: number; height?: number },
 
   if (!supportedVersions.includes(version)) supportedVersions.push(version)
 
+  // Which versions the mesher on disk was built for. Its own URL never changes, so this is what
+  // tells one bundle from the next - see the worker constructor below.
+  const stamp = await mesherStamp()
+
   THREE.DefaultLoadingManager.setURLModifier((url: string) =>
     url.startsWith('textures/') || url.startsWith('blocksStates/') ? `${ASSETS}/${url}` : url,
   )
@@ -1816,7 +2026,16 @@ async function mount(world: { version: string; minY?: number; height?: number },
   const native = window.Worker
   window.Worker = class extends native {
     constructor(url: string | URL, options?: WorkerOptions) {
-      super(url === 'worker.js' ? `${ASSETS}/worker.js` : url, options)
+      /*
+       * Stamped, because the bundle changes and its URL does not.
+       *
+       * The mesher is one bundle carrying the data for every staged version, so staging a new one
+       * rewrites it - at the same path, which the browser has every right to answer from its cache.
+       * The old bundle then starts, takes a version it has no data for, and throws inside a worker
+       * where nothing is listening; the first section to be meshed fails several messages later with
+       * `Cannot read properties of null (reading 'getColumn')`, naming nothing to do with versions.
+       */
+      super(url === 'worker.js' ? `${ASSETS}/worker.js?built=${stamp}` : url, options)
     }
   }
   let viewer: ViewerLike
@@ -1861,7 +2080,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
   if (!states.ok) return fail(t('viewer.unstaged', { version }))
 
   try {
-    viewer.world.blockStatesData = await states.json()
+    viewer.world.blockStatesData = JSON.parse(await pulled(states, version))
   } catch {
     return fail(t('viewer.unstaged', { version }))
   }
@@ -1922,6 +2141,21 @@ async function mount(world: { version: string; minY?: number; height?: number },
       }),
   )
   for (const material of pathMaterials) material.resolution.set(element.clientWidth, element.clientHeight)
+
+  // One dot per node, in the same colour as the line through them. A fixed pixel size rather than a
+  // world size: a node is a fact about the route, not a thing in the world, and one drawn to scale
+  // is a speck at the far end of a long path and a boulder at the near end.
+  const nodeMaterials = [false, true].map(
+    (spent) =>
+      new THREE.PointsMaterial({
+        color: tones.ours,
+        size: NODE_SIZE,
+        sizeAttenuation: false,
+        depthTest: false,
+        transparent: true,
+        opacity: spent ? PATH_SPENT : 1,
+      }),
+  )
 
   const raycaster = new THREE.Raycaster()
 
@@ -2048,7 +2282,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       line.visible = false
       return line
     },
-    buildPath: (points: number[], spent: boolean) => {
+    buildPath: (points: number[], spent: boolean, anchor: { x: number; y: number; z: number }) => {
       // Six floats is one segment. Fewer than that is a path with nowhere to go.
       if (points.length < 6) return undefined
 
@@ -2058,7 +2292,20 @@ async function mount(world: { version: string; minY?: number; height?: number },
       const line = new LineSegments2(geometry, pathMaterials[spent ? 1 : 0]) as unknown as Mesh
       line.renderOrder = NAMETAG_ORDER
       line.frustumCulled = false
+      line.position.set(anchor.x, anchor.y, anchor.z)
       return line
+    },
+    buildNodes: (points: number[], spent: boolean, anchor: { x: number; y: number; z: number }) => {
+      if (points.length < 3) return undefined
+
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+
+      const dots = new THREE.Points(geometry, nodeMaterials[spent ? 1 : 0]) as unknown as Mesh
+      dots.renderOrder = NAMETAG_ORDER
+      dots.frustumCulled = false
+      dots.position.set(anchor.x, anchor.y, anchor.z)
+      return dots
     },
     /**
      * A nametag for a body the stream never announced.
@@ -2367,6 +2614,25 @@ function teardown(): void {
   waiting = []
   building = false
 
+  /*
+   * The socket goes first, and separately from the scene, because it can outlive one.
+   *
+   * A stream is opened before there is anything to draw with, and between those two moments there
+   * is no scene to hang it off - which is exactly where the version staging lives. Closing only
+   * `scene.socket` therefore left that one open and unreferenced: still subscribed, still handing
+   * frames to a handler that would build a second scene beside the one being built now.
+   *
+   * Its handlers come off before it closes. `onclose` reports a stream that ended as a failure, and
+   * one this code closed on purpose is not - left attached, it arrives a moment later and fails the
+   * attempt that replaced it.
+   */
+  if (live) {
+    live.onclose = null
+    live.onmessage = null
+    if (live.readyState <= WebSocket.OPEN) live.close()
+    live = undefined
+  }
+
   const current = scene.value
   scene.value = undefined
   if (!current) return
@@ -2473,13 +2739,79 @@ const ASSETS = '/viewer'
     </div>
 
     <div
-      v-if="status !== 'watching'"
+      v-if="status !== 'watching' && !staging"
       class="bg-base-200/80 absolute inset-0 flex flex-col items-center justify-center gap-3 text-center"
     >
       <span v-if="status === 'connecting'" class="loading loading-spinner loading-lg opacity-40" />
       <p class="text-sm" :class="status === 'failed' ? 'text-error' : 'opacity-60'">
         {{ status === 'failed' ? failure : t('viewer.connecting') }}
       </p>
+    </div>
+
+    <!--
+      Offered, not done. Building a version costs a minute and about 14 MB, so a mistyped version
+      spends neither until somebody says so. Not dismissable by clicking away: there is nothing
+      behind it to look at, and the only two answers are both on it.
+    -->
+    <div
+      v-if="staging"
+      class="bg-base-200/90 absolute inset-0 flex items-center justify-center p-6"
+    >
+      <div class="bg-base-100 w-full max-w-md rounded-box p-5 shadow-lg">
+        <h3 class="font-semibold">{{ t('viewer.staging.title', { version: staging.version }) }}</h3>
+
+        <p v-if="staging.phase === 'asking'" class="mt-2 text-sm opacity-70">
+          {{ t('viewer.staging.explain') }}
+        </p>
+
+        <p v-else-if="staging.phase === 'failed'" class="text-error mt-2 text-sm">
+          {{ t('viewer.staging.failed', { reason: staging.reason }) }}
+        </p>
+
+        <div v-else class="mt-3 space-y-2">
+          <p class="text-sm opacity-70">
+            {{
+              staging.phase === 'downloading'
+                ? t('viewer.staging.downloading')
+                : t('viewer.staging.working', { version: staging.version })
+            }}
+          </p>
+
+          <!--
+            A real bar only for the half that has a real number. The build half is named steps
+            instead: it fetches an asset pack, builds an atlas and bundles a mesher, and a bar moving
+            at an invented rate over that would be a lie told smoothly.
+          -->
+          <progress
+            v-if="staging.phase === 'downloading' && staging.total > 0"
+            class="progress progress-primary w-full"
+            :value="downloaded"
+            max="100"
+          />
+          <progress v-else class="progress progress-primary w-full" />
+
+          <p v-if="staging.steps.length" class="truncate text-xs opacity-50">
+            {{ staging.steps[staging.steps.length - 1] }}
+          </p>
+        </div>
+
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            v-if="staging.phase === 'asking' || staging.phase === 'failed'"
+            class="btn btn-ghost btn-sm"
+            @click="staging = undefined"
+          >
+            {{ t('viewer.staging.cancel') }}
+          </button>
+          <button
+            v-if="staging.phase === 'asking' || staging.phase === 'failed'"
+            class="btn btn-primary btn-sm"
+            @click="stage(staging.version)"
+          >
+            {{ staging.phase === 'failed' ? t('viewer.staging.retry') : t('viewer.staging.load') }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

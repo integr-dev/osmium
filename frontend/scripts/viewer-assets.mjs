@@ -1508,7 +1508,7 @@ function stageItemIcons(version) {
     at++
   }
 
-  verifyItemIcons(items, names.length)
+  verifyItemIcons(items, names.length, names.filter((name) => items[name] === undefined))
 
   mkdirSync(path.dirname(target), { recursive: true })
   writeFileSync(target, PNG.sync.write(sheet))
@@ -1573,7 +1573,7 @@ function copyFace(atlas, block, name, tints, sheet, atX, atY) {
  * something wrong. The three names prove the three paths - a held item off its own sprite, a placed
  * block off the atlas, and a tinted block that would otherwise come out grey.
  */
-function verifyItemIcons(items, total) {
+function verifyItemIcons(items, total, missing = []) {
   // One per path through `draw`: an item sprite, a block off its own model, a tinted block that
   // would otherwise come out grey, an item drawn from another item's texture, and a block whose
   // texture is named for something else entirely.
@@ -1581,13 +1581,34 @@ function verifyItemIcons(items, total) {
     if (items[name] === undefined) throw new Error(`viewer-assets: no item icon for ${name}`)
   }
 
-  // A floor rather than an exact count, and it is about catching a *resolver* regression: this sat
-  // at 87% while the mapping below was missing, and the five names above are what say the paths
-  // still work. It cannot be total, because `minecraft-assets` lags `minecraft-data` by a release
-  // or so - at 1.21.4 it carries no pale oak and no resin at all, which is 27 items no resolver can
-  // find a texture for.
+  /*
+   * A floor, and a low one, because the number it measures is not really about this code.
+   *
+   * `minecraft-assets` lags `minecraft-data`: it ships a directory per release, and the newest ones
+   * are missing whole families of textures that the data already knows the items for. At 1.21.4 that
+   * was pale oak and resin - 27 items. At 1.21.8 it is those plus the bushes, the dry grasses, the
+   * eyeblossoms, the creaking heart and the two test blocks, which is 45 of 1416, or 96.8%. A floor
+   * of 97% failed a version that was staged perfectly well, and the next release would fail harder,
+   * because the gap grows with every one until upstream catches up.
+   *
+   * So what is checked is what this code can get wrong. The five names above are the real tripwire:
+   * one per path through `draw`, and a resolver that has lost a path loses all of them at once - the
+   * regression this originally caught sat at 87%, with the mapping gone entirely. The ratio stays as
+   * a backstop below that, where the only explanation left is something broken here.
+   *
+   * What the pack does not have is said out loud rather than counted silently, because "45 items
+   * have no icon" is worth knowing and is not worth stopping for.
+   */
   const drawn = Object.keys(items).length
-  if (drawn < total * 0.97) {
+  const absent = total - drawn
+
+  if (absent > 0) {
+    const named = missing.slice(0, 6).join(', ')
+    const more = missing.length > 6 ? `, and ${missing.length - 6} more` : ''
+    console.log(`viewer-assets: ${absent} of ${total} items have no icon (${named}${more})`)
+  }
+
+  if (drawn < total * 0.85) {
     throw new Error(`viewer-assets: only ${drawn} of ${total} items got an icon`)
   }
 }

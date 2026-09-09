@@ -32,6 +32,22 @@ declare module 'three' {
       isSprite: boolean
     }
     SpriteMaterial: new (parameters: { map: unknown }) => unknown
+    /** One dot per path node. A geometry of bare positions is all a point cloud needs. */
+    BufferGeometry: new () => {
+      setAttribute(name: string, attribute: unknown): void
+      dispose(): void
+    }
+    Float32BufferAttribute: new (array: number[], itemSize: number) => unknown
+    Points: new (geometry: unknown, material: unknown) => unknown
+    PointsMaterial: new (parameters: {
+      color?: number
+      size?: number
+      /** Off, so a node is the same size wherever it is on the route. */
+      sizeAttenuation?: boolean
+      depthTest?: boolean
+      transparent?: boolean
+      opacity?: number
+    }) => { dispose(): void }
     BoxGeometry: new (width: number, height: number, depth: number) => { translate(x: number, y: number, z: number): void }
     EdgesGeometry: new (geometry: unknown) => unknown
     ClampToEdgeWrapping: number
