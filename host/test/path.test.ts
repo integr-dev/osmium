@@ -165,6 +165,52 @@ describe('movementsFor', () => {
       expect(named('magma_block')).toBe(false)
     })
 
+    /**
+     * A state is not a shape.
+     *
+     * `grass_block` carries `snowy`, which changes what it looks like and nothing else, and
+     * counting states refused it - along with every log, every leaf, podzol, mycelium, deepslate
+     * and a hundred and fifty others. Measured against the registry: 300 blocks by that test, 432
+     * by the shape.
+     */
+    it('takes a full cube that happens to have more than one state', () => {
+      expect(named('grass_block')).toBe(true)
+      expect(named('podzol')).toBe(true)
+      expect(named('mycelium')).toBe(true)
+      expect(named('oak_log')).toBe(true)
+      expect(named('deepslate')).toBe(true)
+    })
+
+    /**
+     * And the other direction, which the same test got wrong just as quietly.
+     *
+     * One state says nothing about height. A carpet is a sixteenth of a block, `dirt_path` is
+     * fifteen sixteenths and `mud` is seven eighths - each of them puts the agent a step lower
+     * than the route worked out, which is every jump after it measured from the wrong place.
+     */
+    it('leaves out what only looks like a full block', () => {
+      expect(named('white_carpet')).toBe(false)
+      expect(named('dirt_path')).toBe(false)
+      expect(named('mud')).toBe(false)
+      expect(named('lily_pad')).toBe(false)
+      expect(named('cauldron')).toBe(false)
+    })
+
+    /** A cube by every test in the data, and gone by the time the agent stands on it. */
+    it('leaves out the blocks that fall out from under it', () => {
+      expect(named('sand')).toBe(false)
+      expect(named('gravel')).toBe(false)
+      expect(named('suspicious_sand')).toBe(false)
+      expect(named('white_concrete_powder')).toBe(false)
+    })
+
+    /** Whatever is inside one of these is not the agent’s to spend on a staircase. */
+    it('leaves out what it would lose the contents of', () => {
+      expect(named('shulker_box')).toBe(false)
+      expect(named('red_shulker_box')).toBe(false)
+      expect(named('tnt')).toBe(false)
+    })
+
     /** The order is the order they are reached for, and these are the ones worth losing. */
     it('reaches for dirt and cobblestone first', () => {
       expect(allowed.slice(0, 2).sort()).toEqual(

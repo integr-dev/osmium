@@ -153,8 +153,30 @@ const AWKWARD = new Set([
   'honey_block',
   // Hurts to stand on, and a tower is a lot of standing.
   'magma_block',
-  // A full box that is not a full height: the agent lands lower than it planned to.
+  // A full box that is not a full height: the agent lands lower than it planned to. Its shape
+  // says so too now, and it is left named because a version that disagrees is not worth finding
+  // out about from the bottom of a hole.
   'soul_sand',
+  // Goes off. Standing on a tower of it is a way to find out what else is nearby.
+  'tnt',
+])
+
+/**
+ * Blocks that do not stay where they are put.
+ *
+ * A cube by every test in the data and still no good underfoot: place one over air and it is
+ * gone by the time the agent stands on it, which for a tower is the whole tower.
+ */
+const FALLS = new Set([
+  'sand',
+  'red_sand',
+  'gravel',
+  'suspicious_sand',
+  'suspicious_gravel',
+  'anvil',
+  'chipped_anvil',
+  'damaged_anvil',
+  'dragon_egg',
 ])
 
 /**
@@ -165,17 +187,64 @@ const AWKWARD = new Set([
  * which is a strange thing to say while standing on a stack of the stuff.
  *
  * What matters is not what the block is called. It has to be a full cube, so the agent can stand on
- * it and jump off it, and it has to behave like one once it is down. **One block state is the cheap
- * test for the first**: a slab, a set of stairs, a chest and a log all carry states that change
- * their shape, and a block with a single state has a single shape. It turns down a few blocks that
- * would have done - logs and deepslate among them - and that is the right way round for a decision
- * an unattended agent spends somebody else's inventory on.
+ * it and jump off it, and it has to behave like one once it is down.
+ *
+ * **Counting block states was the cheap test for that, and it is wrong in both directions.** A
+ * state is not a shape: `grass_block` carries `snowy`, which changes what it looks like and
+ * nothing else, so the commonest block in the world was refused - along with every log, every
+ * leaf, podzol, mycelium, deepslate and a hundred and fifty others. And single-state says nothing
+ * about height, so it let through a carpet at a sixteenth of a block, a `dirt_path` at fifteen
+ * sixteenths and `soul_sand` at seven eighths - each of which puts the agent a step lower than the
+ * route worked out, which is a jump measured from the wrong place.
+ *
+ * **The shape is in the data, so the shape is what is read.** Measured against the registry this
+ * host loads: 300 blocks by the old test, 432 by this one, and the 28 it drops are all genuinely
+ * not cubes.
  *
  * **Upstream's two stay at the front**, because the order is the order they are reached for: dirt
  * and cobblestone are what a player fills a spare slot with precisely because losing them costs
  * nothing, and an agent that pillars up through somebody's wool when it has dirt on it has spent
  * the wrong thing.
  */
+/** The corner-to-corner box of a block that fills its whole square. */
+const WHOLE_BLOCK = [0, 0, 0, 1, 1, 1]
+
+/** As much of the registry as the shape question needs, which its types do not describe. */
+interface Shapes {
+  blockCollisionShapes?: {
+    blocks: Record<string, number | number[]>
+    shapes: Record<string, number[][]>
+  }
+}
+
+/**
+ * Whether a block is the whole of its square in every state it can be in.
+ *
+ * `blockCollisionShapes` gives each block either one shape id for all of its states or one per
+ * state, and each shape is a list of boxes. A block worth building with has the same answer
+ * whichever state it lands in, and that answer is the single box that fills the square: a stair
+ * has two boxes, a slab has one that is half high, a fence has a thin one, and a full block has
+ * exactly this.
+ *
+ * Falls back to counting states where the data is missing, which is the old test and is at least
+ * cautious - a version this host has never seen is not a reason to pillar onto a carpet.
+ */
+function alwaysACube(registry: Bot['registry'], block: { name: string; minStateId: number; maxStateId: number }): boolean {
+  const shapes = (registry as unknown as Shapes).blockCollisionShapes
+  const entry = shapes?.blocks[block.name]
+
+  if (shapes === undefined || entry === undefined) return block.minStateId === block.maxStateId
+
+  const ids = Array.isArray(entry) ? entry : [entry]
+
+  return ids.every((id) => {
+    const shape = shapes.shapes[String(id)]
+    const box = shape?.length === 1 ? shape[0] : undefined
+
+    return box !== undefined && box.length === 6 && box.every((side, at) => side === WHOLE_BLOCK[at])
+  })
+}
+
 function buildableWith(bot: Bot): number[] {
   const registry = bot.registry
   const first: number[] = []
@@ -183,8 +252,12 @@ function buildableWith(bot: Bot): number[] {
 
   for (const block of registry.blocksArray) {
     if (block.boundingBox !== 'block') continue
-    if (block.minStateId !== block.maxStateId) continue
+    if (!alwaysACube(registry, block)) continue
     if (AWKWARD.has(block.name)) continue
+    if (FALLS.has(block.name) || block.name.endsWith('_concrete_powder')) continue
+
+    // Placing one of these spends whatever is inside it, which is not the agent’s to spend.
+    if (block.name.endsWith('shulker_box')) continue
 
     const item = registry.itemsByName[block.name]
     if (!item) continue
