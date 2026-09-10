@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { calls, respondWith } from '../test/http'
 import { token } from '../api/token'
 import { avatarUrl, clearAvatars } from './avatars'
@@ -47,6 +47,31 @@ describe('avatarUrl', () => {
     respondWith(() => ({ status: 404 }))
 
     expect(await avatarUrl('Nobody_here')).toBeNull()
+  })
+
+  it('asks again a minute later, because a missing head is usually a slow moment', async () => {
+    respondWith(() => ({ status: 404 }))
+    expect(await avatarUrl('Mason_slow')).toBeNull()
+
+    const asked = calls.length
+
+    // Straight away it is believed: whatever went wrong is still going wrong, and a page full of
+    // faces must not turn one bad answer into a request per render.
+    expect(await avatarUrl('Mason_slow')).toBeNull()
+    expect(calls.length).toBe(asked)
+
+    // A minute on, it is worth another go. The proxy answers 404 for an upstream that was slow as
+    // well as for a player who has none, and slow is the common one - a skin service that has not
+    // seen a player takes seconds to look them up and no time at all afterwards.
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(Date.now() + 61_000)
+      respondWith(() => ({ status: 200 }))
+
+      expect(await avatarUrl('Mason_slow')).toBe('blob:head-1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not reach the backend at all without a token', async () => {

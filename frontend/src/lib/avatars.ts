@@ -23,10 +23,33 @@ import { token } from '../api/token'
 /** Bounded LRU of identifier → the in-flight or settled fetch. Null means there is no head. */
 const heads = new Map<string, Promise<string | null>>()
 
+/** When a fetch came back with nothing, so it can be asked again rather than believed forever. */
+const missed = new Map<string, number>()
+
 const MAX_HEADS = 200
+
+/**
+ * How long a head that could not be fetched is taken at its word, in milliseconds.
+ *
+ * **A missing head is usually a moment, not a fact.** The proxy answers 404 for an upstream that
+ * was slow as well as for a player who has none, and the slow one is far more common: a skin
+ * service that has not seen a player takes seconds to look them up and no time at all afterwards.
+ * Caching that null for the life of the session - which is what keeping the settled promise does -
+ * leaves faces blank until a reload, long after the backend would happily answer.
+ *
+ * A minute, because retrying is one request and the thing being retried usually works the second
+ * time.
+ */
+const RETRY_MS = 60_000
 
 export function avatarUrl(identifier: string): Promise<string | null> {
   const key = identifier.toLowerCase()
+
+  const stale = missed.get(key)
+  if (stale !== undefined && Date.now() - stale > RETRY_MS) {
+    heads.delete(key)
+    missed.delete(key)
+  }
 
   const existing = heads.get(key)
   if (existing) {
@@ -39,6 +62,11 @@ export function avatarUrl(identifier: string): Promise<string | null> {
 
   const request = fetchHead(identifier)
   heads.set(key, request)
+  // Noted when it settles rather than when it was asked for, so a fetch that took a while is not
+  // half expired by the time anybody has its answer.
+  void request.then((url) => {
+    if (url === null && heads.get(key) === request) missed.set(key, Date.now())
+  })
   evict()
   return request
 }
@@ -67,6 +95,7 @@ function evict(): void {
     if (oldest === undefined) return
     const dropped = heads.get(oldest)
     heads.delete(oldest)
+    missed.delete(oldest)
     void dropped?.then((url) => url && URL.revokeObjectURL(url))
   }
 }
@@ -84,4 +113,5 @@ export function clearAvatars(): void {
     void pending.then((url) => url && URL.revokeObjectURL(url))
   }
   heads.clear()
+  missed.clear()
 }

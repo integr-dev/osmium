@@ -87,7 +87,21 @@ export interface Skin {
 /** Bounded LRU of identifier → the in-flight or settled skin. Null means there is none. */
 const skins = new Map<string, Promise<Skin | null>>()
 
+/** When a fetch came back with nothing, so it can be asked again rather than believed forever. */
+const missed = new Map<string, number>()
+
 const MAX_SKINS = 100
+
+/**
+ * How long a skin that could not be fetched is taken at its word, in milliseconds.
+ *
+ * **A missing skin is usually a moment, not a fact.** The proxy answers 404 for an upstream that was
+ * slow as well as for a player who has none, and slow is far the more common of the two: a skin
+ * service that has not seen a player takes seconds to look them up and no time at all afterwards.
+ * Keeping the settled promise caches that null for the whole session, so a player wears the default
+ * model until a reload, long after the backend would happily answer.
+ */
+const RETRY_MS = 60_000
 
 /**
  * The skin for one player, as a canvas ready to be a texture.
@@ -98,6 +112,12 @@ const MAX_SKINS = 100
  */
 export function skinFor(identifier: string): Promise<Skin | null> {
   const key = identifier.toLowerCase()
+
+  const stale = missed.get(key)
+  if (stale !== undefined && Date.now() - stale > RETRY_MS) {
+    skins.delete(key)
+    missed.delete(key)
+  }
 
   const existing = skins.get(key)
   if (existing) {
@@ -110,6 +130,11 @@ export function skinFor(identifier: string): Promise<Skin | null> {
 
   const request = fetchSkin(identifier)
   skins.set(key, request)
+  // Noted when it settles rather than when it was asked for, so a fetch that took a while is not
+  // half expired by the time anybody has its answer.
+  void request.then((skin) => {
+    if (skin === null && skins.get(key) === request) missed.set(key, Date.now())
+  })
   evict()
   return request
 }
@@ -228,6 +253,7 @@ function evict(): void {
     const oldest = skins.keys().next()
     if (oldest.done) return
     skins.delete(oldest.value)
+    missed.delete(oldest.value)
   }
 }
 
@@ -242,4 +268,5 @@ watch(token, () => clearSkins(), { flush: 'sync' })
 
 export function clearSkins(): void {
   skins.clear()
+  missed.clear()
 }
