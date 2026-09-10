@@ -38,7 +38,7 @@ function flush(): Promise<void> {
 }
 
 /** A promise somebody else decides the fate of. */
-function held<T>() {
+function heldPromise<T>() {
   let settle: (value: T) => void = () => {}
   let fail: (why: Error) => void = () => {}
 
@@ -63,9 +63,9 @@ interface Fake {
   tick(): void
   block(before: { x: number; y: number; z: number; type: number }, after: { type: number }): void
   did: string[]
-  equipping: ReturnType<typeof held<void>>
-  placing: ReturnType<typeof held<void>>
-  digging: ReturnType<typeof held<void>>
+  equipping: ReturnType<typeof heldPromise<void>>
+  placing: ReturnType<typeof heldPromise<void>>
+  digging: ReturnType<typeof heldPromise<void>>
   standAt(x: number, y: number, z: number, onGround?: boolean): void
   drift(x: number, z: number): void
   refuse(times: number): void
@@ -91,9 +91,10 @@ function fakeBot(neighbours: unknown[]): Fake {
   let refusals = 0
 
   const did: string[] = []
-  const equipping = held<void>()
-  const placing = held<void>()
-  const digging = held<void>()
+  const held: Record<string, boolean> = {}
+  const equipping = heldPromise<void>()
+  const placing = heldPromise<void>()
+  const digging = heldPromise<void>()
 
   const bot = {
     entity,
@@ -110,11 +111,20 @@ function fakeBot(neighbours: unknown[]): Fake {
     removeListener() {},
     clearControlStates() {
       did.push('still')
+      for (const name of Object.keys(held)) delete held[name]
     },
     setControlState: (name: string, on: boolean) => {
+      held[name] = on
       if (on) did.push(name)
     },
-    look() {},
+    // Held as well as recorded, because the driver reads its own controls back: a correction that
+    // is already strafing is one the drift damper must not argue with.
+    getControlState: (name: string) => held[name] ?? false,
+    look() {
+      // Recorded because it is what tells walking from braking: aiming at the next square is the
+      // first thing a walk does, and a brake never aims at all.
+      did.push('look')
+    },
     lookAt: async () => {},
     blockAt: (at: WorldVec) => ({
       position: at,
@@ -206,6 +216,18 @@ const onFoot: Simulation = {
 }
 
 /**
+ * A simulation where every jump reaches and no walk does, which is a step up.
+ *
+ * Both jump branches say yes, so which one the driver takes is its own decision rather than the
+ * physics', which is exactly what these tests are about.
+ */
+const jumpable: Simulation = {
+  canStraightLine: () => false,
+  canSprintJump: () => true,
+  canWalkJump: () => true,
+}
+
+/**
  * A simulation that refuses everything, the way it does from the lip of a block.
  *
  * Landing half a block off after a jump is the ordinary reason nothing is reachable - most of all
@@ -260,7 +282,7 @@ describe('Driver', () => {
     }
   }
 
-  it('shuffles to the middle of the column before pillaring out of it', () => {
+  it('walks to the middle of the column before pillaring out of it', () => {
     const world = fakeBot([rung()])
 
     // Stopped near the lip of the square. A jump goes straight up, so wherever it stands is where
@@ -273,8 +295,11 @@ describe('Driver', () => {
     driver.go(within(0, 65, 0, 0.5))
     world.tick()
 
-    // Crouched, and moving without turning: facing the middle is what a tower cannot have.
-    expect(world.did).toContain('sneak')
+    // Moved sideways without turning - facing the middle is what a tower cannot have - and walked
+    // rather than crouched: a crouch is a third of walking pace, so the little correction that costs
+    // one step took a second of shuffling and a stall before it.
+    expect(world.did).toContain('right')
+    expect(world.did).not.toContain('sneak')
     expect(world.did).not.toContain('equip')
   })
 
@@ -484,8 +509,9 @@ describe('Driver', () => {
     world.tick()
 
     // Letting go here is the worst move available: standing still does not change the position the
-    // simulation is objecting to, so it would say no for ever.
-    expect(world.did).toContain('sneak')
+    // simulation is objecting to, so it would say no for ever. Walked, not crouched.
+    expect(world.did).toContain('forward')
+    expect(world.did).not.toContain('sneak')
   })
 
   it('lays the block the square ahead is waiting on', () => {
@@ -877,6 +903,246 @@ describe('Driver', () => {
     // Two refused windows and a third that landed - one job, not three re-plans.
     expect(world.did.filter((what) => what === 'place')).toHaveLength(3)
     expect(world.said.lost).toEqual([])
+  })
+
+  /**
+   * A corridor along +z, walled off after `far` squares.
+   *
+   * What a search of a journey longer than one budget looks like from the driver's side: a route
+   * that stops somewhere short of where the agent was sent, with more world beyond it that nothing
+   * has looked at yet. Moving the wall is how a test says "and then the rest of it arrived".
+   */
+  function corridor(far: () => number) {
+    return (from: { x: number; y: number; z: number; remainingBlocks: number }) => {
+      const z = from.z + 1
+      if (z > far()) return []
+
+      return [{ x: 0, y: 64, z, hash: `0,64,${z}`, cost: 1, remainingBlocks: 8, toPlace: [], toBreak: [] }]
+    }
+  }
+
+  /** A driver walking a corridor, sent somewhere further along it than it can see. */
+  function walkingUp(far: () => number, to: number) {
+    const world = fakeBot([])
+    const rules = () => ({ ...world.rules(), movements: { ...world.rules().movements, getNeighbors: corridor(far) } as unknown as Rules['movements'] })
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, to, 0.5))
+    world.tick()
+
+    /** Walks the agent to the middle of one square and lets the driver see it there. */
+    const stepTo = (z: number) => {
+      world.standAt(0.5, 64, z + 0.5)
+      world.tick()
+    }
+
+    return { world, driver, stepTo }
+  }
+
+  it('carries a route on from where it stops, rather than calling that arrival', () => {
+    // The route it can find ends at z=5; it was sent to z=12.
+    let wall = 5
+    const { world, driver, stepTo } = walkingUp(() => wall, 12)
+
+    for (let z = 1; z <= 5; z++) stepTo(z)
+
+    // Standing on the last square of a route that never reached the goal. Nothing has arrived.
+    expect(world.said.arrived).toBe(0)
+    expect(driver.moving()).toBe(true)
+
+    // The rest of the world turns up, and the search already looking on from z=5 finds the goal.
+    wall = 12
+    world.tick()
+    world.tick()
+
+    for (let z = 6; z <= 12; z++) stepTo(z)
+
+    expect(world.said.arrived).toBe(1)
+  })
+
+  it('looks for the rest of the journey before it runs out of route', () => {
+    let wall = 5
+    const { world, stepTo } = walkingUp(() => wall, 12)
+
+    const drawn = world.said.routes.length
+    wall = 12
+
+    // One step walked, four still ahead of it - and the route is already longer than it was.
+    stepTo(1)
+    world.tick()
+
+    expect(world.said.routes.length).toBeGreaterThan(drawn)
+    expect(world.said.routes[world.said.routes.length - 1]?.steps).toBeGreaterThan(4)
+  })
+
+  it('gives up when there is no way on from where the route ends', () => {
+    const wall = 5
+    const { world, stepTo } = walkingUp(() => wall, 12)
+
+    for (let z = 1; z <= 5; z++) stepTo(z)
+
+    // Every tick from here is another chance to look; none of them may cost another whole search.
+    for (const _ of [1, 2, 3, 4, 5]) world.tick()
+
+    // One answer, not one per tick: the wall is still a wall, and re-asking costs a whole search.
+    expect(world.said.lost).toHaveLength(1)
+    expect(world.said.arrived).toBe(0)
+  })
+
+  /**
+   * A route laid out square by square, each one offering only the next.
+   *
+   * Enough of a world to put a step in the *middle* of a route, which the single-square worlds above
+   * cannot: the last square of a journey is braked into whatever it is, so a test about how the
+   * agent comes into a hole has to have the hole somewhere other than the end.
+   */
+  function trail(squares: Array<{ x: number; y: number; z: number; parkour?: boolean }>) {
+    const walk = squares.map((where) => ({
+      ...where,
+      hash: `${where.x},${where.y},${where.z}`,
+      cost: 1,
+      remainingBlocks: 8,
+      toPlace: [],
+      toBreak: [],
+    }))
+
+    return (at: { hash: string }) => {
+      const on = walk.findIndex((square) => square.hash === at.hash)
+      if (on < 0) return walk.slice(0, 1)
+      return walk.slice(on + 1, on + 2)
+    }
+  }
+
+  /** A driver walking a trail, coming into its first square at speed. */
+  function coming(squares: Array<{ x: number; y: number; z: number }>) {
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      movements: { ...world.rules().movements, getNeighbors: trail(squares) } as unknown as Rules['movements'],
+    })
+
+    // Most of the way across its own square and still moving, which is where every one of these
+    // decisions is actually taken.
+    world.standAt(0.5, 64, 0.9)
+    world.drift(0, 0.25)
+
+    const last = squares[squares.length - 1]!
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(last.x, last.y, last.z, 0.5))
+    world.tick()
+
+    return world
+  }
+
+  it('brakes into a hole rather than running over it', () => {
+    // Three down and one along: a hole, not a step. A walk crosses the fifth of a block where
+    // nothing is underneath it before it has fallen far enough to be committed, and lands on the
+    // far lip - from where the square it wants is behind it, and it comes back at the same speed.
+    const world = coming([
+      { x: 0, y: 61, z: 1 },
+      { x: 0, y: 61, z: 2 },
+    ])
+
+    // Stopped rather than aimed at: a brake presses against the way it is going and never looks.
+    expect(world.did).not.toContain('look')
+    expect(world.did).not.toContain('sprint')
+  })
+
+  it('walks off an ordinary step down without stopping first', () => {
+    const world = coming([
+      { x: 0, y: 63, z: 1 },
+      { x: 0, y: 63, z: 2 },
+    ])
+
+    // Every descent is made of these, and braking at each one would be a staircase taken a step a
+    // second. The simulation says it can walk there, so it aims at it and walks.
+    expect(world.did).toContain('look')
+  })
+
+  /** A driver climbing a step, with whatever comes after it. */
+  function climbing(squares: Array<{ x: number; y: number; z: number; parkour?: boolean }>) {
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: { ...world.rules().movements, getNeighbors: trail(squares) } as unknown as Rules['movements'],
+    })
+
+    world.standAt(0.5, 64, 0.5)
+
+    const last = squares[squares.length - 1]!
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
+    driver.start()
+    driver.go(within(last.x, last.y, last.z, 0.5))
+    world.tick()
+
+    return world
+  }
+
+  it('takes the jump that lands where it aimed when nothing ahead needs the speed', () => {
+    // A staircase into more staircase. A sprint jump carries most of a block past a short hop, and
+    // a block past the square it aimed at is off the far side of it - which is how one died.
+    const world = climbing([
+      { x: 0, y: 65, z: 1 },
+      { x: 0, y: 66, z: 2 },
+    ])
+
+    expect(world.did).toContain('jump')
+    expect(world.did).not.toContain('sprint')
+  })
+
+  it('picks the sprint up before a gap that only a run clears', () => {
+    // The same staircase, with a parkour jump two squares away. One square is not a run-up, so the
+    // speed has to be there before the last step - which is what a flight of gentle jumps destroys.
+    const world = climbing([
+      { x: 0, y: 65, z: 1 },
+      { x: 0, y: 65, z: 4, parkour: true },
+    ])
+
+    expect(world.did).toContain('jump')
+    expect(world.did).toContain('sprint')
+  })
+
+  it('lands softly on the last square, where there is nothing to carry speed into', () => {
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: { ...world.rules().movements, getNeighbors: trail([{ x: 0, y: 65, z: 1 }]) } as unknown as Rules['movements'],
+    })
+
+    world.standAt(0.5, 64, 0.5)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
+    driver.start()
+    driver.go(within(0, 65, 1, 0.5))
+    world.tick()
+
+    // A sprint jump carries most of a block past a one block hop, and there is no next square to
+    // pull the agent back onto its line.
+    expect(world.did).toContain('jump')
+    expect(world.did).not.toContain('sprint')
+  })
+
+  it('takes the sideways drift out of a walk, so a jump goes where it is looking', () => {
+    const world = fakeBot([ahead()])
+
+    // Facing -z, and crabbing to its right. Its box is 0.6 wide in a square of 1, so a drift this
+    // small still puts a shoulder into the column next door on the way up - which is the jump that
+    // stopped dead against a block the route never went near.
+    world.standAt(0.5, 64, 0.5)
+    world.drift(0.12, -0.1)
+
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, 1, 0.5))
+    world.tick()
+
+    // Pressed against the drift, and still walking: a crouch would cost the speed the next gap needs.
+    expect(world.did).toContain('left')
+    expect(world.did).not.toContain('sneak')
   })
 
   it('lets go of everything when told to stop', () => {

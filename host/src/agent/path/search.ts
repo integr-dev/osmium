@@ -83,25 +83,6 @@ export interface Route {
  */
 const TURN = 0.1
 
-/**
- * How much the estimate is leaned on.
- *
- * **The estimate is honest about walking and hopeless about climbing**, and that is what makes a
- * vertical goal slow. A step along the ground costs 1 and takes 1 off the estimate, so on open
- * ground the estimate is exactly right and A* has no reason to prefer any route. A step *upwards*
- * costs 2 - one to move, one for the block it has to lay - and still only takes 1 off. So every
- * square on the ground looks better than the first rung of the tower, and the search spreads out
- * across the whole plane before it will climb: measured, 3901 squares expanded for a route that is
- * 25 straight up.
- *
- * Leaning on the estimate is the standard answer. It makes the search prefer squares that are nearer
- * the goal over squares that were cheap to reach, which is what a person does. The route can come
- * back very slightly longer than the shortest one - that is the trade, and it is a good one at this
- * ratio: nobody watching an agent walk can tell one extra step from none, and everybody notices five
- * seconds of standing still.
- */
-const LEAN = 1
-
 /** How long one search may run in total before it gives up, in milliseconds. */
 const BUDGET = 5_000
 
@@ -165,7 +146,7 @@ export class Search {
     this.budget = limits.budget ?? BUDGET
     this.slice = limits.slice ?? SLICE
 
-    const h = this.goal.estimate(start) * LEAN
+    const h = this.goal.estimate(start)
     const first: Held = { step: start, g: 0, h, f: h, dx: 0, dz: 0, from: undefined }
 
     this.ceiling = limits.reach === undefined ? Infinity : h + limits.reach
@@ -179,9 +160,14 @@ export class Search {
    *
    * Call again while the outcome is `partial`. Every other outcome is final, and calling again after
    * one answers the same thing without doing any more work.
+   *
+   * **The slice is per call**, because how much of a tick a search may have depends on what else the
+   * agent is doing with that tick. One that is standing still waiting for this answer has nothing
+   * else to spend it on; one that is walking a route needs its own tick back. The default is what the
+   * caller asked for when the search was made.
    */
-  run(): Route {
-    const until = Date.now() + this.slice
+  run(slice = this.slice): Route {
+    const until = Date.now() + slice
 
     while (!this.open.empty()) {
       // **The budget first, and it matters which order.** With the slice tested first, a search that
@@ -225,7 +211,7 @@ export class Search {
       const turning = (dx !== 0 || dz !== 0) && (node.dx !== 0 || node.dz !== 0) && (dx !== node.dx || dz !== node.dz)
 
       const g = node.g + step.cost + (turning ? TURN : 0)
-      const h = this.goal.estimate(step) * LEAN
+      const h = this.goal.estimate(step)
       if (g + h > this.ceiling) continue
 
       const held = this.seen.get(step.hash)

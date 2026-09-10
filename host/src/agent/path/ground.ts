@@ -35,6 +35,13 @@ export interface Walk extends Step {
   readonly toBreak: readonly { x: number; y: number; z: number }[]
   /** Scaffolding still in hand once this square is reached, which prices the routes past it. */
   readonly remainingBlocks: number
+  /**
+   * Upstream's own mark for a move that only works at a run.
+   *
+   * It is what the executor reads to know a jump needs speed carried into it - see `drive.ts`. Set
+   * by `getMoveParkourForward` and by nothing else, which is exactly the question being asked.
+   */
+  readonly parkour?: boolean
 }
 
 /** One block to lay: which block to build against, and which of its faces. */
@@ -126,8 +133,9 @@ export function standingAt(bot: Bot, movements: Movements): Walk {
 /**
  * Somewhere to get to, within a block or so.
  *
- * The estimate is upstream's, and it has to be: it is the exact remaining cost on open ground, which
- * is what makes the search's tie-breaking meaningful rather than arbitrary. See `search.ts`.
+ * The estimate is upstream's arithmetic, leaned on: octile distance is the exact remaining cost on
+ * open ground, and {@link LEAN} is what stops that exactness costing thirty seconds. See `search.ts`
+ * for what the tie-breaking does with it.
  */
 export function within(x: number, y: number, z: number, range: number): Goal {
   const rangeSq = range * range
@@ -139,7 +147,7 @@ export function within(x: number, y: number, z: number, range: number): Goal {
       const dz = z - at.z
       return dx * dx + dy * dy + dz * dz <= rangeSq
     },
-    estimate: (at) => octile(x - at.x, z - at.z) + Math.abs(y - at.y) * CLIMB,
+    estimate: (at) => octile(x - at.x, z - at.z) * LEAN + Math.abs(y - at.y) * CLIMB,
   }
 }
 
@@ -160,19 +168,52 @@ export function over(x: number, z: number, range: number): Goal {
       const dz = z - at.z
       return dx * dx + dz * dz <= rangeSq
     },
-    estimate: (at) => octile(x - at.x, z - at.z),
+    estimate: (at) => octile(x - at.x, z - at.z) * LEAN,
   }
 }
+
+/**
+ * How much the distance left is leaned on.
+ *
+ * **Being exactly right about the ground is what made a long walk take half a minute.** Octile
+ * distance is the true remaining cost across open ground, so every square that is no further from
+ * the goal scores the same - and A* has no reason to prefer any of them. Ground that is not open
+ * makes it worse: a hill or a wall means the real cost is higher than the estimate everywhere behind
+ * it, and the search fills in the whole basin before it will commit to a way round.
+ *
+ * Overstating the distance left is the standard answer, and the trade is a route that can come back
+ * slightly longer than the shortest one. Measured against the real rules, over rolling ground with
+ * walls across it:
+ *
+ * | route | expanded at 1 | at 1.5 | route cost |
+ * | --- | --- | --- | --- |
+ * | 80 blocks | 4451 | 208 | 98 -> 100 |
+ * | 150 blocks | 37646 | 1333 | 189 -> 206 |
+ * | 150 blocks and 25 up | 125091 | 11701 | 224 -> 265 |
+ *
+ * Nobody watching an agent walk can tell a route a tenth longer from the shortest one; everybody
+ * notices the thirty seconds it used to spend standing still first.
+ *
+ * **Only the horizontal term**, and that is not a detail: {@link CLIMB} already charges height more
+ * than it costs, and leaning on that as well tips the search into climbing towards anything above it
+ * before it has gone anywhere - measured, a goal 150 out and 25 up went from 125091 squares to
+ * timing out at 600000.
+ */
+const LEAN = 1.5
 
 /**
  * What a block of height is worth to the estimate.
  *
  * **Going up is the one thing the estimate was lying about.** A step along the ground costs 1 and
- * takes 1 off the estimate, so on open ground the estimate is exactly right. A step upwards costs 2 -
- * one to move, one for the block that has to be laid to stand on - and used to take only 1 off. So
+ * takes 1 off the estimate, so on open ground the estimate is exactly right. A step upwards costs
+ * more - a move, plus the block that has to be laid to stand on - and used to take only 1 off. So
  * the first rung of a tower always looked worse than any square on the ground, and the search spread
  * out across the whole plane before it would climb: measured, 3901 squares expanded for a route that
  * was 25 straight up.
+ *
+ * The number tracks what a rung actually costs, so it moved when `placeCost` did - see `walk.ts`,
+ * where laying a block went to 2 to stop the agent building its way past ground it could walk. At
+ * 1.8 against a rung of 3 the same vertical goal cost 3565 squares instead of 605.
  *
  * Charging most of what a rung really costs puts that right, and it does it *only* for height -
  * leaning on the whole estimate instead would make going round something look more expensive than it
@@ -180,7 +221,7 @@ export function over(x: number, z: number, range: number): Goal {
  * a slope at 1, so a route with stairs in it can come back a step longer than the shortest. Nobody
  * watching can tell; everybody notices five seconds of standing still.
  */
-const CLIMB = 1.8
+const CLIMB = 2.5
 
 /** Diagonal-aware distance, priced the way the neighbour source prices its steps. */
 function octile(dx: number, dz: number): number {

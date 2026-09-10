@@ -117,8 +117,33 @@ export interface Rules {
  */
 const SECTION = 64
 
+/**
+ * How many steps from the end of a route that stops short the rest of it is looked for.
+ *
+ * **A route that does not reach the goal is a route with more of itself to find, and the place to
+ * find it from is where it ends.** Searching for that only once the agent is standing there costs
+ * exactly the pause it is meant to avoid, so it starts while there is still walking to do - by the
+ * time the last step is taken the next stretch is usually already on the end of the route.
+ *
+ * Sixteen steps is about four seconds of walking, which buys a search of a hundred and fifty blocks
+ * several times over at the rate a slice of a tick thinks.
+ */
+const LOOKAHEAD = 16
+
+/**
+ * How much longer a slice may be while there is nothing to walk.
+ *
+ * The tick belongs to whatever the agent is doing with it, and an agent standing still waiting for a
+ * route is doing nothing else with it at all. Thinking three times as hard while it waits is three
+ * times less waiting, and costs the movement code nothing, because there is no movement.
+ */
+const STANDING_STILL = 3
+
 /** How close to a square counts as standing in it. Upstream's numbers, and its simulation's. */
 const NEAR = 0.35
+
+/** How many squares ahead a jump that needs a run-up is worth carrying speed for. */
+const LOOK_AHEAD_RUN_UP = 2
 
 /**
  * How far away a square has to be, horizontally, to be worth turning towards.
@@ -186,6 +211,14 @@ const BRAKING = 0.05
  * block of the square on the near side. Tighter than that is chasing floating point.
  */
 const OFF_CENTRE = 0.17
+
+/**
+ * How much sideways travel is worth correcting, in blocks a tick.
+ *
+ * A twentieth of a walking pace. Below this the agent is going where it is looking; above it, it is
+ * crabbing, and a jump would carry that into the column beside the one it aimed at.
+ */
+const DRIFTING = 0.03
 
 /**
  * How many ticks' worth of travel it takes to stop, as a multiple of the current speed.
@@ -320,6 +353,32 @@ export class Driver {
   /** One stretch being thought about again, when one is. */
   private mending: Mend | undefined
 
+  /** What comes after a route that stops short, being looked for. See {@link LOOKAHEAD}. */
+  private extending: Search | undefined
+
+  /**
+   * The square a search for the rest of the journey has already failed from.
+   *
+   * **Asking the same question again the next tick is not looking ahead, it is a busy loop.** A
+   * search that finds no way on costs everything it can reach before it says so, and the answer does
+   * not change while the route ends in the same square. It is dropped whenever the route does, so
+   * arriving there and planning afresh - with the world that far out finally loaded - still happens.
+   */
+  private grown: string | undefined
+
+  /**
+   * Whether the route in hand stops short of where the agent was sent.
+   *
+   * **The difference between arriving and running out of route**, which nothing used to tell apart:
+   * a search that timed out handed back the best stretch it had found, the agent walked it, ran out
+   * of steps and reported that it had arrived - somewhere that was not the destination. Now the end
+   * of a short route is where the next search starts from.
+   */
+  private short = false
+
+  /** How long one slice of thinking may be, from the rules the current route was planned under. */
+  private slice = 0
+
   private sections: Section[] = []
 
   private job: Job | undefined
@@ -341,6 +400,18 @@ export class Driver {
 
   /** Whether the square being walked to is one the agent has to stop in. Kept out of the sprint. */
   private arriving = false
+
+  /**
+   * Whether a jump that only works at a run is coming up, so speed is worth carrying.
+   *
+   * **The other half of the same question, and the two are not opposites.** Most squares want the
+   * gentlest jump that reaches, because a sprint jump carries most of a block past a short hop and
+   * the agent lands beyond what it aimed at - over the edge, in the case that killed one. A run-up
+   * is the exception: a gap upstream marks as parkour cannot be cleared from a standing start, so
+   * the squares before it are the run, and letting go of the sprint on one of them is what leaves
+   * the agent at the lip of a three block gap with walking pace to jump it with.
+   */
+  private hurrying = false
 
   /** Whether a tower has already been re-planned once for starting in the wrong column. */
   private misplaced = false
@@ -435,6 +506,10 @@ export class Driver {
 
     this.sections = []
     this.mending = undefined
+    this.extending = undefined
+    this.short = false
+    this.grown = undefined
+    this.slice = slice
     this.era++
     this.movedAt = Date.now()
     this.arriving = false
@@ -482,10 +557,18 @@ export class Driver {
 
     // Thought before movement, so a route that settles this tick is acted on this tick.
     if (this.plotting) this.plot()
+    else if (this.extending) this.grow()
     else if (this.mending) this.mend()
 
     if (this.sections.length === 0) {
-      if (!this.plotting) this.plan()
+      // **A search already in flight is the answer to having no route**, and planning over the top
+      // of one is how a journey used to throw away everything it had worked out the moment it ran
+      // out of steps to walk.
+      if (!this.plotting && !this.extending) this.plan()
+
+      // Waiting for a route is not being stuck. Same reasoning as an unsettled stretch, and the
+      // same clock: this one is for walking, and the search's own budget watches the search.
+      this.movedAt = Date.now()
       this.still()
       return
     }
@@ -498,7 +581,7 @@ export class Driver {
     const search = this.plotting
     if (!search) return
 
-    const found = search.run()
+    const found = search.run(this.thinking())
 
     if (found.outcome === 'partial') {
       // A guess, and labelled as one: worth walking, because the next slice corrects it, and not
@@ -547,6 +630,10 @@ export class Driver {
     } else {
       this.hopeless = false
     }
+
+    // Anything but `found` ends somewhere that is not the goal, so the route is walked and then
+    // carried on from where it ends rather than being mistaken for an arrival. See {@link grow}.
+    this.short = found.outcome !== 'found'
 
     // The best that could be found, and nothing better is coming, so it is as settled as `found`.
     this.cut(found.steps as Walk[], true)
@@ -619,6 +706,97 @@ export class Driver {
     this.draw()
   }
 
+  /**
+   * One slice of thinking about what comes after a route that stops short.
+   *
+   * **Carrying on rather than starting again.** A journey longer than one search can finish used to
+   * end at the last square that search reached: the agent walked there, called it arrival, and only
+   * an operator sending it again got it any further - and that next search started from scratch,
+   * having learnt nothing from the first. This one starts where the last one stopped and what it
+   * finds is added to the end of the route, so a long walk is one journey made of several searches
+   * rather than several journeys.
+   */
+  private grow(): void {
+    const growing = this.extending
+    if (!growing) return
+
+    const found = growing.run(this.thinking())
+    if (found.outcome === 'partial') return
+
+    this.extending = undefined
+
+    if (found.steps.length === 0) {
+      // Nowhere to go on to. Whether that ends the journey depends on whether the agent is standing
+      // there yet: from a stretch away it is an answer about a place the agent cannot see properly,
+      // and the world in between arrives as it walks.
+      log.debug(`Agent ${this.id} could not find a way on from the end of its route`)
+      this.grown = this.sections[this.sections.length - 1]?.end.hash
+      if (this.sections.length === 0) this.give('there is no route there')
+      return
+    }
+
+    this.short = found.outcome !== 'found'
+    this.grown = undefined
+    this.append(found.steps as Walk[])
+  }
+
+  /**
+   * Starts looking for the rest of the journey, before the agent runs out of route to walk.
+   *
+   * Only ever one search at a time: a stretch being mended and the whole journey being re-planned
+   * both answer this question too, and better, because they know about whatever changed.
+   */
+  private reachOn(): void {
+    const goal = this.goal
+    if (!goal || !this.short) return
+    if (this.plotting || this.mending || this.extending) return
+
+    const last = this.sections[this.sections.length - 1]
+    if (!last?.settled) return
+    if (last.end.hash === this.grown) return
+
+    let left = 0
+    for (const section of this.sections) left += section.steps.length
+    if (left > LOOKAHEAD) return
+
+    const { movements, reach, slice, budget } = this.rules()
+    this.slice = slice
+
+    // From the square the route ends in, carrying the blocks the route expects to have left by
+    // then - so what comes back joins on, and prices its own building honestly.
+    log.debug(
+      `Agent ${this.id} is looking for a way on from ${last.end.x} ${last.end.y} ${last.end.z}, ` +
+        `${left} steps ahead of it`,
+    )
+
+    this.extending = new Search(last.end, walkingFrom(movements), goal, { budget, slice, reach })
+  }
+
+  /** How long a slice may be, which is all of the tick the agent is not using to walk. */
+  private thinking(): number {
+    return this.sections.length === 0 ? this.slice * STANDING_STILL : this.slice
+  }
+
+  /**
+   * Adds stretches onto the end of the route rather than replacing it.
+   *
+   * Deliberately not an era: nothing under the agent's feet changed, so a placement already in the
+   * air still belongs to the stretch that asked for it.
+   */
+  private append(steps: Walk[]): void {
+    keepWhatItStandsOn(steps, this.id)
+
+    for (let at = 0; at < steps.length; at += SECTION) {
+      const slice = steps.slice(at, at + SECTION)
+      const end = slice[slice.length - 1]
+      if (!end) break
+      this.sections.push(sectionOf(slice, end, true))
+    }
+
+    this.movedAt = Date.now()
+    this.draw()
+  }
+
   /** Cuts a fresh route into stretches and takes it. */
   private cut(steps: Walk[], settled: boolean): void {
     keepWhatItStandsOn(steps, this.id)
@@ -650,10 +828,12 @@ export class Driver {
     const at = this.bot.entity?.position
     if (!section || !at) return
 
+    this.reachOn()
+
     const step = section.steps[0]
     if (!step) {
       this.sections.shift()
-      if (this.sections.length === 0) this.done()
+      if (this.sections.length === 0) this.finished()
       return
     }
 
@@ -682,9 +862,17 @@ export class Driver {
 
     // **Do not run at a square the agent has to stop in.** The step after this one pillars straight
     // up out of the square being walked to, and arriving at a sprint is most of a block of stopping
-    // distance - which is the overshoot, before any braking gets a chance.
+    // distance - which is the overshoot, before any braking gets a chance. A hole is the same
+    // problem lying down: see {@link plunging}. So is the end of the journey, where there is no next
+    // square to carry the speed into.
+    const last = this.sections.length === 1 && section.steps.length === 1
     const next = section.steps[1]
-    this.arriving = next !== undefined && next.toPlace.some((spot) => spot.dx === 0 && spot.dz === 0 && spot.dy === 1)
+    const rung = next !== undefined && next.toPlace.some((spot) => spot.dx === 0 && spot.dz === 0 && spot.dy === 1)
+    this.arriving = rung || last || this.plunging(step, at)
+
+    // Two squares of warning, because one is not a run-up. A staircase into a gap has to still be
+    // moving when it gets there, and the sprint has to be picked up before the last step.
+    this.hurrying = !this.arriving && this.runUpNeeded(section.steps)
 
     if (step.toBreak.length > 0 || step.toPlace.length > 0) {
       // Looking at its own feet, once, and then left alone: the block goes in underneath it and
@@ -707,7 +895,7 @@ export class Driver {
       section.steps.shift()
       this.movedAt = Date.now()
       this.failures = 0
-      if (section.steps.length === 0 && this.sections.length === 1) this.done()
+      if (section.steps.length === 0 && this.sections.length === 1) this.finished()
       return
     }
 
@@ -723,7 +911,18 @@ export class Driver {
      * it overshoot": distance left against how far this speed carries. Faster means braking sooner,
      * slower means walking on, and the two never fight.
      */
-    if (this.sections.length === 1 && section.steps.length === 1 && this.overshooting(step, at)) {
+    /*
+     * **Braked into every square it has to stand still in, not just the last one.**
+     *
+     * A rung is built from wherever the agent happens to have stopped, so coasting into the square
+     * below it means arriving off the middle and correcting afterwards - and correcting afterwards
+     * is the pause with the little sideways shuffles in it, once per tower. Slowing on the way in
+     * costs a few ticks and puts the agent on the spot it was aimed at, which is where it was always
+     * meant to be by the time it jumps.
+     *
+     * Still only when it *would* overshoot, never on distance alone - see {@link overshooting}.
+     */
+    if (this.arriving && this.overshooting(step, at)) {
       this.brake()
       return
     }
@@ -816,39 +1015,117 @@ export class Driver {
     const middle = { x: going.x + 0.5, z: going.z + 0.5 }
     const off = Math.hypot(middle.x - at.x, middle.z - at.z)
 
-    if (off > OFF_CENTRE) {
-      this.shuffle(middle.x - at.x, middle.z - at.z)
-      return true
-    }
-
-    // Braking, not waiting. See {@link BRAKING}: waiting is what carried the agent out of the square
-    // it was supposed to pillar up from in the first place.
-    return this.brake()
+    // Walked towards and braked into, rather than waited out. See {@link BRAKING}: waiting is what
+    // carried the agent out of the square it was supposed to pillar up from in the first place.
+    return this.centre(middle.x - at.x, middle.z - at.z)
   }
 
   /**
-   * Edges towards somewhere a fraction of a block away, without turning to face it.
+   * Puts the agent over the middle of a square and stops it there. Answers whether it is still busy.
    *
-   * **Crouched, and in the agent's own frame.** The whole correction is under half a block and a
-   * walked step is two tenths, so walking turns being off one side into being off the other; sneaking
-   * is a fifteenth and lands. Turning to face the middle would be simpler and is exactly what a tower
-   * cannot have - see {@link WORTH_TURNING} - so the direction is resolved into what is forward and
-   * what is sideways *to the agent* and the matching keys are held.
+   * **Walked and braked, never crouched.** This used to shuffle across crouched, because a walked
+   * step is two tenths of a block and the whole correction is smaller than that, so walking turned
+   * being off one side into being off the other. Crouching lands it - and costs more than it is
+   * worth: a crouched agent is a third as fast, will not walk off a ledge it is meant to drop from,
+   * and seeds every physics question the next tick asks with a control the answer depends on.
+   *
+   * What replaces it is the arithmetic the brake already uses: press towards the middle while there
+   * is room to stop, and counter-strafe as soon as carrying on would overshoot. That converges from
+   * either side without a crouch, because stopping is something this agent can now do deliberately.
+   *
+   * In the agent's own frame, because turning to face the middle is exactly what a tower cannot have
+   * - see {@link WORTH_TURNING}.
    */
-  private shuffle(dx: number, dz: number): void {
+  private centre(dx: number, dz: number): boolean {
     const bot = this.bot
-    const yaw = bot.entity.yaw
+    const off = Math.hypot(dx, dz)
+    const moving = bot.entity?.velocity
+    const speed = moving ? Math.hypot(moving.x, moving.z) : 0
 
+    // Near enough, or moving fast enough that another step would carry it past: stop instead.
+    if (off <= OFF_CENTRE || (speed > BRAKING && off < speed * STOPPING)) return this.brake()
+
+    const yaw = bot.entity.yaw
     const ahead = alongFacing(dx, dz, yaw)
     const beside = acrossFacing(dx, dz, yaw)
 
     bot.setControlState('sprint', false)
-    bot.setControlState('sneak', true)
+    bot.setControlState('sneak', false)
+    bot.setControlState('jump', false)
 
     bot.setControlState('forward', ahead > 0)
     bot.setControlState('back', ahead < 0)
     bot.setControlState('right', beside > 0)
     bot.setControlState('left', beside < 0)
+
+    return true
+  }
+
+  /**
+   * Kills sideways drift, so the agent travels along the line it is facing.
+   *
+   * **A jump keeps whatever it takes off with, sideways included.** An agent that is walking a
+   * fraction crabwise - which every turn, every landing and every corrected overshoot leaves it
+   * doing - jumps along that same diagonal, and its box is 0.6 wide in a square of 1. There is a
+   * fifth of a block either side, so a drift too small to see puts a shoulder into the column next
+   * door: measured from one, the agent laid a rung, jumped, and stopped dead against a block to its
+   * right that the route never went near.
+   *
+   * Pressing the opposite side key is what a player does, and unlike crouching it costs no speed -
+   * which matters, because the reason to be moving at all is usually a gap ahead.
+   *
+   * Left alone when something deliberate is already strafing: the brake and {@link centre} are both
+   * sideways corrections of their own, and this must not argue with them.
+   */
+  private holdTheLine(): void {
+    const bot = this.bot
+    const moving = bot.entity?.velocity
+    if (!moving) return
+
+    try {
+      if (bot.getControlState('left') || bot.getControlState('right')) return
+    } catch {
+      return
+    }
+
+    const beside = acrossFacing(moving.x, moving.z, bot.entity.yaw)
+    if (Math.abs(beside) <= DRIFTING) return
+
+    bot.setControlState(beside > 0 ? 'left' : 'right', true)
+  }
+
+  /**
+   * Whether a jump that only works at a run is close enough that the speed has to be there already.
+   *
+   * Two squares, which is what a run-up is worth: the step being taken now and the one after it. Any
+   * further ahead and every staircase in the world would be sprinted down, which is how an agent
+   * lands a block past what it aimed at.
+   */
+  private runUpNeeded(steps: readonly Walk[]): boolean {
+    return steps.slice(1, LOOK_AHEAD_RUN_UP + 1).some((step) => step.parkour === true)
+  }
+
+  /**
+   * Whether the square ahead is reached by dropping into a hole rather than by walking to it.
+   *
+   * **A hole one square wide only swallows an agent that is over it.** The agent is 0.6 wide in a
+   * block of space, so there is a fifth of a block either side where nothing is under it - and any
+   * speed at all crosses that in a tick or two, which lands it on the far lip instead. From there
+   * the square it wants is behind it, so it turns round, comes back at the same speed and misses
+   * again: measured, eight seconds of pacing across a shaft it was standing beside the whole time.
+   *
+   * So a drop is a square to stop in, exactly like the one a tower is built from - held back from a
+   * sprint, and braked into rather than coasted at. Crouching is *not* part of the answer, however
+   * much this looks like every other alignment problem in this file: sneaking is what stops an agent
+   * walking off a ledge, and a ledge is the thing it is trying to walk off.
+   *
+   * Two blocks down rather than one, because a single step down is walked off the edge like any
+   * other step and every ordinary descent is made of those. On the ground, because once it is
+   * falling there is nothing left to decide.
+   */
+  private plunging(step: Walk, at: { y: number }): boolean {
+    if (this.bot.entity?.onGround !== true) return false
+    return step.y < Math.floor(at.y) - 1
   }
 
   /** Whether carrying on at this speed would take the agent past the square it is heading for. */
@@ -976,7 +1253,13 @@ export class Driver {
    * it is handed one rather than the whole route.
    */
   private head(step: Walk): void {
-    this.chose(step, this.decide(step))
+    const how = this.decide(step)
+
+    // After the decision, because the decision clears the side keys before asking the simulation
+    // anything - and what it is asking is whether the agent can get there walking straight.
+    this.holdTheLine()
+
+    this.chose(step, how)
   }
 
   /**
@@ -1087,17 +1370,49 @@ export class Driver {
       return 'walking straight there'
     }
 
-    // **The gentlest jump that reaches, not the fastest.** Upstream asks whether a sprint jump would
-    // work before it asks whether a walk would, so every step up and every one block gap gets taken
-    // at a run - and a sprint jump carries far enough past a one block hop to land beyond the square
-    // it was aimed at. Landing where it meant to is worth more to this agent than the tick it saves,
-    // and a real gap still gets the sprint, because a walk will not clear it.
+    /*
+     * **The gentlest jump that reaches - into a square the agent has to land softly in.**
+     *
+     * Upstream asks whether a sprint jump would work before it asks whether a walk would, so every
+     * step up and every one block gap gets taken at a run, and a sprint jump carries far enough past
+     * a one block hop to land beyond the square it was aimed at. Where the agent has to stop - a
+     * rung it must pillar from, a hole it has to drop into, the end of the journey - landing where
+     * it meant to is worth more than the tick it saves.
+     */
+    if (this.arriving && this.physics.canWalkJump(aim)) {
+      bot.setControlState('jump', true)
+      bot.setControlState('sprint', false)
+      return 'jumping there, softly, because it has to stop'
+    }
+
+
+    /*
+     * **The sprint is kept only where the route is about to need it.**
+     *
+     * Both halves of this have been got wrong in turn. Preferring the gentle jump everywhere makes a
+     * staircase cost the agent its momentum - each step up lets go of the sprint, and a flight of
+     * them arrives at the top at 0.14 a tick where a sprint is 0.28, with nothing left to run at the
+     * gap with. Preferring the sprint everywhere lands it a block past a two block hop, which is off
+     * the far side of the block it aimed at.
+     *
+     * So the question is not which jump is nicer, it is whether anything after this square needs the
+     * speed. Upstream marks the moves that do - see {@link Walk.parkour} - and only those.
+     */
+    if (sprint && this.hurrying && this.physics.canSprintJump(aim)) {
+      bot.setControlState('jump', true)
+      bot.setControlState('sprint', true)
+      return 'sprint jumping there, because a run-up is coming'
+    }
+
+    // Nothing ahead needs the speed, so take the jump that lands where it was aimed.
     if (this.physics.canWalkJump(aim)) {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', false)
       return 'jumping there'
     }
 
+    // A gap a walk will not clear. The sprint is not a choice here, it is the only thing that
+    // reaches - and what it lands with is the brake's problem.
     if (sprint && this.physics.canSprintJump(aim)) {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', true)
@@ -1143,7 +1458,7 @@ export class Driver {
     const off = Math.hypot(middle.x - at.x, middle.z - at.z)
 
     if (off > OFF_CENTRE) {
-      this.shuffle(middle.x - at.x, middle.z - at.z)
+      this.centre(middle.x - at.x, middle.z - at.z)
       return `nothing reachable, backing to the middle of its square (${off.toFixed(2)} off)`
     }
 
@@ -1466,6 +1781,24 @@ export class Driver {
     this.plan()
   }
 
+  /**
+   * The route ran out, which is only sometimes arriving.
+   *
+   * A route that reached the goal ends the journey. One that stopped short ends nothing: it is where
+   * the next search starts, and {@link think} either waits for the one already in flight or starts
+   * one from here.
+   */
+  private finished(): void {
+    if (!this.short) {
+      this.done()
+      return
+    }
+
+    log.debug(`Agent ${this.id} walked to the end of a route that stops short, and is looking further`)
+    this.movedAt = Date.now()
+    this.still()
+  }
+
   private done(): void {
     this.clear()
     this.still()
@@ -1482,6 +1815,9 @@ export class Driver {
     this.goal = undefined
     this.plotting = undefined
     this.mending = undefined
+    this.extending = undefined
+    this.short = false
+    this.grown = undefined
     this.sections = []
     this.job = undefined
     this.mine.clear()
