@@ -29,8 +29,17 @@ import java.time.Duration
  *   default for an operator who wants the 2D screens and not the extra fetch per player in view.
  * @param size pixel size requested upstream. One size for the whole app: the head is rendered at a
  *   handful of small sizes and caching one image per size per player buys nothing.
- * @param timeout how long to wait on the upstream. Short on purpose — a head is decoration, and a
- *   slow skin service must not become a slow Osmium.
+ * @param timeout how long to wait on the upstream.
+ *
+ *   **Longer than it looks like it should be, because of what a cold lookup costs.** A head is
+ *   decoration and a slow skin service must not become a slow Osmium, which argued for five seconds
+ *   — and five seconds fails every first request. Measured against the default upstream: a player
+ *   minotar has not seen takes **10.3 seconds**, consistently, while it looks the profile up, and a
+ *   tenth of a second every time after that. So the first fetch of each player timed out, the
+ *   failure was cached, and a head appeared only once somebody else had warmed it.
+ *
+ *   Waiting is cheap here and a timeout is not: nothing waits on this but the one request, and one
+ *   fetch that takes ten seconds buys a head that is then cached for [ttl].
  * @param ttl how long a fetched head is kept. Skins change rarely, and a stale head for a few hours
  *   is not a fact anybody acts on.
  * @param cacheEntries how many heads are held in memory. Each is a few kilobytes, and the cache is
@@ -41,7 +50,7 @@ data class AvatarProperties(
     val upstream: String = "https://minotar.net/helm/{id}/{size}.png",
     val skinUpstream: String = "https://minotar.net/skin/{id}.png",
     val size: Int = 64,
-    val timeout: Duration = Duration.ofSeconds(5),
+    val timeout: Duration = Duration.ofSeconds(12),
     val ttl: Duration = Duration.ofHours(12),
     val cacheEntries: Int = 512,
 ) {

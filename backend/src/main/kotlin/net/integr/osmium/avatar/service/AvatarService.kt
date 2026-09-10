@@ -7,8 +7,12 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 /** A fetched head, ready to write to a response. */
 data class Avatar(val bytes: ByteArray, val contentType: String) {
@@ -31,8 +35,15 @@ data class Avatar(val bytes: ByteArray, val contentType: String) {
  * escaped. That is what stops the endpoint from being pointed anywhere except the configured
  * upstream.
  *
- * **Failures are cached too.** Without it, a name nobody has a skin for is a fresh upstream request
- * on every page render.
+ * **Failures are cached too, but not every failure is the same failure.** A name the skin service
+ * answered "no" about is remembered for minutes, because that answer will not change. A fetch that
+ * timed out, or one that never went out because too many were already running, is remembered for
+ * seconds or not at all - those say something about this moment, not about the player.
+ *
+ * Caching them alike is how one busy page-load blanked players out for five minutes. Measured
+ * against minotar: a player it has not seen takes **10.3 seconds** to look up and a tenth of a
+ * second every time after, so a fleet arrives cold, times out together, and is written off
+ * together.
  *
  * **Concurrent upstream fetches are capped.** Anyone can ask for any name, so without a ceiling
  * Osmium would happily turn one attacker into a flood aimed at the skin service, and exhaust its own
@@ -51,6 +62,16 @@ class AvatarService(private val properties: AvatarProperties) {
         .build()
 
     private val inFlight = Semaphore(MAX_IN_FLIGHT)
+
+    /**
+     * One fetch per player at a time, however many callers want it.
+     *
+     * A cold player costs ten seconds upstream, and the cache cannot answer for one until that has
+     * finished - so a chat list, an agent row and the 3D view all wanting the same face at once used
+     * to be three requests for one image, three of the eight slots below, and three chances to give
+     * up waiting.
+     */
+    private val fetching = ConcurrentHashMap<String, CompletableFuture<Fetched>>()
 
     /** Bounded and access-ordered, so the least recently rendered head is the one that goes. */
     private val cache = object : LinkedHashMap<String, Cached>(INITIAL_CAPACITY, LOAD_FACTOR, true) {
@@ -86,30 +107,67 @@ class AvatarService(private val properties: AvatarProperties) {
         val key = "$kind:${identifier.lowercase()}"
         cached(key)?.let { return it.avatar }
 
-        val fetched = fetch(identifier, url(identifier))
-        synchronized(cache) {
-            cache[key] = Cached(fetched, Instant.now())
+        return when (val fetched = once(key, identifier, url(identifier))) {
+            // Nothing was asked, so nothing was learnt. Writing this down as "no head" is what turned
+            // one busy page-load into five minutes of blank faces.
+            is Fetched.Busy -> null
+            is Fetched.Got -> remember(key, fetched.avatar, properties.ttl)
+            is Fetched.Missing -> remember(key, null, MISS_TTL)
+            // Long enough not to hammer an upstream having a bad minute, short enough that the
+            // player is back as soon as it stops having one.
+            is Fetched.Slow -> remember(key, null, properties.timeout.multipliedBy(SLOW_TTL_TIMEOUTS))
         }
-        return fetched
+    }
+
+    private fun remember(key: String, avatar: Avatar?, ttl: Duration): Avatar? {
+        synchronized(cache) {
+            cache[key] = Cached(avatar, Instant.now().plus(ttl))
+        }
+        return avatar
+    }
+
+    /**
+     * Fetches, or waits for the fetch somebody else already started for this player.
+     *
+     * The waiter is handed the same answer rather than making its own request. It waits a little
+     * longer than a fetch is allowed to take, so it never gives up on one still inside its budget.
+     */
+    private fun once(key: String, identifier: String, url: String): Fetched {
+        val mine = CompletableFuture<Fetched>()
+        val running = fetching.putIfAbsent(key, mine)
+
+        if (running != null) {
+            return try {
+                running.get(properties.timeout.toMillis() + JOIN_SLACK_MS, TimeUnit.MILLISECONDS)
+            } catch (failure: Exception) {
+                log.debug("Waiting on an in-flight avatar fetch for {} did not finish", identifier, failure)
+                Fetched.Slow
+            }
+        }
+
+        return try {
+            fetch(identifier, url).also { mine.complete(it) }
+        } finally {
+            // Removed after completing, so a caller already holding this future still gets its answer.
+            fetching.remove(key, mine)
+        }
     }
 
     private fun cached(key: String): Cached? {
         val entry = synchronized(cache) { cache[key] } ?: return null
-        // A miss expires far sooner than a hit: a head that was simply not there yet, or a skin
-        // service having a bad minute, should not blank that player out for the rest of the day.
-        val ttl = if (entry.avatar == null) MISS_TTL_SECONDS else properties.ttl.seconds
-        val expired = entry.at.plusSeconds(ttl).isBefore(Instant.now())
-        if (expired) {
+        // Each entry carries its own expiry, because what is being remembered differs: a head lasts
+        // hours, "this player has none" minutes, and "the upstream was slow just then" seconds.
+        if (entry.until.isBefore(Instant.now())) {
             synchronized(cache) { cache.remove(key) }
             return null
         }
         return entry
     }
 
-    private fun fetch(identifier: String, url: String): Avatar? {
+    private fun fetch(identifier: String, url: String): Fetched {
         if (!inFlight.tryAcquire()) {
             log.warn("Avatar fetch for {} skipped: {} already in flight", identifier, MAX_IN_FLIGHT)
-            return null
+            return Fetched.Busy
         }
         try {
             val request = HttpRequest.newBuilder(URI.create(url))
@@ -119,19 +177,22 @@ class AvatarService(private val properties: AvatarProperties) {
                 .build()
 
             val response = http.send(request, sizeCappedBody())
-            if (response.statusCode() != HTTP_OK) return null
+            // An answer, and the answer is no: either the upstream has no image for this player or
+            // what it sent is not one. Both stay true for a while, so both are worth remembering.
+            if (response.statusCode() != HTTP_OK) return Fetched.Missing
 
             val bytes = response.body()
-            if (bytes.isEmpty() || bytes.size > MAX_BYTES) return null
+            if (bytes.isEmpty() || bytes.size > MAX_BYTES) return Fetched.Missing
 
             val contentType = response.headers().firstValue("content-type").orElse(DEFAULT_CONTENT_TYPE)
-            if (!contentType.startsWith("image/")) return null
+            if (!contentType.startsWith("image/")) return Fetched.Missing
 
-            return Avatar(bytes = bytes, contentType = contentType.substringBefore(';').trim())
+            return Fetched.Got(Avatar(bytes = bytes, contentType = contentType.substringBefore(';').trim()))
         } catch (failure: Exception) {
-            // Never fatal. A head is decoration, and the caller renders a fallback for a null.
+            // Never fatal. A head is decoration, and the caller renders a fallback for a null. No
+            // answer came back at all, which says nothing about the player - see Fetched.Slow.
             log.debug("Avatar fetch for {} failed", identifier, failure)
-            return null
+            return Fetched.Slow
         } finally {
             inFlight.release()
         }
@@ -148,7 +209,27 @@ class AvatarService(private val properties: AvatarProperties) {
             else HttpResponse.BodySubscribers.ofByteArray()
         }
 
-    private class Cached(val avatar: Avatar?, val at: Instant)
+    private class Cached(val avatar: Avatar?, val until: Instant)
+
+    /**
+     * How a fetch ended, which is a different question from what it returned.
+     *
+     * All four of these used to be a null, and treating them alike is the whole of why a head that
+     * was there could stay missing for five minutes.
+     */
+    private sealed interface Fetched {
+        /** The image. */
+        data class Got(val avatar: Avatar) : Fetched
+
+        /** The upstream answered and had nothing to give. Still true in a minute. */
+        data object Missing : Fetched
+
+        /** Nothing was asked: too many fetches already running. Says nothing about the player. */
+        data object Busy : Fetched
+
+        /** Asked and gave up waiting, or could not reach the upstream at all. Worth trying again. */
+        data object Slow : Fetched
+    }
 
     companion object {
         /**
@@ -164,7 +245,14 @@ class AvatarService(private val properties: AvatarProperties) {
         private const val HTTP_OK = 200
         private const val MAX_BYTES = 256 * 1024L
         private const val MAX_IN_FLIGHT = 8
-        private const val MISS_TTL_SECONDS = 300L
+        /** How long "this player has no head" is worth remembering. The answer will not change. */
+        private val MISS_TTL: Duration = Duration.ofMinutes(5)
+
+        /** A slow fetch is remembered for twice what one was allowed to take, and no longer. */
+        private const val SLOW_TTL_TIMEOUTS = 2L
+
+        /** How much longer than a fetch a caller waiting on somebody else's fetch will wait. */
+        private const val JOIN_SLACK_MS = 250L
         private const val INITIAL_CAPACITY = 64
         private const val LOAD_FACTOR = 0.75f
         private const val DEFAULT_CONTENT_TYPE = "image/png"
