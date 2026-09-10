@@ -146,6 +146,40 @@ const NEAR = 0.35
 const LOOK_AHEAD_RUN_UP = 2
 
 /**
+ * How much of the takeoff square has to be left before another step towards a gap is safe.
+ *
+ * A walked tick is about a seventh of a block, so a fifth is one tick of warning. Below it the next
+ * step is off the edge, and off the edge of a gap is a fall rather than a jump.
+ */
+const ROOM_TO_RUN = 0.2
+
+/**
+ * How far off the bearing of a gap the agent may be and still jump, in radians.
+ *
+ * **A jump keeps the heading it took off with, and turning is not instant.** `bot.look` animates,
+ * so the tick a jump is decided on is often a tick the agent is still rotating through - and the
+ * simulation that promised the jump did not model that: upstream's controller snaps its simulated
+ * player onto the bearing before the first tick. The real one leaves along whatever heading it had,
+ * clips the far block's edge and falls.
+ *
+ * A tenth of a radian is under six degrees, which over three blocks is a third of a block sideways -
+ * inside the half block of slack a landing square gives.
+ */
+const FACING = 0.1
+
+/**
+ * How far below the square it is walking to the agent has to be before its route is fiction.
+ *
+ * **A missed jump is not a stall, and waiting for the stall clock to notice costs seconds.** The
+ * route says the agent is crossing a gap; the agent is falling down it. Three blocks is more than
+ * any step down the route plans for itself and less than any fall worth re-planning after.
+ */
+const FELL = 2
+
+/** How far from the square it is walking to counts as no longer being on the route at all. */
+const LOST = 8
+
+/**
  * How far away a square has to be, horizontally, to be worth turning towards.
  *
  * **A tower has nowhere to face.** Every rung is directly above the last, so the horizontal distance
@@ -831,6 +865,15 @@ export class Driver {
     this.reachOn()
 
     const step = section.steps[0]
+    if (step && this.strayed(step, at)) {
+      log.warn(
+        `Agent ${this.id} came off its route: it is at ${at.x.toFixed(2)} ${at.y.toFixed(2)} ` +
+          `${at.z.toFixed(2)} and the square it was walking to is ${step.x} ${step.y} ${step.z}`,
+      )
+      this.plan()
+      return
+    }
+
     if (!step) {
       this.sections.shift()
       if (this.sections.length === 0) this.finished()
@@ -866,9 +909,17 @@ export class Driver {
     // problem lying down: see {@link plunging}. So is the end of the journey, where there is no next
     // square to carry the speed into.
     const last = this.sections.length === 1 && section.steps.length === 1
+    /*
+     * **Anything the next square has to build is a reason to arrive still.**
+     *
+     * A rung is the obvious one, and it is not the only one: a bridge laid off the edge of the next
+     * square needs the agent standing on that square while it places, and a sprint carries it off
+     * the far side first. Measured from one: the route meant to lay the block it was about to land
+     * on, and the block went down after the agent had already gone past where it would have been.
+     */
     const next = section.steps[1]
-    const rung = next !== undefined && next.toPlace.some((spot) => spot.dx === 0 && spot.dz === 0 && spot.dy === 1)
-    this.arriving = rung || last || this.plunging(step, at)
+    const building = next !== undefined && (next.toPlace.length > 0 || next.toBreak.length > 0)
+    this.arriving = building || last || this.plunging(step, at)
 
     // Two squares of warning, because one is not a run-up. A staircase into a gap has to still be
     // moving when it gets there, and the sprint has to be picked up before the last step.
@@ -1106,6 +1157,41 @@ export class Driver {
   }
 
   /**
+   * Whether the agent has come off its route rather than merely fallen behind it.
+   *
+   * **The one thing the stall clock is bad at.** A missed jump leaves the agent somewhere the route
+   * never goes, usually a long way down, and everything below carries on steering towards a square
+   * that is now above its head: measured from one, thirty blocks of falling spent deciding it was
+   * "centred already" on a square it could no longer see, and four seconds before anything noticed.
+   */
+  private strayed(step: Walk, at: { x: number; y: number; z: number }): boolean {
+    if (at.y < step.y - FELL) return true
+
+    const stood = standsAt(step)
+    return Math.hypot(stood.x - at.x, stood.z - at.z) > LOST
+  }
+
+  /**
+   * How far the agent can still walk before it is off the square it is standing on.
+   *
+   * Along the way it is facing, which is the way it is about to move. What matters at a gap is the
+   * last moment a jump can still be taken from solid ground.
+   */
+  private roomToRun(at: { x: number; z: number }): number {
+    const yaw = this.bot.entity?.yaw ?? 0
+    const ahead = { x: -Math.sin(yaw), z: -Math.cos(yaw) }
+
+    const across = at.x - Math.floor(at.x)
+    const along = at.z - Math.floor(at.z)
+
+    let room = Infinity
+    if (Math.abs(ahead.x) > 0.001) room = Math.min(room, (ahead.x > 0 ? 1 - across : across) / Math.abs(ahead.x))
+    if (Math.abs(ahead.z) > 0.001) room = Math.min(room, (ahead.z > 0 ? 1 - along : along) / Math.abs(ahead.z))
+
+    return room
+  }
+
+  /**
    * Whether the square ahead is reached by dropping into a hole rather than by walking to it.
    *
    * **A hole one square wide only swallows an agent that is over it.** The agent is 0.6 wide in a
@@ -1237,6 +1323,21 @@ export class Driver {
   private reached(step: Walk, at: { x: number; y: number; z: number }): boolean {
     const stood = standsAt(step)
 
+    /*
+     * **A jump lands on the square or it does not, and anywhere on it counts.**
+     *
+     * Every other step is arrived at within a third of a block of the middle, which is what keeps
+     * the agent on its line. A gap cleared by a hair does not meet that: the agent comes down on the
+     * lip, half a block from the middle, and the step it has just finished is still the step it is
+     * being asked about - so the parkour branch takes the jump again, from the edge this time, and
+     * sails off the far side. Landing is the end of that move; where on the block is the next move's
+     * problem, and it has a whole square to sort it out in.
+     */
+    if (step.parkour === true && this.bot.entity?.onGround === true) {
+      const onIt = Math.floor(at.x) === step.x && Math.floor(at.z) === step.z
+      if (onIt && Math.abs(stood.y - at.y) < HIGH) return true
+    }
+
     if (Math.abs(stood.x - at.x) > NEAR || Math.abs(stood.z - at.z) > NEAR) return false
     if (Math.abs(stood.y - at.y) >= HIGH) return false
 
@@ -1346,6 +1447,64 @@ export class Driver {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', false)
       return 'swimming there'
+    }
+
+    /*
+     * **A gap is jumped from the ledge, never walked off it.**
+     *
+     * `canStraightLine` answers two questions with one yes: *walking gets you there*, and *walk a
+     * few more ticks, then jump, and that gets you there*. Every branch below treats a yes as "run
+     * at it" and none of them ever takes the jump the second answer is built on - which is fine over
+     * ground, where the worst case is a late jump, and fatal at a gap, where the ticks the
+     * simulation wanted to spend running are ticks of thin air. Measured from one: an agent reached
+     * a three block gap at 0.11 a tick, kept running because a jump *later* would have worked, and
+     * fell thirty blocks.
+     *
+     * So for a move upstream marks as parkour the jumps are asked first, and running is only allowed
+     * while there is still block underfoot to run on. When there is not and no jump reaches, it
+     * stops at the edge: a stall is a re-plan, and a re-plan is survivable.
+     */
+    // Already standing on the square this jump was for - see {@link reached}. Jumping again from
+    // here is the second jump that carries it off the far edge.
+    const onTheStep = Math.floor(at.x) === step.x && Math.floor(at.z) === step.z
+
+    if (step.parkour === true && bot.entity.onGround && !onTheStep) {
+      /*
+       * **Pointed at it before leaving the ground.**
+       *
+       * The simulation that says a jump reaches puts its player on the bearing before the first
+       * tick - `getController` assigns `state.yaw` outright. The agent cannot: `bot.look` animates,
+       * so a jump decided while it is still turning takes off along the heading it had, and three
+       * blocks later that is the edge of the block rather than the middle of it. Waiting costs the
+       * ticks the turn takes and nothing else, because the turn was already under way.
+       */
+      const bearing = Math.atan2(-dx, -dz)
+      if (Math.abs(turnLeft(bot.entity.yaw, bearing)) > FACING) {
+        bot.setControlState('sprint', false)
+        return 'turning to face the gap before jumping it'
+      }
+
+      if (sprint && this.physics.canSprintJump(aim)) {
+        bot.setControlState('jump', true)
+        bot.setControlState('sprint', true)
+        return 'sprint jumping the gap'
+      }
+
+      if (this.physics.canWalkJump(aim)) {
+        bot.setControlState('jump', true)
+        return 'jumping the gap'
+      }
+
+      const room = this.roomToRun(at)
+      if (room <= ROOM_TO_RUN) {
+        this.brake()
+        return `at the edge of a gap it cannot jump yet, so stopping (${room.toFixed(2)} of block left)`
+      }
+
+      if (sprint && this.physics.canStraightLine(aim, true)) {
+        bot.setControlState('sprint', true)
+        return `running up to the gap (${room.toFixed(2)} of block left)`
+      }
     }
 
     /*
@@ -1915,6 +2074,14 @@ function keepWhatItStandsOn(steps: Walk[], id: number): void {
  *
  * Facing is `(-sin yaw, -cos yaw)`, which is mineflayer's convention and prismarine-physics' too.
  */
+/** How far one heading is from another, in radians, the short way round. */
+function turnLeft(from: number, to: number): number {
+  let turn = (to - from) % (Math.PI * 2)
+  if (turn > Math.PI) turn -= Math.PI * 2
+  if (turn < -Math.PI) turn += Math.PI * 2
+  return turn
+}
+
 function alongFacing(x: number, z: number, yaw: number): number {
   return x * -Math.sin(yaw) + z * -Math.cos(yaw)
 }

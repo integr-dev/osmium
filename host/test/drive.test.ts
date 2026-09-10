@@ -92,6 +92,8 @@ function fakeBot(neighbours: unknown[]): Fake {
 
   const did: string[] = []
   const held: Record<string, boolean> = {}
+  /** The heading asked for, waiting for the next tick to become the heading it has. */
+  let turning: number | undefined
   const equipping = heldPromise<void>()
   const placing = heldPromise<void>()
   const digging = heldPromise<void>()
@@ -120,10 +122,14 @@ function fakeBot(neighbours: unknown[]): Fake {
     // Held as well as recorded, because the driver reads its own controls back: a correction that
     // is already strafing is one the drift damper must not argue with.
     getControlState: (name: string) => held[name] ?? false,
-    look() {
+    look(yaw: number) {
       // Recorded because it is what tells walking from braking: aiming at the next square is the
       // first thing a walk does, and a brake never aims at all.
       did.push('look')
+      // Asked for now, arrived at next tick, because `bot.look` animates. A jump decided while the
+      // agent is still turning takes off along the heading it had, which is the whole reason the
+      // driver waits to be pointed at a gap before it leaves the ground.
+      turning = yaw
     },
     lookAt: async () => {},
     blockAt: (at: WorldVec) => ({
@@ -182,6 +188,10 @@ function fakeBot(neighbours: unknown[]): Fake {
       budget: 5_000,
     }),
     tick() {
+      if (turning !== undefined) {
+        entity.yaw = turning
+        turning = undefined
+      }
       for (const handler of listeners.get('physicsTick') ?? []) handler()
     },
     block(before, after) {
@@ -1143,6 +1153,155 @@ describe('Driver', () => {
     // Pressed against the drift, and still walking: a crouch would cost the speed the next gap needs.
     expect(world.did).toContain('left')
     expect(world.did).not.toContain('sneak')
+  })
+
+  /**
+   * A simulation that promises a jump only later, which is what a run-up looks like from inside.
+   *
+   * `canStraightLine` says yes for "walk a few ticks and *then* jump", and every jump-now question
+   * says no. Over ground that is a late jump; at a gap it is the difference between jumping and
+   * walking into thin air.
+   */
+  const laterOnly: Simulation = {
+    canStraightLine: () => true,
+    canSprintJump: () => false,
+    canWalkJump: () => false,
+  }
+
+  /**
+   * A driver at the lip of a three block gap, with more route on the far side.
+   *
+   * The far side matters: a gap that ends the journey is a square the agent has to stop in, and the
+   * whole sprint question is suppressed there - which is how the first version of this test passed
+   * without the guard it was written for.
+   */
+  function atAGap(physics: Simulation) {
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 4 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    // A tenth of a block of ledge left, facing -z. Another step is thin air.
+    world.standAt(0.5, 64, 0.1)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), physics)
+    driver.start()
+    driver.go(within(0, 64, 4, 0.5))
+    world.tick()
+
+    return world
+  }
+
+  it('stops at the lip of a gap it cannot jump yet, rather than running off it', () => {
+    // Measured from the agent this was written for: it reached a three block gap at 0.11 a tick,
+    // kept running because a jump *later* would have worked, and fell thirty blocks. That later
+    // jump is what `canStraightLine` says yes to, and nothing here ever takes it.
+    const world = atAGap(laterOnly)
+
+    expect(world.did).not.toContain('sprint')
+    expect(world.did).not.toContain('jump')
+  })
+
+  it('turns to face a gap before leaving the ground, and jumps once it has', () => {
+    const world = atAGap(jumpable)
+
+    // The gap is behind where it happens to be looking, and turning is not instant. Jumping now
+    // would take off along the old heading: three blocks later that is the edge of the block.
+    expect(world.did).not.toContain('jump')
+
+    world.tick()
+
+    expect(world.did).toContain('jump')
+    expect(world.did).toContain('sprint')
+  })
+
+  it('counts a gap cleared by a hair as cleared, rather than jumping again from the lip', () => {
+    const world = atAGap(jumpable)
+    const jumps = world.did.filter((what) => what === 'jump').length
+
+    // Down on the far lip: half a block from the middle, which is not "arrived" for any ordinary
+    // step - and asking for the middle from here means taking the same jump again, off the far side.
+    world.standAt(0.5, 64, 3.92)
+    world.tick()
+
+    // No second jump went out, and the square is behind it: walking onto the next one finishes
+    // the journey, which it cannot do while the driver still thinks the gap is ahead of it.
+    expect(world.did.filter((what) => what === 'jump').length).toBe(jumps)
+
+    world.standAt(0.5, 64, 4.5)
+    world.tick()
+
+    expect(world.said.arrived).toBe(1)
+  })
+
+  it('does not run into a square it has to build from', () => {
+    // The square after this one lays the block the agent means to stand on next. A sprint carries
+    // most of a block past where it stopped meaning to be, and the block goes down after the agent
+    // has already gone by - which is a placement into thin air and a fall.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: (at: { hash: string }) => {
+          if (at.hash === '0,64,0') {
+            return [{ x: 0, y: 64, z: 1, hash: '0,64,1', cost: 1, remainingBlocks: 8, toPlace: [], toBreak: [] }]
+          }
+          if (at.hash === '0,64,1') {
+            return [
+              {
+                x: 0,
+                y: 64,
+                z: 2,
+                hash: '0,64,2',
+                cost: 3,
+                remainingBlocks: 7,
+                toPlace: [{ x: 0, y: 63, z: 1, dx: 0, dy: 0, dz: 1 }],
+                toBreak: [],
+              },
+            ]
+          }
+          return []
+        },
+      } as unknown as Rules['movements'],
+    })
+
+    world.standAt(0.5, 64, 0.5)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, 2, 0.5))
+    world.tick()
+
+    expect(world.did).not.toContain('sprint')
+  })
+
+  it('plans again the moment it finds itself under its own route', () => {
+    const world = fakeBot([ahead()])
+
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, 1, 0.5))
+    world.tick()
+
+    const drawn = world.said.routes.length
+
+    // A missed jump: thirty blocks below the square the route is still steering towards. Waiting for
+    // the stall clock to work that out costs seconds of falling and deciding it is centred already.
+    world.standAt(0.5, 34, 0.5)
+    world.tick()
+    world.tick()
+
+    expect(world.said.routes.length).toBeGreaterThan(drawn)
   })
 
   it('lets go of everything when told to stop', () => {
