@@ -59,13 +59,170 @@ import { type Goal, Search } from './search.ts'
  * that square, does it need a jump, will a sprint carry it. Each of these reads only the first entry
  * of what it is passed, so it is handed one square rather than a route.
  */
+/** One tick of a jump, real or simulated. */
+export interface Frame {
+  x: number
+  y: number
+  z: number
+  speed: number
+  onGround: boolean
+  held?: string
+  yaw?: number
+}
+
 export interface Simulation {
   canStraightLine(aim: readonly WorldVec[], sprint?: boolean): boolean
   canSprintJump(aim: readonly WorldVec[], after?: number): boolean
   canWalkJump(aim: readonly WorldVec[], after?: number): boolean
+  /**
+   * Where a jump taken this tick puts the agent back on the ground, if it ever does.
+   *
+   * The question the three above cannot answer - see {@link Jumping}.
+   */
+  lands(aim: readonly WorldVec[], sprint: boolean): WorldVec | undefined
+  /** The same jump tick by tick, for {@link Driver.record}. Diagnostic, and optional. */
+  traced?(aim: readonly WorldVec[], sprint: boolean): Frame[]
 }
 
-const Physics = untypedPhysics as unknown as new (bot: Bot) => Simulation
+/** As much of prismarine’s player state as the landing question reads. */
+interface Simulated {
+  pos: WorldVec
+  vel: WorldVec
+  onGround: boolean
+  yaw: number
+  control: {
+    forward: boolean
+    back: boolean
+    left: boolean
+    right: boolean
+    jump: boolean
+    sprint: boolean
+    sneak: boolean
+  }
+}
+
+/** The two of upstream’s internals that {@link Jumping} is built from. */
+interface Innards {
+  /** The agent the simulation is of. Upstream keeps it; the fixed heading is measured from it. */
+  bot: Bot
+  simulateUntil(
+    done: (state: Simulated) => boolean,
+    control: (state: Simulated, tick: number) => void,
+    ticks: number,
+  ): Simulated
+  getController(
+    to: WorldVec,
+    jump: boolean,
+    sprint: boolean,
+    after?: number,
+  ): (state: Simulated, tick: number) => void
+}
+
+const Engine = untypedPhysics as unknown as new (bot: Bot) => Innards & Omit<Simulation, 'lands' | 'traced'>
+
+/**
+ * How long a jump is worth simulating for, in ticks. Two seconds; none of them stay up half that.
+ */
+const JUMP_TICKS = 40
+
+/**
+ * Upstream’s simulation, asked the one question it does not ask itself: **where does this jump
+ * put the agent down?**
+ *
+ * `canSprintJump` and friends are all built on `getReached`, which is satisfied the moment the
+ * simulated player passes within 0.35 of the target - *at any tick, at any height, at any speed*.
+ * A jump whose arc crosses the square at head height and carries a block and a half beyond it
+ * therefore answers yes, and answers yes for exactly the same reason as one that comes down on the
+ * middle of it. Over ground the difference does not matter, because whatever it lands on is more
+ * ground. At a gap it is the difference between the route and the void: measured, a corner taken
+ * at 0.292 reported "running straight there" a block short of the square and was 0.98 past its far
+ * edge half a second later, on its way down 84 blocks.
+ *
+ * So a jump over a gap is chosen on where it ends, which means simulating it until it is standing
+ * again rather than until it is briefly near something. Everything else upstream answers is left
+ * exactly as it is.
+ */
+class Jumping extends Engine implements Simulation {
+  /**
+   * The controls a jump is flown with, held for the whole of it.
+   *
+   * Deliberately not upstream's `getController`, which re-aims at the target every simulated
+   * tick. Re-aiming turns a jump into an arc: as the agent drifts off the line the bearing
+   * swings, and the thrust swings with it. The arc is not a landing error - it was measured
+   * predicted to a tenth of a block - but it sweeps sideways through whatever is beside the
+   * line it should have flown, and 0.32 of a block of bend is more than the fifth of a block
+   * of slack a 0.6 wide box has in a square.
+   *
+   * So the heading is taken once, at the ledge, and held. {@link Driver.decide} holds the same
+   * one for the same flight, and the strafe keys are cleared here because it clears them too -
+   * the answer is only worth having if it is an answer about the jump the agent will fly.
+   */
+  private flownAt(from: WorldVec, to: WorldVec, sprint: boolean): (state: Simulated, tick: number) => void {
+    const heading = Math.atan2(-(to.x - from.x), -(to.z - from.z))
+
+    return (state) => {
+      state.yaw = heading
+      state.control.forward = true
+      state.control.back = false
+      state.control.left = false
+      state.control.right = false
+      state.control.sneak = false
+      state.control.jump = true
+      state.control.sprint = sprint
+    }
+  }
+
+  lands(aim: readonly WorldVec[], sprint: boolean): WorldVec | undefined {
+    const to = aim[0]
+    if (to === undefined) return undefined
+
+    // Off the ground first, back on it second. Without the first half the simulation is finished
+    // before it starts, because the agent is standing on a block when it is asked.
+    let flew = false
+
+    const put = this.simulateUntil(
+      (state) => {
+        if (!state.onGround) flew = true
+        return flew && state.onGround
+      },
+      this.flownAt(this.bot.entity.position, to, sprint),
+      JUMP_TICKS,
+    )
+
+    return flew && put.onGround ? put.pos : undefined
+  }
+
+  /**
+   * The same jump, tick by tick, for comparing against what the agent actually did.
+   *
+   * Diagnostic. {@link Driver.record} plays the real flight alongside it, and the tick the two
+   * part company is the answer to why a jump did not go where it was chosen to go.
+   */
+  traced(aim: readonly WorldVec[], sprint: boolean): Frame[] {
+    const to = aim[0]
+    if (to === undefined) return []
+
+    const frames: Frame[] = []
+    const control = this.flownAt(this.bot.entity.position, to, sprint)
+
+    this.simulateUntil(
+      (state) => {
+        frames.push({
+          x: state.pos.x,
+          y: state.pos.y,
+          z: state.pos.z,
+          speed: Math.hypot(state.vel?.x ?? 0, state.vel?.z ?? 0),
+          onGround: state.onGround,
+        })
+        return frames.length > 1 && state.onGround
+      },
+      control,
+      JUMP_TICKS,
+    )
+
+    return frames
+  }
+}
 
 /** What the driver tells whoever asked for the journey. */
 export interface Driven {
@@ -447,6 +604,12 @@ export class Driver {
    */
   private hurrying = false
 
+  /** The heading a jump left the ground on, held until it lands. */
+  private flying: number | undefined
+
+  /** A jump in progress, being played back against what the simulation said. Diagnostic. */
+  private flight: { to: string; predicted: Frame[]; real: Frame[] } | undefined
+
   /** Whether a tower has already been re-planned once for starting in the wrong column. */
   private misplaced = false
 
@@ -478,7 +641,7 @@ export class Driver {
      * a whole world behind it to answer at all - and because flight, which has no ground to simulate
      * standing on, will hand in its own.
      */
-    private readonly physics: Simulation = new Physics(bot),
+    private readonly physics: Simulation = new Jumping(bot),
   ) {}
 
   start(): void {
@@ -572,11 +735,78 @@ export class Driver {
    */
   private tick(): void {
     try {
+      this.record()
       this.think()
     } catch (err) {
       log.warn(`Agent ${this.id} could not work out what to do next: ${(err as Error).message}`)
       this.give('it could not work out how to get there')
     }
+  }
+
+  /**
+   * Plays a jump back a tick at a time against what the simulation said it would do.
+   *
+   * Diagnostic, and temporary. Six hypotheses about one jump have each been argued from a once a
+   * second line and each been wrong; this prints the thing itself.
+   */
+  private record(): void {
+    const flight = this.flight
+    const entity = this.bot.entity
+    if (!flight || !entity) return
+
+    const held = ['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak']
+      .filter((name) => {
+        try {
+          return this.bot.getControlState(name as Parameters<Bot['getControlState']>[0])
+        } catch {
+          return false
+        }
+      })
+      .map((name) => name[0])
+      .join('')
+
+    flight.real.push({
+      x: entity.position.x,
+      y: entity.position.y,
+      z: entity.position.z,
+      speed: Math.hypot(entity.velocity?.x ?? 0, entity.velocity?.z ?? 0),
+      onGround: entity.onGround === true,
+      held,
+      yaw: entity.yaw,
+    })
+
+    const down = flight.real.length > 1 && entity.onGround === true
+    if (!down && flight.real.length < JUMP_TICKS) return
+
+    this.flight = undefined
+
+    const rows = Math.max(flight.real.length, flight.predicted.length)
+    const lines: string[] = []
+
+    for (let at = 0; at < rows; at++) {
+      const was = flight.real[at]
+      const said = flight.predicted[at]
+
+      lines.push(
+        `  ${String(at).padStart(2)} ` +
+          (was
+            ? `${was.x.toFixed(3)} ${was.y.toFixed(3)} ${was.z.toFixed(3)} ${was.speed.toFixed(3)} ` +
+              `${was.onGround ? 'gnd' : 'air'} ${(was.held ?? '').padEnd(7)} ` +
+              `yaw ${(was.yaw ?? 0).toFixed(2)}`
+            : ''.padEnd(52)) +
+          ` | ` +
+          (said
+            ? `${said.x.toFixed(3)} ${said.y.toFixed(3)} ${said.z.toFixed(3)} ${said.speed.toFixed(3)} ` +
+              `${said.onGround ? 'gnd' : 'air'}`
+            : ''),
+      )
+    }
+
+    log.debug(
+      `Agent ${this.id} flight for ${flight.to}, real | simulated:\n` +
+        `   t x y z speed ground held yaw | x y z speed ground\n` +
+        lines.join('\n'),
+    )
   }
 
   private think(): void {
@@ -973,7 +1203,9 @@ export class Driver {
      *
      * Still only when it *would* overshoot, never on distance alone - see {@link overshooting}.
      */
-    if (this.arriving && this.overshooting(step, at)) {
+    // **On the ground only.** Braking is a counter-strafe - see {@link brake} - and a
+    // counter-strafe in mid-flight is the one control that turns a jump into a fall.
+    if (this.bot.entity?.onGround === true && this.arriving && this.overshooting(step, at)) {
       this.brake()
       return
     }
@@ -1127,11 +1359,50 @@ export class Driver {
    *
    * Left alone when something deliberate is already strafing: the brake and {@link centre} are both
    * sideways corrections of their own, and this must not argue with them.
+   *
+   * **On the ground only, which is where the drift is worth taking out.** Read the sentence this
+   * comment opens with: a jump keeps what it takes off with, so the drift is dealt with *before*
+   * the takeoff or not at all. In the air a side key removes almost none of it - air
+   * acceleration is about 0.02 a tick - and it costs a great deal, because Minecraft normalises
+   * the movement input: forward and a strafe together leave about seven tenths of the thrust
+   * pointing forward. {@link Simulation.lands} chose the jump on a simulation holding forward
+   * and nothing else, so every tick of strafing in the air is the jump falling short of the
+   * answer it was picked for.
+   *
+   * Measured on the one jump of a course that failed: the seven gaps around it were taken from a
+   * standstill at 0.06 with no drift to correct, and landed where the simulation said. This one
+   * came off a jump in the other axis and turned ninety degrees, so it took off at 0.203 with
+   * real drift - the only flight where this fired. Predicted 3.83 blocks, travelled 3.25, at an
+   * average of 0.217 a tick against the 0.27 the answer needed. Seven tenths of the air
+   * acceleration is that difference, and 0.58 of a block short of a one block landing is the
+   * void.
    */
   private holdTheLine(): void {
     const bot = this.bot
     const moving = bot.entity?.velocity
     if (!moving) return
+
+    if (bot.entity?.onGround !== true) return
+
+    /*
+     * **Not on the tick the jump goes out.**
+     *
+     * This runs after {@link decide}, so a strafe pressed here is held through the takeoff -
+     * and Minecraft normalises the movement input, which leaves about seven tenths of the
+     * thrust pointing forward on the one tick where all of it matters. Recorded from two jumps
+     * on the same course: the one that worked had `f j s` down at takeoff and went from 0.059
+     * to 0.382 a tick, the one that failed had `f r j s` and went from 0.203 to 0.302. The
+     * difference is about 1.3 blocks of jump, which is the difference between the far side and
+     * the near face of it.
+     *
+     * The drift is still worth taking out on every other tick of the run-up, which is what
+     * straightens the line the jump is eventually taken along.
+     */
+    try {
+      if (bot.getControlState('jump')) return
+    } catch {
+      return
+    }
 
     try {
       if (bot.getControlState('left') || bot.getControlState('right')) return
@@ -1364,6 +1635,34 @@ export class Driver {
   }
 
   /**
+   * Says what a jump over a gap was taken on, once per jump.
+   *
+   * Not rate limited like {@link chose}, because a jump is over in twelve ticks and the once a
+   * second line lands in the middle of it or after it. What went wrong with a jump is always the
+   * speed it left with against where the simulation said that would put it, and neither of those
+   * is visible from anywhere else.
+   */
+  private launched(step: Walk, at: WorldVec, put: WorldVec, sprinting: boolean): void {
+    const stood = standsAt(step)
+    this.flying = Math.atan2(-(stood.x - at.x), -(stood.z - at.z))
+
+    this.flight = {
+      to: `${step.x} ${step.y} ${step.z}`,
+      predicted: this.physics.traced?.([standsAt(step) as unknown as WorldVec], sprinting) ?? [],
+      real: [],
+    }
+
+    const moving = this.bot.entity?.velocity
+
+    log.debug(
+      `Agent ${this.id} left the ground at ${at.x.toFixed(2)} ${at.y.toFixed(2)} ${at.z.toFixed(2)} ` +
+        `for ${step.x} ${step.y} ${step.z}, ${sprinting ? 'sprinting' : 'walking'}, carrying ` +
+        `${Math.hypot(moving?.x ?? 0, moving?.z ?? 0).toFixed(3)}, to come down at ` +
+        `${put.x.toFixed(2)} ${put.z.toFixed(2)}`,
+    )
+  }
+
+  /**
    * Says what it decided to do about the square ahead, at most once a second.
    *
    * **Because every guess about this has been wrong.** What the agent is *doing* is visible from
@@ -1419,8 +1718,20 @@ export class Driver {
      *
      * Only the heading is left alone. Everything below still runs.
      */
+    /*
+     * **A jump flies the heading it left on, and a walk re-aims every tick.**
+     *
+     * Re-aiming is right on the ground, where the agent is steering. In the air it is what
+     * bends a jump into an arc - the bearing swings as the agent drifts off the line, and the
+     * thrust swings with it - and {@link Jumping.flownAt} does not model an arc, because a
+     * straight line is the jump worth choosing. Measured over one course, the straight jumps
+     * bent a hundredth of a block off the line and the corners bent 0.09 to 0.32.
+     */
     const column = Math.floor(at.x) === step.x && Math.floor(at.z) === step.z
-    if (!column && Math.hypot(dx, dz) > WORTH_TURNING) bot.look(Math.atan2(-dx, -dz), 0)
+    if (bot.entity.onGround === true) this.flying = undefined
+
+    if (this.flying !== undefined) bot.look(this.flying, 0)
+    else if (!column && Math.hypot(dx, dz) > WORTH_TURNING) bot.look(Math.atan2(-dx, -dz), 0)
     bot.setControlState('forward', true)
     bot.setControlState('jump', false)
 
@@ -1448,6 +1759,30 @@ export class Driver {
       bot.setControlState('sprint', false)
       return 'swimming there'
     }
+
+    /*
+     * **Nothing is decided in the air. Everything below is about how to leave the ground.**
+     *
+     * The jump was chosen on {@link Simulation.lands}, which simulates one fixed set of controls
+     * all the way to the landing. Every control changed after takeoff is a control that answer
+     * did not have, and the agent then flies a different jump from the one it was given.
+     *
+     * Both branches below do exactly that from the air, and both were measured doing it:
+     *
+     * - `canStraightLine(aim, true)` is *true* mid-flight, because its two hundred ticks include
+     *   landing and walking the rest - so it turned the sprint back on one tick after every walk
+     *   jump. Over one course, all fifteen sprint jumps landed within 0.005 of the simulation and
+     *   all seven walk jumps landed 0.29 to 1.43 blocks past it. The last of those was 0.42 past,
+     *   which is one square past, which is the gap.
+     * - The fallback at the bottom shuffles towards the middle of the agent's square, which
+     *   presses `back` against the direction of travel. Measured: a jump that left at 0.203 for a
+     *   square 3.8 blocks away was 1.3 blocks along at 0.034 half a second later, and fell 79.
+     *
+     * Nothing above can reach a square from the air anyway - the block the simulation would push
+     * off is below the agent and receding - so there is no decision here to lose. `forward` is on
+     * and the heading is aimed, from the top of this method, which is what the simulation held.
+     */
+    if (bot.entity.onGround !== true) return 'in the air, so the jump is left to finish'
 
     /*
      * **A gap is jumped from the ledge, never walked off it.**
@@ -1484,15 +1819,55 @@ export class Driver {
         return 'turning to face the gap before jumping it'
       }
 
-      if (sprint && this.physics.canSprintJump(aim)) {
+      /*
+       * **The gentlest jump that comes down on the square, and no jump that does not.**
+       *
+       * Both halves matter and both were wrong. Asking {@link Simulation.lands} instead of
+       * `canSprintJump` is what stops a jump being taken because its arc *passes over* the
+       * landing block on the way somewhere else. Asking for the walk first is what stops the
+       * agent using a sprint on a gap that does not need one: with the landing checked, a walk
+       * that answers at all answers with a landing on the square, and it is the shorter of the
+       * two arcs, so it is the one with room to spare on the far side.
+       *
+       * The sprint is let go of explicitly for the walked one. It used not to be, and a run-up
+       * that had just set it left it set: the simulation was asked about a walk jump and the
+       * agent then performed a sprint jump, which is most of a block further than the answer it
+       * was given.
+       */
+      /*
+       * **The height is half of what a landing is, and leaving it out was fatal.**
+       *
+       * A gap has a floor a long way down, and that floor is directly beneath the square being
+       * jumped to. Comparing only the column therefore calls the bottom of the pit a landing on
+       * the block above it, and the jump gets taken *because* the simulation predicted a fall.
+       *
+       * Recorded tick by tick from the jump this was found on: the simulation had the agent
+       * hitting the block's near face at z -1213630.700, dropping thirty six blocks, and coming
+       * to rest at y 107 - and its x and z floored to the target square exactly as a good
+       * landing would. The agent then flew that trajectory to the tenth of a block.
+       *
+       * Upstream's own tolerance for arriving is a block of height, so that is the one used.
+       */
+      const ontoIt = (put: WorldVec | undefined): put is WorldVec =>
+        put !== undefined &&
+        Math.floor(put.x) === step.x &&
+        Math.floor(put.z) === step.z &&
+        Math.abs(put.y - to.y) < 1
+
+      const walked = this.physics.lands(aim, false)
+      if (ontoIt(walked)) {
         bot.setControlState('jump', true)
-        bot.setControlState('sprint', true)
-        return 'sprint jumping the gap'
+        bot.setControlState('sprint', false)
+        this.launched(step, at, walked, false)
+        return 'jumping the gap'
       }
 
-      if (this.physics.canWalkJump(aim)) {
+      const run = sprint ? this.physics.lands(aim, true) : undefined
+      if (ontoIt(run)) {
         bot.setControlState('jump', true)
-        return 'jumping the gap'
+        bot.setControlState('sprint', true)
+        this.launched(step, at, run, true)
+        return 'sprint jumping the gap'
       }
 
       const room = this.roomToRun(at)
@@ -1505,6 +1880,21 @@ export class Driver {
         bot.setControlState('sprint', true)
         return `running up to the gap (${room.toFixed(2)} of block left)`
       }
+
+      /*
+       * **A gap answers for itself, and does not fall through to the ladder below.**
+       *
+       * Everything after this block asks upstream whether a jump *reaches*, and reaching is
+       * satisfied by an arc that crosses the square on its way past - see {@link Jumping}. So a
+       * jump refused up here for coming down in the void was picked up four branches later and
+       * taken anyway, which made the landing check worth nothing at the only square it is for.
+       *
+       * Holding the block is the honest answer instead: the stall clock re-plans in three seconds
+       * with the agent still on it, and a re-plan from a block is a route. A re-plan from the
+       * bottom of the drop is a walk back.
+       */
+      this.brake()
+      return `at a gap nothing lands on the far side of, so holding the block (${room.toFixed(2)} left)`
     }
 
     /*
@@ -1527,6 +1917,28 @@ export class Driver {
     if (this.physics.canStraightLine(aim)) {
       bot.setControlState('sprint', false)
       return 'walking straight there'
+    }
+
+    /*
+     * **Every jump waits for the turn, not only the ones over a gap.**
+     *
+     * The parkour branch above has had this since a jump taken mid-rotation left along the old
+     * heading and clipped the far block. Nothing below it did, and everything below it jumps
+     * too - a step up, a hop, a sprint jump onto the next square - so a route that turns a corner
+     * onto a step took that step while still coming round. Measured on the course, all twenty
+     * nine gap jumps left within 0.005 of a radian of their bearing and the ones through here
+     * were not measured at all, because only a gap says it left the ground.
+     *
+     * The simulations below have the same blind spot the parkour ones did: upstream's controller
+     * snaps its player onto the bearing before the first tick, so every one of them answers about
+     * a jump taken by an agent that is already pointed the right way.
+     *
+     * Only the jumps wait. Walking and running are steering, and steering while turning is what
+     * turning is for - both branches above are left alone.
+     */
+    if (!column && Math.abs(turnLeft(bot.entity.yaw, Math.atan2(-dx, -dz))) > FACING) {
+      bot.setControlState('sprint', false)
+      return 'turning to face the square before jumping to it'
     }
 
     /*

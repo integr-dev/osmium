@@ -223,6 +223,7 @@ const onFoot: Simulation = {
   canStraightLine: () => true,
   canSprintJump: () => false,
   canWalkJump: () => false,
+  lands: () => undefined,
 }
 
 /**
@@ -235,6 +236,9 @@ const jumpable: Simulation = {
   canStraightLine: () => false,
   canSprintJump: () => true,
   canWalkJump: () => true,
+  // Both come down on the middle of the square, so which one the driver takes is its own
+  // decision rather than the landing.
+  lands: (aim) => aim[0],
 }
 
 /**
@@ -247,6 +251,7 @@ const refusing: Simulation = {
   canStraightLine: () => false,
   canSprintJump: () => false,
   canWalkJump: () => false,
+  lands: () => undefined,
 }
 
 /**
@@ -460,6 +465,7 @@ describe('Driver', () => {
       canStraightLine: () => false,
       canWalkJump: () => true,
       canSprintJump: () => false,
+      lands: (aim, sprint) => (sprint ? undefined : aim[0]),
     }
 
     world.standAt(0.5, 64, 0.5)
@@ -481,6 +487,7 @@ describe('Driver', () => {
       canStraightLine: () => false,
       canWalkJump: () => false,
       canSprintJump: () => true,
+      lands: (aim, sprint) => (sprint ? aim[0] : undefined),
     }
 
     const world = fakeBot([
@@ -501,6 +508,9 @@ describe('Driver', () => {
     const driver = new Driver(1, world.bot, running, world.report, hands(), onlyBySprinting)
     driver.start()
     driver.go(within(0, 64, 1, 0.5))
+
+    // The first tick is the turn towards the square; the jump is the one after it.
+    world.tick()
     world.tick()
 
     expect(world.did).toContain('sprint')
@@ -1086,6 +1096,10 @@ describe('Driver', () => {
     const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
     driver.start()
     driver.go(within(last.x, last.y, last.z, 0.5))
+
+    // Two ticks: the squares are at +z and the fake bot starts facing -z, so the first is the
+    // turn - no jump leaves the ground until the agent is pointed at where it is going.
+    world.tick()
     world.tick()
 
     return world
@@ -1128,6 +1142,9 @@ describe('Driver', () => {
     const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
     driver.start()
     driver.go(within(0, 65, 1, 0.5))
+
+    // The first tick is the turn: the square is at +z and the fake bot starts facing -z.
+    world.tick()
     world.tick()
 
     // A sprint jump carries most of a block past a one block hop, and there is no next square to
@@ -1166,6 +1183,7 @@ describe('Driver', () => {
     canStraightLine: () => true,
     canSprintJump: () => false,
     canWalkJump: () => false,
+    lands: () => undefined,
   }
 
   /**
@@ -1210,6 +1228,62 @@ describe('Driver', () => {
     expect(world.did).not.toContain('jump')
   })
 
+  it('waits for the turn before a step up, not only before a gap', () => {
+    // The gap branch has waited for the turn since a jump taken mid-rotation left along the old
+    // heading and clipped the far block. Every other jump - a step up, a hop, a sprint jump onto
+    // the next square - went through the ladder below it, which never waited, and the
+    // simulations there have the same blind spot: they snap their player onto the bearing before
+    // the first tick.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 3, y: 65, z: 0 },
+          { x: 4, y: 65, z: 0 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    // Facing -z, which is a quarter turn away from the step, which is off to +x.
+    world.standAt(0.5, 64, 0.5)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
+    driver.start()
+    driver.go(within(4, 65, 0, 0.5))
+    world.tick()
+
+    expect(world.did).not.toContain('jump')
+
+    // The turn lands on the next tick, the way mineflayer animates one.
+    world.tick()
+
+    expect(world.did).toContain('jump')
+  })
+
+  it('flies the heading it left the ground on, rather than arcing round to the square', () => {
+    // Re-aiming every tick is right on the ground and bends a jump in the air: as the agent
+    // drifts off the line the bearing swings and the thrust swings with it. Measured over one
+    // course, the straight jumps bent a hundredth of a block off the line and the corners bent
+    // 0.09 to 0.32 - and a 0.6 wide box has about a fifth of a block of slack in a square. The
+    // landing question simulates a straight line, so a straight line is what has to be flown.
+    const world = atAGap(jumpable)
+    world.tick()
+
+    expect(world.did).toContain('jump')
+
+    // The bearing it left on: straight down +z, from the middle of the block it took off from.
+    const left = world.bot.entity.yaw
+
+    // Airborne and most of a block off the line, which is where re-aiming would swing hardest.
+    world.standAt(1.4, 65.2, 2, false)
+    world.tick()
+    world.tick()
+
+    expect(world.bot.entity.yaw).toBeCloseTo(left, 2)
+  })
+
   it('turns to face a gap before leaving the ground, and jumps once it has', () => {
     const world = atAGap(jumpable)
 
@@ -1220,7 +1294,218 @@ describe('Driver', () => {
     world.tick()
 
     expect(world.did).toContain('jump')
+  })
+
+  it('will not take a jump that only passes over the square on its way past', () => {
+    // The whole of what upstream asks is whether the arc comes within a third of a block of the
+    // target at some tick of it - at any height, at any speed. An arc that crosses the square at
+    // head height and comes down a block beyond it answers yes for the same reason as one that
+    // lands on the middle, and over a gap the block beyond it is the void. Measured: a corner
+    // taken at 0.292 was 0.98 past the far edge half a second later, on its way down 84 blocks.
+    const flyingPast: Simulation = {
+      canStraightLine: () => false,
+      canWalkJump: () => true,
+      canSprintJump: () => true,
+      lands: (aim) => aim[0]?.offset(0, 0, 1),
+    }
+
+    const world = atAGap(flyingPast)
+    world.tick()
+    world.tick()
+
+    expect(world.did).not.toContain('jump')
+  })
+
+  it('uses the sprint when it is the only jump that comes down on the square', () => {
+    // The other half of the same rule: the gentler jump is preferred, and preferred is not the
+    // same as taken regardless. A walk that falls short of a three block gap is not a landing.
+    const onlyTheRun: Simulation = {
+      canStraightLine: () => false,
+      canWalkJump: () => true,
+      canSprintJump: () => true,
+      lands: (aim, sprint) => (sprint ? aim[0] : aim[0]?.offset(0, 0, -2)),
+    }
+
+    const world = atAGap(onlyTheRun)
+    world.tick()
+
+    expect(world.did).toContain('jump')
     expect(world.did).toContain('sprint')
+  })
+
+  it('will not take a jump the simulation puts down at the bottom of the gap', () => {
+    // A gap has a floor, and that floor is directly under the square being jumped to - so a
+    // landing thirty six blocks down floors to the same column as a good one. Recorded tick by
+    // tick: the simulation had the agent hitting the block's near face, dropping to y 107, and
+    // coming to rest at x and z that matched the target exactly. The jump was taken because the
+    // simulation predicted a fall.
+    const intoThePit: Simulation = {
+      canStraightLine: () => false,
+      canWalkJump: () => true,
+      canSprintJump: () => true,
+      lands: (aim) => aim[0]?.offset(0, -36, 0),
+    }
+
+    const world = atAGap(intoThePit)
+    world.tick()
+    world.tick()
+
+    expect(world.did).not.toContain('jump')
+  })
+
+  it('does not strafe on the tick a jump goes out', () => {
+    // The damper runs after the decision, so a strafe pressed on the takeoff tick is held through
+    // it - and Minecraft normalises the movement input, leaving about seven tenths of the thrust
+    // forward on the one tick where all of it matters. Recorded from two jumps on one course:
+    // `f j s` at takeoff went 0.059 to 0.382 a tick, `f r j s` went 0.203 to 0.302.
+    //
+    // A step up rather than a gap, because a gap now sheds its sideways momentum before it jumps
+    // at all - see the corner test above. Every other jump still leaves the ground from here.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 65, z: 1 },
+          { x: 0, y: 65, z: 2 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    world.standAt(0.5, 64, 0.5)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
+    driver.start()
+    driver.go(within(0, 65, 2, 0.5))
+
+    // A tick for the heading to catch up, which the fake turn applies on the next one.
+    world.tick()
+
+    // Walking a fraction crabwise, which on any other tick is exactly what the damper is for.
+    world.drift(0.2, 0.25)
+
+    const before = world.did.length
+    world.tick()
+    const takeoff = world.did.slice(before)
+
+    expect(takeoff).toContain('jump')
+    expect(takeoff).not.toContain('left')
+    expect(takeoff).not.toContain('right')
+  })
+
+  it('does not pick the sprint up again once a walk jump is in the air', () => {
+    // `canStraightLine` asked with sprint is true from mid-flight, because its two hundred ticks
+    // include the landing and the walk after it. So one tick after every walk jump the sprint
+    // came back on, and the agent flew a jump it was never given: over one course all fifteen
+    // sprint jumps landed within 0.005 of the simulation and all seven walk jumps landed 0.29
+    // to 1.43 past it. The last was 0.42 past, one square past, into the gap.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 4 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    // Says a straight run reaches, which is what it says to an agent halfway across a gap.
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, 4, 0.5))
+
+    world.standAt(0.5, 65.2, 1.9, false)
+    world.drift(0, 0.25)
+
+    const before = world.did.length
+    world.tick()
+
+    expect(world.did.slice(before)).not.toContain('sprint')
+  })
+
+  it('does not strafe against its own drift while it is in the air', () => {
+    // Taking the drift out is worth a side key on the ground and costs one in the air, because
+    // Minecraft normalises the movement input: forward and a strafe together leave about seven
+    // tenths of the thrust pointing forward, and the jump was chosen on a simulation holding
+    // forward and nothing else. Measured on the one gap of a course that failed - the only
+    // flight with drift to correct - the jump was picked for 3.83 blocks and travelled 3.25.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 4 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), refusing)
+    driver.start()
+    driver.go(within(0, 64, 4, 0.5))
+
+    // A tick on the ground first, so the heading has caught up by the time it matters.
+    world.standAt(0.5, 64, 0.5)
+    world.tick()
+
+    // Airborne, crossing the gap, carrying the sideways momentum a ninety degree turn leaves.
+    world.standAt(0.5, 65.2, 1.9, false)
+    world.drift(0.2, 0.25)
+
+    const before = world.did.length
+    world.tick()
+    const inTheAir = world.did.slice(before)
+
+    expect(inTheAir).not.toContain('left')
+    expect(inTheAir).not.toContain('right')
+  })
+
+  it('never brakes a jump that is already in the air', () => {
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 4 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    // Refuses everything, which is what every simulation does while the agent is off the ground:
+    // the block it would push off is below it and receding. So a flight always ends up at the
+    // last branch of the ladder, whatever it is.
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), refusing)
+    driver.start()
+    driver.go(within(0, 64, 4, 0.5))
+
+    // A tick on the ground first, because the fake turn lands on the next one exactly as
+    // mineflayer’s does - without it the agent is still facing where it started.
+    world.standAt(0.5, 64, 0.5)
+    world.tick()
+
+    // Now halfway across the gap, off the middle of the square it is passing over - which on the
+    // ground is exactly the cue to shuffle back towards it - and travelling the way it is
+    // looking, which is the direction a brake presses against.
+    world.standAt(0.9, 65.2, 1.9, false)
+    world.drift(0, 0.25)
+
+    const before = world.did.length
+    world.tick()
+    const inTheAir = world.did.slice(before)
+
+    // Measured with the takeoff line beside it: a jump that left the ground at 0.203 for a square
+    // 3.8 blocks away was 1.3 blocks along at 0.034 half a second later, already below the height
+    // it started from, and fell 79 blocks. Air acceleration is about 0.02 a tick, so twelve ticks
+    // of counter-strafe is the whole of a jump.
+    expect(inTheAir).not.toContain('back')
+    expect(inTheAir).toContain('forward')
   })
 
   it('counts a gap cleared by a hair as cleared, rather than jumping again from the lip', () => {
