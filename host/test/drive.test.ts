@@ -2,7 +2,7 @@ import type { Bot } from 'mineflayer'
 import { describe, expect, it } from 'vitest'
 import { Vec3 as WorldVec } from 'vec3'
 
-import { Driver, type Driven, type Rules, type Simulation } from '../src/agent/path/drive.ts'
+import { Driver, type Driven, keepWhatItStandsOn, type Rules, type Simulation } from '../src/agent/path/drive.ts'
 import { Schedule } from '../src/agent/schedule.ts'
 import { within } from '../src/agent/path/ground.ts'
 
@@ -297,6 +297,26 @@ describe('Driver', () => {
     }
   }
 
+  it('leaves an axis alone when it is already close enough to press for', () => {
+    // A key is held for a whole tick and a walked tick covers about 0.13 of a block, so chasing an
+    // error smaller than that moves the agent further than it was out by. Recorded from a tower
+    // lining up: it started dead on the column x and wandered 0.30 off it and back while crossing
+    // in z - right, right, left, left - taking 75 ticks to cover a block and a third.
+    const world = fakeBot([rung()])
+
+    // Most of a block out in z, a twentieth out in x. Only one of those is worth a key.
+    world.standAt(0.45, 64, 0.05)
+
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 65, 0, 0.5))
+    world.tick()
+
+    expect(world.did).toContain('back')
+    expect(world.did).not.toContain('left')
+    expect(world.did).not.toContain('right')
+  })
+
   it('walks to the middle of the column before pillaring out of it', () => {
     const world = fakeBot([rung()])
 
@@ -542,6 +562,31 @@ describe('Driver', () => {
     expect(world.did).toContain('equip')
   })
 
+  it('waits to land before it starts mining', async () => {
+    // Vanilla divides mining speed by five for a player who is not on the ground, and digging
+    // straight down leaves the agent falling into the hole it just made. Measured on a column of
+    // dirt by hand: 0.82 of a second for the block it stood on, then 3.77, 3.76 and 3.75 for the
+    // rest. Dirt is 0.75 by hand, so those are the penalty exactly.
+    const world = fakeBot([ahead({ toBreak: [{ x: 0, y: 64, z: 1 }] })])
+
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, 1, 0.5))
+
+    // Still falling through what it dug a moment ago.
+    world.standAt(0.5, 64.6, 0.5, false)
+    world.tick()
+    world.tick()
+
+    expect(world.did).not.toContain('equip')
+
+    // Down, and it reaches for the block.
+    world.standAt(0.5, 64, 0.5)
+    world.tick()
+
+    expect(world.did).toContain('equip')
+  })
+
   it('breaks the block the square ahead is waiting on', () => {
     const { world } = driving([ahead({ toBreak: [{ x: 0, y: 64, z: 1 }] })])
 
@@ -780,6 +825,67 @@ describe('Driver', () => {
     expect(world.said.lost).toEqual(['there is no route there'])
   })
 
+  it('keeps every break of a dig straight down', () => {
+    // Digging down makes the block under one step the position of the next: the steps are
+    // (x, y, z), (x, y-1, z), (x, y-2, z), each breaking the block it stands in. Read as ground,
+    // every break below the first is a square an earlier step means to stand on - measured,
+    // thirteen dropped at once. What was left dug one block and walked into solid rock, so the
+    // agent broke the top, stalled, re-planned, and did it again for every block of the descent.
+    const column = [64, 63, 62, 61].map((y) => ({
+      x: 0,
+      y,
+      z: 0,
+      hash: `0,${y},0`,
+      cost: 1,
+      remainingBlocks: 8,
+      toPlace: [],
+      toBreak: [{ x: 0, y, z: 0 }],
+    }))
+
+    keepWhatItStandsOn(column as never, 1)
+
+    expect(column.map((step) => step.toBreak.length)).toEqual([1, 1, 1, 1])
+  })
+
+  it('keeps a break under a block it stood on before the drop', () => {
+    // A drop clears several blocks at once, so the step that breaks them is a long way below the
+    // step that was standing on top of them. Measured on a descent: the break at y 158 was wanted
+    // by the step at y 156, and dropped because the step at y 159 had stood on it - a step that by
+    // then was three blocks behind. The route ran out of breaks before it ran out of squares and
+    // the agent stood still until the clock re-planned, which is the last block before a drop
+    // never being marked to break until a recalc.
+    const route = [
+      { x: 0, y: 159, z: 0, hash: `0,159,0`, cost: 1, remainingBlocks: 8, toPlace: [], toBreak: [] },
+      {
+        x: 0,
+        y: 156,
+        z: 0,
+        hash: `0,156,0`,
+        cost: 1,
+        remainingBlocks: 8,
+        toPlace: [],
+        toBreak: [{ x: 0, y: 158, z: 0 }],
+      },
+    ]
+
+    keepWhatItStandsOn(route as never, 1)
+
+    expect(route[1]!.toBreak).toEqual([{ x: 0, y: 158, z: 0 }])
+  })
+
+  it('still takes back a break under a square it walks across', () => {
+    // The case the taking back is for, and the one that has to survive it: a step means to break
+    // the block another step later stands on, and nothing in the route puts it back.
+    const route = [
+      { x: 0, y: 64, z: 0, hash: `0,64,0`, cost: 1, remainingBlocks: 8, toPlace: [], toBreak: [{ x: 1, y: 63, z: 0 }] },
+      { x: 1, y: 64, z: 0, hash: `1,64,0`, cost: 1, remainingBlocks: 8, toPlace: [], toBreak: [] },
+    ]
+
+    keepWhatItStandsOn(route as never, 1)
+
+    expect(route[0]!.toBreak).toEqual([])
+  })
+
   it('will not break the ground it later means to stand on', () => {
     // The search prices every square against the world as it is now, so a route can dig through a
     // floor at step one and expect to stand on it at step ten. The agent then falls through it.
@@ -888,6 +994,32 @@ describe('Driver', () => {
     // every other agent's session in it - gone.
     expect(() => world.tick()).not.toThrow()
     expect(world.said.lost).toEqual(['it could not work out how to get there'])
+  })
+
+  it('searches at full tilt whenever it is not walking, not only when it has no route', () => {
+    // Measured on a dig: 3.7 seconds of silence between one block and the next, no narration and
+    // no movement, all of it waiting for a four node route to settle. The multiplier existed and
+    // only applied to an empty route, so an agent with an unsettled one - or a block in its hands
+    // - searched at walking pace while standing perfectly still.
+    const world = fakeBot([ahead()])
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    const inner = driver as unknown as {
+      thinking(): number
+      slice: number
+      sections: unknown[]
+      job: unknown
+    }
+
+    driver.start()
+    driver.go(within(0, 64, 1, 0.5))
+    world.tick()
+
+    // Walking a settled route: the slice is what is left of the tick.
+    expect(inner.thinking()).toBe(inner.slice)
+
+    // Breaking a block is not walking.
+    inner.job = { what: 'breaking' }
+    expect(inner.thinking()).toBe(inner.slice * 3)
   })
 
   it('does not count thinking against the stall clock', () => {
@@ -1271,6 +1403,39 @@ describe('Driver', () => {
     return world
   }
 
+  it('backs off the lip of a gap it cannot jump from, rather than standing on it', () => {
+    // The gap is measured from where the agent is, so a takeoff at the edge is a longer jump than
+    // the same one from the middle, with no ground left to build speed on. Reported from a course:
+    // an agent braked onto an edge and then refused the way it had just come - a shorter jump than
+    // the one that put it there - and stood there until it was told to stop.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 4 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    // On the very lip, facing the gap, with nothing that reaches from here.
+    world.standAt(0.5, 64, 0.95)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), refusing)
+    driver.start()
+    driver.go(within(0, 64, 4, 0.5))
+    world.tick()
+
+    const before = world.did.length
+    world.tick()
+
+    // Walking back into its own square, which is where the run-up comes from. Not off it: the
+    // target is the middle of the block it is already standing on.
+    expect(world.did.slice(before)).toContain('back')
+  })
+
   it('stops at the lip of a gap it cannot jump yet, rather than running off it', () => {
     // Measured from the agent this was written for: it reached a three block gap at 0.11 a tick,
     // kept running because a jump *later* would have worked, and fell thirty blocks. That later
@@ -1534,99 +1699,6 @@ describe('Driver', () => {
 
     expect(inTheAir).not.toContain('left')
     expect(inTheAir).not.toContain('right')
-  })
-
-  it('stops a landing that came down where the route turns', () => {
-    // Nothing braked after a landing: the driver either kept driving - forward and sprint held
-    // straight through touchdown - or let go and coasted, and a landing at 0.270 a tick ran 0.59
-    // of a block before it stopped. Free on a straight run, because the coast is travel towards
-    // the next square. Where the route turns it is the agent arriving at the corner with the
-    // whole of the last jump still in it.
-    const world = atAGap(jumpable)
-
-    // Turned on the first tick, jumped on the second - so the driver knows it is in a flight.
-    world.tick()
-
-    // Down again, carrying the jump across the line the route now takes. Facing the way it is
-    // going, so the key that opposes it is the unambiguous one: a brake is a counter-strafe
-    // against travel, not a fixed key.
-    world.standAt(0.5, 64, 3.5)
-    world.drift(0.27, 0)
-    world.bot.look(-Math.PI / 2, 0)
-    world.tick()
-
-    const braking = world.did.length
-    world.tick()
-
-    expect(world.did.slice(braking)).toContain('back')
-
-    // And it finishes the stop rather than walking again the moment the speed is under the
-    // threshold that asked for it - recorded from a landing that would not stay on its block:
-    // forward at 0.201, back at 0.056, forward at 0.084, trading the agent back and forth.
-    world.drift(0.04, 0)
-
-    const settling = world.did.length
-    world.tick()
-
-    expect(world.did.slice(settling)).not.toContain('forward')
-  })
-
-  it('keeps its speed across a run of jumps in a straight line', () => {
-    // The squares the route still means to visit have to be read on the tick they are used. Every
-    // branch of a tick returns early on some of them, so reading them where the walking happens
-    // left the answer a tick or more behind - and a stale one reads a straight run as a corner.
-    // Measured: the agent braked to a stand after every landing and ran up each gap from 0.000
-    // with half a block of runway.
-    const world = fakeBot([])
-    const rules = () => ({
-      ...world.rules(),
-      sprint: true,
-      movements: {
-        ...world.rules().movements,
-        getNeighbors: trail([
-          { x: 0, y: 64, z: 3, parkour: true },
-          { x: 0, y: 64, z: 6, parkour: true },
-          { x: 0, y: 64, z: 9, parkour: true },
-        ]),
-      } as unknown as Rules['movements'],
-    })
-
-    world.standAt(0.5, 64, 0.1)
-
-    const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
-    driver.start()
-    driver.go(within(0, 64, 9, 0.5))
-    world.tick()
-    world.tick()
-
-    // Down on the first gap of three, still travelling the way all of them go.
-    world.standAt(0.5, 64, 3.5)
-    world.drift(0, 0.27)
-    world.bot.look(Math.PI, 0)
-
-    const after = world.did.length
-    world.tick()
-    world.tick()
-
-    expect(world.did.slice(after)).not.toContain('back')
-  })
-
-  it('lets a landing keep its speed when the route carries on the same way', () => {
-    // The other half, and why braking every landing would be wrong: the coast is the run-up for
-    // whatever comes next.
-    const world = atAGap(jumpable)
-    world.tick()
-
-    // Down again, still travelling towards the square the route goes to.
-    world.standAt(0.5, 64, 3.5)
-    world.drift(0, 0.27)
-    world.bot.look(Math.PI, 0)
-    world.tick()
-
-    const after = world.did.length
-    world.tick()
-
-    expect(world.did.slice(after)).not.toContain('back')
   })
 
   it('never brakes a jump that is already in the air', () => {

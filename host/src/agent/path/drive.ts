@@ -419,14 +419,6 @@ const LOOK_AHEAD_LANDING = 3
 const BRAKING = 0.05
 
 /**
- * How closely a landing has to be pointed at the next square for its speed to be worth keeping.
- *
- * A half, which is sixty degrees. Inside that the coast is travel and stopping it would cost the
- * run-up for whatever is next; outside it the agent is carrying the last jump into a corner.
- */
-const ALONG_THE_ROUTE = 0.5
-
-/**
  * How far off the middle of a square is worth correcting before pillaring out of it.
  *
  * **Tried once before and taken out again, because it was walking.** Shuffling towards the middle at
@@ -438,6 +430,15 @@ const ALONG_THE_ROUTE = 0.5
  * block of the square on the near side. Tighter than that is chasing floating point.
  */
 const OFF_CENTRE = 0.17
+
+/**
+ * The smallest correction worth pressing a key for, in blocks.
+ *
+ * Half of what a walked tick covers. A key is held for the whole tick whatever the error is, so
+ * chasing anything smaller than this moves the agent further than it was out by and the next tick
+ * corrects back - which is the shuffle, not the fix.
+ */
+const A_STEP = 0.07
 
 /**
  * How much sideways travel is worth correcting, in blocks a tick.
@@ -1105,9 +1106,21 @@ export class Driver {
     this.extending = new Search(last.end, walkingFrom(movements), goal, { budget, slice, reach })
   }
 
-  /** How long a slice may be, which is all of the tick the agent is not using to walk. */
+  /**
+   * How long a slice may be, which is all of the tick the agent is not using to walk.
+   *
+   * **Standing still is standing still, whatever it is waiting for.** This used to read only the
+   * empty route, so an agent that had one and could not act on it - a block being broken, a
+   * stretch still being thought about - searched at walking pace while doing nothing at all.
+   *
+   * Measured on a dig: 3.7 seconds of silence between one block and the next, no narration and no
+   * movement, the whole of it waiting for a four node route to settle. Digging spends almost every
+   * tick like that, which is why breaking a column read as slower than a player doing it by hand.
+   */
   private thinking(): number {
-    return this.sections.length === 0 ? this.slice * STANDING_STILL : this.slice
+    const waiting = this.sections.length === 0 || this.job !== undefined || this.sections[0]?.settled === false
+
+    return waiting ? this.slice * STANDING_STILL : this.slice
   }
 
   /**
@@ -1218,33 +1231,6 @@ export class Driver {
     if (landed) this.flying = undefined
 
     /*
-     * **A jump that lands where the route turns is stopped, once, on the block it landed on.**
-     *
-     * Two complaints, one cause. Nothing brakes after a landing: the driver either keeps driving
-     * - `fs` held straight through touchdown - or lets go and coasts, and recorded from one of
-     * each, a landing at 0.270 a tick ran 0.59 of a block before it stopped. On a straight run
-     * that is free, because the coast is travel towards the next square. Where the route turns it
-     * is the agent arriving at the corner with all of the last jump still in it, which is both
-     * the slipping and the corner taken too fast to line up.
-     *
-     * Two earlier goes at this missed. Measuring the coast against the block it would leave fired
-     * four times in a run and changed nothing, because the agent is not coasting - it is driving,
-     * and a friction-only estimate understates it. Shedding the *sideways* part before a takeoff
-     * stalled corners outright and left the rest as fast as they were, because by then the speed
-     * is already pointed along the new line and there is nothing sideways left to find.
-     *
-     * The moment that matters is the landing, and the question is where the route goes next, not
-     * how fast the agent is: a jump is worth all of its speed when the next square is ahead and
-     * none of it when the next square is off to one side. Engaging the latch rather than braking
-     * for a tick is what makes it stick - see the latch below.
-     */
-    if (landed && this.turningAway(step, at)) {
-      this.stopping = true
-      this.brake()
-      return
-    }
-
-    /*
      * **A stop that has been started is finished.**
      *
      * Both brakes below ask whether the agent is going too fast *right now*, and a brake works, so
@@ -1301,6 +1287,25 @@ export class Driver {
     const midJump = this.flying !== undefined && this.bot.entity?.onGround !== true
 
     if (!midJump && (step.toBreak.length > 0 || step.toPlace.length > 0)) {
+      /*
+       * **Mining in mid-air takes five times as long.**
+       *
+       * Vanilla divides the speed by five for a player who is not standing on something, and
+       * digging straight down leaves the agent falling into the hole it has just made - so every
+       * block after the first was mined on the way past it.
+       *
+       * Measured on a column of dirt by hand: 0.82 of a second for the one it stood on, then
+       * 3.77, 3.76 and 3.75 for the rest. Dirt is 0.75 by hand, so those are the penalty exactly,
+       * and it is why breaking read as slower than a player doing the same thing.
+       *
+       * Waiting costs the tick or two of the fall and nothing else; the clock is held for the
+       * same reason it is held while lining up, since falling to the floor is not being stuck.
+       */
+      if (step.toBreak.length > 0 && this.bot.entity?.onGround !== true) {
+        this.movedAt = Date.now()
+        return
+      }
+
       // Looking at its own feet, once, and then left alone: the block goes in underneath it and
       // there is nothing else to watch. Set here rather than at the moment of placing so the agent
       // is already looking the right way by the time the jump reaches the top.
@@ -1310,7 +1315,22 @@ export class Driver {
 
       if (this.composing(step, at)) {
         this.holding(step, at)
-        this.futility()
+
+        /*
+         * **Getting into position is progress, and the stall clock was counting it against the
+         * agent.**
+         *
+         * The same argument an unsettled stretch already makes: this clock is for an agent that
+         * has stopped getting anywhere, and one walking itself into the column it is about to
+         * pillar up is doing exactly what it was asked to.
+         *
+         * Measured, it was the difference between one search and two. Lining up took 75 ticks -
+         * see {@link centre}, which crabs - and the clock fires at 3.5 seconds, so a route that
+         * cost 6.5 seconds to find was thrown away a quarter of a second before the first block
+         * would have gone down, and the whole search ran again. Thirteen seconds of standing
+         * still, of which none was the towering.
+         */
+        this.movedAt = Date.now()
         return
       }
 
@@ -1520,10 +1540,22 @@ export class Driver {
     bot.setControlState('sneak', false)
     bot.setControlState('jump', false)
 
-    bot.setControlState('forward', ahead > 0)
-    bot.setControlState('back', ahead < 0)
-    bot.setControlState('right', beside > 0)
-    bot.setControlState('left', beside < 0)
+    /*
+     * **An axis that is already right is left alone.**
+     *
+     * These were bare sign tests, and a key is pressed for a whole tick: a walked tick covers
+     * about 0.13 of a block, so any error smaller than that is overshot and reversed on the next
+     * one. Recorded from a tower lining up, the agent started dead on the column's x and wandered
+     * to 0.30 off it and back while it crossed in z - right, right, left, left, right - taking 75
+     * ticks to cover a block and a third at 0.055 a tick where walking is 0.13.
+     *
+     * Below a half tick there is nothing a press can do but make it worse, and friction closes it
+     * for free.
+     */
+    bot.setControlState('forward', ahead > A_STEP)
+    bot.setControlState('back', ahead < -A_STEP)
+    bot.setControlState('right', beside > A_STEP)
+    bot.setControlState('left', beside < -A_STEP)
 
     return true
   }
@@ -1670,33 +1702,21 @@ export class Driver {
   }
 
   /**
-   * Whether the way the agent is travelling is not the way the route goes next.
+   * Walks the agent back to the middle of the square it is standing on, for room to jump from.
    *
-   * A cosine rather than an angle, and a generous one: inside sixty degrees the speed is carrying
-   * the agent roughly where it was going anyway and is worth keeping, and outside it the speed is
-   * pointed at nothing the route wants.
+   * Answers whether it is doing that, so a caller can say so and leave it to get on with it. On
+   * the middle already, there is nothing to buy and the answer is no.
    *
-   * Standing still is not turning away - there is no direction to disagree with - so a landing
-   * that has already stopped asks nothing of the brake.
+   * It cannot walk the agent off anything: the target is the middle of the square it is already
+   * standing in, and {@link centre} stops it there rather than letting it coast past.
    */
-  private turningAway(step: Walk, at: { x: number; y: number; z: number }): boolean {
-    const moving = this.bot.entity?.velocity
-    if (!moving) return false
+  private roomBehind(at: { x: number; y: number; z: number }): boolean {
+    const middle = { x: Math.floor(at.x) + 0.5, z: Math.floor(at.z) + 0.5 }
+    const off = Math.hypot(middle.x - at.x, middle.z - at.z)
 
-    const speed = Math.hypot(moving.x, moving.z)
-    if (speed <= BRAKING) return false
+    if (off <= OFF_CENTRE) return false
 
-    const stood = standsAt(step)
-    const dx = stood.x - at.x
-    const dz = stood.z - at.z
-    const far = Math.hypot(dx, dz)
-
-    // Standing on the square it was walking to, so that one says nothing about a direction - the
-    // question is where the route goes *next*. Without this an arrival reads as a turn and every
-    // landing is braked, which is the whole of what this is trying not to do.
-    if (far <= NEAR) return this.ahead[0] !== undefined && this.turningAway(this.ahead[0], at)
-
-    return (moving.x * dx + moving.z * dz) / (speed * far) < ALONG_THE_ROUTE
+    return this.centre(middle.x - at.x, middle.z - at.z)
   }
 
   /** Whether carrying on at this speed would take the agent past the square it is heading for. */
@@ -2112,6 +2132,22 @@ export class Driver {
 
       const room = this.roomToRun(at)
       if (room <= ROOM_TO_RUN) {
+        /*
+         * **Room is bought by backing up, not waited for.**
+         *
+         * Standing on the lip is the worst place to jump from and the only place this used to be
+         * able to do it from: the gap is measured from where the agent is, so a takeoff at the
+         * edge is a longer jump than the same one from the middle, with no ground left to build
+         * speed on. Reported from a course, an agent braked onto an edge and then refused the way
+         * it had just come - a shorter jump than the one that put it there - and stood until it
+         * was told to stop.
+         *
+         * A block is a block wide, so the middle of its own square is always available and is
+         * always further from the gap. {@link centre} walks it there and stops it there, which is
+         * both the run-up and the aim.
+         */
+        if (this.roomBehind(at)) return `backing off the edge of a gap for room to jump it`
+
         this.brake()
         return `at the edge of a gap it cannot jump yet, so stopping (${room.toFixed(2)} of block left)`
       }
@@ -2133,6 +2169,9 @@ export class Driver {
        * with the agent still on it, and a re-plan from a block is a route. A re-plan from the
        * bottom of the drop is a walk back.
        */
+      // Nothing reaches from here, and here is a choice: see {@link roomBehind}.
+      if (this.roomBehind(at)) return `backing off a gap nothing reaches, for room to try again`
+
       this.brake()
       const said = (put: WorldVec | undefined) =>
         put ? `${put.x.toFixed(2)} ${put.y.toFixed(2)} ${put.z.toFixed(2)}` : 'nowhere'
@@ -2752,34 +2791,65 @@ function beside(steps: readonly Walk[], at: { x: number; y: number; z: number })
  * in the way, that step fails on its own and the ordinary machinery plans again - which is a far
  * better outcome than digging away the floor and finding out by falling through it.
  */
-function keepWhatItStandsOn(steps: Walk[], id: number): void {
+export function keepWhatItStandsOn(steps: Walk[], id: number): void {
   if (steps.length === 0) return
 
-  // Every square the route needs to be solid: the one under each step it stands in.
-  const standing = new Set<string>()
-  for (const step of steps) standing.add(`${step.x},${step.y - 1},${step.z}`)
+  /*
+   * **A square the route walks into is one the agent is inside**, not one it stands on: digging
+   * straight down makes the block under one step the position of the next. Its support is a block
+   * lower, and that block is protected on its own account. Read as ground, every break below the
+   * first is a square some step means to stand on, and all of them were dropped - measured,
+   * thirteen at once. What was left dug one block and walked into solid rock.
+   */
+  const walkedInto = new Set(steps.map((step) => `${step.x},${step.y},${step.z}`))
 
   /*
-   * **Unless the route puts one back.** A tower clears the block two above its head to have room to
-   * jump, and the next rung stands at exactly that height - on a block this same route lays there a
-   * moment later. Breaking and then rebuilding a square is not a route destroying its own floor, it
-   * is how pillaring through a ceiling works, and treating it as the former left the agent under a
-   * block it was never allowed to remove, unable to clear its own square. Only what the route relies
-   * on *as it already is* is protected.
+   * **Later, and only later.**
+   *
+   * A square is ground for the steps that come *after* it is stood on, not for the whole route.
+   * A drop clears several blocks at once, so the step breaking them is a long way below the step
+   * that was standing on top of them - and read without an order, that is a route digging away
+   * its own floor.
+   *
+   * Measured on a descent: the break at y 158 was wanted by the step at y 156 and dropped because
+   * the step at y 159 had stood on it, three blocks back. The route ran out of breaks before it
+   * ran out of squares, so the agent was asked to reach a step through solid ground and stood
+   * there until the clock re-planned and found the break again.
+   *
+   * Walked backwards for that reason: what a step may not break is whatever the squares behind it
+   * in this loop - ahead of it on the route - still need to be solid, its own floor included.
    */
-  for (const step of steps) {
-    for (const spot of step.toPlace) {
-      standing.delete(`${spot.x + spot.dx},${spot.y + spot.dy},${spot.z + spot.dz}`)
-    }
-  }
-
+  const later = new Set<string>()
   let taken = 0
+  const gone: string[] = []
 
-  for (const step of steps) {
+  for (let at = steps.length - 1; at >= 0; at--) {
+    const step = steps[at]!
+    const under = `${step.x},${step.y - 1},${step.z}`
+
+    if (!walkedInto.has(under)) later.add(under)
+
+    /*
+     * **Unless the route puts one back.** A tower clears the block two above its head to have room
+     * to jump, and the next rung stands at exactly that height - on a block this same route lays
+     * there a moment later. Breaking and then rebuilding a square is not a route destroying its
+     * own floor, it is how pillaring through a ceiling works, and treating it as the former left
+     * the agent under a block it was never allowed to remove, unable to clear its own square.
+     */
+    for (const spot of step.toPlace) {
+      later.delete(`${spot.x + spot.dx},${spot.y + spot.dy},${spot.z + spot.dz}`)
+    }
+
     if (step.toBreak.length === 0) continue
 
-    const keeping = step.toBreak.filter((spot) => !standing.has(`${spot.x},${spot.y},${spot.z}`))
+    const keeping = step.toBreak.filter((spot) => !later.has(`${spot.x},${spot.y},${spot.z}`))
     if (keeping.length === step.toBreak.length) continue
+
+    for (const spot of step.toBreak) {
+      if (!later.has(`${spot.x},${spot.y},${spot.z}`)) continue
+
+      gone.push(`${spot.x} ${spot.y} ${spot.z}, wanted by the step at ${step.x} ${step.y} ${step.z}`)
+    }
 
     taken += step.toBreak.length - keeping.length
     // The arrays are the search's own and nobody else holds them.
@@ -2788,7 +2858,10 @@ function keepWhatItStandsOn(steps: Walk[], id: number): void {
   }
 
   if (taken > 0) {
-    log.debug(`Agent ${id} dropped ${taken} break(s) from its route: it means to stand on them later`)
+    log.debug(
+      `Agent ${id} dropped ${taken} break(s) from its route: a later step stands on them - ` +
+        gone.join('; '),
+    )
   }
 }
 
