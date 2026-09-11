@@ -13,6 +13,8 @@ import AgentTargets from './AgentTargets.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
+import { dollyToward, easeZoom, panRate, zoomFactor, type Point } from '../lib/orbit'
+import { axisCross, cornerArms } from '../lib/reticle'
 
 /**
  * An agent's world, rendered live.
@@ -62,33 +64,47 @@ const firstPerson = ref(false)
 const follow = ref(false)
 
 /**
- * How fast a drag moves the world, as a multiple of upstream's rate.
+ * How far a drag moves what is under the cursor, as a share of the distance it moves.
  *
- * Upstream's is worked out from how far the camera is from what it orbits, which is not the same
- * thing as how far away what you are looking at is. A little more than one is enough for a drag to
- * keep up with the cursor at the distances this viewer is used at.
+ * One, which is the whole of it: drag a hundred pixels and the ground under the pointer travels a
+ * hundred pixels. That is only a number worth writing down now that {@link panRate} measures the
+ * rate against what is being looked at - it used to be 1.6, which was a guess at how much of
+ * upstream's under-scaling to undo, and it was a different guess at every distance.
  */
-const PAN_SPEED = 1.6
+const PAN_SPEED = 1
 
 /**
- * How fast a wheel notch moves the camera.
+ * How big the gimbal cross is, in blocks.
  *
- * A notch multiplies the distance rather than subtracting from it, so close in each one covers very
- * little ground - which is right for lining up on a block and slow for everything else.
+ * **A size in the world, not on the screen.** The pivot is a place, and a mark that stays the
+ * same size in the corner of the view whatever the camera does reads as part of the interface -
+ * something painted on the glass. One block wide, drawn against a world made of blocks, reads as
+ * a thing sitting on the one it is pivoting on: it grows as the camera closes on it and shrinks
+ * as it pulls away, which is how you can tell at a glance how far off it is.
  */
-const ZOOM_SPEED = 1.6
+const GIMBAL_SPAN = 1
 
 /**
- * The closest the camera is treated as being, in blocks, when working out how far a drag moves.
+ * How long the gimbal stays up after the camera stops being moved, in milliseconds.
  *
- * **Panning collapses at close range**, because upstream measures a drag against the distance from
- * the camera to what it orbits - a few blocks, when the target is the agent right in front of it -
- * and moves the world by that much. Pushed right up to a wall it moves almost nothing.
- *
- * Below this the camera is treated as if it were here. Far out nothing changes, which is where
- * distance-proportional panning is doing something useful; up close a drag stays worth making.
+ * **Shown while it is being used and not otherwise**, which is what every tool that draws one
+ * does. A pivot marker parked on the screen is one more thing in a view already full of boxes,
+ * and the moment it is worth seeing is the moment the view is swinging around it.
  */
-const PAN_REACH = 10
+const GIMBAL_LINGER = 1600
+
+/** How long it takes to fade out once that has run out. */
+const GIMBAL_FADE = 450
+
+
+/**
+ * How smoothly the camera catches up with the mouse, as a share of the gap it closes a frame.
+ *
+ * Damping is most of what separates a viewer that feels like a tool from one that feels like a
+ * slider: a drag that stops dead the instant the button comes up reads as a stutter, and one that
+ * coasts to a halt reads as weight. An eighth is a couple of frames of coast at sixty a second.
+ */
+const SETTLING = 0.12
 
 /** Which mouse button pans. The middle one orbits and the left one picks; this is the right. */
 const PANNING = 2
@@ -113,6 +129,15 @@ interface Scene {
   /** The one material every player's box shares; its width is in pixels, so it tracks the canvas. */
   /** One per colour. Each is told the canvas size, because a line width is in pixels. */
   outlineMaterials?: Array<{ resolution: { set(width: number, height: number): void } }>
+  /**
+   * The single markers - the hover cursor, the gimbal, the block a job is about.
+   *
+   * Held for one reason: a {@link LineMaterial} width is in pixels, so every one of them has to
+   * be told how many there are - see {@link resize}. The outlines and the route were in that list
+   * and these three were not, so opening the chat rail left them drawn at the width the canvas
+   * used to be.
+   */
+  markerMaterials?: Array<{ resolution: { set(width: number, height: number): void } }>
   controls?: { enabled: boolean; update(): void; dispose(): void; target: { set(x: number, y: number, z: number): void } }
   frame: number
   position?: { pos: { x: number; y: number; z: number }; yaw: number; pitch: number }
@@ -195,6 +220,9 @@ interface Scene {
    */
   hover?: Mesh
   buildHover?: () => Mesh | undefined
+  /** The cross on the point the camera turns around - see {@link showGimbal}. */
+  gimbal?: Mesh
+  buildGimbal?: () => Mesh | undefined
   /**
    * A box on every block the route still means to lay or break.
    *
@@ -214,6 +242,16 @@ interface Scene {
    * of its own - the renderer and its `THREE` are loaded once, inside the init closure.
    */
   pick?: (nx: number, ny: number) => { x: number; y: number; z: number } | undefined
+  /** How far away the world is at a point on the screen, for {@link keepControlsUseful}. */
+  depthAt?: (nx: number, ny: number) => number | undefined
+  /** The wheel handler and what it is on, kept so teardown can take it off again. */
+  wheeling?: { on: HTMLElement; handle: (event: WheelEvent) => void }
+  /**
+   * Zoom the wheel has asked for and the frames have not finished paying - see {@link glideZoom}.
+   *
+   * No `at` means the orbit target, which is where a zoom closes while following an agent.
+   */
+  zooming?: { at?: { x: number; y: number; z: number }; left: number }
   /** Builds an outline in the entity mesh's own units. Held so the decoration needs no imports. */
   buildOutline?: (width: number, height: number, tone: Tone) => Mesh | undefined
   buildNametag?: (height: number) => Mesh | undefined
@@ -1641,15 +1679,20 @@ function settle(current: Scene, now: number): void {
  * stepped from - so the camera stays where it is and simply starts pointing at the agent.
  */
 /**
- * Keeps a drag worth making when the camera is close to what it is looking at.
+ * Scales a drag and a wheel notch against what is on the screen, once a frame.
  *
- * Upstream multiplies a drag by the distance from the camera to its target, so the closer in, the
- * less a pan moves - and at the range this viewer is actually used at, following an agent from a few
- * blocks away, that is almost nothing. Undoing the multiplication near to is exactly cancelling it,
- * so the rate is what it would be at {@link PAN_REACH} blocks and no closer. Further out the
- * proportional behaviour is left alone: out there it is what makes a drag keep up with the cursor.
+ * **Both of upstream's rates are measured from the orbit pivot**, and in this viewer the pivot is
+ * stuck to an agent - so zoomed in on one, a drag moves the world by three blocks and a notch by a
+ * twentieth of three blocks, while the landscape filling the view is fifty blocks off and barely
+ * shifts. Zoomed out the pivot is sixty away and the same gestures move everything. The further
+ * in, the less either does, which is backwards.
+ *
+ * So the depth of whatever is in the middle of the view is measured, and both rates are worked
+ * out from that instead - see `orbit.ts` for the arithmetic. A ray down the centre rather than
+ * under the pointer, because a rate that changed with the mouse resting somewhere would be its
+ * own kind of wonky, and a wheel is turned without the pointer having to be over anything.
  */
-function keepPanUseful(current: Scene): void {
+function keepControlsUseful(current: Scene): void {
   const controls = current.controls as unknown as
     | { panSpeed: number; target: { x: number; y: number; z: number } }
     | undefined
@@ -1657,9 +1700,80 @@ function keepPanUseful(current: Scene): void {
 
   const eye = current.viewer.camera.position
   const at = controls.target
-  const away = Math.hypot(eye.x - at.x, eye.y - at.y, eye.z - at.z)
+  const pivot = Math.hypot(eye.x - at.x, eye.y - at.y, eye.z - at.z)
 
-  controls.panSpeed = PAN_SPEED * Math.max(1, PAN_REACH / Math.max(away, 0.001))
+  controls.panSpeed = panRate(PAN_SPEED, current.depthAt?.(0, 0), pivot)
+}
+
+/**
+ * Zooms towards the point the camera turns around.
+ *
+ * **The wheel is still ours** even though the target is upstream’s, because what it does between
+ * events is not: a notch is owed rather than spent, and {@link glideZoom} pays it off over the
+ * frames that follow. See {@link dollyToward} for the two things that fall out of scaling about a
+ * point - arriving slows down, and what is being closed on cannot be zoomed through.
+ *
+ * It closed on whatever was under the pointer for a while, which is what a modelling tool does. In
+ * a viewer whose pivot is a place somebody chose - the middle of the screen, or the agent while
+ * following - the cursor is wherever the mouse happens to be resting, and a view that slides off
+ * towards it is not what a wheel is for here.
+ */
+function zoomAtPointer(current: Scene, event: WheelEvent): void {
+  const controls = current.controls as unknown as { target: Point & { set(x: number, y: number, z: number): void } } | undefined
+
+  // In first person the camera is the agent, and the orbit is not updated at all - a wheel there
+  // would move something nothing puts back.
+  if (!controls || firstPerson.value) return
+
+  // The page must not scroll, and the browser must not treat it as a gesture on an ancestor.
+  event.preventDefault()
+
+  stirred = performance.now()
+
+  /*
+   * **Owed, not spent, and owed against the pivot.**
+   *
+   * {@link glideZoom} pays it off over the frames that follow, reading the pivot on the frame it
+   * spends - so a zoom while following closes on the agent as it is now rather than where it was
+   * when the wheel turned. The amount multiplies into whatever is still owed, so a wheel spun in
+   * one motion adds up the way it would have if every notch had arrived at once.
+   */
+  current.zooming = { left: (current.zooming?.left ?? 1) * zoomFactor(event.deltaY) }
+}
+
+/**
+ * Spends a frame of whatever zoom the wheel is still owed.
+ *
+ * The point being closed on is held in the world rather than on the screen, so it stays under the
+ * cursor for the whole glide even though the camera is moving the entire time - which is the
+ * difference between a camera flying to somewhere and a picture being rescaled.
+ *
+ * Dropped when there is nothing left to spend, and when a step moved nothing: {@link dollyToward}
+ * refuses to go closer than {@link CLOSEST} to what it is aimed at, and an unspendable remainder
+ * would otherwise be retried every frame for ever.
+ */
+function glideZoom(current: Scene): void {
+  const zooming = current.zooming
+  const controls = current.controls as unknown as
+    | { target: Point & { set(x: number, y: number, z: number): void } }
+    | undefined
+  if (!zooming || !controls) return
+
+  const { step, left } = easeZoom(zooming.left)
+  const eye = current.viewer.camera.position
+
+  // The pivot when the wheel was turned while following, which is the agent as it is now rather
+  // than where it was when the wheel moved. Scaling about the target moves only the camera, so
+  // the agent stays exactly where it is on the screen.
+  const at = zooming.at ?? { x: controls.target.x, y: controls.target.y, z: controls.target.z }
+  const moved = dollyToward(eye, controls.target, at, step)
+  const stalled = moved.camera.x === eye.x && moved.camera.y === eye.y && moved.camera.z === eye.z
+
+  eye.set(moved.camera.x, moved.camera.y, moved.camera.z)
+  controls.target.set(moved.target.x, moved.target.y, moved.target.z)
+
+  if (left === 1 || stalled) current.zooming = undefined
+  else zooming.left = left
 }
 
 function followAgent(current: Scene): void {
@@ -1722,6 +1836,47 @@ const TELEPORT = 32
  * Frozen while the panel is open: the box is then showing the block that was picked, which is what
  * the panel is about, and letting it wander would leave the two disagreeing.
  */
+/**
+ * Draws the point the camera turns around, while it is being turned.
+ *
+ * **The pivot is invisible and everything the camera does is about it**: an orbit swings around
+ * it, a pan carries it, and a zoom while following closes on it. Not knowing where it is, is most
+ * of why an orbit camera feels arbitrary - the view rotates about somewhere, and which somewhere
+ * is a guess until it is drawn.
+ *
+ * Sized as a share of its distance, so it is the same size on the screen from anywhere, and gone
+ * again a moment after the camera stops: see {@link GIMBAL_LINGER}.
+ */
+function showGimbal(current: Scene): void {
+  if (!current.gimbal) {
+    const built = current.buildGimbal?.()
+    if (!built) return
+
+    current.gimbal = built
+    current.viewer.scene.add(built)
+  }
+
+  const cross = current.gimbal
+  const controls = current.controls as unknown as { target: Point } | undefined
+  const since = performance.now() - stirred
+
+  // Nothing to say while following: the pivot is the agent, the agent is in the middle of the
+  // screen, and a cross drawn on it is a mark over the one thing being watched.
+  if (!controls || firstPerson.value || follow.value || since > GIMBAL_LINGER + GIMBAL_FADE) {
+    cross.visible = false
+    return
+  }
+
+  const at = controls.target
+
+  cross.position.set(at.x, at.y, at.z)
+  cross.scale.set(GIMBAL_SPAN, GIMBAL_SPAN, GIMBAL_SPAN)
+  cross.visible = true
+
+  const material = (cross as unknown as { material?: { opacity: number } }).material
+  if (material) material.opacity = 1 - Math.max(0, since - GIMBAL_LINGER) / GIMBAL_FADE
+}
+
 function showHover(current: Scene): void {
   if (!current.hover) {
     const built = current.buildHover?.()
@@ -1734,13 +1889,17 @@ function showHover(current: Scene): void {
   const box = current.hover
   const over = current.over
 
-  if (!over || firstPerson.value) {
-    box.visible = false
-    return
-  }
+  /*
+   * **A picked block outlives the cursor that picked it.**
+   *
+   * Reaching for the panel takes the pointer off the canvas, which clears {@link Scene.over} -
+   * and the outline went with it, so the one moment the box is doing its most useful work, saying
+   * which block the menu is about, was the one moment it was not drawn. What is under the cursor
+   * only matters while nothing has been chosen.
+   */
+  const at = picked.value ?? (over && current.pick?.(over.nx, over.ny))
 
-  const at = picked.value ?? current.pick?.(over.nx, over.ny)
-  if (!at) {
+  if (!at || firstPerson.value) {
     box.visible = false
     return
   }
@@ -2068,10 +2227,26 @@ async function mount(world: { version: string; minY?: number; height?: number },
   // Both are set by the class and neither is in its type declarations, which describe an older
   // shape than the code in the same package. Narrowed to the two fields rather than cast away
   // wholesale, so everything else about the controls stays typed.
-  const panning = controls as unknown as { screenSpacePanning: boolean; panSpeed: number; zoomSpeed: number }
+  const panning = controls as unknown as {
+    screenSpacePanning: boolean
+    panSpeed: number
+    enableZoom: boolean
+    enableDamping: boolean
+    dampingFactor: number
+  }
   panning.screenSpacePanning = true
   panning.panSpeed = PAN_SPEED
-  panning.zoomSpeed = ZOOM_SPEED
+
+  /*
+   * **The wheel is ours**, because zooming towards the pointer is a different move from the one
+   * upstream makes - see {@link zoomAtPointer}. Left on, both would run against the same event.
+   */
+  panning.enableZoom = false
+
+  // Every drag and orbit eases to a stop rather than ending on the frame the button comes up.
+  // `update` is already called every frame, which is what damping needs.
+  panning.enableDamping = true
+  panning.dampingFactor = SETTLING
 
   // Two of them are the two the map paints its markers with: the fleet in `--color-primary` and
   // everybody else in `--color-error`. The third is nobody's, and is not a theme colour at all -
@@ -2130,11 +2305,31 @@ async function mount(world: { version: string; minY?: number; height?: number },
 
   const raycaster = new THREE.Raycaster()
 
+  /**
+   * The first block a ray through a point on the screen touches.
+   *
+   * **Only the world's own meshes**, for the reason `pick` gives: the bodies, the nametags and
+   * the outlines are drawn with depth testing off, so casting against the whole scene answers
+   * with something floating in front of the terrain rather than the terrain.
+   *
+   * The one cast the depth, the aim and the pivot are all read out of - they were three copies of
+   * it, and three copies of a thing like this is three chances for them to disagree about what
+   * the camera is looking at.
+   */
+  const groundAt = (nx: number, ny: number): Point | undefined => {
+    raycaster.setFromCamera({ x: nx, y: ny } as never, viewer.camera as never)
+
+    const world = Object.values(viewer.world.sectionMeshs ?? {}).filter((mesh) => mesh !== undefined)
+    const hit = raycaster.intersectObjects(world as never[], false)[0] as { point: Point } | undefined
+
+    return hit?.point
+  }
+
   // The page's own text colour, which is what vanilla's own selection box amounts to: a neutral
   // that is not one of the two colours already meaning "ours" and "theirs".
   const hoverMaterial = new LineMaterial({
     color: themeColour('--color-base-content', 0x111111),
-    linewidth: 1.5,
+    linewidth: 2.5,
     // Depth tested, unlike the boxes around bodies. A selection box that showed through the hill in
     // front of it would say the cursor was on something it is not.
     depthTest: true,
@@ -2142,6 +2337,20 @@ async function mount(world: { version: string; minY?: number; height?: number },
     opacity: 0.9,
   })
   hoverMaterial.resolution.set(element.clientWidth, element.clientHeight)
+
+  // The accent, because this is the only mark on the screen that is about the camera rather than
+  // about the world. Not depth tested: what the view turns around is worth seeing when it is
+  // inside a hill, which is most of the time when following an agent through one.
+  const gimbalMaterial = new LineMaterial({
+    color: themeColour('--color-accent', 0x38bdf8),
+    // Heavier than the outlines around bodies: those sit on something, and this is a bare cross in
+    // open air with a world of edges behind it to be lost among.
+    linewidth: 3.5,
+    depthTest: false,
+    transparent: true,
+    opacity: 0,
+  })
+  gimbalMaterial.resolution.set(element.clientWidth, element.clientHeight)
 
   // Green, and the page's own if it has one: this is the only marker on the map that means
   // "about to happen" rather than "is", and it should not be mistakable for either agent colour.
@@ -2236,6 +2445,21 @@ async function mount(world: { version: string; minY?: number; height?: number },
      * the ray lands exactly on the boundary between the ground and the air above it, and flooring
      * that raw is a coin toss between the two.
      */
+    /**
+     * How far the camera is from the world at a point on the screen.
+     *
+     * The same cast as {@link Scene.pick} and against the same meshes, answering the distance
+     * rather than the block - which is what a gesture should be scaled by, and is not the same as
+     * the distance to whatever the camera happens to be orbiting. Nothing when the ray leaves the
+     * world, which is the sky.
+     */
+    depthAt: (nx: number, ny: number) => {
+      const on = groundAt(nx, ny)
+      if (!on) return undefined
+
+      const eye = viewer.camera.position
+      return Math.hypot(eye.x - on.x, eye.y - on.y, eye.z - on.z)
+    },
     pick: (nx: number, ny: number) => {
       raycaster.setFromCamera({ x: nx, y: ny } as never, viewer.camera as never)
 
@@ -2253,13 +2477,40 @@ async function mount(world: { version: string; minY?: number; height?: number },
         z: Math.floor(hit.point.z + away.z * 0.5),
       }
     },
+    /**
+     * Corners rather than a cage - see `reticle.ts`.
+     *
+     * The middle of each edge is left open, which matters more here than anywhere else on the
+     * screen: every edge of a full wireframe lands on an edge the world already has, so the box
+     * that is meant to say where the cursor is disappears into the block it is on.
+     */
     buildHover: () => {
-      const box = new THREE.BoxGeometry(1, 1, 1)
       const line = new LineSegments2(
-        new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(box)),
+        new LineSegmentsGeometry().setPositions(cornerArms()),
         hoverMaterial,
       ) as unknown as Mesh
 
+      line.frustumCulled = false
+      line.visible = false
+      return line
+    },
+    buildGimbal: () => {
+      const line = new LineSegments2(
+        new LineSegmentsGeometry().setPositions(axisCross()),
+        gimbalMaterial,
+      ) as unknown as Mesh
+
+      /*
+       * **Last in the transparent pass, whatever the camera thinks the order should be.**
+       *
+       * The same fault the nametags have, and for the same reason - see {@link NAMETAG_ORDER}.
+       * Everything drawn through the world here is transparent, so three sorts it all back to
+       * front by distance, and orbiting swaps which of any two is nearer. For the half of a turn
+       * where an outline or a route sorted later than this, it was drawn over the top and the
+       * pivot simply was not there. Depth testing being off does not help: nothing is being
+       * tested, the other thing just arrives afterwards.
+       */
+      line.renderOrder = NAMETAG_ORDER
       line.frustumCulled = false
       line.visible = false
       return line
@@ -2322,6 +2573,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
     bounds,
     received: 0,
     outlineMaterials,
+    markerMaterials: [hoverMaterial, gimbalMaterial, workMaterial],
     pathMaterials: [...pathMaterials, hoverMaterial],
     seen: new Map(),
     names: new Map(),
@@ -2344,14 +2596,21 @@ async function mount(world: { version: string; minY?: number; height?: number },
       // Before `update`, which is what applies the target to the camera. After it, the frame would
       // be drawn one step behind and the agent would sit slightly off centre the whole way.
       if (follow.value) followAgent(built)
-      keepPanUseful(built)
+      keepControlsUseful(built)
+      glideZoom(built)
       built.controls?.update()
     }
     showHover(built)
+    showGimbal(built)
     viewer.update()
     renderer.render(viewer.scene, viewer.camera)
   }
   draw()
+
+  // Not passive, because the page must not scroll under a wheel turned on the viewer. Held on the
+  // scene so it comes off with everything else - see `teardown`.
+  built.wheeling = { on: element, handle: (event: WheelEvent) => zoomAtPointer(built, event) }
+  element.addEventListener('wheel', built.wheeling.handle, { passive: false })
 
   // The canvas, not the window. Opening or closing the chat rail changes how much room this has
   // without the window changing at all, and a viewer that only listened for the latter kept
@@ -2408,6 +2667,9 @@ const picked = ref<{ x: number; y: number; z: number; px: number; py: number } |
 /** Where the press began, and whether it turned into an orbit. */
 let pressed: { x: number; y: number; moved: boolean } | null = null
 
+/** When the camera was last moved, so the gimbal can be shown while it is being used. */
+let stirred = 0
+
 /** Pixels of travel before a press stops being a click. */
 const SLOP = 4
 
@@ -2463,6 +2725,8 @@ function onPointerDown(event: PointerEvent): void {
    * statement that the answer is to stop following rather than to argue with it.
    */
   if (event.button === PANNING && follow.value) follow.value = false
+
+  stirred = performance.now()
 }
 
 function onPointerMove(event: PointerEvent): void {
@@ -2476,6 +2740,9 @@ function onPointerMove(event: PointerEvent): void {
       ny: -((event.clientY - box.top) / box.height) * 2 + 1,
     }
   }
+
+  // A drag of the view, which is an orbit or a pan: both are about the pivot, so both show it.
+  if (pressed?.moved) stirred = performance.now()
 
   if (!pressed || pressed.moved) return
   if (Math.abs(event.clientX - pressed.x) + Math.abs(event.clientY - pressed.y) > SLOP) pressed.moved = true
@@ -2610,7 +2877,11 @@ function resize(): void {
   current.viewer.camera.updateProjectionMatrix()
   current.renderer.setSize(element.clientWidth, element.clientHeight, false)
   // The box's width is a number of pixels, which means nothing without knowing how many there are.
-  for (const material of [...(current.outlineMaterials ?? []), ...(current.pathMaterials ?? [])]) {
+  for (const material of [
+    ...(current.outlineMaterials ?? []),
+    ...(current.pathMaterials ?? []),
+    ...(current.markerMaterials ?? []),
+  ]) {
     material.resolution.set(element.clientWidth, element.clientHeight)
   }
 }
@@ -2655,10 +2926,15 @@ function teardown(): void {
   if (!current) return
 
   current.watcher?.disconnect()
+  if (current.wheeling) current.wheeling.on.removeEventListener('wheel', current.wheeling.handle)
   // Before the renderer goes, while there is still a scene to take them out of.
   if (current.hover) {
     current.viewer.world.scene.remove(current.hover)
     disposeGeometry(current.hover)
+  }
+  if (current.gimbal) {
+    current.viewer.world.scene.remove(current.gimbal)
+    disposeGeometry(current.gimbal)
   }
   for (const line of current.pathLines ?? []) {
     current.viewer.world.scene.remove(line)
