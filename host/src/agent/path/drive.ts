@@ -68,6 +68,8 @@ export interface Frame {
   onGround: boolean
   held?: string
   yaw?: number
+  /** How far from the middle of the square a block is going into. Towers only. */
+  off?: number
 }
 
 export interface Simulation {
@@ -124,6 +126,15 @@ const Engine = untypedPhysics as unknown as new (bot: Bot) => Innards & Omit<Sim
  * How long a jump is worth simulating for, in ticks. Two seconds; none of them stay up half that.
  */
 const JUMP_TICKS = 40
+
+/** How many ticks of getting into position for a block are worth keeping. Ten seconds of them. */
+const RUNG_TICKS = 200
+
+/** How many ticks after a landing are worth keeping, to see whether it stayed on the block. */
+const AFTER_TICKS = 20
+
+/** The controls a recorder reports, in the order it reports them. */
+const HELD = ['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'] as const
 
 /**
  * Upstream’s simulation, asked the one question it does not ask itself: **where does this jump
@@ -379,6 +390,23 @@ const OVER_THE_EDGE = -1.421
 const SETTLED = 0.02
 
 /**
+ * How long the end of a journey is braked into before it is called an arrival, in ticks.
+ *
+ * A counter-strafe kills a sprint in two or three, so six is room to spare. It is a bound rather
+ * than a duration: something holding the agent in motion - a push, a slope, a server that keeps
+ * putting it back - must not be able to stop it ever arriving.
+ */
+const HOLD_UP = 6
+
+/**
+ * How many squares past the one being jumped to still count as landing on the route.
+ *
+ * Three, which is as far as one jump can carry an agent past what it aimed at. Further than that
+ * and a landing is not an overshoot, it is somewhere else.
+ */
+const LOOK_AHEAD_LANDING = 3
+
+/**
  * Above this, stopping is worth doing something about rather than waiting out.
  *
  * **Friction alone is far too slow to stop inside one block.** It takes 0.6 of the speed off each
@@ -389,6 +417,14 @@ const SETTLED = 0.02
  * two ticks instead, inside the square it arrived in.
  */
 const BRAKING = 0.05
+
+/**
+ * How closely a landing has to be pointed at the next square for its speed to be worth keeping.
+ *
+ * A half, which is sixty degrees. Inside that the coast is travel and stopping it would cost the
+ * run-up for whatever is next; outside it the agent is carrying the last jump into a corner.
+ */
+const ALONG_THE_ROUTE = 0.5
 
 /**
  * How far off the middle of a square is worth correcting before pillaring out of it.
@@ -607,8 +643,31 @@ export class Driver {
   /** The heading a jump left the ground on, held until it lands. */
   private flying: number | undefined
 
+  /** Ticks spent getting into position for a block, printed when it is laid. Diagnostic. */
+  private rung: { at: string; frames: Frame[] } | undefined
+
   /** A jump in progress, being played back against what the simulation said. Diagnostic. */
-  private flight: { to: string; predicted: Frame[]; real: Frame[] } | undefined
+  private flight: { to: string; predicted: Frame[]; real: Frame[]; landed?: number } | undefined
+
+  /**
+   * Whether the agent is in the middle of being brought to a stand.
+   *
+   * Held until {@link brake} says it is still, rather than asked again every tick - see where it
+   * is set. A brake that is re-decided is a brake that alternates with a walk.
+   */
+  private stopping = false
+
+  /**
+   * The steps after the one being walked to, so a landing can be checked against the route.
+   *
+   * Kept rather than passed, because {@link decide} is handed one square and the question a
+   * landing asks is about the journey: coming down a square early or a square late is fine if
+   * the route goes there, and is a fall if it does not.
+   */
+  private ahead: readonly Walk[] = []
+
+  /** Ticks spent braking into the last square, so an agent that never settles still arrives. */
+  private landing = 0
 
   /** Whether a tower has already been re-planned once for starting in the wrong column. */
   private misplaced = false
@@ -775,8 +834,18 @@ export class Driver {
       yaw: entity.yaw,
     })
 
-    const down = flight.real.length > 1 && entity.onGround === true
-    if (!down && flight.real.length < JUMP_TICKS) return
+    /*
+     * **The landing is not the end of it.**
+     *
+     * A jump that lands where it was aimed can still slide off the block it landed on, and that
+     * happens entirely after the flight is over - so a recorder that stopped at touchdown was
+     * blind to the half of it worth watching. Kept running for a while afterwards, the dump shows
+     * the coast: what was held, how fast it was still going, and which tick it left the square.
+     */
+    if (entity.onGround === true && flight.real.length > 1) flight.landed ??= flight.real.length
+
+    const settled = flight.landed !== undefined && flight.real.length - flight.landed >= AFTER_TICKS
+    if (!settled && flight.real.length < JUMP_TICKS + AFTER_TICKS) return
 
     this.flight = undefined
 
@@ -1137,6 +1206,63 @@ export class Driver {
     // up out of the square being walked to, and arriving at a sprint is most of a block of stopping
     // distance - which is the overshoot, before any braking gets a chance. A hole is the same
     // problem lying down: see {@link plunging}. So is the end of the journey, where there is no next
+    // **The tick a gap jump ends.** {@link flying} is set only by a parkour takeoff and cleared
+    // here rather than in {@link decide}, because the branches below return without reaching it.
+    // **The route as it is on this tick.** Every branch below returns early on some of them, so
+    // reading this where the walking happens left it a tick or more behind - and a stale answer
+    // reads a straight run as a corner. Measured: the agent braked to a stand after every landing
+    // and ran up each gap from 0.000 with half a block of runway.
+    this.ahead = section.steps.slice(1, LOOK_AHEAD_LANDING + 1)
+
+    const landed = this.flying !== undefined && this.bot.entity?.onGround === true
+    if (landed) this.flying = undefined
+
+    /*
+     * **A jump that lands where the route turns is stopped, once, on the block it landed on.**
+     *
+     * Two complaints, one cause. Nothing brakes after a landing: the driver either keeps driving
+     * - `fs` held straight through touchdown - or lets go and coasts, and recorded from one of
+     * each, a landing at 0.270 a tick ran 0.59 of a block before it stopped. On a straight run
+     * that is free, because the coast is travel towards the next square. Where the route turns it
+     * is the agent arriving at the corner with all of the last jump still in it, which is both
+     * the slipping and the corner taken too fast to line up.
+     *
+     * Two earlier goes at this missed. Measuring the coast against the block it would leave fired
+     * four times in a run and changed nothing, because the agent is not coasting - it is driving,
+     * and a friction-only estimate understates it. Shedding the *sideways* part before a takeoff
+     * stalled corners outright and left the rest as fast as they were, because by then the speed
+     * is already pointed along the new line and there is nothing sideways left to find.
+     *
+     * The moment that matters is the landing, and the question is where the route goes next, not
+     * how fast the agent is: a jump is worth all of its speed when the next square is ahead and
+     * none of it when the next square is off to one side. Engaging the latch rather than braking
+     * for a tick is what makes it stick - see the latch below.
+     */
+    if (landed && this.turningAway(step, at)) {
+      this.stopping = true
+      this.brake()
+      return
+    }
+
+    /*
+     * **A stop that has been started is finished.**
+     *
+     * Both brakes below ask whether the agent is going too fast *right now*, and a brake works, so
+     * one tick of it drops the speed under the threshold and the next tick decides everything is
+     * fine and presses forward again. Recorded from a landing that would not stay on its block:
+     * `f` at 0.201, `b` at 0.056, `f` at 0.084 - a counter-press and a walk trading the agent back
+     * and forth while it left the square. That is the tug of war {@link overshooting} was written
+     * to avoid on distance, arriving instead on speed.
+     *
+     * So stopping is a state, not a tick: once either brake engages the agent is brought to a
+     * stand, and {@link brake} says when that is done.
+     */
+    if (this.bot.entity?.onGround === true && this.stopping) {
+      if (this.brake()) return
+
+      this.stopping = false
+    }
+
     // square to carry the speed into.
     const last = this.sections.length === 1 && section.steps.length === 1
     /*
@@ -1155,7 +1281,26 @@ export class Driver {
     // moving when it gets there, and the sprint has to be picked up before the last step.
     this.hurrying = !this.arriving && this.runUpNeeded(section.steps)
 
-    if (step.toBreak.length > 0 || step.toPlace.length > 0) {
+    /*
+     * **A jump over a gap is finished before anything else is begun.**
+     *
+     * Everything in the branch below lets go of the controls to do its work: {@link begin} calls
+     * {@link still}, which is `clearControlStates`, and {@link composing} brakes. On the ground
+     * that is the point of them. One tick after a takeoff it is the jump.
+     *
+     * Recorded from the one it cost: a sprint jump left the ground and the tick after it the
+     * route reached a square with a block to lay, so every control went off. The next tick set
+     * `forward` again and the airborne gate in {@link decide} - rightly - returned before
+     * anything could set `sprint`, so the rest of the flight was a walk. It was chosen on a
+     * simulation of a sprint: 0.058 a tick against 0.236, 1.4 blocks covered against 2.9, and
+     * the far side of the gap never arrived.
+     *
+     * {@link flying} is a gap jump specifically, which is what makes this safe for a tower: a
+     * rung is laid from inside a jump on purpose, and that jump never sets it.
+     */
+    const midJump = this.flying !== undefined && this.bot.entity?.onGround !== true
+
+    if (!midJump && (step.toBreak.length > 0 || step.toPlace.length > 0)) {
       // Looking at its own feet, once, and then left alone: the block goes in underneath it and
       // there is nothing else to watch. Set here rather than at the moment of placing so the agent
       // is already looking the right way by the time the jump reaches the top.
@@ -1164,15 +1309,53 @@ export class Driver {
       }
 
       if (this.composing(step, at)) {
+        this.holding(step, at)
         this.futility()
         return
       }
 
+      this.settled(step)
       this.begin(step)
       return
     }
 
     if (this.reached(step, at)) {
+      /*
+       * **The end of a journey is stopped at, not coasted through.**
+       *
+       * {@link done} lets go of the controls, and letting go is not braking: Minecraft sheds four
+       * tenths of the speed a tick, so a release at a sprint travels most of a block further.
+       * Recorded from an arrival - every control off at 0.270 a tick, and it skated 0.59 blocks
+       * across the square before it stopped, coming to rest a hundredth of a block from the far
+       * edge of the one it had landed on. Nothing was holding it. That is the slide.
+       *
+       * So the last square is braked in before it is called an arrival. It costs the tick or two a
+       * counter-strafe takes, and the agent ends up where it was sent rather than a coast past it.
+       */
+      const ending = section.steps.length === 1 && this.sections.length === 1
+
+      /*
+       * **A journey is not over while the agent is still in the air.**
+       *
+       * {@link reached} counts a gap as cleared the moment the agent is over the square, which is
+       * right for walking the route on and wrong for ending it: {@link done} lets go of the
+       * controls, and {@link think} stops thinking once the goal is cleared, so a last jump
+       * declared finished in mid-flight lands with nothing holding it at all.
+       *
+       * Recorded from one: arrival was reported 0.03 of a second before touchdown, the trace
+       * shows every control released from the tick it landed, and it coasted 0.54 of a block off
+       * the square it had just landed on. The brake below never got a chance - there was no
+       * longer a journey for it to belong to.
+       */
+      if (ending && this.bot.entity?.onGround !== true) return
+
+      if (ending && this.bot.entity?.onGround === true && this.landing < HOLD_UP && this.brake()) {
+        this.landing++
+        return
+      }
+
+      this.landing = 0
+      this.stopping = false
       section.steps.shift()
       this.movedAt = Date.now()
       this.failures = 0
@@ -1206,6 +1389,7 @@ export class Driver {
     // **On the ground only.** Braking is a counter-strafe - see {@link brake} - and a
     // counter-strafe in mid-flight is the one control that turns a jump into a fall.
     if (this.bot.entity?.onGround === true && this.arriving && this.overshooting(step, at)) {
+      this.stopping = true
       this.brake()
       return
     }
@@ -1485,6 +1669,36 @@ export class Driver {
     return step.y < Math.floor(at.y) - 1
   }
 
+  /**
+   * Whether the way the agent is travelling is not the way the route goes next.
+   *
+   * A cosine rather than an angle, and a generous one: inside sixty degrees the speed is carrying
+   * the agent roughly where it was going anyway and is worth keeping, and outside it the speed is
+   * pointed at nothing the route wants.
+   *
+   * Standing still is not turning away - there is no direction to disagree with - so a landing
+   * that has already stopped asks nothing of the brake.
+   */
+  private turningAway(step: Walk, at: { x: number; y: number; z: number }): boolean {
+    const moving = this.bot.entity?.velocity
+    if (!moving) return false
+
+    const speed = Math.hypot(moving.x, moving.z)
+    if (speed <= BRAKING) return false
+
+    const stood = standsAt(step)
+    const dx = stood.x - at.x
+    const dz = stood.z - at.z
+    const far = Math.hypot(dx, dz)
+
+    // Standing on the square it was walking to, so that one says nothing about a direction - the
+    // question is where the route goes *next*. Without this an arrival reads as a turn and every
+    // landing is braked, which is the whole of what this is trying not to do.
+    if (far <= NEAR) return this.ahead[0] !== undefined && this.turningAway(this.ahead[0], at)
+
+    return (moving.x * dx + moving.z * dz) / (speed * far) < ALONG_THE_ROUTE
+  }
+
   /** Whether carrying on at this speed would take the agent past the square it is heading for. */
   private overshooting(step: Walk, at: { x: number; y: number; z: number }): boolean {
     const moving = this.bot.entity?.velocity
@@ -1642,7 +1856,7 @@ export class Driver {
    * speed it left with against where the simulation said that would put it, and neither of those
    * is visible from anywhere else.
    */
-  private launched(step: Walk, at: WorldVec, put: WorldVec, sprinting: boolean): void {
+  private launched(step: Walk, at: WorldVec, put: WorldVec | undefined, sprinting: boolean): void {
     const stood = standsAt(step)
     this.flying = Math.atan2(-(stood.x - at.x), -(stood.z - at.z))
 
@@ -1658,7 +1872,7 @@ export class Driver {
       `Agent ${this.id} left the ground at ${at.x.toFixed(2)} ${at.y.toFixed(2)} ${at.z.toFixed(2)} ` +
         `for ${step.x} ${step.y} ${step.z}, ${sprinting ? 'sprinting' : 'walking'}, carrying ` +
         `${Math.hypot(moving?.x ?? 0, moving?.z ?? 0).toFixed(3)}, to come down at ` +
-        `${put.x.toFixed(2)} ${put.z.toFixed(2)}`,
+        (put ? `${put.x.toFixed(2)} ${put.z.toFixed(2)}` : 'somewhere it did not say'),
     )
   }
 
@@ -1848,22 +2062,48 @@ export class Driver {
        *
        * Upstream's own tolerance for arriving is a block of height, so that is the one used.
        */
-      const ontoIt = (put: WorldVec | undefined): put is WorldVec =>
+      /*
+       * **Landing on the level, rather than landing on the square.**
+       *
+       * The height is the half of this that earns its keep: the jump that took an agent down a
+       * thirty six block hole came back with `y 107` against a target of `y 143`, and a landing
+       * that is not at the route's own level is a fall however tidy its column looks.
+       *
+       * Insisting on the *column* as well is what deadlocked a two block gap. Recorded from one:
+       * aiming at -1213613.50, a walk came down at -1213612.94 and a run at -1213614.36 - both
+       * on solid ground at y 143, straddling the one block square between them. Neither was
+       * allowed, nothing else reaches, and the agent stood on the ledge re-planning.
+       *
+       * **So a square the route goes to, rather than the one square it was aimed at.**
+       * {@link caughtUp} carries a journey on from whatever square the agent actually came down
+       * on - but only where there is a route to carry on from. Accepting any landing at the right
+       * height instead is a jump into the dark, and it went there immediately: a landing one
+       * square past the last step of a run, at the right height, on nothing. The agent braked to
+       * a stand at -1213610.695 with its box reaching -1213610.995, five thousandths past the
+       * edge of the block, and dropped eighty seven.
+       */
+      const going = new Set([step, ...this.ahead].map((one) => `${one.x},${one.z}`))
+
+      const onTheRoute = (put: WorldVec | undefined): put is WorldVec =>
         put !== undefined &&
-        Math.floor(put.x) === step.x &&
-        Math.floor(put.z) === step.z &&
-        Math.abs(put.y - to.y) < 1
+        Math.abs(put.y - to.y) < 1 &&
+        going.has(`${Math.floor(put.x)},${Math.floor(put.z)}`)
+
+      const wide = (put: WorldVec) => Math.hypot(put.x - to.x, put.z - to.z)
 
       const walked = this.physics.lands(aim, false)
-      if (ontoIt(walked)) {
+      const run = sprint ? this.physics.lands(aim, true) : undefined
+
+      // The gentler one unless the run genuinely lands closer, which is the old preference with
+      // the column requirement taken out of it.
+      if (onTheRoute(walked) && (!onTheRoute(run) || wide(walked) <= wide(run))) {
         bot.setControlState('jump', true)
         bot.setControlState('sprint', false)
         this.launched(step, at, walked, false)
         return 'jumping the gap'
       }
 
-      const run = sprint ? this.physics.lands(aim, true) : undefined
-      if (ontoIt(run)) {
+      if (onTheRoute(run)) {
         bot.setControlState('jump', true)
         bot.setControlState('sprint', true)
         this.launched(step, at, run, true)
@@ -1894,7 +2134,14 @@ export class Driver {
        * bottom of the drop is a walk back.
        */
       this.brake()
-      return `at a gap nothing lands on the far side of, so holding the block (${room.toFixed(2)} left)`
+      const said = (put: WorldVec | undefined) =>
+        put ? `${put.x.toFixed(2)} ${put.y.toFixed(2)} ${put.z.toFixed(2)}` : 'nowhere'
+
+      return (
+        `at a gap nothing lands on the far side of, so holding the block (${room.toFixed(2)} left, ` +
+        `aiming ${to.x.toFixed(2)} ${to.y.toFixed(2)} ${to.z.toFixed(2)}, ` +
+        `a walk puts it at ${said(walked)}, a run at ${said(run)})`
+      )
     }
 
     /*
@@ -1953,6 +2200,7 @@ export class Driver {
     if (this.arriving && this.physics.canWalkJump(aim)) {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', false)
+      this.launched(step, at, this.physics.lands(aim, false), false)
       return 'jumping there, softly, because it has to stop'
     }
 
@@ -1972,6 +2220,7 @@ export class Driver {
     if (sprint && this.hurrying && this.physics.canSprintJump(aim)) {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', true)
+      this.launched(step, at, this.physics.lands(aim, true), true)
       return 'sprint jumping there, because a run-up is coming'
     }
 
@@ -1979,6 +2228,7 @@ export class Driver {
     if (this.physics.canWalkJump(aim)) {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', false)
+      this.launched(step, at, this.physics.lands(aim, false), false)
       return 'jumping there'
     }
 
@@ -1987,6 +2237,7 @@ export class Driver {
     if (sprint && this.physics.canSprintJump(aim)) {
       bot.setControlState('jump', true)
       bot.setControlState('sprint', true)
+      this.launched(step, at, this.physics.lands(aim, true), true)
       return 'sprint jumping there'
     }
 
@@ -2037,6 +2288,66 @@ export class Driver {
     bot.setControlState('forward', false)
     bot.setControlState('sprint', false)
     return 'nothing reachable, and centred already - stuck'
+  }
+
+  /**
+   * Records a tick spent getting ready to lay a block, for {@link settled} to print.
+   *
+   * Diagnostic, and the same trick the flight recorder plays. {@link composing} can hold a step
+   * up for seconds at a time - walking to the middle of a column, braking, waiting for the drift
+   * to die - and the once a second narration says only that the agent is standing still, which is
+   * exactly as much as it said about a jump before the flights were played back tick by tick.
+   */
+  private holding(step: Walk, at: { x: number; y: number; z: number }): void {
+    const laying = step.toPlace[0]
+    if (!laying) return
+
+    const going = { x: laying.x + laying.dx, y: laying.y + laying.dy, z: laying.z + laying.dz }
+    const held = HELD.filter((name) => {
+      try {
+        return this.bot.getControlState(name)
+      } catch {
+        return false
+      }
+    })
+      .map((name) => name[0])
+      .join('')
+
+    const moving = this.bot.entity?.velocity
+
+    this.rung ??= { at: `${going.x} ${going.y} ${going.z}`, frames: [] }
+    if (this.rung.frames.length >= RUNG_TICKS) return
+
+    this.rung.frames.push({
+      x: at.x,
+      y: at.y,
+      z: at.z,
+      speed: Math.hypot(moving?.x ?? 0, moving?.z ?? 0),
+      onGround: this.bot.entity?.onGround === true,
+      held,
+      off: Math.hypot(going.x + 0.5 - at.x, going.z + 0.5 - at.z),
+    })
+  }
+
+  /** Prints what a block cost to get into position for, once it is finally being laid. */
+  private settled(step: Walk): void {
+    const waited = this.rung
+    this.rung = undefined
+
+    if (!waited || waited.frames.length === 0) return
+
+    const lines = waited.frames.map(
+      (was, tick) =>
+        `  ${String(tick).padStart(3)} ${was.x.toFixed(3)} ${was.y.toFixed(3)} ${was.z.toFixed(3)} ` +
+        `${was.speed.toFixed(3)} ${(was.off ?? 0).toFixed(3)} ` +
+        `${was.onGround ? 'gnd' : 'air'} ${was.held ?? ''}`,
+    )
+
+    log.debug(
+      `Agent ${this.id} spent ${waited.frames.length} ticks getting into ${waited.at} to lay in it:\n` +
+        `    t x y z speed off ground held\n` +
+        lines.join('\n'),
+    )
   }
 
   /** Starts the next piece of work on the square ahead. Breaking comes before laying. */

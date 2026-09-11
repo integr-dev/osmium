@@ -695,6 +695,59 @@ describe('Driver', () => {
     expect(world.said.routes.length).toBe(drawn)
   })
 
+  it('brakes into the last square rather than coasting across it', () => {
+    // Letting go is not braking: Minecraft sheds four tenths of the speed a tick, so a release at
+    // a sprint travels most of a block further. Recorded from an arrival - every control off at
+    // 0.270 a tick, skating 0.59 blocks across the square and stopping a hundredth of a block from
+    // the far edge of the one it had landed on.
+    const { world } = driving([ahead()])
+
+    // Standing on the last square already, still carrying a landing's worth of speed.
+    world.standAt(0.5, 64, 1.5)
+    world.drift(0, 0.27)
+    world.bot.look(Math.PI, 0)
+
+    const before = world.did.length
+    world.tick()
+
+    // Stopped on it, and not called arrived until it is - a coast is not an arrival.
+    expect(world.did.slice(before)).toContain('back')
+    expect(world.said.arrived).toBe(0)
+
+    // Once it is still, the journey is over.
+    world.drift(0, 0)
+    world.tick()
+
+    expect(world.said.arrived).toBe(1)
+  })
+
+  it('does not call a journey finished while the agent is still in the air', () => {
+    // `reached` counts a gap as cleared the moment the agent is over the square, which is right
+    // for walking the route on and wrong for ending it: arrival lets go of the controls and stops
+    // the driver thinking. Recorded from one, arrival was reported 0.03 of a second before
+    // touchdown, every control was released from the tick it landed, and it coasted 0.54 of a
+    // block off the square it had just landed on.
+    const { world } = driving([ahead()])
+
+    // Over the last square, still falling onto it, with a landing worth of speed.
+    world.standAt(0.5, 64.4, 1.5, false)
+    world.drift(0, 0.27)
+    world.tick()
+
+    expect(world.said.arrived).toBe(0)
+
+    // Down, and now it is an arrival - braked into rather than coasted through.
+    world.standAt(0.5, 64, 1.5)
+    world.tick()
+
+    expect(world.said.arrived).toBe(0)
+
+    world.drift(0, 0)
+    world.tick()
+
+    expect(world.said.arrived).toBe(1)
+  })
+
   it('says it arrived once it is standing on the last square', () => {
     const { world } = driving([ahead()])
 
@@ -1296,24 +1349,42 @@ describe('Driver', () => {
     expect(world.did).toContain('jump')
   })
 
-  it('will not take a jump that only passes over the square on its way past', () => {
-    // The whole of what upstream asks is whether the arc comes within a third of a block of the
-    // target at some tick of it - at any height, at any speed. An arc that crosses the square at
-    // head height and comes down a block beyond it answers yes for the same reason as one that
-    // lands on the middle, and over a gap the block beyond it is the void. Measured: a corner
-    // taken at 0.292 was 0.98 past the far edge half a second later, on its way down 84 blocks.
-    const flyingPast: Simulation = {
+  it('will not take a jump that lands past the end of the route', () => {
+    // A square either side is only forgiving where there is route to carry on from. Past the last
+    // step there is none, and the height alone says nothing: recorded from one, the simulation
+    // promised y 143 a square beyond the final block, the agent braked to a stand at -1213610.695
+    // with its box reaching five thousandths past the edge, and fell eighty seven blocks.
+    const pastTheEnd: Simulation = {
+      canStraightLine: () => false,
+      canWalkJump: () => true,
+      canSprintJump: () => true,
+      lands: (aim) => aim[0]?.offset(0, 0, 2),
+    }
+
+    const world = atAGap(pastTheEnd)
+    world.tick()
+    world.tick()
+
+    expect(world.did).not.toContain('jump')
+  })
+
+  it('takes a jump that comes down a square past the one it aimed at', () => {
+    // A square either side is not a miss - {@link caughtUp} carries the route on from whatever
+    // square the agent actually came down on. Insisting on the exact column deadlocked a two block
+    // gap: aiming at -1213613.50, a walk came down at -1213612.94 and a run at -1213614.36, both
+    // on solid ground at the same height, straddling the one block square between them. Neither
+    // was allowed and the agent stood on the ledge re-planning.
+    const justPast: Simulation = {
       canStraightLine: () => false,
       canWalkJump: () => true,
       canSprintJump: () => true,
       lands: (aim) => aim[0]?.offset(0, 0, 1),
     }
 
-    const world = atAGap(flyingPast)
-    world.tick()
+    const world = atAGap(justPast)
     world.tick()
 
-    expect(world.did).not.toContain('jump')
+    expect(world.did).toContain('jump')
   })
 
   it('uses the sprint when it is the only jump that comes down on the square', () => {
@@ -1463,6 +1534,99 @@ describe('Driver', () => {
 
     expect(inTheAir).not.toContain('left')
     expect(inTheAir).not.toContain('right')
+  })
+
+  it('stops a landing that came down where the route turns', () => {
+    // Nothing braked after a landing: the driver either kept driving - forward and sprint held
+    // straight through touchdown - or let go and coasted, and a landing at 0.270 a tick ran 0.59
+    // of a block before it stopped. Free on a straight run, because the coast is travel towards
+    // the next square. Where the route turns it is the agent arriving at the corner with the
+    // whole of the last jump still in it.
+    const world = atAGap(jumpable)
+
+    // Turned on the first tick, jumped on the second - so the driver knows it is in a flight.
+    world.tick()
+
+    // Down again, carrying the jump across the line the route now takes. Facing the way it is
+    // going, so the key that opposes it is the unambiguous one: a brake is a counter-strafe
+    // against travel, not a fixed key.
+    world.standAt(0.5, 64, 3.5)
+    world.drift(0.27, 0)
+    world.bot.look(-Math.PI / 2, 0)
+    world.tick()
+
+    const braking = world.did.length
+    world.tick()
+
+    expect(world.did.slice(braking)).toContain('back')
+
+    // And it finishes the stop rather than walking again the moment the speed is under the
+    // threshold that asked for it - recorded from a landing that would not stay on its block:
+    // forward at 0.201, back at 0.056, forward at 0.084, trading the agent back and forth.
+    world.drift(0.04, 0)
+
+    const settling = world.did.length
+    world.tick()
+
+    expect(world.did.slice(settling)).not.toContain('forward')
+  })
+
+  it('keeps its speed across a run of jumps in a straight line', () => {
+    // The squares the route still means to visit have to be read on the tick they are used. Every
+    // branch of a tick returns early on some of them, so reading them where the walking happens
+    // left the answer a tick or more behind - and a stale one reads a straight run as a corner.
+    // Measured: the agent braked to a stand after every landing and ran up each gap from 0.000
+    // with half a block of runway.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 6, parkour: true },
+          { x: 0, y: 64, z: 9, parkour: true },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    world.standAt(0.5, 64, 0.1)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), jumpable)
+    driver.start()
+    driver.go(within(0, 64, 9, 0.5))
+    world.tick()
+    world.tick()
+
+    // Down on the first gap of three, still travelling the way all of them go.
+    world.standAt(0.5, 64, 3.5)
+    world.drift(0, 0.27)
+    world.bot.look(Math.PI, 0)
+
+    const after = world.did.length
+    world.tick()
+    world.tick()
+
+    expect(world.did.slice(after)).not.toContain('back')
+  })
+
+  it('lets a landing keep its speed when the route carries on the same way', () => {
+    // The other half, and why braking every landing would be wrong: the coast is the run-up for
+    // whatever comes next.
+    const world = atAGap(jumpable)
+    world.tick()
+
+    // Down again, still travelling towards the square the route goes to.
+    world.standAt(0.5, 64, 3.5)
+    world.drift(0, 0.27)
+    world.bot.look(Math.PI, 0)
+    world.tick()
+
+    const after = world.did.length
+    world.tick()
+
+    expect(world.did.slice(after)).not.toContain('back')
   })
 
   it('never brakes a jump that is already in the air', () => {
