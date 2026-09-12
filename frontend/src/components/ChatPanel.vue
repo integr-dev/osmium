@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { EyeOff, Search, Send, Server, TriangleAlert } from 'lucide-vue-next'
 import PlayerHead from './PlayerHead.vue'
@@ -21,7 +21,7 @@ import {
 import { useFeed, useInfiniteScroll } from '../lib/feed'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
-import { atTime } from '../lib/time'
+import { atTime, dayKey, onDay } from '../lib/time'
 
 /**
  * One conversation: the lines, and the box that adds to them.
@@ -51,12 +51,21 @@ const sending = ref(false)
 const sendError = ref<string | null>(null)
 
 /**
- * What is being searched for, and what the feed is actually reading.
+ * What the feed is actually reading.
  *
- * Two refs rather than one: every keystroke would otherwise be a query. `searching` is what the
- * feed reads and only moves when the typing settles.
+ * **Nothing here holds what is being typed**, and that is the point. `searching` only moves when
+ * the typing settles, so a query is not sent per keystroke - but a ref bound to the box with
+ * `v-model` is read by this template, and this template draws the whole transcript. Every
+ * character therefore re-ran the render over every line in the panel: the debounce was holding
+ * back the request while the expensive half went ahead anyway.
+ *
+ * The feed is paged in at a hundred lines a time and never trimmed, so a session that has
+ * scrolled has thousands of rows, each with a head and a rendered line. Typing into a box above
+ * that was re-diffing all of them between keystrokes.
+ *
+ * So the box keeps its own value, as an ordinary uncontrolled input does, and nothing it holds is
+ * reactive until it settles. See {@link onTyped}.
  */
-const search = ref('')
 const searching = ref('')
 
 /**
@@ -91,7 +100,14 @@ const scroll = useInfiniteScroll(sentinel, () => void loadMore(), scrollBox)
 onMounted(async () => {
   await feed.reset()
   scroll.start()
+  await repin()
 })
+
+/** Re-reads which day is at the top, once the lines that decide it are on the page. */
+async function repin(): Promise<void> {
+  await nextTick()
+  onScrolled()
+}
 
 /**
  * Typing settles before anything is asked for.
@@ -102,10 +118,29 @@ onMounted(async () => {
 const SEARCH_SETTLES = 250
 let pending: number | undefined
 
-watch(search, (value) => {
+/**
+ * Whether the box is waiting on something - either still settling, or out asking.
+ *
+ * **The one reactive thing a keystroke touches, and it only moves twice.** Writing the same value
+ * to a ref is not a change, so this goes false to true on the first character of a search and
+ * back again when the answer lands; everything between is free. That is what keeps the
+ * transcript out of it - see {@link searching}.
+ */
+const looking = ref(false)
+
+/**
+ * A keystroke, read off the element rather than out of a ref.
+ *
+ * The value is taken from the event and held in a closure, so nothing this template renders from
+ * has changed and the transcript below is left alone until there is an answer to show.
+ */
+function onTyped(event: Event): void {
+  const typed = (event.target as HTMLInputElement).value
+
+  looking.value = true
   window.clearTimeout(pending)
-  pending = window.setTimeout(() => void apply(value.trim()), SEARCH_SETTLES)
-})
+  pending = window.setTimeout(() => void apply(typed.trim()), SEARCH_SETTLES)
+}
 
 // Changing the reach re-asks the question. Only while one is being asked: toggling it against an
 // empty box would reload the same conversation it is already showing.
@@ -114,14 +149,21 @@ watch(everywhere, () => {
 })
 
 async function apply(value: string): Promise<void> {
-  if (value === searching.value) return
-  searching.value = value
-  await reload()
+  // Cleared whatever happens, including on the path that has nothing to do: typing a word and
+  // deleting it again settles back to where it started and must not leave the box spinning.
+  try {
+    if (value === searching.value) return
+    searching.value = value
+    await reload()
+  } finally {
+    looking.value = false
+  }
 }
 
 async function reload(): Promise<void> {
   await feed.reset()
   await scroll.rearm()
+  await repin()
 }
 
 /** What the host calls a line it could not attribute to a player. */
@@ -220,6 +262,7 @@ onBeforeUnmount(() => {
 async function loadMore(): Promise<void> {
   await feed.more()
   if (!exhausted.value) await scroll.rearm()
+  await repin()
 }
 
 /**
@@ -322,6 +365,87 @@ const agentsHere = computed(() => {
   return agentStore.agents.filter((agent) => agent.serverAddress === scope.address).length
 })
 
+/**
+ * Whether a line is the first of its day, reading the transcript downwards.
+ *
+ * `items` runs newest first, so the line after this one in the list is the one before it in time.
+ * A day opens where the two fall on different dates.
+ *
+ * The oldest line loaded never opens one, even though it always begins *some* day: there is more
+ * above it that has not been fetched, and a rule drawn there would be claiming a seam that the
+ * next page is about to move.
+ */
+/**
+ * The day showing at the top of the transcript, or null when none is worth naming.
+ *
+ * Read off the rules themselves rather than worked out from the scroll position: they are the
+ * elements that know where a day begins, and there are only ever a handful of them - one a day -
+ * so measuring the lot on a scroll costs nothing. Measuring the *lines* would be the same mistake
+ * this panel has already made once, with thousands of them.
+ */
+const pinned = ref<string | null>(null)
+
+let framed = 0
+
+/**
+ * Works out which day the top of the view is inside.
+ *
+ * The rule for a day sits directly above that day's first line, so the day being read is the one
+ * whose rule is nearest the top edge without having passed below it. Scrolled back far enough that
+ * no rule is above the edge, there is nothing to pin: what is up there is the oldest page loaded,
+ * whose own rule has not been fetched yet.
+ *
+ * Coalesced onto a frame, because a scroll fires far more often than one and each pass reads
+ * layout.
+ */
+function onScrolled(): void {
+  if (framed) return
+
+  framed = requestAnimationFrame(() => {
+    framed = 0
+
+    const box = scrollBox.value
+    if (!box) return
+
+    const edge = box.getBoundingClientRect().top
+    let nearest: string | null = null
+    let above = -Infinity
+
+    for (const rule of box.querySelectorAll<HTMLElement>('[data-day]')) {
+      const top = rule.getBoundingClientRect().top
+      if (top > edge || top <= above) continue
+
+      above = top
+      nearest = rule.dataset.day ?? null
+    }
+
+    /*
+     * **The oldest line loaded, when no rule is above the edge.**
+     *
+     * Two ways that happens and both want the same answer. A transcript that has not yet reached
+     * back past a midnight has no boundary in it at all, so there is no rule to find - and that is
+     * the ordinary case, a panel opened on a busy afternoon, where the label was simply never drawn.
+     * Scrolled up past every rule is the same question again: what is up there is the oldest page,
+     * whose own rule belongs to a day that has not been fetched.
+     *
+     * The list runs newest first, so its last entry is the line at the top of the view.
+     */
+    const oldest = items.value[items.value.length - 1]
+
+    pinned.value = nearest ?? (oldest ? onDay(oldest.at) : null)
+  })
+}
+
+onBeforeUnmount(() => cancelAnimationFrame(framed))
+
+function opensDay(at: number): boolean {
+  const line = items.value[at]
+  const before = items.value[at + 1]
+  if (!line || !before) return false
+
+  return dayKey(line.at) !== dayKey(before.at)
+}
+
 function involvesAgent(line: ChatMessageResponse): boolean {
   // Not on our own lines. The question this answers is "who was this to", which a whisper or a
   // proximity line raises and an outbound one does not — there the speaker is already the head and
@@ -348,13 +472,24 @@ function involvesAgent(line: ChatMessageResponse): boolean {
     -->
     <label class="input input-sm w-full gap-2">
       <Search class="size-4 shrink-0 opacity-40" />
+      <!--
+        Deliberately unbound. The element keeps what is typed on its own, which is all that is
+        wanted here - binding it would make every character a render of the transcript below. The
+        native clear on a `search` input fires `input` like any other edit, so it settles too.
+      -->
       <input
-        v-model="search"
         type="search"
         class="grow"
         :placeholder="t('chat.searchPlaceholder')"
         :aria-label="t('chat.searchPlaceholder')"
+        @input="onTyped"
       />
+      <!--
+        In the box rather than over the transcript, because it is the box that is busy: the lines
+        below are still the last answer until a new one arrives, and dropping a spinner on them
+        would say they had gone when they have not.
+      -->
+      <span v-if="looking" class="loading loading-spinner loading-xs shrink-0 opacity-40"></span>
     </label>
 
     <!-- Offered only while searching: with an empty box it would govern nothing. -->
@@ -368,31 +503,62 @@ function involvesAgent(line: ChatMessageResponse): boolean {
       <span>{{ error }}</span>
     </div>
 
-    <!--
-      The transcript, and the one thing that floats over it.
-    -->
     <div class="relative flex min-h-0 flex-1 flex-col">
       <!--
-        At the bottom, because that is where a new line arrives: the transcript is reversed, so the
-        newest is the one nearest the composer. Over the transcript rather than in it, so a flush of
-        thirty lines does not also move the conversation down by a row - and at this end rather than
-        the top, where it sat over the search box and covered the very control somebody uses while
-        catching up. Announced politely: it is reassurance about motion on screen, not something to
-        interrupt a screen reader mid-line for.
+        **The day being read, held at the top of the transcript.**
+
+        Over the lines rather than among them - the rules themselves are in the flow, and this is
+        the one that has scrolled off. Not a pointer target: it names what is behind it, and
+        swallowing a click meant for a line would be the worst thing it could do.
+
+        On the rail's own `base-200` rather than a tint or a blur, so it reads as the rule itself
+        held in place rather than as a bar bolted across the top. It has to have *some* ground: with
+        none, lines pass straight through the words as they scroll under it.
       -->
       <Transition name="fade">
-        <p
-          v-if="catchingUp"
-          role="status"
-          aria-live="polite"
-          class="bg-base-300/80 text-base-content/70 pointer-events-none absolute inset-x-0 bottom-0 z-10 mx-auto flex w-fit items-center gap-2 rounded-t-lg px-3 py-1 text-xs backdrop-blur"
+        <div
+          v-if="pinned"
+          aria-hidden="true"
+          class="bg-base-200 pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-1 py-1"
         >
-          <span class="loading loading-spinner loading-xs"></span>
-          {{ t('chat.catchingUp') }}
-        </p>
+          <span class="border-base-content/15 h-px flex-1 border-t"></span>
+          <span class="font-mono text-[0.65rem] tracking-wide opacity-50">{{ pinned }}</span>
+          <span class="border-base-content/15 h-px flex-1 border-t"></span>
+        </div>
       </Transition>
 
-      <div ref="scrollBox" class="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
+      <div
+        ref="scrollBox"
+        class="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto"
+        @scroll.passive="onScrolled"
+      >
+        <!--
+          **A row of the transcript, not a badge over it.**
+
+          At the bottom, because that is where a new line arrives: the box is reversed, so its first
+          child is the one nearest the composer and the newest line sits directly above this.
+
+          It used to float over that corner, on the argument that a flush of thirty lines should not
+          also move the conversation down by a row. What it actually did was cover the newest line -
+          the one the flush had just delivered, and the one being waited for - with a note saying
+          more were coming. Taking a row is the cheaper of the two: the transcript is anchored at
+          this end and shifts by a row either way whenever anything arrives.
+
+          Announced politely: it is reassurance about motion on screen, not something to interrupt a
+          screen reader mid-line for.
+        -->
+        <Transition name="fade">
+          <p
+            v-if="catchingUp"
+            role="status"
+            aria-live="polite"
+            class="text-base-content/60 flex shrink-0 items-center gap-2 px-1 py-1 text-xs italic"
+          >
+            <span class="loading loading-spinner loading-xs shrink-0"></span>
+            {{ t('chat.catchingUp') }}
+          </p>
+        </Transition>
+
         <!--
           Reversed a second time inside, so the newest line is the first one the eye meets coming up
           off the send box. Insertions animate and the first render does not; see the dashboard for
@@ -412,14 +578,14 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           it, which nobody can see in a scrolling panel anyway.
         -->
         <TransitionGroup :name="items.length > SETTLED_LINES ? '' : 'feed'" tag="div" class="flex flex-col-reverse gap-1">
-          <template v-for="line in items" :key="line.id">
+          <template v-for="(line, at) in items" :key="line.id">
             <!--
               A gap, drawn as one row that grows rather than as the lines it stands for — which is
               the point, since those were refused precisely so they would not be kept. Dimmed and
               italic because nobody said it: it is the panel talking, not the server.
             -->
             <p v-if="isSuppressed(line)" class="flex items-center gap-2 px-1 text-xs italic opacity-40">
-              <span class="shrink-0 font-mono">{{ atTime(line.at) }}</span>
+              <span class="shrink-0 font-mono tabular-nums">{{ atTime(line.at) }}</span>
               <EyeOff class="size-3.5 shrink-0" />
               <span class="min-w-0 flex-1 break-words">
                 {{
@@ -430,7 +596,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
               </span>
             </p>
             <p v-else class="flex items-start gap-2 px-1 text-sm">
-              <span class="shrink-0 pt-0.5 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
+              <span class="shrink-0 pt-0.5 font-mono text-xs tabular-nums opacity-40">{{ atTime(line.at) }}</span>
               <!--
                 Global chat is where strangers show up, so a head is not decoration — it is how a player
                 nobody recognises is told apart from an agent at a glance. A line the host could not
@@ -474,6 +640,31 @@ function involvesAgent(line: ChatMessageResponse): boolean {
               -->
               <McText :components="line.components" :text="line.text" class="min-w-0 flex-1 break-words opacity-80" />
             </p>
+
+            <!--
+              **The day, written once, where it changes.**
+
+              A date on every row is the same eleven characters repeated down the whole panel, and
+              the question it answers - which day am I reading - is only ever asked at the seam.
+
+              After the line rather than before it, because the box is reversed: later in the DOM is
+              higher on the screen, so this lands directly above the first line of its day.
+
+              Carries the day it opens, which is what {@link dayAtTop} reads to decide what to pin
+              above the transcript. `position: sticky` cannot do that job here: the scroller is
+              reversed, which puts its scroll origin at the bottom and stops `top: 0` behaving like
+              a header at all, and every rule shares one containing block - so even where it stuck,
+              they would all pin at once instead of handing over.
+            -->
+            <div
+              v-if="opensDay(at)"
+              :data-day="onDay(line.at)"
+              class="flex items-center gap-2 py-1"
+            >
+              <span class="border-base-content/15 h-px flex-1 border-t"></span>
+              <span class="font-mono text-[0.65rem] tracking-wide opacity-50">{{ onDay(line.at) }}</span>
+              <span class="border-base-content/15 h-px flex-1 border-t"></span>
+            </div>
           </template>
         </TransitionGroup>
 

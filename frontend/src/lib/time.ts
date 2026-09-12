@@ -19,6 +19,35 @@ export function atTime(at: string | number | Date): string {
 }
 
 /**
+ * A day, written out, for the rule that separates one from the next in a transcript.
+ *
+ * Spelt rather than numeric because it appears once a day rather than once a line - there is room
+ * for it, and `Tue, 26 Aug` is read at a glance where `08/26` has to be worked out. No year, for
+ * the same reason {@link atShort} has none.
+ */
+export function onDay(at: string | number | Date): string {
+  return new Date(at).toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+  })
+}
+
+/**
+ * Which day a moment falls on, as something cheap to compare.
+ *
+ * **Not a formatted date.** Deciding whether a line opens a new day is a question asked of every
+ * line in the panel on every render, and `Intl` formatting is far too expensive to put there -
+ * the transcript runs to thousands of rows. These are local date parts straight off the `Date`,
+ * which is all a comparison needs and costs nothing; {@link onDay} formats the few that win.
+ */
+export function dayKey(at: string | number | Date): string {
+  const on = new Date(at)
+
+  return `${on.getFullYear()}-${on.getMonth()}-${on.getDate()}`
+}
+
+/**
  * Day, month and time. No year: everything shown this way is inside a retention window measured in
  * days, and a year on every row is four characters that never change.
  */
