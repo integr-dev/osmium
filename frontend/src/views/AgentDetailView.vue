@@ -997,6 +997,13 @@ async function confirmRemove() {
         only add margin inside its own card. Stacks again below `lg`, where there is no width to
         share out.
       -->
+      <!--
+        `min-w-0` on both, because a grid item is `min-width: auto` by default - which is its
+        min-content, not zero. Below `lg` this is one `auto` column, so whichever of the two
+        wanted the most room set the width of the page and everything else overflowed with it.
+        Both of these have something inside that can be narrowed instead: the inventory divides
+        its row, and the nearby list truncates.
+      -->
       <div class="grid gap-6 lg:grid-cols-[auto_minmax(0,1fr)]">
           <!--
             What it is carrying, under the readings and beside who is standing near it.
@@ -1005,10 +1012,10 @@ async function confirmRemove() {
             asking why an agent stopped mining is asking about its pickaxe, and a page that answers that
             two clicks away is a page they check less often than they should.
           -->
-          <AgentInventory :agent-id="agent.id" :online="isOnline(agent)" />
+          <AgentInventory :agent-id="agent.id" :online="isOnline(agent)" class="min-w-0" />
 
           <!-- Nearby players -->
-        <div class="card border-base-300 bg-base-200 border">
+        <div class="card border-base-300 bg-base-200 min-w-0 border">
           <div class="card-body gap-3">
             <h2 class="card-title flex items-center gap-2 text-base">
               <Users class="text-primary size-4" />

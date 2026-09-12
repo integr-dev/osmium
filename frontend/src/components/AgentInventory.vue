@@ -364,7 +364,7 @@ function release(slot: number): void {
           whatever it was given, which on a wide screen meant slots the size of a thumbnail; an
           inventory is read by recognising icons, and past a certain size that stops getting easier.
         -->
-        <div ref="grid" class="flex w-fit flex-col gap-4">
+        <div ref="grid" class="flex w-[27.75rem] max-w-full flex-col gap-4">
           <div class="flex items-start gap-6">
             <div class="flex flex-col gap-2">
               <div class="text-xs uppercase opacity-50">{{ t('inventory.armour') }}</div>
@@ -426,7 +426,7 @@ function release(slot: number): void {
 
           <div class="flex flex-col gap-2">
             <div class="text-xs uppercase opacity-50">{{ t('inventory.main') }}</div>
-            <div class="grid grid-cols-9 gap-1.5">
+            <div class="grid max-w-[27.75rem] grid-cols-9 gap-1.5">
               <InventorySquare
                 v-for="slot in MAIN"
                 :key="slot"
@@ -462,7 +462,7 @@ function release(slot: number): void {
               not look alike.
             -->
             <div class="mt-1 text-xs uppercase opacity-50">{{ t('inventory.hotbar') }}</div>
-            <div ref="hotbar" class="relative grid grid-cols-9 gap-1.5">
+            <div ref="hotbar" class="relative grid max-w-[27.75rem] grid-cols-9 gap-1.5">
               <!--
                 Which square is in hand, as one ring that travels rather than nine that take turns.
                 After the squares in the DOM so it paints over them: neither carries a stacking

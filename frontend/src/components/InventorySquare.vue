@@ -99,7 +99,7 @@ const sprite = computed(() =>
     anchored to it has to be a sibling rather than a child. A sibling also keeps it out of the
     button, which is the difference between a panel with buttons in it and invalid markup.
   -->
-  <div class="relative">
+  <div class="slot relative">
     <button
       type="button"
       class="square"
@@ -137,19 +137,37 @@ const sprite = computed(() =>
 
 <style scoped>
 /*
- * A fixed size, not a share of whatever row it lands in.
+ * **The size it wants, never more room than it has.**
  *
- * It was briefly sized off its container, so that the grid would fill the card. What that produced
- * was slots the size of a thumbnail on a wide screen: an inventory is read by recognising icons, and
- * past a certain size that stops getting easier while the card gets three times as tall.
+ * Nine of these in a row at 2.75rem, with the gaps, come to 444px before the card has had any
+ * padding - which does not fit a phone, and the inventory ran off the side of every one.
  *
- * 2.75rem is a little over the 2.25rem this started at — enough that a 16-pixel sprite is drawn at
- * nearly triple size and the stack counts sit comfortably, without the block outgrowing the page.
+ * Stated as a plain width with `max-width: 100%` over it, which is the one form that means the
+ * same thing in both places these are used. In the nine-wide grids that cap is the width of the
+ * cell, so a narrow card divides its row and the squares come down with it. In the armour and
+ * offhand rows, which are plain flex, there is nothing narrower than the square itself, so they
+ * simply stay 2.75rem.
+ *
+ * Two earlier goes tried to say this in flex terms - `width: 100%` with a floor, then a named
+ * `flex-basis` - and both left those two rows sitting at their minimum while the grid was right,
+ * because a percentage needs a definite width above it and a flex item asks its basis rather than
+ * its width. Measured off the page: 32px against the 44px next to it, which is the floor exactly.
+ *
+ * `aspect-ratio` rather than a fixed height, so it stays square at whatever width it ends up.
  */
+.slot {
+  width: 2.75rem;
+  max-width: 100%;
+  aspect-ratio: 1;
+
+  /* A flex row must not stretch it: a definite height is something for the ratio to argue with. */
+  align-self: start;
+}
+
 .square {
   position: relative;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 100%;
+  height: 100%;
   border-radius: var(--radius-field, 0.25rem);
   background-color: color-mix(in oklab, var(--color-base-300) 55%, transparent);
   border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
