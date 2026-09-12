@@ -472,6 +472,150 @@ function stageEntityTextures() {
   console.log(`viewer-assets: staged ${ENTITY_VERSION} entity textures`)
 }
 
+/**
+ * Tells each model how big its texture really is, where the model has it wrong.
+ *
+ * **A wrong size is not a wrong picture, it is wrong arithmetic.** `addCube` divides every UV by
+ * the size the model declares, so a model that names a sheet half as tall as the file doubles
+ * every `v` it computes. On a zombie that lands most of the body in the bottom half of a modern
+ * 64x64 skin, which is the transparent overlay region - so the torso, arms and legs sample nothing
+ * at all and what is left of the mob is a lump floating where its head was.
+ *
+ * The models are Bedrock and the textures are Java, and the two disagree about six entities. Five
+ * of them disagree only in the declaration: the UVs are pixel coordinates that sit comfortably
+ * inside the real sheet, and naming its true size puts every face where it belongs - a zombie
+ * authored against the old 64x32 layout addresses exactly the top half of the 64x64 one.
+ *
+ * **Only where the UVs actually fit.** The sixth is a sheep, whose model reaches 62 rows down a
+ * sheet that is 32 tall: its UVs want the Bedrock texture and no declaration makes a Java one
+ * serve. Rewriting its size would wrap every face instead of fixing it, so it is left alone and
+ * said out loud rather than quietly made different-but-still-wrong.
+ */
+function sizeTexturesFromTheSheet() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+  const before = JSON.stringify(entities)
+  const stranded = []
+  const lifted = []
+
+  for (const [name, entity] of Object.entries(entities)) {
+    for (const [which, geometry] of Object.entries(entity.geometry ?? {})) {
+      const texture = (entity.textures ?? {})[which]
+      if (!texture || !geometry.bones) continue
+
+      const sheet = measureSheet(staged(texture.replace('textures', path.join('textures', ENTITY_VERSION)) + '.png'))
+      if (!sheet) continue
+
+      const declared = [geometry.texturewidth ?? 64, geometry.textureheight ?? 64]
+      if (declared[0] === sheet.width && declared[1] === sheet.height) continue
+
+      let reach = uvReach(geometry)
+
+      /*
+       * **A layer that hangs off the bottom of a combined sheet is lifted onto its own.**
+       *
+       * Bedrock draws a sheep from one 64x64 image with the bare animal in the top half and the
+       * fleece in the bottom; Java ships the fleece as its own 64x32 file laid out exactly like
+       * that top half. So the wool model reads rows 32 to 62 of a file that stops at 32, and every
+       * face of it lands outside the picture - measured, head [0,32], body [28,40], legs [0,48],
+       * each of them precisely 32 below the same bone on the sheared model.
+       *
+       * Lifting the layer by the height of the sheet it actually has is the whole correction, and
+       * it is self-checking: it is only kept if every UV then lands inside the file and none of
+       * them goes negative. A layer that was never a lower half fails both and is left alone.
+       */
+      if (reach.v > sheet.height && liftLayer(geometry, sheet.height)) {
+        reach = uvReach(geometry)
+        lifted.push(`${name}.${which}`)
+      }
+
+      if (reach.u > sheet.width || reach.v > sheet.height) {
+        stranded.push(`${name}.${which} (${reach.u}x${reach.v} of UVs on a ${sheet.width}x${sheet.height} sheet)`)
+        continue
+      }
+
+      geometry.texturewidth = sheet.width
+      geometry.textureheight = sheet.height
+    }
+  }
+
+  if (lifted.length) {
+    console.log(`viewer-assets: lifted ${lifted.join(', ')} onto the sheet it is drawn from`)
+  }
+
+  if (stranded.length) {
+    console.log(`viewer-assets: ${stranded.length} model(s) want a sheet the textures do not have - ${stranded.join(', ')}`)
+  }
+
+  if (JSON.stringify(entities) === before) return
+
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log('viewer-assets: entity models now measure their own textures')
+}
+
+/**
+ * Moves every UV of a layer up by one sheet, and says whether that was the right thing to do.
+ *
+ * All or nothing: the cubes are measured first and only written if every one of them lands on
+ * the sheet afterwards, so a model that merely overflows for some other reason is left exactly as
+ * it was rather than shifted into a different kind of wrong.
+ */
+function liftLayer(geometry, height) {
+  const cubes = []
+
+  for (const bone of geometry.bones ?? []) {
+    for (const cube of bone.cubes ?? []) {
+      // Only a plain origin can be shifted as one number; a per-face rectangle is its own thing.
+      if (!Array.isArray(cube.uv)) return false
+      if (cube.uv[1] - height < 0) return false
+
+      cubes.push(cube)
+    }
+  }
+
+  if (cubes.length === 0) return false
+
+  for (const cube of cubes) cube.uv[1] -= height
+
+  return true
+}
+
+/** A PNG says its own size in the IHDR, which is always the first chunk. */
+function measureSheet(file) {
+  if (!existsSync(file)) return null
+
+  const header = readFileSync(file).subarray(0, 24)
+  if (header.length < 24) return null
+
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) }
+}
+
+/** How far down and across a model actually reads, in texture pixels. */
+function uvReach(geometry) {
+  let u = 0
+  let v = 0
+
+  for (const bone of geometry.bones ?? []) {
+    for (const cube of bone.cubes ?? []) {
+      // A per-face rectangle names its own origin and size; one origin unwraps the whole box.
+      if (!Array.isArray(cube.uv)) {
+        for (const face of Object.values(cube.uv ?? {})) {
+          if (!face?.uv) continue
+          const size = face.uv_size ?? [0, 0]
+          u = Math.max(u, face.uv[0] + Math.abs(size[0]))
+          v = Math.max(v, face.uv[1] + Math.abs(size[1]))
+        }
+        continue
+      }
+
+      u = Math.max(u, cube.uv[0] + 2 * cube.size[0] + 2 * cube.size[2])
+      v = Math.max(v, cube.uv[1] + cube.size[1] + cube.size[2])
+    }
+  }
+
+  return { u, v }
+}
 function stageVersion(version) {
   const atlas = staged('textures', `${version}.png`)
   const states = staged('blocksStates', `${version}.json`)
@@ -973,6 +1117,109 @@ function stageSlimPlayer() {
 }
 
 /**
+ * Fills in the entities the table has never heard of, as far as honestly possible.
+ *
+ * The table is Bedrock-era and stops at 95 entries; a current server sends 149. Every name it does
+ * not know throws inside `Entity`, is swallowed by the catch in `getEntityMesh`, and comes out a
+ * magenta box - so a boat, a trader llama and a warden all look like the same bug.
+ *
+ * **Most of the gap is variants of something already here.** A trader llama is a llama, a glow
+ * squid is a squid, every wood of boat is the boat, and the two minecarts added since are the
+ * minecart. Those are pointed at the model they are a variant of and come out right, or close
+ * enough that nobody would look twice - see {@link LIKE}, which says how close each one is.
+ *
+ * **Some of it should draw nothing at all**, which is also what vanilla does: a marker, an
+ * interaction, the display entities. An entry with no geometry builds an empty group, so they
+ * simply stop being magenta boxes standing in the world.
+ *
+ * What is left is the mobs added since the table was written - allay, camel, goat, sniffer,
+ * warden and the rest - and they need geometry nobody here can invent. They keep the box, which
+ * is at least the right size, and they are counted in the log so the number is known rather than
+ * discovered.
+ */
+function fillTheEntityTable() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+  const before = JSON.stringify(entities)
+
+  for (const [name, like] of Object.entries(LIKE)) {
+    if (entities[name]) continue
+
+    const model = entities[like]
+    if (!model) throw new Error(`viewer-assets: nothing called ${like} to draw a ${name} as`)
+
+    entities[name] = structuredClone(model)
+  }
+
+  // No geometry, so `Entity` builds an empty group rather than throwing. Drawn as nothing, on
+  // purpose, which is what the game does with them too.
+  for (const name of UNDRAWN) entities[name] ??= { geometry: {}, textures: {} }
+
+  if (JSON.stringify(entities) === before) return
+
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log(
+    `viewer-assets: ${Object.keys(LIKE).length} entities drawn as what they are a variant of, ` +
+      `${UNDRAWN.length} drawn as nothing`,
+  )
+}
+
+/**
+ * What to draw an entity as, when the table has no model of its own for it.
+ *
+ * Exact: a trader llama *is* the llama model, and every boat and minecart here is the one the
+ * table already holds. Close: a bogged is a mossy skeleton, an illusioner an illager in a
+ * different coat, a giant a zombie four times the size - right shape, wrong detail, and far more
+ * use than a magenta cube. A chest boat comes out as the boat without its chest.
+ */
+const LIKE = {
+  acacia_boat: 'boat',
+  bamboo_raft: 'boat',
+  birch_boat: 'boat',
+  cherry_boat: 'boat',
+  dark_oak_boat: 'boat',
+  jungle_boat: 'boat',
+  mangrove_boat: 'boat',
+  oak_boat: 'boat',
+  pale_oak_boat: 'boat',
+  spruce_boat: 'boat',
+  acacia_chest_boat: 'boat',
+  bamboo_chest_raft: 'boat',
+  birch_chest_boat: 'boat',
+  cherry_chest_boat: 'boat',
+  dark_oak_chest_boat: 'boat',
+  jungle_chest_boat: 'boat',
+  mangrove_chest_boat: 'boat',
+  oak_chest_boat: 'boat',
+  pale_oak_chest_boat: 'boat',
+  spruce_chest_boat: 'boat',
+  furnace_minecart: 'minecart',
+  spawner_minecart: 'minecart',
+  trader_llama: 'llama',
+  glow_squid: 'squid',
+  bogged: 'skeleton',
+  giant: 'zombie',
+  illusioner: 'pillager',
+  spectral_arrow: 'arrow',
+}
+
+/**
+ * Entities the game itself draws nothing for.
+ *
+ * They are positions and payloads rather than things to look at, and every one of them was
+ * standing in the world as a magenta cube.
+ */
+const UNDRAWN = [
+  'marker',
+  'interaction',
+  'area_effect_cloud',
+  'block_display',
+  'item_display',
+  'text_display',
+  'ominous_item_spawner',
+]
+/**
  * Drops Vite's pre-bundle, because the table just written is **inlined into it**.
  *
  * `Entity.js` does `require('./entities.json')`, so the optimiser copies the whole table into its
@@ -1084,6 +1331,32 @@ const LIMB_UV = {
  * regard to case, and a parent that still cannot be found leaves the bone a root rather than taking
  * the entity down with it.
  */
+/**
+ * Takes a bind pose back out of the inherited chain, wherever one was already written in.
+ *
+ * **Separate from {@link correctEntityBuilder} because that one will not run again.** It skips a
+ * file it has already patched, and it has to: the text it searches for is upstream's, and upstream's
+ * is gone once it has run. So a checkout whose package was patched before this was understood would
+ * keep the old chain for as long as its `node_modules` survived, and the animals would stay
+ * scrambled with nothing in the build saying why.
+ *
+ * Idempotent and narrow: on a clean install there is nothing here to find, because the text written
+ * above is already right.
+ */
+function bindPoseStaysPut() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'Entity.js')
+  const source = readFileSync(file, 'utf8')
+
+  const inherited = INHERITS_BIND_POSE
+  if (!source.includes(inherited)) return
+
+  writeFileSync(file, source.replace(inherited, 'const angles = ancestor.rotation'))
+  dropDepCache()
+  console.log('viewer-assets: a bind pose no longer turns the bones hanging off it')
+}
+
+/** What an older run of this file left behind. See {@link bindPoseStaysPut}. */
+const INHERITS_BIND_POSE = 'const angles = ancestor.bind_pose_rotation || ancestor.rotation'
 function correctEntityBuilder() {
   const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'Entity.js')
   const source = readFileSync(file, 'utf8')
@@ -1200,6 +1473,18 @@ const ADDCUBE_BEFORE = `function addCube (attr, boneId, bone, cube, texWidth = 6
 }`
 
 const ADDCUBE_AFTER = `// osmium: every rotation a cube hangs under, innermost first.
+//
+// A bind pose is not one of them. \`rotation\` is a pose put on a bone, and it carries to whatever
+// hangs off that bone; \`bind_pose_rotation\` describes the pose the bone was already *authored in*,
+// and its children were authored in the finished model alongside it. Inheriting it turns them a
+// second time.
+//
+// Eighteen entities have a parent with one, and every one of them is an animal: a pig, a cow and a
+// sheep all stand their body cube upright and lay it flat with a 90 degree bind pose, while the
+// head is written where a head goes - out front, at head height - and needs nothing done to it.
+// Rotating the head by the body's bind pose swings it under the animal, which is the scrambling.
+// Player and enderman have no rotated bones at all, which is why they were the two that looked
+// right.
 function ancestorsOf (jsonBone, jsonBones) {
   const chain = []
   let name = jsonBone.parent
@@ -1207,7 +1492,7 @@ function ancestorsOf (jsonBone, jsonBones) {
 
   while (name && jsonBones[name] && guard++ < 16) {
     const ancestor = jsonBones[name]
-    const angles = ancestor.bind_pose_rotation || ancestor.rotation
+    const angles = ancestor.rotation
 
     if (angles && angles.some(angle => angle !== 0)) {
       const pivot = ancestor.pivot || [0, 0, 0]
@@ -1642,12 +1927,15 @@ function nextPowerOfTwo(n) {
 
 mkdirSync(out, { recursive: true })
 correctEntityBuilder()
+bindPoseStaysPut()
 placeStrandedBones()
 mirrorOpposingLimbs()
 stageSlimPlayer()
 pairLimbTextures()
+fillTheEntityTable()
 await stageWorker()
 stageEntityTextures()
+sizeTexturesFromTheSheet()
 for (const version of VERSIONS) {
   stageVersion(version)
   stageMapColours(version)
