@@ -117,6 +117,58 @@ describe('movementsFor', () => {
   })
 
   /**
+   * **A head is somebody.** An avatar is a player head in the world, and upstream is willing to
+   * mine one: a head reads `boundingBox: block`, so it is not safe to walk through, and the move
+   * that meets one prices breaking it like any other block. Every head in the game is diggable
+   * and the only list upstream protects is chests.
+   */
+  it('will not mine a head, whatever the route wants', () => {
+    const bot = fakeBot()
+    const movements = movementsFor(bot, pathSettingsFrom({ 'path.dig': 'true' }))
+
+    expect(movements.canDig).toBe(true)
+
+    for (const name of ['player_head', 'player_wall_head', 'zombie_head', 'skeleton_skull']) {
+      const kind = bot.registry.blocksByName[name]
+      expect(kind, `${name} missing from the block table`).toBeDefined()
+      expect(movements.blocksCantBreak.has(kind.id), `${name} is breakable`).toBe(true)
+    }
+  })
+
+  /**
+   * **And it is not ground.** Upstream sorts blocks by shape into two cases - taller than 1 is too
+   * tall to stand on, shorter than 0.1 is flat enough to walk through - and a head is 0.5, so it
+   * falls between them and stays `physical`. That is what lets the parkour move offer a jump onto
+   * one, filing the node a block above a surface that is half that and a quarter inset on every
+   * side. Asked of upstream's own `getBlock`, because a set membership proves nothing about what
+   * the pathfinder then decides.
+   */
+  it('will not stand on a head', () => {
+    const bot = fakeBot()
+    const head = bot.registry.blocksByName['player_head']
+    expect(head).toBeDefined()
+
+    const movements = movementsFor(bot, pathSettingsFrom({ 'path.parkour': 'true' })) as unknown as {
+      getBlock: (pos: unknown, dx: number, dy: number, dz: number) => { physical: boolean; safe: boolean }
+      bot: { blockAt: unknown }
+    }
+
+    // One head, wherever it is asked about.
+    movements.bot.blockAt = () => ({
+      type: head.id,
+      boundingBox: 'block',
+      shapes: [[0.25, 0, 0.25, 0.75, 0.5, 0.75]],
+      position: { x: 0, y: 64, z: 0 },
+    })
+
+    const asked = movements.getBlock({ x: 0, y: 64, z: 0 }, 0, 0, 0)
+
+    // Not ground to land on, and not air to walk through either - so the route goes round.
+    expect(asked.physical).toBe(false)
+    expect(asked.safe).toBe(false)
+  })
+
+  /**
    * **A block laid has to cost more than a step taken**, or the two tie and the tie is settled by
    * nothing: a rung of a tower is a move plus a placement, upstream prices both at 1, and stepping
    * up onto a block already there is 2 as well. Measured over 400 patches of rough ground, that tie

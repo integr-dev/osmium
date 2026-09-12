@@ -56,6 +56,34 @@ export function movementsFor(bot: Bot, wanted: PathSettings, avoid: readonly Ref
   const movements = new plugin.Movements(bot)
 
   /*
+   * **Heads are not scenery, and they are not ground either.** See {@link SOMEBODY}.
+   *
+   * Two wirings, for two different things upstream gets wrong about a head.
+   *
+   * It protects chests and nothing else, so a head in the way is priced as a block to mine - and
+   * mining one destroys the avatar it stands for.
+   *
+   * And it sorts blocks by shape into exactly two cases, a block taller than 1 being too tall to
+   * stand on and one shorter than 0.1 being flat enough to walk through. A head is 0.5 and falls
+   * between them, so it stays `physical` - which is how the parkour move comes to offer a jump
+   * onto one, filing the node a whole block above a surface that is only half that. Worse than
+   * the height, a head is inset a quarter on every side, so the face being landed on is the
+   * middle quarter of the square: measured, the agent came down 0.04 outside the square the route
+   * meant, and the jump was refused over and over from a pillar with no run-up.
+   *
+   * Upstream calls that set `fences`, which is its own word for solid but not worth standing on,
+   * and is exactly what a head is. Non-physical and unbreakable, the square is neither walked
+   * through nor landed on, so the route goes round it.
+   */
+  for (const name of SOMEBODY) {
+    const kind = bot.registry.blocksByName[name]
+    if (!kind) continue
+
+    movements.blocksCantBreak.add(kind.id)
+    movements.fences.add(kind.id)
+  }
+
+  /*
    * Places the agent has been refused, priced out of the search rather than forbidden.
    *
    * A cost rather than a wall, because the ladder has to end somewhere: an agent whose only route
@@ -159,6 +187,38 @@ const AWKWARD = new Set([
   'soul_sand',
   // Goes off. Standing on a tower of it is a way to find out what else is nearby.
   'tnt',
+])
+
+/**
+ * Heads and skulls, which are neither mined nor stood on.
+ *
+ * **A head is somebody.** This host puts a player head in the world for an avatar, so a head in
+ * the way is not scenery - breaking one destroys the thing it represents, and the pathfinder was
+ * entirely willing to: every head in the game is `diggable` and upstream protects only chests.
+ *
+ * It is not ground either, and that is the subtler half. A head is half a block tall and inset a
+ * quarter on every side, so the face to land on is the middle quarter of the square - while
+ * `boundingBox` calls it a full cube and upstream files the node a whole block above it. See the
+ * wiring in {@link movementsFor} for what each of those costs.
+ *
+ * Named rather than derived from the shape, because "not a full cube" is most of a Minecraft
+ * world - slabs, stairs and carpets are all fine to walk over and none of them are anybody.
+ */
+const SOMEBODY = new Set([
+  'player_head',
+  'player_wall_head',
+  'skeleton_skull',
+  'skeleton_wall_skull',
+  'wither_skeleton_skull',
+  'wither_skeleton_wall_skull',
+  'zombie_head',
+  'zombie_wall_head',
+  'creeper_head',
+  'creeper_wall_head',
+  'dragon_head',
+  'dragon_wall_head',
+  'piglin_head',
+  'piglin_wall_head',
 ])
 
 /**
