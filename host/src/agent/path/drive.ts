@@ -10,7 +10,7 @@ import { log } from '../../log.ts'
 import { RANK, type Schedule } from '../schedule.ts'
 import { reachFor } from '../tool.ts'
 import { type Placement, standingAt, standsAt, type Walk, walkingFrom, within } from './ground.ts'
-import { type Goal, Search } from './search.ts'
+import { type Goal, type Route, Search } from './search.ts'
 
 /**
  * The executor, which is ours.
@@ -670,8 +670,16 @@ export class Driver {
   /** Ticks spent braking into the last square, so an agent that never settles still arrives. */
   private landing = 0
 
+  /**
+   * The square the agent gave up on and planned again from, so it only does that once.
+   *
+   * Cleared by taking a step, because an agent that got somewhere is not the agent this is
+   * about. A latch that clears on the next tick latches nothing - see the column walk in
+   * {@link composing}, which is what that mistake looked like from outside.
+   */
+  private stranded: string | undefined
+
   /** Whether a tower has already been re-planned once for starting in the wrong column. */
-  private misplaced = false
 
   /** Whether the last finished search could not reach the goal at all. */
   private hopeless = false
@@ -809,6 +817,27 @@ export class Driver {
    * Diagnostic, and temporary. Six hypotheses about one jump have each been argued from a once a
    * second line and each been wrong; this prints the thing itself.
    */
+  /**
+   * What a finished search cost, once per search.
+   *
+   * Diagnostic. Three numbers decide what to do about a slow search and none of them is visible
+   * from outside it: how many squares it expanded, how much of the wall clock it was actually
+   * allowed to think for, and how much of *that* went into the neighbour source rather than the
+   * search. A search that is slow because the world is hard to read, one that expands far too
+   * much, and one that is simply throttled all look the same from a stopwatch.
+   */
+  private cost(what: string, search: Search, found: Route): void {
+    const { slices, thought, asking, asked } = search.spent
+    const waited = Date.now() - (search as unknown as { startedAt: number }).startedAt
+
+    log.debug(
+      `Agent ${this.id} ${what} ${found.outcome} in ${waited}ms: ${found.looked} squares for ` +
+        `${found.steps.length} steps, thinking ${thought}ms of it over ${slices} slice(s) ` +
+        `(${waited > 0 ? Math.round((thought / waited) * 100) : 0}% of the clock), of which ` +
+        `${asking}ms was ${asked} call(s) to the rules`,
+    )
+  }
+
   private record(): void {
     const flight = this.flight
     const entity = this.bot.entity
@@ -924,6 +953,7 @@ export class Driver {
       return
     }
 
+    this.cost('planned', search, found)
     this.plotting = undefined
 
     if (found.steps.length === 0) {
@@ -1020,6 +1050,7 @@ export class Driver {
     // Still thinking. The old steps carry on being walked, and stay unbuildable while they do.
     if (found.outcome === 'partial') return
 
+    this.cost('mended', mending.search, found)
     this.mending = undefined
 
     const held = this.sections[mending.index]
@@ -1058,6 +1089,7 @@ export class Driver {
     if (found.outcome === 'partial') return
 
     this.extending = undefined
+    this.cost('extended', growing, found)
 
     if (found.steps.length === 0) {
       // Nowhere to go on to. Whether that ends the journey depends on whether the agent is standing
@@ -1379,6 +1411,7 @@ export class Driver {
       section.steps.shift()
       this.movedAt = Date.now()
       this.failures = 0
+      this.stranded = undefined
       if (section.steps.length === 0 && this.sections.length === 1) this.finished()
       return
     }
@@ -1459,37 +1492,25 @@ export class Driver {
     if (laying.dx !== 0 || laying.dz !== 0 || laying.dy !== 1) return false
     if (going.y !== stood.y) return false
 
-    // **In the column before building it.** The route is drawn from where the agent was standing, and
-    // it walks on while the search settles - so by the time the first rung is asked for, the agent is
-    // regularly a block past the column it is meant to pillar up. Placing from there is a block laid
-    // sideways at a run, which is the overshoot that looks like a tower starting mid-stride.
-    if (going.x !== stood.x || going.z !== stood.z) {
-      /*
-       * **The route is stale, so it is thrown away rather than walked back into.** Walking to a
-       * column is what put the agent past it in the first place - the search was drawn from where it
-       * used to be standing and it kept going while that search settled - and walking back is the
-       * same overshoot in the other direction. A search from where it is *now* pillars from where it
-       * is now, and it stands still while it thinks.
-       *
-       * **Once, though.** A second search from a standing agent produces a route from the square it
-       * is standing in, so a disagreement that survives one re-plan is not a stale route - it is
-       * this code being wrong about which square the route meant. Planning again on that for ever
-       * leaves the agent doing nothing at all, which is worse than a tower one block off, so the
-       * route gets its way and the squares go in the log for somebody to read.
-       */
-      log.debug(
-        `Agent ${this.id} is not in the column it is meant to pillar up: standing in ` +
-          `${stood.x} ${stood.y} ${stood.z}, the block goes at ${going.x} ${going.y} ${going.z}`,
-      )
-
-      if (!this.misplaced) {
-        this.misplaced = true
-        this.plan()
-        return true
-      }
-    }
-
-    this.misplaced = false
+    /*
+     * **A block out of the column is walked, not re-planned.**
+     *
+     * This used to throw the route away and search again from where the agent stood, on the
+     * argument that the route was stale - drawn from where the agent used to be, which it had
+     * walked past while the search settled - and that walking back would only overshoot the
+     * other way. {@link centre} could not stop at the time, so that was true.
+     *
+     * It stops now, and the re-plan turned out to cost what it was meant to save. Recorded from
+     * a tower: the agent stood still at -534030 104 -1213587 wanting a rung at -534029, so every
+     * search planned from a standing agent returned the same answer and the disagreement was
+     * never stale at all. Three full journey searches in five seconds, 4314 squares each, all
+     * identical, none of which moved the agent an inch - and the latch meant to allow only one
+     * of them was cleared on the very next tick by the reset below it, so it latched nothing.
+     *
+     * The walk was already written and sitting underneath it: {@link centre} is aimed at the
+     * middle of the column the route wants, and a block away is simply a long correction. It is
+     * one square of walking against a search of several thousand.
+     */
 
     /*
      * In the column, and two things left before it jumps: **over the middle of it, and still.**
@@ -1964,6 +1985,36 @@ export class Driver {
     const column = Math.floor(at.x) === step.x && Math.floor(at.z) === step.z
     if (bot.entity.onGround === true) this.flying = undefined
 
+    /*
+     * **A drop straight down is not steered, because there is nowhere to steer it to.**
+     *
+     * Everything below this presses `forward` and re-aims the heading, and it runs *before* the
+     * airborne gate further down - so it ran on every tick of a fall too. A jump wants that: the
+     * gate argues, rightly, that `forward` and a fixed bearing are what the simulation held when
+     * it chose the jump, so the flight has to keep holding them.
+     *
+     * A fall was never simulated and never chose anything. The agent steps off a ledge or digs
+     * out from under itself, and from there the thrust is a guess held for the length of the
+     * drop - air control is about 0.02 a tick, 0.026 sprinting, and nothing clears the sprint on
+     * the way past, so whatever it was carrying when it left the ground it keeps all the way
+     * down. Into a shaft the walls hide it; into open air it is a drop that does not land where
+     * it was dropped, which is rare exactly because most of them are shafts.
+     *
+     * Only where the route wants the agent to come down on its own square: off-column the fall
+     * genuinely has somewhere to be, and an ordinary step down keeps the momentum it walked off
+     * with. {@link flying} tells the two apart - every takeoff sets it through {@link launched},
+     * and a fall is the case where nothing did.
+     */
+    if (bot.entity.onGround !== true && this.flying === undefined && column) {
+      bot.setControlState('forward', false)
+      bot.setControlState('back', false)
+      bot.setControlState('left', false)
+      bot.setControlState('right', false)
+      bot.setControlState('sprint', false)
+
+      return 'dropping onto its own square, so nothing is held on the way down'
+    }
+
     if (this.flying !== undefined) bot.look(this.flying, 0)
     else if (!column && Math.hypot(dx, dz) > WORTH_TURNING) bot.look(Math.atan2(-dx, -dz), 0)
     bot.setControlState('forward', true)
@@ -2171,6 +2222,35 @@ export class Driver {
        */
       // Nothing reaches from here, and here is a choice: see {@link roomBehind}.
       if (this.roomBehind(at)) return `backing off a gap nothing reaches, for room to try again`
+
+      /*
+       * **Nothing reaches, and nothing is left to buy, so it is the route that is wrong.**
+       *
+       * Holding the block was the honest answer while the stall clock was the only thing that
+       * could re-plan, and it cost three and a half seconds of an agent standing still every
+       * time. The clock is for an agent that has stopped getting anywhere without knowing why;
+       * this one knows exactly why, and has already checked the two things that could fix it -
+       * a walk, a run, and the room to back up for either.
+       *
+       * Recorded from a head: upstream offers a parkour jump onto anything `physical`, which
+       * reads `boundingBox` and so counts a player head as a full cube, and it files the node
+       * a whole block above it. The real surface is half that, so the simulation lands the
+       * agent short of the square the route means, every time, from a pillar with no run-up.
+       * No amount of standing there changes the answer.
+       *
+       * **Once per square.** The search may hand back the same route - it priced that jump on
+       * the same bad block - and re-planning on every tick of it is how an agent does nothing
+       * at all very expensively. One go, then the block is held as before and the clock has it.
+       */
+      const here = `${Math.floor(at.x)},${Math.floor(at.y)},${Math.floor(at.z)}`
+
+      if (this.stranded !== here) {
+        this.stranded = here
+        this.brake()
+        this.plan()
+
+        return `nothing lands on the far side of this gap, so planning again from the block`
+      }
 
       this.brake()
       const said = (put: WorldVec | undefined) =>

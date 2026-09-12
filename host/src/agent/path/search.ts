@@ -137,6 +137,17 @@ export class Search {
 
   private looked = 0
 
+  /**
+   * What the search actually spent, for telling a slow search from a throttled one.
+   *
+   * Diagnostic. `waited` is wall clock from the first slice to the last, `thought` is the time
+   * inside {@link run}, and `asking` is the part of that spent in the neighbour source - which
+   * is upstream's `getNeighbors` and reads the world. A search that is slow because it thinks
+   * too much and one that is slow because it is only allowed a fifth of each tick look
+   * identical from outside and are not the same problem.
+   */
+  readonly spent = { slices: 0, thought: 0, asking: 0, asked: 0 }
+
   constructor(
     start: Step,
     private readonly neighbours: Neighbours,
@@ -167,7 +178,10 @@ export class Search {
    * caller asked for when the search was made.
    */
   run(slice = this.slice): Route {
-    const until = Date.now() + slice
+    const began = Date.now()
+    const until = began + slice
+
+    this.spent.slices++
 
     while (!this.open.empty()) {
       // **The budget first, and it matters which order.** With the slice tested first, a search that
@@ -175,13 +189,13 @@ export class Search {
       // answers a partial by running another slice, the budget is unreachable for exactly the
       // searches it exists to stop. What that looks like from outside is an agent that plans, never
       // moves, never fails and never says anything, while a core sits at a hundred percent.
-      if (Date.now() - this.startedAt >= this.budget) return this.route('timeout', this.best)
-      if (Date.now() >= until) return this.route('partial', this.best)
+      if (Date.now() - this.startedAt >= this.budget) return this.took(began, this.route('timeout', this.best))
+      if (Date.now() >= until) return this.took(began, this.route('partial', this.best))
 
       const node = this.open.pop()
       if (!node) break
 
-      if (this.goal.reached(node.step)) return this.route('found', node)
+      if (this.goal.reached(node.step)) return this.took(began, this.route('found', node))
 
       this.seen.delete(node.step.hash)
       this.done.add(node.step.hash)
@@ -194,11 +208,23 @@ export class Search {
       this.expand(node)
     }
 
-    return this.route('nowhere', this.best)
+    return this.took(began, this.route('nowhere', this.best))
+  }
+
+  /** Charges whatever {@link run} took to {@link spent}, whichever way it left. */
+  private took<T>(began: number, what: T): T {
+    this.spent.thought += Date.now() - began
+
+    return what
   }
 
   private expand(node: Held): void {
-    for (const step of this.neighbours(node.step)) {
+    const asked = Date.now()
+    const offered = this.neighbours(node.step)
+    this.spent.asking += Date.now() - asked
+    this.spent.asked++
+
+    for (const step of offered) {
       if (this.done.has(step.hash)) continue
 
       // Signs rather than the offset itself: a step of two blocks in one direction is the same

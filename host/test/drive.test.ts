@@ -317,6 +317,28 @@ describe('Driver', () => {
     expect(world.did).not.toContain('right')
   })
 
+  it('walks into a column a block away rather than planning again', () => {
+    // Recorded from a tower: the agent stood still wanting a rung one square across, and every
+    // search planned from a standing agent came back with the same answer - three journey
+    // searches of 4314 squares in five seconds, none of which moved it. The walk to the column
+    // was already written underneath the re-plan, and a square of walking is the cheaper of the
+    // two by several thousand.
+    const world = fakeBot([rung()])
+
+    // A whole block out of the column the rung goes in, and stopped.
+    world.standAt(1.5, 64, 0.5)
+
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 65, 0, 0.5))
+    world.tick()
+
+    // Walking towards it, and no search started to decide that.
+    expect(world.did).toContain('left')
+    expect(world.did).not.toContain('equip')
+    expect((driver as unknown as { plotting: unknown }).plotting).toBeUndefined()
+  })
+
   it('walks to the middle of the column before pillaring out of it', () => {
     const world = fakeBot([rung()])
 
@@ -396,23 +418,6 @@ describe('Driver', () => {
     world.tick()
 
     expect(world.did).toContain('equip')
-  })
-
-  it('plans again rather than walking back to a column it went past', () => {
-    const world = fakeBot([rung()])
-
-    // A block past the column. The route was drawn from where the agent was standing and it kept
-    // walking while the search settled, which is how a tower ends up starting mid-stride. Walking
-    // back is the same overshoot in the other direction, so the stale route goes instead.
-    world.standAt(1.5, 64, 0.5)
-
-    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
-    driver.start()
-    driver.go(within(0, 65, 0, 0.5))
-    world.tick()
-
-    expect(world.did).not.toContain('equip')
-    expect((driver as unknown as { plotting: unknown }).plotting).toBeDefined()
   })
 
   it('does not hold up a step up onto the square ahead', () => {
@@ -562,6 +567,39 @@ describe('Driver', () => {
     expect(world.did).toContain('equip')
   })
 
+  it('holds nothing on the way down a drop onto its own square', () => {
+    // The controls are set at the top of the decision, above the airborne gate, so they were set
+    // on every tick of a fall as well as a flight. A jump wants that - they are what the
+    // simulation held when it chose the jump - but a fall chose nothing, and air control is 0.02
+    // a tick, 0.026 sprinting, with nothing clearing the sprint on the way past. A drop meant to
+    // go straight down came out of the shaft pointed somewhere.
+    const below = {
+      x: 0,
+      y: 63,
+      z: 0,
+      hash: '0,63,0',
+      cost: 1,
+      remainingBlocks: 8,
+      toPlace: [],
+      toBreak: [],
+    }
+    const world = fakeBot([below])
+
+    const driver = new Driver(1, world.bot, world.rules, world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 63, 0, 0.5))
+
+    // Over the square it is dropping onto, three blocks up and already falling.
+    world.standAt(0.5, 66.5, 0.5, false)
+
+    const before = world.did.length
+    world.tick()
+    const after = world.did.slice(before)
+
+    expect(after).not.toContain('forward')
+    expect(after).not.toContain('sprint')
+  })
+
   it('waits to land before it starts mining', async () => {
     // Vanilla divides mining speed by five for a player who is not on the ground, and digging
     // straight down leaves the agent falling into the hole it just made. Measured on a column of
@@ -697,6 +735,7 @@ describe('Driver', () => {
     world.block({ x: 0, y: 64, z: 1, type: 1 }, { type: 0 })
     world.tick()
 
+    console.log(JSON.stringify(world.said), "drawn="+drawn)
     expect(world.said.routes.length).toBeGreaterThan(drawn)
   })
 
@@ -1371,6 +1410,13 @@ describe('Driver', () => {
     lands: () => undefined,
   }
 
+  /** A simulation that reaches nothing: no straight line, no jump, and no landing anywhere. */
+  const nowhereLands: Simulation = {
+    canStraightLine: () => false,
+    canSprintJump: () => false,
+    canWalkJump: () => false,
+    lands: () => undefined,
+  }
   /**
    * A driver at the lip of a three block gap, with more route on the far side.
    *
@@ -1402,6 +1448,52 @@ describe('Driver', () => {
 
     return world
   }
+
+  it('plans again when nothing reaches and there is no room left to buy', () => {
+    // Holding the block was the answer while the stall clock was the only thing that could
+    // re-plan, and it cost three and a half seconds of standing still each time. Recorded from a
+    // player head: upstream offers a parkour jump onto anything physical, which reads boundingBox
+    // and counts a head as a full cube, filing the node a whole block above it when the real
+    // surface is half that. The simulation lands short of the square the route means, every time,
+    // and no amount of standing there changes the answer.
+    const world = fakeBot([])
+    const rules = () => ({
+      ...world.rules(),
+      sprint: true,
+      movements: {
+        ...world.rules().movements,
+        getNeighbors: trail([
+          { x: 0, y: 64, z: 3, parkour: true },
+          { x: 0, y: 64, z: 4 },
+        ]),
+      } as unknown as Rules['movements'],
+    })
+
+    // Dead centre of the block, so there is no backing up to be done: the run-up is already all
+    // the run-up there is.
+    world.standAt(0.5, 64, 0.5)
+
+    const driver = new Driver(1, world.bot, rules, world.report, hands(), nowhereLands)
+    driver.start()
+    driver.go(within(0, 64, 4, 0.5))
+
+    // The first tick is spent turning to face the gap, so the dead end is the one after it.
+    const stuck = () => (driver as unknown as { stranded: string | undefined }).stranded
+
+    world.tick()
+    expect(stuck()).toBeUndefined()
+
+    // Nothing reaches, it is already centred, and it gave up on the square rather than holding it.
+    world.tick()
+    expect(stuck()).toBe(`0,64,0`)
+
+    // And only once. The latch is the square, so it stays that square however long it stands
+    // there - the ticks after it hold the block as before, rather than re-planning on every one.
+    world.tick()
+    world.tick()
+
+    expect(stuck()).toBe(`0,64,0`)
+  })
 
   it('backs off the lip of a gap it cannot jump from, rather than standing on it', () => {
     // The gap is measured from where the agent is, so a takeoff at the edge is a longer jump than
