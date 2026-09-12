@@ -765,64 +765,81 @@ async function logout() {
           rather than at the row's.
         -->
         <!--
-          `mt-2` rather than the gap the fleet happens to leave. With the agents open, the list ends
-          somewhere above this and the space between reads as a break between two kinds of thing;
-          folded shut, the reveal collapses to nothing and the chat row landed against the Agents
-          header as though it were the next item in that list.
-        -->
-        <div v-if="auth.can('chat.read')" class="mt-2 px-3 pb-3">
-          <NavRail>
-            <ul class="menu w-full gap-0.5 p-0">
-              <li>
-                <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
-                  <MessagesSquare class="size-4 shrink-0" />
-                  {{ t('chat.title') }}
-                  <span v-if="chat.unread" class="badge badge-primary badge-xs ml-auto">
-                    {{ chat.unread > 99 ? '99+' : chat.unread }}
-                  </span>
-                  <kbd v-else class="kbd kbd-xs ml-auto">{{ chatKeys }}</kbd>
-                </button>
-              </li>
-            </ul>
-          </NavRail>
-        </div>
+          **The foot of the sidebar, kept at the foot of it.**
 
-        <div class="border-base-300 border-t p-3">
-          <NavRail>
-            <ul class="menu w-full gap-0.5 p-0">
-              <LanguagePicker />
-              <li>
-                <RouterLink :to="{ name: 'account' }" class="gap-3">
-                  <User class="size-4 shrink-0" />
-                  {{ t('nav.myAccount') }}
-                </RouterLink>
-              </li>
-              <li v-if="auth.can('user.read')">
-                <RouterLink :to="{ name: 'accounts' }" class="gap-3">
-                  <Users class="size-4 shrink-0" />
-                  {{ t('nav.allAccounts') }}
-                </RouterLink>
-              </li>
-              <li v-if="auth.can('audit.read')">
-                <RouterLink :to="{ name: 'audit' }" class="gap-3">
-                  <ScrollText class="size-4 shrink-0" />
-                  {{ t('nav.auditLog') }}
-                </RouterLink>
-              </li>
-              <li v-if="auth.can('storage.read')">
-                <RouterLink :to="{ name: 'storage' }" class="gap-3">
-                  <HardDrive class="size-4 shrink-0" />
-                  {{ t('nav.storage') }}
-                </RouterLink>
-              </li>
-              <li>
-                <button type="button" class="text-error hover:bg-error/10 gap-3" @click="logout">
-                  <LogOut class="size-4 shrink-0" />
-                  {{ t('nav.logOut') }}
-                </button>
-              </li>
-            </ul>
-          </NavRail>
+          Everything above is either a fixed height or the fleet, and the fleet only claims the
+          leftover space while it is open. Folded shut nothing claimed it at all, so the chat row and
+          the account menu rode up the middle of an otherwise empty sidebar and sat under the Agents
+          header as though they belonged to it. `mt-auto` takes whatever is spare and puts it above
+          this group, which is nothing at all when the fleet is open and the whole of it when it is
+          not - so the foot is at the bottom either way.
+
+          `shrink-0` for the other half of the same bug: with the window short enough there is
+          nothing spare to take, and flex answers that by squeezing whatever will squeeze. That was
+          this group, which has a definite size and cannot afford to lose any of it, rather than the
+          one thing here built to be bounded and scrolled. The fleet gives way instead.
+        -->
+        <div class="mt-auto shrink-0">
+          <!--
+            `mt-2` rather than the gap the fleet happens to leave. With the agents open, the list ends
+            somewhere above this and the space between reads as a break between two kinds of thing;
+            folded shut, the reveal collapses to nothing and the chat row landed against the Agents
+            header as though it were the next item in that list.
+          -->
+          <div v-if="auth.can('chat.read')" class="mt-2 px-3 pb-3">
+            <NavRail>
+              <ul class="menu w-full gap-0.5 p-0">
+                <li>
+                  <button type="button" class="gap-3" :class="chat.open ? 'menu-active' : ''" @click="chat.toggle()">
+                    <MessagesSquare class="size-4 shrink-0" />
+                    {{ t('chat.title') }}
+                    <span v-if="chat.unread" class="badge badge-primary badge-xs ml-auto">
+                      {{ chat.unread > 99 ? '99+' : chat.unread }}
+                    </span>
+                    <kbd v-else class="kbd kbd-xs ml-auto">{{ chatKeys }}</kbd>
+                  </button>
+                </li>
+              </ul>
+            </NavRail>
+          </div>
+
+          <div class="border-base-300 border-t p-3">
+            <NavRail>
+              <ul class="menu w-full gap-0.5 p-0">
+                <LanguagePicker />
+                <li>
+                  <RouterLink :to="{ name: 'account' }" class="gap-3">
+                    <User class="size-4 shrink-0" />
+                    {{ t('nav.myAccount') }}
+                  </RouterLink>
+                </li>
+                <li v-if="auth.can('user.read')">
+                  <RouterLink :to="{ name: 'accounts' }" class="gap-3">
+                    <Users class="size-4 shrink-0" />
+                    {{ t('nav.allAccounts') }}
+                  </RouterLink>
+                </li>
+                <li v-if="auth.can('audit.read')">
+                  <RouterLink :to="{ name: 'audit' }" class="gap-3">
+                    <ScrollText class="size-4 shrink-0" />
+                    {{ t('nav.auditLog') }}
+                  </RouterLink>
+                </li>
+                <li v-if="auth.can('storage.read')">
+                  <RouterLink :to="{ name: 'storage' }" class="gap-3">
+                    <HardDrive class="size-4 shrink-0" />
+                    {{ t('nav.storage') }}
+                  </RouterLink>
+                </li>
+                <li>
+                  <button type="button" class="text-error hover:bg-error/10 gap-3" @click="logout">
+                    <LogOut class="size-4 shrink-0" />
+                    {{ t('nav.logOut') }}
+                  </button>
+                </li>
+              </ul>
+            </NavRail>
+          </div>
         </div>
       </aside>
     </div>
