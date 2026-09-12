@@ -464,6 +464,12 @@ export const en = {
     broken: 'The renderer could not start: {reason}',
     unsupported: 'This host is streaming a format this page cannot read. Update Osmium.',
     unstaged: "The renderer has no block data for Minecraft {version}. Stage it with OSMIUM_VIEWER_VERSIONS and rebuild.",
+    /** The controls, over the bottom left of the view. Keep each one short: they sit on one line. */
+    legendOrbit: 'drag to turn',
+    legendPan: 'right-drag to pan',
+    legendZoom: 'wheel to zoom',
+    legendFast: 'shift for faster',
+    legendFly: 'ctrl to move the pivot',
   },
 
   /** The agent's own inventory screen, laid out the way Minecraft lays one out. */

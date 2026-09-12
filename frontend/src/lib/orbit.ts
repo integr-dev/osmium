@@ -88,6 +88,35 @@ export const MOST_AT_ONCE = 4
 export const CLOSEST = 0.75
 
 /**
+ * How far a whole notch of wheel carries the camera once it is flying, in blocks.
+ *
+ * A flat rate rather than a share of anything - see {@link dollyToward} for why every
+ * proportional version of this faded out exactly where it was wanted. {@link HURRY} is there
+ * for crossing ground.
+ */
+export const STRIDE = 24
+
+/**
+ * How far a notch carries the whole view when it is flying the pivot, in blocks.
+ *
+ * A little under {@link STRIDE}, because it is a different move and wants a slightly finer hand:
+ * pulling the camera in is coarse, while taking the point everything turns around and putting it
+ * somewhere else is aiming. Only a little, though - it was half for a while and that made crossing
+ * any distance with the pivot a chore, which is the same complaint a proportional rate earned.
+ */
+export const FLIGHT = 20
+
+/**
+ * How much further a notch carries while the hurry key is held.
+ *
+ * Four, which turns a block into four - a chunk in three notches. The wheel is deliberately
+ * unhurried for lining a shot up, and that is the wrong speed entirely for crossing a build to
+ * look at the other end of it; rather than compromise on one rate, there are two.
+ */
+export const HURRY = 4
+
+
+/**
  * How much of the zoom still owed is spent each frame.
  *
  * A wheel notch is a discrete thing and a camera arriving at its answer in one frame is a jump,
@@ -139,39 +168,31 @@ export function panRate(base: number, depth: number | undefined, pivot: number):
  * the distance wherever the camera is, and so that any two events add up to the same place as the
  * one event that spans them - which is what makes a trackpad feel continuous instead of steppy.
  */
+/**
+ * How far one wheel event turned, with the hurry key folded in.
+ *
+ * **A held shift moves the turn onto the other axis.** Browsers treat shift and a wheel as a
+ * request to scroll sideways, so on Windows and Linux the notch arrives as `deltaX` with a
+ * `deltaY` of zero - and a zoom reading only `deltaY` does nothing at all for the one gesture
+ * that is asking it to hurry. Whichever axis carries it, it is the same turn of the same wheel.
+ *
+ * Multiplied rather than switched, so it stays one continuous control: {@link zoomFactor} is
+ * exponential in this number and {@link dollyToward} is linear in its log, so multiplying here
+ * multiplies the distance travelled by exactly {@link HURRY}.
+ */
+export function wheelTurn(deltaY: number, deltaX: number, hurrying: boolean): number {
+  const turned = Number.isFinite(deltaY) && deltaY !== 0 ? deltaY : deltaX
+  if (!Number.isFinite(turned)) return 0
+
+  return hurrying ? turned * HURRY : turned
+}
+
 export function zoomFactor(deltaY: number): number {
   if (!Number.isFinite(deltaY)) return 1
 
   return Math.min(MOST_AT_ONCE, Math.max(1 / MOST_AT_ONCE, Math.exp(deltaY * PER_PIXEL)))
 }
 
-function scaledFrom(at: Point, point: Point, by: number): Point {
-  return {
-    x: at.x + (point.x - at.x) * by,
-    y: at.y + (point.y - at.y) * by,
-    z: at.z + (point.z - at.z) * by,
-  }
-}
-
-/**
- * Where the camera and its pivot go when the wheel is turned with [at] under the cursor.
- *
- * **What is under the pointer stays under the pointer**, which is the whole of what makes zooming
- * in a 3D viewer feel like a tool rather than a slider. Both the camera and the pivot are scaled
- * about that point, so the direction the camera looks does not change - only how far away it is -
- * and orbiting afterwards still turns about something sensible.
- *
- * Two things fall out of it for free, and both are things a rate-based zoom has to be told:
- *
- * - **It slows down as it arrives.** The step is a share of the distance to the surface, so
- *   approaching one costs progressively less distance, which is what stops a wheel overshooting a
- *   block it was being lined up on.
- * - **It cannot go through anything it is aimed at**, because {@link CLOSEST} is a floor on the
- *   distance to that point rather than to the pivot.
- *
- * Zooming out is left unclamped: there is nothing to collide with behind the camera, and a viewer
- * that would not let go of a wall it had been pushed up against would be worse than one that does.
- */
 /**
  * One frame of a zoom, and what is left of it afterwards.
  *
@@ -199,19 +220,82 @@ export function easeZoom(left: number, share: number = GLIDE): { step: number; l
 export function dollyToward(
   camera: Point,
   target: Point,
-  at: Point,
   factor: number,
+  flying = false,
 ): { camera: Point; target: Point } {
-  const away = Math.hypot(camera.x - at.x, camera.y - at.y, camera.z - at.z)
+  /*
+   * **A notch is a notch, at every range and in both directions - and it flies the whole view.**
+   *
+   * Scaling about the pivot is the usual way to zoom and it has one behaviour nobody wants: the
+   * step is a share of the distance it is closing, so it shrinks the whole way in and is worth
+   * almost nothing by the time it arrives. Four versions of this measured the step against some
+   * distance or other - what the clamp refused, the run to the world ahead, the gap to the pivot -
+   * and every one of them faded out exactly where it was needed, because the step is closing the
+   * very distance it is measured against.
+   *
+   * So the step is measured against nothing, and it moves the camera and the pivot together.
+   * {@link STRIDE} of travel per notch, near or far, coming or going.
+   *
+   * **Moving both is what makes it undo itself.** Anything that changed the gap between them had
+   * a direction it could not come back from: flying the pivot out into the world and then backing
+   * the camera off it left a view that had to be rebuilt by hand, because winding the wheel the
+   * other way opened a gap rather than retracing the flight. A translation has an exact inverse,
+   * so the same number of notches the other way lands precisely where it started.
+   *
+   * **In the log of the factor**, because `1 - factor` is not symmetric - a notch in is 0.095 of
+   * it and the notch that undoes it is 0.105 - and because it is the space {@link easeZoom}
+   * already eases in, so a notch split across frames still adds up to one notch.
+   */
+  const travel = -(flying ? FLIGHT : STRIDE) * Math.log(factor)
+  if (!Number.isFinite(travel) || travel === 0) return { camera, target }
 
-  // Already inside whatever it is aimed at, or aimed at itself. Backing out is still allowed;
-  // there is nothing sensible to scale towards.
-  if (!Number.isFinite(away) || away <= 0) return { camera, target }
+  const gone = apart(camera, target)
+  if (gone <= 0) return { camera, target }
 
-  const closest = factor < 1 ? Math.max(factor, CLOSEST / away) : factor
-
-  return {
-    camera: scaledFrom(at, camera, closest),
-    target: scaledFrom(at, target, closest),
+  // Along the line of sight, which is from the camera towards the pivot.
+  const ahead = {
+    x: ((target.x - camera.x) / gone) * travel,
+    y: ((target.y - camera.y) / gone) * travel,
+    z: ((target.z - camera.z) / gone) * travel,
   }
+
+  /*
+   * **Only the camera, unless the whole view is being flown.**
+   *
+   * Moving the pivot is the stronger thing and it is the one that needs asking for: it takes the
+   * point the view turns around off whatever it was on, and having to put that back by hand is a
+   * worse job than any zoom is worth. So by default the camera slides along the line of sight and
+   * the pivot stays exactly where it was put, which is what an orbit is.
+   *
+   * **Nose against the pivot, and no further.** Sliding closes the gap, so the camera would
+   * otherwise arrive at the thing it is turning around and then pass through it.
+   */
+  if (!flying) {
+    const gap = Math.max(CLOSEST, gone - travel)
+    const back = { x: (camera.x - target.x) / gone, y: (camera.y - target.y) / gone, z: (camera.z - target.z) / gone }
+
+    return {
+      camera: { x: target.x + back.x * gap, y: target.y + back.y * gap, z: target.z + back.z * gap },
+      target,
+    }
+  }
+
+  /*
+   * **Flying takes the pivot with it**, which is the whole point of asking for it: the view goes
+   * further into the world rather than closing on something it has already reached, and orbiting
+   * afterwards turns about what is in front of the camera. Moving both is also what makes it undo
+   * itself - a translation has an exact inverse, where anything that changed the gap had a
+   * direction it could not come back from.
+   *
+   * No floor here: the gap does not change, so there is nothing for one to protect.
+   */
+  return {
+    camera: { x: camera.x + ahead.x, y: camera.y + ahead.y, z: camera.z + ahead.z },
+    target: { x: target.x + ahead.x, y: target.y + ahead.y, z: target.z + ahead.z },
+  }
+}
+
+/** How far apart two points are. */
+function apart(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
 }

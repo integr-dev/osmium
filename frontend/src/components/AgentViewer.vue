@@ -13,7 +13,7 @@ import AgentTargets from './AgentTargets.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
-import { dollyToward, easeZoom, panRate, zoomFactor, type Point } from '../lib/orbit'
+import { dollyToward, easeZoom, panRate, wheelTurn, zoomFactor, type Point } from '../lib/orbit'
 import { axisCross, cornerArms } from '../lib/reticle'
 
 /**
@@ -96,6 +96,14 @@ const GIMBAL_LINGER = 1600
 /** How long it takes to fade out once that has run out. */
 const GIMBAL_FADE = 450
 
+/**
+ * How much of the pivot mark is left where the world is in front of it.
+ *
+ * Under half. The dashed half is there to say "it is over there, behind this" - enough to follow
+ * and not enough to be mistaken for the thing itself, which is the solid one.
+ */
+const GHOST_SHARE = 0.45
+
 
 /**
  * How smoothly the camera catches up with the mouse, as a share of the gap it closes a frame.
@@ -108,6 +116,9 @@ const SETTLING = 0.12
 
 /** Which mouse button pans. The middle one orbits and the left one picks; this is the right. */
 const PANNING = 2
+
+/** The left button, which pans while a modifier is held and orbits otherwise. */
+const TURNING = 0
 const status = ref<'connecting' | 'watching' | 'failed'>('connecting')
 const failure = ref('')
 
@@ -223,6 +234,9 @@ interface Scene {
   /** The cross on the point the camera turns around - see {@link showGimbal}. */
   gimbal?: Mesh
   buildGimbal?: () => Mesh | undefined
+  /** The same cross, dashed, for wherever the world is in front of it. */
+  ghost?: Mesh
+  buildGhost?: () => Mesh | undefined
   /**
    * A box on every block the route still means to lay or break.
    *
@@ -251,7 +265,7 @@ interface Scene {
    *
    * No `at` means the orbit target, which is where a zoom closes while following an agent.
    */
-  zooming?: { at?: { x: number; y: number; z: number }; left: number }
+  zooming?: { left: number; flying: boolean }
   /** Builds an outline in the entity mesh's own units. Held so the decoration needs no imports. */
   buildOutline?: (width: number, height: number, tone: Tone) => Mesh | undefined
   buildNametag?: (height: number) => Mesh | undefined
@@ -1728,7 +1742,9 @@ function zoomAtPointer(current: Scene, event: WheelEvent): void {
   // The page must not scroll, and the browser must not treat it as a gesture on an ancestor.
   event.preventDefault()
 
-  stirred = performance.now()
+  // Plain zoom slides the camera along its line of sight and leaves the pivot alone, so there is
+  // nothing to point at. Ctrl is the one that moves it.
+  if (event.ctrlKey || event.metaKey) stirred = performance.now()
 
   /*
    * **Owed, not spent, and owed against the pivot.**
@@ -1738,7 +1754,14 @@ function zoomAtPointer(current: Scene, event: WheelEvent): void {
    * when the wheel turned. The amount multiplies into whatever is still owed, so a wheel spun in
    * one motion adds up the way it would have if every notch had arrived at once.
    */
-  current.zooming = { left: (current.zooming?.left ?? 1) * zoomFactor(event.deltaY) }
+  const turned = wheelTurn(event.deltaY, event.deltaX, event.shiftKey)
+
+  // Held at the moment of the turn rather than read while gliding, so letting go of the key
+  // half a notch in does not leave the rest of that notch doing something else.
+  current.zooming = {
+    left: (current.zooming?.left ?? 1) * zoomFactor(turned),
+    flying: event.ctrlKey || event.metaKey,
+  }
 }
 
 /**
@@ -1762,11 +1785,9 @@ function glideZoom(current: Scene): void {
   const { step, left } = easeZoom(zooming.left)
   const eye = current.viewer.camera.position
 
-  // The pivot when the wheel was turned while following, which is the agent as it is now rather
-  // than where it was when the wheel moved. Scaling about the target moves only the camera, so
-  // the agent stays exactly where it is on the screen.
-  const at = zooming.at ?? { x: controls.target.x, y: controls.target.y, z: controls.target.z }
-  const moved = dollyToward(eye, controls.target, at, step)
+  // The pivot as it is now rather than where it was when the wheel moved, which matters while
+  // following: the flight is along the line to the body the camera is watching.
+  const moved = dollyToward(eye, controls.target, step, zooming.flying)
   const stalled = moved.camera.x === eye.x && moved.camera.y === eye.y && moved.camera.z === eye.z
 
   eye.set(moved.camera.x, moved.camera.y, moved.camera.z)
@@ -1856,7 +1877,16 @@ function showGimbal(current: Scene): void {
     current.viewer.scene.add(built)
   }
 
+  if (!current.ghost) {
+    const built = current.buildGhost?.()
+    if (built) {
+      current.ghost = built
+      current.viewer.scene.add(built)
+    }
+  }
+
   const cross = current.gimbal
+  const ghost = current.ghost
   const controls = current.controls as unknown as { target: Point } | undefined
   const since = performance.now() - stirred
 
@@ -1864,17 +1894,28 @@ function showGimbal(current: Scene): void {
   // screen, and a cross drawn on it is a mark over the one thing being watched.
   if (!controls || firstPerson.value || follow.value || since > GIMBAL_LINGER + GIMBAL_FADE) {
     cross.visible = false
+    if (ghost) ghost.visible = false
     return
   }
 
   const at = controls.target
+  const fading = 1 - Math.max(0, since - GIMBAL_LINGER) / GIMBAL_FADE
 
-  cross.position.set(at.x, at.y, at.z)
-  cross.scale.set(GIMBAL_SPAN, GIMBAL_SPAN, GIMBAL_SPAN)
-  cross.visible = true
+  for (const mark of [cross, ghost]) {
+    if (!mark) continue
 
-  const material = (cross as unknown as { material?: { opacity: number } }).material
-  if (material) material.opacity = 1 - Math.max(0, since - GIMBAL_LINGER) / GIMBAL_FADE
+    mark.position.set(at.x, at.y, at.z)
+    mark.scale.set(GIMBAL_SPAN, GIMBAL_SPAN, GIMBAL_SPAN)
+    mark.visible = true
+  }
+
+  // The solid half is the whole of what the mark is when nothing is in the way, so the dashed one
+  // is kept under it rather than adding to it.
+  const solid = (cross as unknown as { material?: { opacity: number } }).material
+  if (solid) solid.opacity = fading
+
+  const faint = (ghost as unknown as { material?: { opacity: number } } | undefined)?.material
+  if (faint) faint.opacity = fading * GHOST_SHARE
 }
 
 function showHover(current: Scene): void {
@@ -2339,18 +2380,48 @@ async function mount(world: { version: string; minY?: number; height?: number },
   hoverMaterial.resolution.set(element.clientWidth, element.clientHeight)
 
   // The accent, because this is the only mark on the screen that is about the camera rather than
-  // about the world. Not depth tested: what the view turns around is worth seeing when it is
-  // inside a hill, which is most of the time when following an agent through one.
+  // about the world.
+  //
+  // Depth tested, like the hover cursor and unlike the boxes around bodies. Drawn through the
+  // world it reads as floating in front of whatever is actually there, which is the one thing a
+  // mark saying "here" must not do - and now that it only appears while it is being moved, being
+  // occluded says something useful in itself: the pivot has gone behind something.
   const gimbalMaterial = new LineMaterial({
     color: themeColour('--color-accent', 0x38bdf8),
     // Heavier than the outlines around bodies: those sit on something, and this is a bare cross in
     // open air with a world of edges behind it to be lost among.
     linewidth: 3.5,
-    depthTest: false,
+    depthTest: true,
     transparent: true,
     opacity: 0,
   })
   gimbalMaterial.resolution.set(element.clientWidth, element.clientHeight)
+
+  /*
+   * **The same cross again, for the part of it that is behind something.**
+   *
+   * Depth testing alone answers the wrong question. Drawn through the world the pivot floats in
+   * front of walls it is nowhere near; drawn behind them it vanishes outright, and a mark that
+   * disappears exactly when it is furthest from obvious is not much of a mark. So it is drawn
+   * twice - solid where there is a clear line to it, dashed where there is not - and the break
+   * between the two says where the surface in front of it is.
+   *
+   * Thinner and fainter, because this half is a hint about something out of sight rather than a
+   * thing being pointed at.
+   */
+  const ghostMaterial = new LineMaterial({
+    color: themeColour('--color-accent', 0x38bdf8),
+    linewidth: 2,
+    // Every arm is half a block, so a dash and a gap of a tenth reads as a dash rather than as a
+    // line somebody nicked.
+    dashed: true,
+    dashSize: 0.1,
+    gapSize: 0.1,
+    depthTest: false,
+    transparent: true,
+    opacity: 0.45,
+  })
+  ghostMaterial.resolution.set(element.clientWidth, element.clientHeight)
 
   // Green, and the page's own if it has one: this is the only marker on the map that means
   // "about to happen" rather than "is", and it should not be mistakable for either agent colour.
@@ -2507,10 +2578,26 @@ async function mount(world: { version: string; minY?: number; height?: number },
        * Everything drawn through the world here is transparent, so three sorts it all back to
        * front by distance, and orbiting swaps which of any two is nearer. For the half of a turn
        * where an outline or a route sorted later than this, it was drawn over the top and the
-       * pivot simply was not there. Depth testing being off does not help: nothing is being
-       * tested, the other thing just arrives afterwards.
+       * pivot simply was not there. Depth testing does not answer it either: that settles what the
+       * world hides, and this is about two overlays arriving in the wrong order.
        */
       line.renderOrder = NAMETAG_ORDER
+      line.frustumCulled = false
+      line.visible = false
+      return line
+    },
+    buildGhost: () => {
+      const line = new LineSegments2(
+        new LineSegmentsGeometry().setPositions(axisCross()),
+        ghostMaterial,
+      ) as unknown as Mesh
+
+      // A dashed line is drawn from how far along itself each vertex is, which nothing works out
+      // on its own: without this the whole cross comes out solid and the two halves are one.
+      ;(line as unknown as { computeLineDistances(): void }).computeLineDistances()
+
+      // Behind the solid one in the transparent pass, for the same reason it is ordered at all.
+      line.renderOrder = NAMETAG_ORDER - 1
       line.frustumCulled = false
       line.visible = false
       return line
@@ -2573,7 +2660,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
     bounds,
     received: 0,
     outlineMaterials,
-    markerMaterials: [hoverMaterial, gimbalMaterial, workMaterial],
+    markerMaterials: [hoverMaterial, gimbalMaterial, ghostMaterial, workMaterial],
     pathMaterials: [...pathMaterials, hoverMaterial],
     seen: new Map(),
     names: new Map(),
@@ -2667,6 +2754,9 @@ const picked = ref<{ x: number; y: number; z: number; px: number; py: number } |
 /** Where the press began, and whether it turned into an orbit. */
 let pressed: { x: number; y: number; moved: boolean } | null = null
 
+/** Whether the drag in progress is the one that carries the pivot. */
+let carrying = false
+
 /** When the camera was last moved, so the gimbal can be shown while it is being used. */
 let stirred = 0
 
@@ -2712,8 +2802,29 @@ const sendable = computed(() => {
 const sending = ref<number[]>([])
 const sendingBusy = ref(false)
 
+/**
+ * Whether a drag is the one that carries the pivot.
+ *
+ * **Two buttons do it, not one.** Upstream pans on the right button *or* on the left with ctrl,
+ * meta or shift held - both land in the same handler and do exactly the same thing - and it
+ * swaps the other way too, so the right button with a modifier orbits. Everything here that
+ * cared about panning asked only whether the right button was down, so the left-with-modifier
+ * half of it went unnoticed: the view panned while the pivot mark stayed hidden, and following
+ * was never let go of, which meant the pan was overwritten by the next frame putting the target
+ * back on the agent. The harder the agent was moving, the more there was to fight.
+ */
+function pans(event: PointerEvent): boolean {
+  const held = event.ctrlKey || event.metaKey || event.shiftKey
+
+  if (event.button === TURNING) return held
+  if (event.button === PANNING) return !held
+
+  return false
+}
+
 function onPointerDown(event: PointerEvent): void {
   pressed = { x: event.clientX, y: event.clientY, moved: false }
+  carrying = pans(event)
 
   /*
    * **Panning takes the camera off the agent, which means letting go of it.**
@@ -2724,9 +2835,11 @@ function onPointerDown(event: PointerEvent): void {
    * was moving the more there was to fight. Asking to look somewhere else is a clear enough
    * statement that the answer is to stop following rather than to argue with it.
    */
-  if (event.button === PANNING && follow.value) follow.value = false
+  if (pans(event) && follow.value) follow.value = false
 
-  stirred = performance.now()
+  // Only a pan carries the pivot; an orbit swings around it and leaves it where it is. See
+  // {@link showGimbal} for why that decides whether it is drawn.
+  if (pans(event)) stirred = performance.now()
 }
 
 function onPointerMove(event: PointerEvent): void {
@@ -2741,8 +2854,9 @@ function onPointerMove(event: PointerEvent): void {
     }
   }
 
-  // A drag of the view, which is an orbit or a pan: both are about the pivot, so both show it.
-  if (pressed?.moved) stirred = performance.now()
+  // A pan is the drag that moves the pivot. An orbit turns about it without touching it, so it
+  // has nothing to say about where it is.
+  if (pressed?.moved && carrying) stirred = performance.now()
 
   if (!pressed || pressed.moved) return
   if (Math.abs(event.clientX - pressed.x) + Math.abs(event.clientY - pressed.y) > SLOP) pressed.moved = true
@@ -2936,6 +3050,10 @@ function teardown(): void {
     current.viewer.world.scene.remove(current.gimbal)
     disposeGeometry(current.gimbal)
   }
+  if (current.ghost) {
+    current.viewer.world.scene.remove(current.ghost)
+    disposeGeometry(current.ghost)
+  }
   for (const line of current.pathLines ?? []) {
     current.viewer.world.scene.remove(line)
     disposeGeometry(line)
@@ -2966,6 +3084,21 @@ const ASSETS = '/viewer'
       @pointerup="onPointerUp"
       @pointerleave="onPointerLeave"
     />
+
+    <!--
+      Over the view rather than beside it, and in the corner the map puts its readout in, because
+      they are the same kind of thing: a quiet note about the surface it sits on. Hidden in first
+      person, where none of it applies - there is no pivot and no orbit, only a head.
+    -->
+    <div
+      v-if="!firstPerson"
+      class="bg-base-200/80 pointer-events-none absolute bottom-2 left-2 rounded px-2 py-1 font-mono text-xs shadow-sm"
+    >
+      <span class="opacity-60">
+        {{ t('viewer.legendOrbit') }} · {{ t('viewer.legendPan') }} · {{ t('viewer.legendZoom') }} ·
+        {{ t('viewer.legendFast') }} · {{ t('viewer.legendFly') }}
+      </span>
+    </div>
 
     <!--
       Anchored where the click landed, over the canvas. The block it names is the one the ray came

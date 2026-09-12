@@ -120,6 +120,13 @@ declare module 'three/examples/jsm/lines/LineMaterial.js' {
       transparent: boolean
       /** Only read while `transparent`, which is the only way any of these are built. */
       opacity?: number
+      /**
+       * Dashes, which need `computeLineDistances()` to have been run over the geometry - without
+       * that the line has no idea how far along itself each vertex is, and comes out solid.
+       */
+      dashed?: boolean
+      dashSize?: number
+      gapSize?: number
     })
     resolution: { set(width: number, height: number): void }
   }

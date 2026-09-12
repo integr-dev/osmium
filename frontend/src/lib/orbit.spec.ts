@@ -5,11 +5,15 @@ import {
   CLOSEST,
   LEAST,
   MOST,
+  HURRY,
+  FLIGHT,
   MOST_AT_ONCE,
+  STRIDE,
   dollyToward,
   easeZoom,
   panRate,
   reachFor,
+  wheelTurn,
   zoomFactor,
   type Point,
 } from './orbit'
@@ -73,6 +77,43 @@ describe('panRate', () => {
   })
 })
 
+describe('wheelTurn', () => {
+  it('reads an ordinary turn off the vertical axis', () => {
+    expect(wheelTurn(-100, 0, false)).toBe(-100)
+    expect(wheelTurn(100, 0, false)).toBe(100)
+  })
+
+  it('finds a hurried turn on the axis the browser moved it to', () => {
+    // Shift and a wheel is a request to scroll sideways, so on Windows and Linux the notch arrives
+    // as deltaX with a deltaY of zero - and a zoom reading only deltaY does nothing at all for the
+    // one gesture that is asking it to hurry.
+    expect(wheelTurn(0, -100, true)).toBe(-100 * HURRY)
+  })
+
+  it('hurries a turn that stayed on the vertical axis too', () => {
+    // macOS leaves it on deltaY, so both have to work.
+    expect(wheelTurn(-100, 0, true)).toBe(-100 * HURRY)
+  })
+
+  it('travels exactly HURRY times as far for the same turn', () => {
+    // The point of multiplying the turn rather than switching to another rate: zoomFactor is
+    // exponential in it and dollyToward is linear in its log, so the two compose into a clean
+    // multiple of the distance.
+    const pivot: Point = { x: 0, y: 0, z: 0 }
+    const from: Point = { x: 0, y: 0, z: 40 }
+
+    const walked = dollyToward(from, pivot, zoomFactor(wheelTurn(-100, 0, false)), true)
+    const hurried = dollyToward(from, pivot, zoomFactor(wheelTurn(-100, 0, true)), true)
+
+    expect(40 - hurried.camera.z).toBeCloseTo((40 - walked.camera.z) * HURRY, 8)
+  })
+
+  it('says nothing happened when nothing did', () => {
+    expect(wheelTurn(0, 0, false)).toBe(0)
+    expect(wheelTurn(Number.NaN, Number.NaN, false)).toBe(0)
+  })
+})
+
 describe('zoomFactor', () => {
   it('goes away from a wheel turned down and towards one turned up', () => {
     expect(zoomFactor(100)).toBeGreaterThan(1)
@@ -93,64 +134,98 @@ describe('zoomFactor', () => {
 })
 
 describe('dollyToward', () => {
-  const at: Point = { x: 0, y: 0, z: 0 }
+  const pivot: Point = { x: 0, y: 0, z: 0 }
 
-  it('holds the point under the cursor still', () => {
-    const camera = { x: 0, y: 10, z: 20 }
-    const target = { x: 0, y: 2, z: 4 }
+  /** What one turn of the wheel is worth, in blocks, for each of the two moves. */
+  function step(factor: number): number {
+    return STRIDE * -Math.log(factor)
+  }
 
-    const closer = dollyToward(camera, target, at, 0.5)
+  function flown(factor: number): number {
+    return FLIGHT * -Math.log(factor)
+  }
 
-    // Camera, pivot and the point stay on one line, and the point does not move: everything else
-    // is half as far from it as it was, which is what keeps it under the cursor.
-    expect(apart(closer.camera, at)).toBeCloseTo(apart(camera, at) / 2, 10)
-    expect(apart(closer.target, at)).toBeCloseTo(apart(target, at) / 2, 10)
+  it('is worth the same wherever the wheel is turned', () => {
+    // The whole complaint, four times over: every version of this was a share of some distance,
+    // and each of them shrank to nothing exactly where it was wanted, because the step is closing
+    // the very distance it is measured against.
+    const near = dollyToward({ x: 0, y: 0, z: 20 }, pivot, 0.9)
+    const far = dollyToward({ x: 0, y: 0, z: 400 }, pivot, 0.9)
+
+    expect(20 - near.camera.z).toBeCloseTo(step(0.9), 10)
+    expect(400 - far.camera.z).toBeCloseTo(step(0.9), 10)
   })
 
-  it('does not turn the camera, only move it', () => {
-    const camera = { x: 3, y: 10, z: 20 }
-    const target = { x: 1, y: 2, z: 4 }
+  it('carries on at that rate however long it is held', () => {
+    // It does not fade. Ten notches move ten notches worth, which is what a wheel with the same
+    // weight in the hand at the end of a gesture as at the start does.
+    let camera: Point = { x: 0, y: 0, z: 20 }
+    let target: Point = { x: 0, y: 0, z: 0 }
 
-    const before = apart(camera, target)
-    const closer = dollyToward(camera, target, at, 0.5)
-
-    // Both scale about the same point, so the camera still looks along the same line - the whole
-    // arrangement is just smaller.
-    expect(apart(closer.camera, closer.target)).toBeCloseTo(before / 2, 10)
-  })
-
-  /** A share of the remaining distance, so arriving costs less and less. */
-  it('slows down as it approaches a surface', () => {
-    const first = dollyToward({ x: 0, y: 0, z: 40 }, { x: 0, y: 0, z: 30 }, at, 0.8)
-    const second = dollyToward(first.camera, first.target, at, 0.8)
-
-    const one = 40 - apart(first.camera, at)
-    const two = apart(first.camera, at) - apart(second.camera, at)
-
-    expect(two).toBeLessThan(one)
-  })
-
-  it('will not put the camera inside what it is aimed at', () => {
-    let camera: Point = { x: 0, y: 0, z: 10 }
-    let target: Point = { x: 0, y: 0, z: 5 }
-
-    for (let turn = 0; turn < 200; turn++) {
-      ;({ camera, target } = dollyToward(camera, target, at, 0.5))
+    for (let turn = 0; turn < 10; turn++) {
+      ;({ camera, target } = dollyToward(camera, target, 0.9, true))
     }
 
-    expect(apart(camera, at)).toBeCloseTo(CLOSEST, 5)
+    expect(20 - camera.z).toBeCloseTo(10 * flown(0.9), 8)
   })
 
-  it('still lets go of a wall it has been pushed against', () => {
-    const camera = { x: 0, y: 0, z: CLOSEST }
-    const out = dollyToward(camera, { x: 0, y: 0, z: 0.1 }, at, 2)
+  it('leaves the pivot where it was put unless it is asked to fly', () => {
+    // Moving the point a view turns around is the stronger thing and the one worth asking for:
+    // put back by hand it is a worse job than any zoom is worth. So the plain wheel slides the
+    // camera along the line of sight and the pivot stays exactly where it is.
+    const orbiting = dollyToward({ x: 0, y: 0, z: 20 }, pivot, 0.9)
 
-    expect(apart(out.camera, at)).toBeCloseTo(CLOSEST * 2, 10)
+    expect(orbiting.target).toEqual(pivot)
+    expect(20 - orbiting.camera.z).toBeCloseTo(step(0.9), 10)
   })
 
-  it('leaves a camera standing on the point it is aimed at alone', () => {
-    const camera = { x: 0, y: 0, z: 0 }
-    const same = dollyToward(camera, { x: 0, y: 0, z: 5 }, at, 0.5)
+  it('takes the pivot with it when it is', () => {
+    // The gimbal moves into the world with the camera, which is what makes orbiting afterwards
+    // turn about something in front of the camera rather than somewhere it has long since left.
+    const moved = dollyToward({ x: 0, y: 0, z: 20 }, pivot, 0.9, true)
+
+    expect(moved.target.z).toBeCloseTo(-flown(0.9), 10)
+    expect(apart(moved.camera, moved.target)).toBeCloseTo(20, 10)
+  })
+
+  it('slides the camera up to the pivot and no further', () => {
+    // Sliding closes the gap, so without a floor the camera arrives at the thing it is turning
+    // around and then passes through it.
+    let camera: Point = { x: 0, y: 0, z: 20 }
+
+    for (let turn = 0; turn < 200; turn++) {
+      ;({ camera } = dollyToward(camera, pivot, 0.9))
+    }
+
+    expect(apart(camera, pivot)).toBeCloseTo(CLOSEST, 10)
+  })
+
+  it('flies back out the way it flew in', () => {
+    // The one-way version pushed the pivot off into the world and left no way of getting it home:
+    // winding the wheel back opened a gap instead of retracing the flight, so a view that had been
+    // flown somewhere had to be rebuilt by hand. A translation has an exact inverse.
+    let camera: Point = { x: 0, y: 0, z: 20 }
+    let target: Point = { x: 0, y: 0, z: 0 }
+
+    for (let turn = 0; turn < 12; turn++) {
+      ;({ camera, target } = dollyToward(camera, target, 0.9, true))
+    }
+
+    expect(20 - camera.z).toBeCloseTo(12 * flown(0.9), 8)
+
+    for (let turn = 0; turn < 12; turn++) {
+      ;({ camera, target } = dollyToward(camera, target, 1 / 0.9, true))
+    }
+
+    expect(camera.z).toBeCloseTo(20, 8)
+    expect(target.z).toBeCloseTo(0, 8)
+  })
+
+
+  it('leaves a camera standing on its own pivot alone', () => {
+    // No line of sight to fly along.
+    const camera: Point = { x: 0, y: 0, z: 0 }
+    const same = dollyToward(camera, pivot, 0.5)
 
     expect(same.camera).toEqual(camera)
   })
