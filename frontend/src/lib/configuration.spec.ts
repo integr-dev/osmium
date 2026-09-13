@@ -210,6 +210,17 @@ describe('the copy behind the form', () => {
     }
   })
 
+  /** The picker lists every command it knows, so one without copy shows its translation key instead. */
+  it('describes every command a player can be granted', () => {
+    for (const locale of locales) {
+      for (const command of COMMAND_NAMES) {
+        expect(copy(locale, `configuration.players.command.${command}`), `${locale} ${command}`).toEqual(
+          expect.any(String),
+        )
+      }
+    }
+  })
+
   it('names every group', () => {
     for (const locale of locales) {
       for (const group of SETTING_GROUPS) {
