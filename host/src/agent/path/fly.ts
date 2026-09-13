@@ -120,13 +120,15 @@ export function takeoff(
 /**
  * Blocks that are empty to the physics and are still no place to fly through.
  *
- * Water and lava slow and stop flight, the rest hurt or hold, and a portal would take the agent
- * somewhere else entirely.
+ * Lava burns, the rest hurt or hold, and a portal would take the agent somewhere else entirely.
+ *
+ * **Water is not one of them.** A player who is flying is not slowed by water - vanilla leaves
+ * fluids alone for anyone with flight - and the velocity this engine sets is what the physics moves
+ * the body by, in water as out of it. Counted as closed, an agent that started underwater had no
+ * square with room in it and gave up on flying before it had moved. See {@link WET}.
  */
 const UNSAFE = new Set([
-  'water',
   'lava',
-  'bubble_column',
   'fire',
   'soul_fire',
   'cobweb',
@@ -140,6 +142,18 @@ const UNSAFE = new Set([
 
 /** Solid, and still nothing to land on. */
 const BAD_GROUND = new Set(['magma_block', 'campfire', 'soul_campfire', 'cactus', 'pointed_dripstone'])
+
+/**
+ * Water, which is flown through but not for longer than it has to be.
+ *
+ * A player underwater runs out of air, so a searched square of it costs {@link WET_COST} on top of
+ * its distance, and a surface counts as ground when a stretch works out how high to fly - over a
+ * lake, not along its bed.
+ */
+const WET = new Set(['water', 'bubble_column'])
+
+/** What a searched square of water costs on top of its distance. */
+const WET_COST = 2
 
 /**
  * Blocks that burn, kept a margin clear of rather than only not flown into.
@@ -225,7 +239,8 @@ export function flyingFrom(blockAt: BlockAt): Neighbours {
       if (!swept(cached, from, dx, dy, dz)) continue
       // Dear rather than closed, so a search that starts beside lava can still find its way off.
       const hot = !clearOfHeat(cached, x + 0.5, y + CLEARANCE, z + 0.5)
-      steps.push(cell(x, y, z, Math.hypot(dx, dy, dz) + (hot ? HOT_COST : 0)))
+      const wet = WET.has(cached(x, y, z)?.name ?? '') || WET.has(cached(x, y + 1, z)?.name ?? '')
+      steps.push(cell(x, y, z, Math.hypot(dx, dy, dz) + (hot ? HOT_COST : 0) + (wet ? WET_COST : 0)))
     }
 
     return steps
@@ -1071,7 +1086,8 @@ export class FlightDriver {
         return this.remember(key, y)
       }
       sent = true
-      if (!open(this.blocks, x, y, z)) return this.remember(key, y)
+      // A water surface is ground to fly over, though it is not ground to fly into: see WET.
+      if (!open(this.blocks, x, y, z) || WET.has(block.name)) return this.remember(key, y)
     }
     return sent ? this.remember(key, WORLD_BOTTOM) : undefined
   }

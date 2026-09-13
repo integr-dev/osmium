@@ -503,6 +503,22 @@ describe('flying', () => {
     expect(agent.physics.gravity).toBe(0.08)
   })
 
+  /** Water counted as closed, so an agent that started in it had nowhere with room and never took off. */
+  it('flies out of water it starts in', () => {
+    const WATER = { name: 'water', boundingBox: 'empty' }
+    const lake: Record<string, typeof STONE> = {}
+    for (let x = -3; x <= 20; x++) for (let y = 64; y <= 70; y++) for (let z = -4; z <= 4; z++) lake[`${x},${y},${z}`] = WATER
+
+    const agent = flyer(world(lake), false)
+    agent.driver.go({ x: 30, y: 64, z: 0 }, 1)
+
+    for (let at = 0; at < 600 && agent.said.arrived === 0 && agent.said.grounded.length === 0; at++) agent.tick()
+
+    expect(agent.said.grounded).toEqual([])
+    expect(agent.said.arrived).toBe(1)
+    expect(agent.entity.position.x).toBeGreaterThan(29)
+  })
+
   /** Gravity back on two hundred blocks up was a fall into whatever was under it, lava included. */
   it('comes down to the ground before handing an abandoned flight back to walking', () => {
     const sealed: Record<string, typeof STONE> = {}

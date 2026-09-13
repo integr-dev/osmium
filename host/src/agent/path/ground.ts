@@ -63,7 +63,101 @@ export interface Placement {
 /** What can be reached from a square, by walking, under these rules. */
 export function walkingFrom(movements: Movements): Neighbours {
   // The objects go straight through: upstream builds `Move`s, and a `Move` is a `Walk`.
-  return (from) => movements.getNeighbors(from as never) as unknown as readonly Walk[]
+  return (from) => {
+    const walks = movements.getNeighbors(from as never) as unknown as readonly Walk[]
+    const swims = SWIMS.map(([dx, dy, dz]) => swimming(movements, from as Walk, dx, dy, dz)).filter(
+      (step): step is Walk => step !== undefined,
+    )
+    return swims.length > 0 ? [...walks, ...swims] : walks
+  }
+}
+
+/**
+ * The height to walk to for a point, which for a point on top of water is the water.
+ *
+ * **A swimmer floats in the top square of water, not the square above it** - and a point picked on a
+ * water surface is the square above it, because that is the square the surface is the top of. Walked
+ * to as given, that square is a block and a half from every square a swimmer can be in, never within
+ * arriving distance, so the search spent its whole budget proving it could not get there while the
+ * agent stood at the water's edge.
+ */
+export function swimmingHeight(bot: Bot, x: number, y: number, z: number): number {
+  const square = bot.blockAt(new WorldVec(Math.floor(x), Math.floor(y), Math.floor(z)))
+  const under = bot.blockAt(new WorldVec(Math.floor(x), Math.floor(y) - 1, Math.floor(z)))
+  const dry = square !== null && square.boundingBox === 'empty' && square.name !== 'water'
+  return dry && under?.name === 'water' ? y - 1 : y
+}
+
+/**
+ * Every way a swimmer goes up or down a square: straight, or with a square across on the way.
+ *
+ * **Sloped as well as straight**, because a route of only straight moves down through water is a
+ * staircase - down a square, across a square, down again - and a swimmer steering that turns to face
+ * every step of it.
+ */
+const SWIMS: ReadonlyArray<readonly [number, 1 | -1, number]> = [1, -1].flatMap((dy) =>
+  [
+    [0, 0],
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ].map(([dx, dz]) => [dx!, dy as 1 | -1, dz!] as const),
+)
+
+/** As much of upstream's block reading as swimming asks about, which its types do not describe. */
+interface Wading {
+  getBlock(node: { x: number; y: number; z: number }, dx: number, dy: number, dz: number): { liquid: boolean; safe: boolean }
+  liquidCost: number
+}
+
+/**
+ * Up or down a square of water, from a square of water.
+ *
+ * **Upstream swims along the top of water and never through it** - both of its vertical moves
+ * refuse a square of liquid outright - so an agent that was underwater had no route to anywhere, a
+ * point under the surface was somewhere no route reached, and one sent across a lake could only ever
+ * be routed along whatever depth it went in at. Holding jump in water rises and letting go sinks,
+ * which is all these moves are: `drive.ts` swims them.
+ *
+ * Only into more water, so the route surfaces at the top square of it rather than a square above
+ * the surface a swimmer cannot rise into, and bottoms out on the square above the bed; the walking
+ * moves carry on from there. Lava is liquid too and never safe, so none of this reaches it.
+ */
+function swimming(movements: Movements, from: Walk, dx: number, dy: 1 | -1, dz: number): Walk | undefined {
+  const rules = movements as unknown as Wading
+  const block = (x: number, y: number, z: number) => rules.getBlock(from, x, y, z)
+  const water = (x: number, y: number, z: number) => {
+    const found = block(x, y, z)
+    return found.liquid && found.safe
+  }
+
+  // The square the feet end in, and the head above it: water, so a swimmer can be there.
+  if (!water(0, 0, 0) || !water(dx, dy, dz) || !block(dx, dy + 1, dz).safe) return undefined
+
+  if (dx !== 0 || dz !== 0) {
+    // **Along a slope, the body sweeps the corner squares too**, or a swim down past the lip of a
+    // ledge is routed through the ledge. Up: through the water above first. Down: across first,
+    // which is where the head of the move already is.
+    if (dy === 1 && (!water(0, 1, 0) || !block(0, 2, 0).safe || !block(dx, 0, dz).safe)) return undefined
+    if (dy === -1 && (!water(0, -1, 0) || !block(dx, 1, dz).safe)) return undefined
+  } else if (dy === 1 && !block(0, 2, 0).safe) {
+    return undefined
+  }
+
+  const x = from.x + dx
+  const y = from.y + dy
+  const z = from.z + dz
+  return {
+    x,
+    y,
+    z,
+    hash: `${x},${y},${z}`,
+    cost: Math.hypot(dx, dy, dz) + rules.liquidCost,
+    toPlace: [],
+    toBreak: [],
+    remainingBlocks: from.remainingBlocks,
+  }
 }
 
 /**
@@ -109,6 +203,17 @@ export function standingAt(bot: Bot, movements: Movements): Walk {
     toBreak: [],
     remainingBlocks: held,
   })
+
+  // **In water, the square of water it is in.** A swimmer is never on the ground, and the airborne
+  // answer below looks for the floor under it - which puts the start of a search on the bed of the
+  // lake, a square the agent is nowhere near and cannot sink to on purpose.
+  if ((bot.entity as unknown as { isInWater?: boolean }).isInWater === true) {
+    const liquids = (movements as unknown as { liquids: Set<number> }).liquids
+    for (const y of [floored.y, floored.y - 1]) {
+      const block = bot.blockAt(new WorldVec(floored.x, y, floored.z))
+      if (block && liquids.has(block.type)) return square(floored.x, y, floored.z)
+    }
+  }
 
   if (!bot.entity.onGround) {
     // The first solid thing below, within a jump's worth of height. Further than that and the agent

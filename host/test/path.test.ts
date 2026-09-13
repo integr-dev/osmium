@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest'
 
 import { advanced, nodesOf } from '../src/agent/path/track.ts'
 import { DEFAULT_DROP, DEFAULT_RANGE, leanFor, MOST_DROP, MOST_RANGE, pathSettingsFrom } from '../src/agent/path/settings.ts'
-import { within } from '../src/agent/path/ground.ts'
+import blockLoader from 'prismarine-block'
+
+import { swimmingHeight, walkingFrom, within } from '../src/agent/path/ground.ts'
 import { movementsFor, type Refused } from '../src/agent/path/walk.ts'
 
 /**
@@ -364,6 +366,99 @@ describe('going around somewhere the server refused', () => {
     const [priced] = movementsFor(fakeBot(), pathSettingsFrom({}), [refusal(0, 0, 0)]).exclusionAreasStep
 
     expect(priced!({} as never)).toBe(0)
+  })
+})
+
+/**
+ * Up through water, which upstream never routes: both of its vertical moves refuse a square of
+ * liquid, so an agent underwater had no route anywhere.
+ */
+describe('swimming up', () => {
+  const registry = registryFor('1.20.4')
+  const Block = blockLoader(registry)
+
+  /** Stone to y 59, and a pool of `liquid` from y 60 to 64 around the origin, air above it all. */
+  function pool(liquid: 'water' | 'lava'): Bot {
+    const blockAt = (at: { x: number; y: number; z: number }) => {
+      const name = at.y <= 59 ? 'stone' : at.y <= 64 && Math.abs(at.x) <= 3 && Math.abs(at.z) <= 3 ? liquid : 'air'
+      const block = Block.fromStateId(registry.blocksByName[name]!.defaultState!, 0)
+      block.position = at as never
+      return block
+    }
+    return { registry, blockAt, game: { minY: -64 }, entity: { effects: {} } } as unknown as Bot
+  }
+
+  function from(y: number) {
+    return { x: 0, y, z: 0, hash: `0,${y},0`, cost: 0, toPlace: [], toBreak: [], remainingBlocks: 0 }
+  }
+
+  const up = (bot: Bot, y: number) =>
+    walkingFrom(movementsFor(bot, pathSettingsFrom({})))(from(y)).some((step) => step.x === 0 && step.z === 0 && step.y === y + 1)
+
+  it('rises through water it is under', () => {
+    expect(up(pool('water'), 60)).toBe(true)
+  })
+
+  /** A swimmer holding jump floats in the top square; the square above that is not somewhere it can rise into. */
+  it('stops at the top square of the water', () => {
+    expect(up(pool('water'), 64)).toBe(false)
+  })
+
+  it('never rises through lava', () => {
+    expect(up(pool('lava'), 60)).toBe(false)
+  })
+
+  const down = (bot: Bot, y: number) =>
+    walkingFrom(movementsFor(bot, pathSettingsFrom({})))(from(y)).some((step) => step.x === 0 && step.z === 0 && step.y === y - 1)
+
+  /** A point under the surface was somewhere no route reached, so the search spent its whole budget on it. */
+  it('sinks through water it is in', () => {
+    expect(down(pool('water'), 64)).toBe(true)
+  })
+
+  it('stops on the square above the bed', () => {
+    expect(down(pool('water'), 60)).toBe(false)
+  })
+
+  it('never sinks through lava', () => {
+    expect(down(pool('lava'), 64)).toBe(false)
+  })
+
+  const toward = (bot: Bot, y: number, dx: number, dy: number) =>
+    walkingFrom(movementsFor(bot, pathSettingsFrom({})))(from(y)).some(
+      (step) => step.x === dx && step.z === 0 && step.y === y + dy,
+    )
+
+  /** Straight moves only make a staircase down, and a swimmer steering one turns at every step of it. */
+  it('swims down and up at a slope, not only straight', () => {
+    expect(toward(pool('water'), 63, 1, -1)).toBe(true)
+    expect(toward(pool('water'), 61, 1, 1)).toBe(true)
+  })
+
+  it('does not slope through the bed, or up out of the top square', () => {
+    expect(toward(pool('water'), 60, 1, -1)).toBe(false)
+    expect(toward(pool('water'), 64, 1, 1)).toBe(false)
+  })
+
+  it('does not slope out past the edge of the water', () => {
+    expect(toward(pool('water'), 62, 1, -1)).toBe(true)
+    const edge = pool('water')
+    const moved = (y: number, dy: number) =>
+      walkingFrom(movementsFor(edge, pathSettingsFrom({})))({ ...from(y), x: 3 }).some(
+        (step) => step.x === 4 && step.y === y + dy,
+      )
+    expect(moved(62, -1)).toBe(false)
+    expect(moved(62, 1)).toBe(false)
+  })
+
+  /** A swimmer floats in the top square of water; a point picked on the surface is the square above it. */
+  it('walks to the water under a point on top of it', () => {
+    const bot = pool('water')
+
+    expect(swimmingHeight(bot, 0.5, 65, 0.5)).toBe(64)
+    expect(swimmingHeight(bot, 0.5, 62, 0.5)).toBe(62)
+    expect(swimmingHeight(bot, 0.5, 70, 0.5)).toBe(70)
+    expect(swimmingHeight(bot, 10.5, 60, 10.5)).toBe(60)
   })
 })
 

@@ -598,6 +598,43 @@ interface Mend {
   index: number
 }
 
+/**
+ * How far below the agent's feet a square in water can be and still be risen to rather than sunk to.
+ *
+ * A swimmer holding jump bobs with its feet about half a block into the top square of water, so the
+ * square it is floating in reads as a little below it - and letting go there sinks it out of the
+ * square it was already in.
+ */
+const SURFACING = 0.5
+
+/**
+ * What a tick of sprinting in water keeps of its horizontal speed, against what paddling keeps.
+ *
+ * **The half of swimming prismarine's physics leaves out.** Vanilla damps horizontal speed in water
+ * by 0.9 a tick while sprinting and by 0.8 otherwise, which is the whole difference between swimming
+ * and paddling - near enough twice the top speed. The physics applies 0.8 whatever is held, so a
+ * sprint in water was a key pressed for nothing. Scaling what it left by the ratio, after each tick
+ * it sprinted through, is exactly vanilla's: the stroke is the same, only less of it is lost.
+ * Vertical speed is damped the same either way, so it is left alone.
+ */
+const SPRINT_SWIM = 0.9 / 0.8
+
+/**
+ * What a tick of diving takes off a swimmer's vertical speed.
+ *
+ * Vanilla's for a player holding sneak in water, which prismarine's physics does not model - it only
+ * knows that jump rises. Left to sink on its own a swimmer drops a tenth of a block a tick, slower
+ * than it crosses the water, so it arrived above every square of a descent and circled it on the way
+ * down. Holding sneak instead would not do: the physics slows every stroke to a third for a crouch
+ * that in water is not one.
+ */
+const DIVE = 0.04
+
+/** Whether the agent is in water, by the physics' own reading of it. */
+function swimming(bot: Bot): boolean {
+  return (bot.entity as unknown as { isInWater?: boolean } | undefined)?.isInWater === true
+}
+
 export class Driver {
   private goal: Goal | undefined
 
@@ -694,6 +731,9 @@ export class Driver {
 
   /** Ticks spent braking into the last square, so an agent that never settles still arrives. */
   private landing = 0
+
+  /** Whether the last decision was to swim down to a square below. See {@link DIVE}. */
+  private diving = false
 
   /**
    * The square the agent gave up on and planned again from, so it only does that once.
@@ -828,6 +868,14 @@ export class Driver {
    */
   private tick(): void {
     try {
+      // The tick just simulated, before anything below changes the controls for the next one.
+      const moving = this.bot.entity?.velocity
+      if (moving && swimming(this.bot) && this.bot.getControlState('sprint')) {
+        moving.x *= SPRINT_SWIM
+        moving.z *= SPRINT_SWIM
+      }
+      if (moving && swimming(this.bot) && this.diving) moving.y -= DIVE
+
       this.record()
       this.think()
     } catch (err) {
@@ -1237,6 +1285,9 @@ export class Driver {
     const at = this.bot.entity?.position
     if (!section || !at) return
 
+    // Decided afresh by every swimming tick, so a dive does not outlive the square it was for.
+    this.diving = false
+
     this.reachOn()
 
     const step = section.steps[0]
@@ -1290,7 +1341,9 @@ export class Driver {
     // and ran up each gap from 0.000 with half a block of runway.
     this.ahead = section.steps.slice(1, LOOK_AHEAD_LANDING + 1)
 
-    const landed = this.flying !== undefined && this.bot.entity?.onGround === true
+    // A jump into water comes down in it, and is as over as one that came down on a block.
+    const wading = swimming(this.bot)
+    const landed = this.flying !== undefined && (this.bot.entity?.onGround === true || wading)
     if (landed) this.flying = undefined
 
     /*
@@ -1430,7 +1483,8 @@ export class Driver {
        * the square it had just landed on. The brake below never got a chance - there was no
        * longer a journey for it to belong to.
        */
-      if (ending && this.bot.entity?.onGround !== true) return
+      // A swimmer is never on the ground, and a journey that ends in water still ends.
+      if (ending && this.bot.entity?.onGround !== true && !wading) return
 
       if (ending && this.bot.entity?.onGround === true && this.landing < HOLD_UP && this.brake()) {
         this.landing++
@@ -2017,6 +2071,49 @@ export class Driver {
     if (bot.entity.onGround === true) this.flying = undefined
 
     /*
+     * **Swimming is not falling, and it is not a jump.**
+     *
+     * A swimmer is never on the ground, so every branch below took one for a body in the air: in its
+     * own column it was "dropping onto its own square" and let go of everything - which in water is
+     * sinking - and anywhere else it was a jump "left to finish", which never lands. Water is steered
+     * like the ground it is not: towards the square, rising with jump held while the square is level
+     * or above, and sinking with it let go while the square is below.
+     *
+     * **Sprinting, where sprinting is allowed**, which in water is swimming: about twice the speed of
+     * paddling. See {@link SPRINT_SWIM} for the half of it the physics does not know about.
+     */
+    if (swimming(bot)) {
+      this.flying = undefined
+      const rising = to.y >= at.y - SURFACING
+
+      if (column) {
+        /*
+         * **Straight up or down its own square has nothing to face.** Turning to the middle of the
+         * square it is already in is a heading that moves as the agent does - a new one every tick -
+         * and on a descent that alternated straight and across steps, it swung round to that middle
+         * and back out again at every one. So it is slid back to the middle in its own frame, the way
+         * a tower lines up, and the heading is left where the last square across put it.
+         */
+        this.centre(dx, dz)
+      } else {
+        if (Math.hypot(dx, dz) > WORTH_TURNING) bot.look(Math.atan2(-dx, -dz), 0)
+        bot.setControlState('forward', true)
+        bot.setControlState('back', false)
+        bot.setControlState('left', false)
+        bot.setControlState('right', false)
+        bot.setControlState('sneak', false)
+        bot.setControlState('sprint', this.rules().sprint)
+      }
+
+      // After lining up, which lets go of jump along with everything else.
+      bot.setControlState('jump', rising)
+      this.diving = !rising
+
+      if (column) return rising ? 'swimming up its own square' : 'diving down its own square'
+      return rising ? 'swimming there' : 'swimming down to it'
+    }
+
+    /*
      * **A drop straight down is not steered, because there is nowhere to steer it to.**
      *
      * Everything below this presses `forward` and re-aims the heading, and it runs *before* the
@@ -2069,12 +2166,6 @@ export class Driver {
     bot.setControlState('right', false)
 
     const sprint = this.rules().sprint
-
-    if ((bot.entity as unknown as { isInWater?: boolean }).isInWater) {
-      bot.setControlState('jump', true)
-      bot.setControlState('sprint', false)
-      return 'swimming there'
-    }
 
     /*
      * **Nothing is decided in the air. Everything below is about how to leave the ground.**

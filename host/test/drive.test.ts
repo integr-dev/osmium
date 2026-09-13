@@ -68,6 +68,8 @@ interface Fake {
   placing: ReturnType<typeof heldPromise<void>>
   digging: ReturnType<typeof heldPromise<void>>
   standAt(x: number, y: number, z: number, onGround?: boolean): void
+  /** In water, as the physics reads it: never on the ground. */
+  swim(): void
   drift(x: number, z: number): void
   refuse(times: number): void
 }
@@ -87,6 +89,7 @@ function fakeBot(neighbours: unknown[]): Fake {
     yaw: 0,
     pitch: 0,
     onGround: true,
+    isInWater: false,
     effects: {},
   }
   let refusals = 0
@@ -183,6 +186,10 @@ function fakeBot(neighbours: unknown[]): Fake {
         countScaffoldingItems: () => 8,
         getScaffoldingItem: () => ({ type: 4, name: 'cobblestone' }),
         emptyBlocks: new Set<number>(),
+        // Dry land everywhere, which is what the single square ahead stands for: nothing to swim up.
+        getBlock: () => ({ liquid: false, safe: true }),
+        liquidCost: 1,
+        liquids: new Set<number>(),
       } as unknown as Rules['movements'],
       reach: 128,
       sprint: false,
@@ -204,6 +211,10 @@ function fakeBot(neighbours: unknown[]): Fake {
     standAt(x, y, z, onGround = true) {
       entity.position = new WorldVec(x, y, z)
       entity.onGround = onGround
+    },
+    swim() {
+      entity.isInWater = true
+      entity.onGround = false
     },
     drift(x: number, z: number) {
       entity.velocity = new WorldVec(x, 0, z)
@@ -843,6 +854,87 @@ describe('Driver', () => {
     expect(world.said.arrived).toBe(1)
     // A route that reaches the goal is not the closest it could get.
     expect(world.said.closest).toBe(0)
+  })
+
+  /**
+   * A swimmer is never on the ground, so under its next square it was "dropping onto its own square"
+   * and let go of everything - which in water is sinking away from it.
+   */
+  it('holds jump to swim up to a square above it, rather than letting go and sinking', () => {
+    const { world } = driving([ahead()])
+
+    world.swim()
+    world.standAt(0.5, 63.3, 1.5, false)
+    world.tick()
+
+    expect(world.bot.getControlState('jump')).toBe(true)
+    expect(world.said.arrived).toBe(0)
+  })
+
+  /** Paddling is half the speed of swimming, and a player crossing water sprints. */
+  it('sprints to swim when sprinting is allowed, and swims as fast as vanilla does', () => {
+    const world = fakeBot([ahead()])
+    const driver = new Driver(1, world.bot, () => ({ ...world.rules(), sprint: true }), world.report, hands(), onFoot)
+    driver.start()
+    driver.go(within(0, 64, 1, 0.5))
+    world.tick()
+
+    world.swim()
+    world.standAt(0.5, 64.3, 0.6, false)
+    world.tick()
+
+    expect(world.bot.getControlState('sprint')).toBe(true)
+    expect(world.bot.getControlState('forward')).toBe(true)
+
+    // What the physics left after a tick of sprinting in water: its paddling drag, 0.8.
+    world.drift(0, 0.08)
+    world.tick()
+
+    // Vanilla's is 0.9 while sprinting, so the same stroke keeps an eighth more of its speed.
+    expect(world.bot.entity.velocity.z).toBeCloseTo(0.09)
+    expect(world.bot.entity.velocity.x).toBeCloseTo(0)
+  })
+
+  /**
+   * A descent of straight and sloped steps turned the agent to the middle of its own square and back
+   * out at every one, and it sank slower than it swam, so it circled each square on the way down.
+   */
+  it('dives straight down its own square without turning, pushed down the way vanilla dives', () => {
+    const { world } = driving([ahead()])
+
+    world.swim()
+    world.standAt(0.7, 65.3, 1.3, false)
+    const looked = world.did.filter((what) => what === 'look').length
+    world.tick()
+
+    expect(world.did.filter((what) => what === 'look').length).toBe(looked)
+    expect(world.bot.getControlState('jump')).toBe(false)
+
+    world.drift(0, 0)
+    world.tick()
+
+    expect(world.bot.entity.velocity.y).toBeCloseTo(-0.04)
+  })
+
+  it('swims without sprinting when sprinting is not allowed', () => {
+    const { world } = driving([ahead()])
+
+    world.swim()
+    world.standAt(0.5, 64.3, 0.6, false)
+    world.tick()
+
+    expect(world.bot.getControlState('sprint')).toBe(false)
+  })
+
+  /** The last square waited for the ground, and a journey that ended in water never ended. */
+  it('finishes a journey that ends in water', () => {
+    const { world } = driving([ahead()])
+
+    world.swim()
+    world.standAt(0.5, 64.4, 1.5, false)
+    world.tick()
+
+    expect(world.said.arrived).toBe(1)
   })
 
   it('gives up when a second search also cannot reach the goal', () => {

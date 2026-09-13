@@ -19,7 +19,7 @@ import { log } from '../../log.ts'
 import type { Schedule } from '../schedule.ts'
 import { Driver, type Rules } from './drive.ts'
 import { FlightDriver, type FlightRules, type Permit, takeoff } from './fly.ts'
-import { over, standsAt, type Walk, within } from './ground.ts'
+import { over, standsAt, swimmingHeight, type Walk, within } from './ground.ts'
 import type { PathSettings } from './settings.ts'
 import { advanced, nodesOf, type PathNode, type PathWork } from './track.ts'
 import { movementsFor, type Refused } from './walk.ts'
@@ -651,7 +651,7 @@ export class AgentNavigator {
       this.driver.go(
         target.y === undefined
           ? over(target.x, target.z, near, wanted.lean)
-          : within(target.x, target.y, target.z, near, wanted.lean),
+          : within(target.x, swimmingHeight(this.bot, target.x, target.y, target.z), target.z, near, wanted.lean),
       )
     }
 
