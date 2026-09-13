@@ -71,6 +71,11 @@ export interface PathUpdate {
   progress?: number
   /** Why it stopped, for `failed`. */
   reason?: string
+  /**
+   * The route being walked only gets as close as the search could, because nothing it can walk,
+   * climb or build reaches the goal. Sent once per journey, on the update after the route is drawn.
+   */
+  closest?: true
 }
 
 /**
@@ -164,6 +169,16 @@ export class AgentNavigator {
   /** Whether {@link nodes} has changed since the last report. */
   private redrawn = false
 
+  /**
+   * Whether the next report says the route only gets as close as it can, and whether this journey
+   * has said so already.
+   *
+   * Once per journey: a long walk that keeps finding only the closest it can get extends its route
+   * several times, and an operator needs to hear that once rather than on every stretch.
+   */
+  private closest = false
+  private toldClosest = false
+
   private ticker: NodeJS.Timeout | undefined
 
   /**
@@ -235,6 +250,11 @@ export class AgentNavigator {
         route: (steps, settled) => this.routed(steps, settled),
         arrived: () => this.reached(),
         lost: (why) => this.finish('failed', why),
+        closest: () => {
+          if (this.toldClosest) return
+          this.toldClosest = true
+          this.closest = true
+        },
         stalled: () => log.debug(`Agent ${this.id} was stuck ${this.physics()}`),
       },
       hands,
@@ -305,6 +325,7 @@ export class AgentNavigator {
     this.waypoints = [...waypoints]
     this.at = 0
     this.refused = []
+    this.toldClosest = false
     this.seek()
   }
 
@@ -558,9 +579,11 @@ export class AgentNavigator {
       progress: this.progress,
       ...(goal ? { goal } : {}),
       ...(this.redrawn ? { nodes: this.nodes, work: this.work } : {}),
+      ...(this.closest ? { closest: true as const } : {}),
     })
 
     this.redrawn = false
+    this.closest = false
   }
 
   /** The engine says it is standing where it was sent. */
@@ -674,6 +697,8 @@ export class AgentNavigator {
     this.work = []
     this.progress = 0
     this.redrawn = false
+    this.closest = false
+    this.toldClosest = false
   }
 
   private destination(): Waypoint | undefined {

@@ -1656,6 +1656,7 @@ export class Agent {
           ...(update.work ? { work: update.work } : {}),
           ...(update.progress !== undefined ? { progress: update.progress } : {}),
           ...(update.reason ? { reason: update.reason } : {}),
+          ...(update.closest ? { closest: update.closest } : {}),
         })
       },
       this.hands,

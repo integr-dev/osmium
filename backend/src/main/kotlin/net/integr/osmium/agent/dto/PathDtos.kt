@@ -74,6 +74,13 @@ data class AgentPathResponse(
 
     @field:Schema(description = "Why it gave up, for FAILED.", example = "there is no route there")
     val reason: String?,
+
+    @field:Schema(
+        description = "True on the one update that says the route only gets as close as the search " +
+            "could, because nothing the agent can walk, climb or build reaches the goal. The agent " +
+            "is still walking it. False on every other update.",
+    )
+    val closest: Boolean = false,
 )
 
 @Schema(description = "What the route means to do to one block.")

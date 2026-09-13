@@ -163,6 +163,33 @@ export const en = {
     /** The count of how many is on the notice, so this stays singular however often it repeats. */
     segmentFailed: 'A piece of {name} failed. Open the job to see what the host said.',
     hostUnreachable: '{name} stopped answering. Its agents are offline until it comes back.',
+    /** How a journey ended. `{goal}` is whole-block coordinates, two of them for a column. */
+    path: {
+      arrived: '{name} arrived at {goal}.',
+      closest: '{name} found no path to {goal}, so it is walking as close as it can get.',
+      none: '{name} found no path to {goal}.',
+      timedOut: '{name} found no path to {goal} before the search ran out of time.',
+      noBlocks: '{name} found no path to {goal}: it has no blocks left to build with.',
+      unloaded: '{name} found no path to {goal}: the world around it has not loaded yet.',
+      broke: '{name} gave up on the way to {goal}: working out the route failed. The host log says why.',
+      couldNotPlace: '{name} gave up on the way to {goal}: it could not place a block.',
+      couldNotBreak: '{name} gave up on the way to {goal}: it could not break a block.',
+      putBack: '{name} gave up on the way to {goal}: the server kept putting it back.',
+      failed: '{name} gave up on the way to {goal}.',
+      /** A reason this build does not know yet, in the host's own words. */
+      failedBecause: '{name} gave up on the way to {goal}: {reason}.',
+    },
+    agent: {
+      dropped: '{name} dropped out of the game. Osmium is bringing it back.',
+      left: '{name} left the game.',
+      connectFailed: '{name} could not join {server}.',
+      needsRelink: '{name} needs linking again before it can join.',
+      gaveUp: 'Osmium stopped trying to bring {name} back.',
+    },
+    schematic: {
+      ready: '{name} is ready to build.',
+      failed: '{name} could not be read. Open it in the library to see why.',
+    },
   },
 
   login: {

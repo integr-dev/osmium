@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { formatUptime, useAgentStore } from './agents'
 import { useAuthStore } from './auth'
+import { useToastStore } from './toasts'
 import type { AgentResponse, AgentTelemetryResponse, HostResponse } from '../api/client'
 import { respondWith } from '../test/http'
 
@@ -380,6 +381,24 @@ describe('live updates', () => {
     expect(() => store.applyEvent('something-new', { whatever: true })).not.toThrow()
     expect(store.agents).toHaveLength(AGENTS.length)
   })
+
+  it('announces an agent dropping out, but not one this tab disconnected', async () => {
+    fleet()
+    const store = useAgentStore()
+    await store.refresh()
+
+    respondWith(() => ({ status: 200, body: {} }))
+    await store.disconnect(12)
+    store.applyEvent('agent', agent({ id: 12, state: 'LINKED', serverAddress: 'alpha.example:25565' }))
+
+    expect(useToastStore().toasts).toEqual([])
+
+    store.applyEvent('agent', { ...agent({ id: 5, state: 'LINKED', serverAddress: 'beta.example:25565' }), rejoining: true })
+
+    expect(useToastStore().toasts).toMatchObject([
+      { kind: 'warning', key: 'toast.agent.dropped', params: { name: 'Mason_5' }, to: { name: 'agent', params: { id: '5' } } },
+    ])
+  })
 })
 
 /**
@@ -469,6 +488,20 @@ describe('journeys', () => {
     store.applyEvent('agent-removed', { id: 6 })
 
     expect(store.pathOf(6)).toBeNull()
+  })
+
+  it('announces a journey that found no path, linked to the agent on it', async () => {
+    fleet(AGENTS, [journey({})])
+    const store = useAgentStore()
+    await store.refresh()
+
+    store.applyEvent('path', journey({ closest: true }))
+    store.applyEvent('path', journey({ state: 'FAILED', reason: 'there is no route there', nodes: null }))
+
+    expect(useToastStore().toasts).toMatchObject([
+      { kind: 'warning', key: 'toast.path.closest', params: { name: 'Mason_6', goal: '128, 64, -340' } },
+      { kind: 'error', key: 'toast.path.none', to: { name: 'agent', params: { id: '6' } } },
+    ])
   })
 })
 

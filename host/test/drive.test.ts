@@ -57,6 +57,7 @@ interface Fake {
     routes: Array<{ settled: boolean; steps: number }>
     arrived: number
     lost: string[]
+    closest: number
     stalled: number
   }
   report: Driven
@@ -160,7 +161,7 @@ function fakeBot(neighbours: unknown[]): Fake {
     activateBlock: async () => {},
   }
 
-  const said: Fake['said'] = { routes: [], arrived: 0, lost: [], stalled: 0 }
+  const said: Fake['said'] = { routes: [], arrived: 0, lost: [], closest: 0, stalled: 0 }
 
   return {
     bot: bot as unknown as Bot,
@@ -173,6 +174,7 @@ function fakeBot(neighbours: unknown[]): Fake {
       route: (steps, settled) => said.routes.push({ settled, steps: steps.length }),
       arrived: () => said.arrived++,
       lost: (why) => said.lost.push(why),
+      closest: () => said.closest++,
       stalled: () => said.stalled++,
     },
     rules: () => ({
@@ -839,6 +841,8 @@ describe('Driver', () => {
     world.tick()
 
     expect(world.said.arrived).toBe(1)
+    // A route that reaches the goal is not the closest it could get.
+    expect(world.said.closest).toBe(0)
   })
 
   it('gives up when a second search also cannot reach the goal', () => {
@@ -854,6 +858,9 @@ describe('Driver', () => {
 
     expect(world.said.lost).toEqual([])
     expect(world.said.routes.at(-1)?.steps).toBe(1)
+    // Walked, and said to be only the closest it can get - which is the one thing the line on a map
+    // cannot show.
+    expect(world.said.closest).toBe(1)
 
     // A stall plans again, which is the loop this guards.
     const inner = driver as unknown as { movedAt: number }

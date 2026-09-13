@@ -54,6 +54,16 @@ describe('toast store', () => {
     expect(toasts.toasts[0]!.params.name).toBe('oslo-1')
   })
 
+  it('keeps the page a notice is about, and leaves one about nothing without', () => {
+    const toasts = useToastStore()
+
+    toasts.notify('warning', 'toast.hostUnreachable', { params: { name: 'oslo-1' }, to: { name: 'host', params: { id: '1' } } })
+    toasts.notify('success', 'toast.agentRemoved', { params: { name: 'Mason_01' } })
+
+    expect(toasts.toasts[0]!.to).toEqual({ name: 'host', params: { id: '1' } })
+    expect(toasts.toasts[1]!).not.toHaveProperty('to')
+  })
+
   it('takes the severity of the latest of a run', () => {
     const toasts = useToastStore()
 

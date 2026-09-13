@@ -7,6 +7,7 @@ import {
   type AgentPathResponse,
   type AgentResponse,
   type HostResponse,
+  type SchematicResponse,
   type UserResponse,
 } from '../api/client'
 import { openLiveUpdates, type LiveUpdateHandle } from '../api/liveUpdates'
@@ -28,6 +29,14 @@ import { useToastStore } from './toasts'
 import { t } from '../i18n'
 import { jobFigures } from '../lib/jobs'
 import { isOnline } from '../lib/agentState'
+import {
+  agentNotice,
+  hostPage,
+  JOBS_PAGE,
+  pathNotice,
+  schematicNotice,
+  type Notice,
+} from '../lib/announce'
 
 /**
  * Fleet state.
@@ -291,9 +300,15 @@ export const useAgentStore = defineStore('agents', () => {
    */
   function applyEvent(name: string, data: unknown): void {
     switch (name) {
-      case 'agent':
-        upsertAgent(data as AgentResponse)
+      case 'agent': {
+        const incoming = data as AgentResponse
+        announceAgent(
+          agents.value.find((existing) => existing.id === incoming.id),
+          incoming,
+        )
+        upsertAgent(incoming)
         break
+      }
       case 'agent-removed': {
         const gone = (data as { id: number }).id
         agents.value = agents.value.filter((agent) => agent.id !== gone)
@@ -327,6 +342,7 @@ export const useAgentStore = defineStore('agents', () => {
         applyTelemetry(data as { agentId: number; telemetry: AgentTelemetry })
         break
       case 'path':
+        announcePath(data as AgentPath)
         applyPath(data as AgentPath)
         break
       case 'inventory': {
@@ -349,13 +365,20 @@ export const useAgentStore = defineStore('agents', () => {
       case 'audit':
       case 'user':
       case 'user-removed':
-      // Schematics are a list too, and one that moves on its own: an upload and the pass that
-      // follows it run for minutes with nobody touching anything, so the view that shows them
-      // needs the stream rather than a poll.
-      case 'schematic':
-      case 'schematic-removed':
         // Paged lists, owned by whichever view is showing one, so these are handed on rather than
         // accumulated here: the store has no way to know which page a line belongs on.
+        for (const listener of feedListeners) listener(name, data)
+        break
+      // Schematics are a list too, and one that moves on its own: an upload and the pass that
+      // follows it run for minutes with nobody touching anything, so the view that shows them
+      // needs the stream rather than a poll. Handed on the same way, and the end of that pass is
+      // announced on the way through.
+      case 'schematic':
+        announceSchematic(data as SchematicResponse)
+        for (const listener of feedListeners) listener(name, data)
+        break
+      case 'schematic-removed':
+        schematicStatuses.delete((data as { id: number }).id)
         for (const listener of feedListeners) listener(name, data)
         break
       // Runs are not a paged list and not owned by one view: an agent's assignment is a fact about
@@ -409,7 +432,7 @@ export const useAgentStore = defineStore('agents', () => {
     const toasts = useToastStore()
 
     if (previous.state !== 'DONE' && incoming.state === 'DONE') {
-      toasts.notify('success', 'toast.jobDone', { params: { name: incoming.buildName } })
+      toasts.notify('success', 'toast.jobDone', { params: { name: incoming.buildName }, to: JOBS_PAGE })
     }
 
     // Per piece that has *become* failed, so a job carrying a failure does not re-announce it every
@@ -425,7 +448,7 @@ export const useAgentStore = defineStore('agents', () => {
     // twice is one card counting two. A host that cannot build one box usually cannot build the
     // next either, and twenty lines saying so is a worse account of it than one saying twenty.
     for (let remaining = failed.length; remaining > 0; remaining -= 1) {
-      toasts.notify('warning', 'toast.segmentFailed', { params: { name: incoming.buildName } })
+      toasts.notify('warning', 'toast.segmentFailed', { params: { name: incoming.buildName }, to: JOBS_PAGE })
     }
   }
 
@@ -439,7 +462,47 @@ export const useAgentStore = defineStore('agents', () => {
     if (!previous?.reachable || incoming.reachable) return
     useToastStore().notify('warning', 'toast.hostUnreachable', {
       params: { name: incoming.name },
+      to: hostPage(incoming.id),
     })
+  }
+
+  function tell(notice: Notice | null): void {
+    if (notice) useToastStore().notify(notice.kind, notice.key, { params: notice.params, to: notice.to })
+  }
+
+  /**
+   * Agents this tab has just told to leave the game, so their leaving is not announced back to the
+   * operator who pressed the button. Spent once the agent is out and nothing is bringing it back.
+   */
+  const leaving = new Set<number>()
+
+  /** An agent leaving the game, or failing to get into it. See `agentNotice` for which. */
+  function announceAgent(previous: AgentResponse | undefined, incoming: AgentResponse): void {
+    const asked = leaving.has(incoming.id)
+    tell(agentNotice(previous, incoming, asked))
+
+    if (asked && incoming.state !== 'ONLINE' && incoming.state !== 'CONNECTING' && !incoming.rejoining) {
+      leaving.delete(incoming.id)
+    }
+  }
+
+  /** How a journey ended, and a route that only gets as close as it can. See `pathNotice`. */
+  function announcePath(incoming: AgentPath): void {
+    const agent = agents.value.find((existing) => existing.id === incoming.agentId)
+    if (agent) tell(pathNotice(incoming, agent.label))
+  }
+
+  /**
+   * The last status seen per schematic, which is what tells a pass finishing from a rename.
+   *
+   * Plain rather than reactive: nothing draws it, and a schematic nobody saw being read is one this
+   * tab has no business announcing.
+   */
+  const schematicStatuses = new Map<number, SchematicResponse['status']>()
+
+  function announceSchematic(incoming: SchematicResponse): void {
+    tell(schematicNotice(schematicStatuses.get(incoming.id), incoming))
+    schematicStatuses.set(incoming.id, incoming.status)
   }
 
   function upsertJob(incoming: BuildJob): void {
@@ -913,10 +976,15 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   async function disconnect(id: number): Promise<void> {
+    // Before the request: the host can answer on the stream before this one returns.
+    leaving.add(id)
     const { error: failure } = await api.POST('/api/agents/{id}/disconnect', {
       params: { path: { id } },
     })
-    if (failure) throw new Error(errorMessage(failure, t('errors.disconnectAgent')))
+    if (failure) {
+      leaving.delete(id)
+      throw new Error(errorMessage(failure, t('errors.disconnectAgent')))
+    }
   }
 
   async function say(id: number, message: string): Promise<void> {

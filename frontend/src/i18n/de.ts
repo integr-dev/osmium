@@ -132,6 +132,31 @@ export const de: Copy = {
     jobDone: '{name} ist fertig — alle Teile stehen.',
     segmentFailed: 'Ein Teil von {name} ist fehlgeschlagen. Im Auftrag steht, was der Host gemeldet hat.',
     hostUnreachable: '{name} antwortet nicht mehr. Die zugehörigen Agenten sind offline, bis er zurück ist.',
+    path: {
+      arrived: '{name} ist bei {goal} angekommen.',
+      closest: '{name} hat keinen Weg nach {goal} gefunden und läuft so nah heran wie möglich.',
+      none: '{name} hat keinen Weg nach {goal} gefunden.',
+      timedOut: '{name} hat keinen Weg nach {goal} gefunden, bevor der Suche die Zeit ausging.',
+      noBlocks: '{name} hat keinen Weg nach {goal} gefunden: keine Blöcke mehr zum Bauen.',
+      unloaded: '{name} hat keinen Weg nach {goal} gefunden: die Welt drumherum ist noch nicht geladen.',
+      broke: '{name} hat den Weg nach {goal} abgebrochen: die Route ließ sich nicht berechnen. Das Host-Log sagt, warum.',
+      couldNotPlace: '{name} hat den Weg nach {goal} abgebrochen: ein Block ließ sich nicht setzen.',
+      couldNotBreak: '{name} hat den Weg nach {goal} abgebrochen: ein Block ließ sich nicht abbauen.',
+      putBack: '{name} hat den Weg nach {goal} abgebrochen: der Server hat den Agenten immer wieder zurückgesetzt.',
+      failed: '{name} hat den Weg nach {goal} abgebrochen.',
+      failedBecause: '{name} hat den Weg nach {goal} abgebrochen: {reason}.',
+    },
+    agent: {
+      dropped: '{name} ist aus dem Spiel geflogen. Osmium holt den Agenten zurück.',
+      left: '{name} hat das Spiel verlassen.',
+      connectFailed: '{name} konnte {server} nicht beitreten.',
+      needsRelink: '{name} muss neu verknüpft werden, bevor der Agent beitreten kann.',
+      gaveUp: 'Osmium versucht nicht mehr, {name} zurückzuholen.',
+    },
+    schematic: {
+      ready: '{name} ist bereit zum Bauen.',
+      failed: '{name} konnte nicht gelesen werden. In der Bibliothek steht, warum.',
+    },
   },
 
   login: {

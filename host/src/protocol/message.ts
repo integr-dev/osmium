@@ -213,6 +213,8 @@ export type Event =
       work?: PathWork[]
       progress?: number
       reason?: string
+      /** The route only gets as close as the search could. Once per journey - see `PathUpdate`. */
+      closest?: true
     }
   /** How far through a segment we are. A total placed by *us* since being handed it, never a delta:
    * the backend reports the higher of this and what was standing when we took the piece. */

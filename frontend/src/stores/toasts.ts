@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import type { RouteLocationRaw } from 'vue-router'
 
 /**
  * Transient notices, stacked in a corner.
@@ -52,10 +53,16 @@ export interface Toast {
    * it is a worse account of it than a single line saying twenty.
    */
   count: number
+  /**
+   * The page the notice is about, when it is about one. The line becomes a link there, and following
+   * it dismisses the notice: it has been acted on, which is what dismissing says.
+   */
+  to?: RouteLocationRaw
 }
 
 export interface NotifyOptions {
   params?: Record<string, unknown>
+  to?: RouteLocationRaw
   /**
    * What counts as "the same notice". Defaults to the copy *and* what is filled into it, so what
    * folds is what would render identically — which is what somebody reading a stack of cards means
@@ -98,7 +105,10 @@ export const useToastStore = defineStore('toasts', () => {
       return
     }
 
-    toasts.value = [...toasts.value, { id: nextId++, kind, key, params, group, count: 1 }]
+    toasts.value = [
+      ...toasts.value,
+      { id: nextId++, kind, key, params, group, count: 1, ...(options.to ? { to: options.to } : {}) },
+    ]
 
     while (toasts.value.length > KEPT) toasts.value.shift()
   }

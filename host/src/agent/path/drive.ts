@@ -244,6 +244,14 @@ export interface Driven {
   /** It cannot get there, and why. */
   lost(why: string): void
   /**
+   * The search ran out of world before it reached the goal, so the route it drew only gets as close
+   * as it can.
+   *
+   * Said separately from {@link route} because it is news rather than a line: the agent is still
+   * walking, and nothing on a map tells a route to the goal from a route towards it.
+   */
+  closest(): void
+  /**
    * It stopped getting anywhere and is thinking again.
    *
    * Not a failure and not reported to an operator - it is what should happen when a door closes in
@@ -1020,6 +1028,8 @@ export class Driver {
 
     // The best that could be found, and nothing better is coming, so it is as settled as `found`.
     this.cut(found.steps as Walk[], true)
+
+    if (found.outcome === 'nowhere') this.report.closest()
   }
 
   /**
@@ -1123,6 +1133,8 @@ export class Driver {
     this.short = found.outcome !== 'found'
     this.grown = undefined
     this.append(found.steps as Walk[])
+
+    if (found.outcome === 'nowhere') this.report.closest()
   }
 
   /**

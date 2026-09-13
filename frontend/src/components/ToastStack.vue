@@ -167,7 +167,15 @@ onBeforeUnmount(() => sizes?.disconnect())
         :class="TONES[toast.kind]"
       >
         <component :is="ICONS[toast.kind]" class="mt-0.5 size-5 shrink-0" />
-        <span class="min-w-0 flex-1 text-sm">{{ t(toast.key, toast.params) }}</span>
+        <RouterLink
+          v-if="toast.to"
+          :to="toast.to"
+          class="min-w-0 flex-1 text-sm hover:underline"
+          @click="toasts.dismiss(toast.id)"
+        >
+          {{ t(toast.key, toast.params) }}
+        </RouterLink>
+        <span v-else class="min-w-0 flex-1 text-sm">{{ t(toast.key, toast.params) }}</span>
         <!--
           The count of a notice that kept happening. Flashed on every increment, because the line
           itself does not change when the second one arrives and a number that ticks up unremarked
