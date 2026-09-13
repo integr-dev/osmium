@@ -7,6 +7,7 @@ import { Crosshair, Footprints, Map as MapIcon, Navigation } from 'lucide-vue-ne
 
 import PlayerHead from '../components/PlayerHead.vue'
 import WorldMap, { type Mark, type PathLine, type Picked } from '../components/WorldMap.vue'
+import { areaNote, type AreaPicked } from '../lib/area'
 import ActionMenu from '../components/ActionMenu.vue'
 import AgentTargets from '../components/AgentTargets.vue'
 import { fetchLastSeen, listMappedServers, type MapExtentResponse } from '../api/map'
@@ -508,6 +509,14 @@ const paths = computed<PathLine[]>(() =>
 const picked = ref<Picked | null>(null)
 
 /**
+ * An area dragged out with shift held, until it is acted on or dismissed.
+ *
+ * There is nothing to do to one yet: the panel it opens is where those actions will go, and it opens
+ * and closes by the same rules as the one a click opens, so they arrive into something that works.
+ */
+const area = ref<AreaPicked | null>(null)
+
+/**
  * The agents this click could be about: in the game, in this world, and ours to move.
  *
  * The one the map was opened on comes first when there is one. A link that says "show me where this
@@ -592,6 +601,7 @@ async function sendThere(): Promise<void> {
  */
 function close(): void {
   picked.value = null
+  area.value = null
   sending.value = []
 }
 
@@ -621,7 +631,19 @@ function onPick(at: Picked): void {
     return
   }
 
+  area.value = null
   picked.value = at
+}
+
+/** An area dragged out on the map, by the same rule: a press that put a panel away opens nothing. */
+function onSelect(at: AreaPicked): void {
+  if (dismissing) {
+    dismissing = false
+    return
+  }
+
+  picked.value = null
+  area.value = at
 }
 
 function elsewhere(event: PointerEvent): void {
@@ -636,7 +658,7 @@ function elsewhere(event: PointerEvent): void {
   const inside = menu.value?.root
   if (inside && event.composedPath().includes(inside as EventTarget)) return
 
-  dismissing = picked.value !== null
+  dismissing = picked.value !== null || area.value !== null
   close()
 }
 
@@ -783,7 +805,9 @@ const worldName = dimensionLabel
       :dimension="world"
       :marks="marks"
       :paths="paths"
+      :area="area?.area ?? null"
       @pick="onPick($event)"
+      @select="onSelect($event)"
     />
 
     <div v-else class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
@@ -836,6 +860,21 @@ const worldName = dimensionLabel
         </span>
       </template>
     </ActionMenu>
+
+    <!--
+      An area dragged out with shift held, anchored where the drag ended the way the panel above is
+      anchored where the click landed. Empty for now: what can be done to a stretch of the world goes
+      here.
+    -->
+    <ActionMenu
+      v-if="area"
+      ref="menu"
+      placement="at"
+      :x="area.px"
+      :y="area.py"
+      :title="t('map.area')"
+      :note="areaNote(area.area)"
+    />
 
     <!--
       One panel, over the map rather than above it, built from the same card the rest of the app

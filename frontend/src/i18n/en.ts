@@ -509,6 +509,9 @@ export const en = {
     /** The controls, over the bottom left of the view. Keep each one short: they sit on one line. */
     legendOrbit: 'drag to turn',
     legendPan: 'right-drag to pan',
+    legendSelect: 'shift-drag or shift-click two blocks to select',
+    /** Over the panel an area dragged out in the view opens, above its corners and size. */
+    area: 'Area',
     legendZoom: 'wheel to zoom',
     legendFast: 'shift for faster',
     legendFly: 'ctrl to move the pivot',
@@ -563,6 +566,10 @@ export const en = {
     /** A click where the fleet has charted nothing, so the height of the ground is unknown. */
     pickUncharted: '{x}, ?, {z}',
     pickNoGround: 'Nobody has walked here, so the agent is sent to this spot at whatever height the ground is.',
+    /** Over the panel an area dragged out on the map opens, above its corners and size. */
+    area: 'Area',
+    /** Under the map's coordinates while nothing is pointed at: how to drag an area out. */
+    selectHint: 'shift-drag or shift-click twice to select',
     sendCount: 'Send {count} | Send 1 agent | Send {count} agents',
     scale: '{n} px per block',
     recentre: 'Centre on the fleet',

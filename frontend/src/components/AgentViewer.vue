@@ -15,6 +15,16 @@ import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
 import { dollyToward, easeZoom, panRate, wheelTurn, zoomFactor, type Point } from '../lib/orbit'
 import { axisCross, cornerArms } from '../lib/reticle'
+import {
+  afterShiftPress,
+  areaNote,
+  areaUnderway,
+  cubeEdges,
+  type Area,
+  type AreaPicked,
+  type Corner,
+  type ShiftPress,
+} from '../lib/area'
 import { onThemeChange, themeColour as tokenColour } from '../lib/theme'
 
 /**
@@ -240,6 +250,9 @@ interface Scene {
    */
   hover?: Mesh
   buildHover?: () => Mesh | undefined
+  /** The cage around an area being dragged out, or the one a panel is open about. Scaled, not rebuilt. */
+  areaBox?: Mesh
+  buildArea?: () => Mesh | undefined
   /** The cross on the point the camera turns around - see {@link showGimbal}. */
   gimbal?: Mesh
   buildGimbal?: () => Mesh | undefined
@@ -265,6 +278,13 @@ interface Scene {
    * of its own - the renderer and its `THREE` are loaded once, inside the init closure.
    */
   pick?: (nx: number, ny: number) => { x: number; y: number; z: number } | undefined
+  /**
+   * The block a point on the canvas is on, rather than the one in front of it.
+   *
+   * {@link pick} steps out of the face the ray hit, because a destination is somewhere to stand. The
+   * corner of an area is the block being pointed at.
+   */
+  pickSolid?: (nx: number, ny: number) => { x: number; y: number; z: number } | undefined
   /** How far away the world is at a point on the screen, for {@link keepControlsUseful}. */
   depthAt?: (nx: number, ny: number) => number | undefined
   /** The wheel handler and what it is on, kept so teardown can take it off again. */
@@ -2024,15 +2044,47 @@ function showHover(current: Scene): void {
    * which block the menu is about, was the one moment it was not drawn. What is under the cursor
    * only matters while nothing has been chosen.
    */
-  const at = picked.value ?? (over && current.pick?.(over.nx, over.ny))
+  // With shift held the box is on the block pointed at rather than the air in front of it, because
+  // that is the block a shift click or drag would take for a corner.
+  const at = picked.value ?? (over && (shifted ? current.pickSolid : current.pick)?.(over.nx, over.ny))
 
-  if (!at || firstPerson.value) {
+  // An area has its own cage, and one block's box inside it would say the menu was about that block.
+  if (!at || firstPerson.value || liveArea.value || viewArea.value) {
     box.visible = false
     return
   }
 
   // The middle of the cell, because a box is one block wide and centred on its own origin.
   box.position.set(at.x + 0.5, at.y + 0.5, at.z + 0.5)
+  box.visible = true
+}
+
+/** The cage around an area being dragged out, or the one a panel is open about. See {@link Scene.areaBox}. */
+function showArea(current: Scene): void {
+  const area: Area | null = liveArea.value ?? viewArea.value?.area ?? null
+
+  if (!current.areaBox) {
+    if (!area) return
+    const built = current.buildArea?.()
+    if (!built) return
+    current.areaBox = built
+    current.viewer.scene.add(built)
+  }
+
+  const box = current.areaBox
+  if (!area || area.low === undefined || area.high === undefined || firstPerson.value) {
+    box.visible = false
+    return
+  }
+
+  // From the corner, because the cage is drawn from its corner: inclusive at both ends, so one more
+  // than the difference in every direction.
+  box.position.set(area.west, area.low, area.north)
+  ;(box as unknown as { scale: { set(x: number, y: number, z: number): void } }).scale.set(
+    area.east - area.west + 1,
+    area.high - area.low + 1,
+    area.south - area.north + 1,
+  )
   box.visible = true
 }
 
@@ -2663,6 +2715,24 @@ async function mount(world: { version: string; minY?: number; height?: number },
         z: Math.floor(hit.point.z + away.z * 0.5),
       }
     },
+    pickSolid: (nx: number, ny: number) => {
+      raycaster.setFromCamera({ x: nx, y: ny } as never, viewer.camera as never)
+
+      const world = Object.values(viewer.world.sectionMeshs ?? {}).filter((mesh) => mesh !== undefined)
+      const hit = raycaster.intersectObjects(world as never[], false)[0] as
+        | { point: { x: number; y: number; z: number }; face?: { normal: { x: number; y: number; z: number } } }
+        | undefined
+
+      if (!hit) return undefined
+
+      // Into the face rather than out of it: the block the ray met, not the air in front of it.
+      const into = hit.face?.normal ?? { x: 0, y: 0, z: 0 }
+      return {
+        x: Math.floor(hit.point.x - into.x * 0.5),
+        y: Math.floor(hit.point.y - into.y * 0.5),
+        z: Math.floor(hit.point.z - into.z * 0.5),
+      }
+    },
     /**
      * Corners rather than a cage - see `reticle.ts`.
      *
@@ -2673,6 +2743,18 @@ async function mount(world: { version: string; minY?: number; height?: number },
     buildHover: () => {
       const line = new LineSegments2(
         new LineSegmentsGeometry().setPositions(cornerArms()),
+        hoverMaterial,
+      ) as unknown as Mesh
+
+      line.frustumCulled = false
+      line.visible = false
+      return line
+    },
+    // The hover box's material, so it takes the page's text colour and follows the canvas size the
+    // way that one does; a whole cage rather than corners, because an area's edges are the point.
+    buildArea: () => {
+      const line = new LineSegments2(
+        new LineSegmentsGeometry().setPositions(cubeEdges()),
         hoverMaterial,
       ) as unknown as Mesh
 
@@ -2818,6 +2900,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       built.controls?.update()
     }
     showHover(built)
+    showArea(built)
     showGimbal(built)
     viewer.update()
     renderer.render(viewer.scene, viewer.camera)
@@ -2890,6 +2973,103 @@ let carrying = false
 /** When the camera was last moved, so the gimbal can be shown while it is being used. */
 let stirred = 0
 
+/**
+ * An area being dragged out: the block the drag started on and the one under the pointer now.
+ *
+ * **Shift and the left button**, the same gesture the map uses. It used to pan here too, which the
+ * right button and ctrl still do - see {@link pans}. A shift click is one corner instead, and the next
+ * is the other - see `afterShiftPress`.
+ */
+let selecting: (ShiftPress & { x: number; y: number }) | null = null
+
+/** A first corner a shift click left, waiting for the second. Any press without shift lets it go. */
+let firstCorner: Corner | null = null
+
+/**
+ * Whether shift is down, so the cursor box can show the block a shift press would take.
+ *
+ * Read off the keys as well as the pointer: pressing shift over a block without moving has to move
+ * the box too, and a pointer event only says so once the mouse moves. Plain rather than reactive,
+ * because the box is drawn every frame anyway.
+ */
+let shifted = false
+
+function shift(event: KeyboardEvent): void {
+  if (event.key === 'Shift') shifted = event.type === 'keydown'
+}
+
+/** A window that loses focus never hears the key come back up. */
+function unshift(): void {
+  shifted = false
+}
+
+/** The box of that drag, for drawing while it is being made. */
+const liveArea = ref<Area | null>(null)
+
+/** An area that was dragged out, until its panel is dismissed. Nothing to do to one yet. */
+const viewArea = ref<AreaPicked | null>(null)
+
+/** The block under the pointer, for one end of an area. */
+function cornerUnder(event: PointerEvent): Corner | undefined {
+  const current = scene.value
+  const box = canvas.value?.getBoundingClientRect()
+  if (!current || !box) return undefined
+
+  // The block being pointed at, not the air in front of it: see `pickSolid`.
+  const at = current.pickSolid?.(((event.clientX - box.left) / box.width) * 2 - 1, -((event.clientY - box.top) / box.height) * 2 + 1)
+  return at ? { x: at.x, y: at.y, z: at.z } : undefined
+}
+
+/**
+ * Starts an area, if the press is on the world.
+ *
+ * **The camera's own drag handler listens on this canvas too**, and pans on shift - so it is switched
+ * off for the length of the drag. It was added after this component's handler, so it already sees
+ * itself switched off by the time the same press reaches it.
+ */
+function startArea(event: PointerEvent): boolean {
+  const current = scene.value
+  const corner = cornerUnder(event)
+  if (!current || !corner) return false
+
+  if (current.controls) current.controls.enabled = false
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+
+  selecting = { start: corner, end: corner, moved: false, x: event.clientX, y: event.clientY }
+  liveArea.value = areaUnderway(firstCorner, selecting, corner)
+  return true
+}
+
+function finishArea(event: PointerEvent): void {
+  const press = selecting
+  selecting = null
+
+  const current = scene.value
+  if (current?.controls) current.controls.enabled = !firstPerson.value
+  ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
+
+  const box = canvas.value?.getBoundingClientRect()
+  if (!press || !box) {
+    firstCorner = null
+    liveArea.value = null
+    return
+  }
+
+  const after = afterShiftPress(firstCorner, press)
+  firstCorner = after.waiting
+  liveArea.value = after.chosen ? null : areaUnderway(firstCorner, null, press.end)
+  if (!after.chosen) return
+
+  // This press already did its job on the way down, by the same rule a click follows.
+  if (dismissing) {
+    dismissing = false
+    return
+  }
+
+  picked.value = null
+  viewArea.value = { area: after.chosen, px: event.clientX - box.left, py: event.clientY - box.top }
+}
+
 /** Pixels of travel before a press stops being a click. */
 const SLOP = 4
 
@@ -2944,15 +3124,23 @@ const sendingBusy = ref(false)
  * back on the agent. The harder the agent was moving, the more there was to fight.
  */
 function pans(event: PointerEvent): boolean {
-  const held = event.ctrlKey || event.metaKey || event.shiftKey
-
-  if (event.button === TURNING) return held
-  if (event.button === PANNING) return !held
+  // Shift on the left button is not here: it drags out an area, with the camera switched off for
+  // it - see {@link startArea}.
+  if (event.button === TURNING) return event.ctrlKey || event.metaKey
+  if (event.button === PANNING) return !(event.ctrlKey || event.metaKey || event.shiftKey)
 
   return false
 }
 
 function onPointerDown(event: PointerEvent): void {
+  if (event.shiftKey && event.button === TURNING && !firstPerson.value && startArea(event)) return
+
+  // Any other press lets go of a first corner still waiting for its second.
+  if (firstCorner) {
+    firstCorner = null
+    liveArea.value = null
+  }
+
   pressed = { x: event.clientX, y: event.clientY, moved: false }
   carrying = pans(event)
 
@@ -2973,6 +3161,7 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
+  shifted = event.shiftKey
   const current = scene.value
   const box = canvas.value?.getBoundingClientRect()
 
@@ -2982,6 +3171,23 @@ function onPointerMove(event: PointerEvent): void {
       nx: ((event.clientX - box.left) / box.width) * 2 - 1,
       ny: -((event.clientY - box.top) / box.height) * 2 + 1,
     }
+  }
+
+  if (selecting) {
+    if (Math.abs(event.clientX - selecting.x) + Math.abs(event.clientY - selecting.y) > SLOP) selecting.moved = true
+    const corner = cornerUnder(event)
+    if (corner) {
+      selecting.end = corner
+      liveArea.value = areaUnderway(firstCorner, selecting, corner)
+    }
+    return
+  }
+
+  // A first corner waiting for its second: the area it would make, following the pointer. Not while
+  // the camera is being dragged, when the block under the pointer is sweeping across the world.
+  if (firstCorner && !pressed) {
+    const corner = cornerUnder(event)
+    if (corner) liveArea.value = areaUnderway(firstCorner, null, corner)
   }
 
   // A pan is the drag that moves the pivot. An orbit turns about it without touching it, so it
@@ -2999,6 +3205,11 @@ function onPointerLeave(): void {
 }
 
 function onPointerUp(event: PointerEvent): void {
+  if (selecting) {
+    finishArea(event)
+    return
+  }
+
   const press = pressed
   pressed = null
 
@@ -3059,6 +3270,7 @@ const menu = ref<InstanceType<typeof ActionMenu> | null>(null)
 
 function close(): void {
   picked.value = null
+  viewArea.value = null
   sending.value = []
 }
 
@@ -3090,7 +3302,7 @@ function elsewhere(event: PointerEvent): void {
   const inside = menu.value?.root
   if (inside && event.composedPath().includes(inside as EventTarget)) return
 
-  dismissing = picked.value !== null
+  dismissing = picked.value !== null || viewArea.value !== null
   close()
 }
 
@@ -3101,16 +3313,26 @@ function dismiss(event: KeyboardEvent): void {
 onMounted(() => {
   document.addEventListener('pointerdown', elsewhere, true)
   document.addEventListener('keydown', dismiss)
+  document.addEventListener('keydown', shift)
+  document.addEventListener('keyup', shift)
+  window.addEventListener('blur', unshift)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', elsewhere, true)
   document.removeEventListener('keydown', dismiss)
+  document.removeEventListener('keydown', shift)
+  document.removeEventListener('keyup', shift)
+  window.removeEventListener('blur', unshift)
 })
 
 // There is nothing to point at through the agent's own eyes, and nothing to point at in a world
 // that has gone.
-watch([firstPerson, () => status.value], () => close())
+watch([firstPerson, () => status.value], () => {
+  firstCorner = null
+  liveArea.value = null
+  close()
+})
 
 function resize(): void {
   const current = scene.value
@@ -3245,6 +3467,7 @@ const ASSETS = '/viewer'
     >
       <span class="opacity-60">
         {{ t('viewer.legendOrbit') }} · {{ t('viewer.legendPan') }} · {{ t('viewer.legendZoom') }} ·
+        {{ t('viewer.legendSelect') }} ·
         {{ t('viewer.legendFast') }} · {{ t('viewer.legendFly') }}
       </span>
     </div>
@@ -3282,6 +3505,21 @@ const ASSETS = '/viewer'
         {{ t('map.sendCount', { count: sending.length }) }}
       </button>
     </ActionMenu>
+
+    <!--
+      An area dragged out with shift held, anchored where the drag ended like the panel above is
+      anchored where the click landed. Empty for now: what can be done to a stretch of the world goes
+      here.
+    -->
+    <ActionMenu
+      v-if="viewArea"
+      ref="menu"
+      placement="at"
+      :x="viewArea.px"
+      :y="viewArea.py"
+      :title="t('viewer.area')"
+      :note="areaNote(viewArea.area)"
+    />
 
     <!--
       The world stays on screen when the agent leaves it, because it is the only picture of where it

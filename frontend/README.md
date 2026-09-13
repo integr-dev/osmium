@@ -1471,6 +1471,33 @@ whatever height the ground turns out to be — which is a real instruction, not 
 What came of it is announced in the corner — arrived, gave up and why, or walking only as close as
 the search could get — and the notice links back to the agent. See **Saying what happened**.
 
+### Choosing an area
+
+**Shift and a drag, in both views**, opens the same `ActionMenu` where the drag ended, naming both
+corners and the size. It has nothing in it yet: it is where what can be done to a stretch of the
+world will go, and it opens and closes by the same rules as the panel a click opens, so those
+actions arrive into something that already works.
+
+**A plain drag keeps the job it had.** It moves the map and turns the 3D view, far more often than
+anybody chooses an area, so the rarer gesture is the one that asks for a key. In the 3D view shift
+on the left button used to pan as well; it no longer does, and the right button and ctrl still pan.
+The camera's own drag handler listens on the same canvas and would pan on shift, so it is switched
+off for the length of the drag.
+
+**Or a corner at a time.** A shift click with nothing waiting is the first corner, drawn following the
+pointer, and the next shift click is the second - which is how an area too big to drag across the
+screen at one zoom is chosen at all. A drag while a first corner waits starts again from where the
+drag did, and any press without shift lets the waiting corner go.
+
+**In the 3D view a corner is the block pointed at**, not the air in front of the face the ray hit,
+which is what a destination picks (`pickSolid` against `pick`). The cursor box follows suit while
+shift is held, so it always shows the block a press would take - read off the keys as well as the
+pointer, so pressing shift over a block moves the box without the mouse moving.
+
+**Whole blocks, inclusive at both ends, whichever way the drag went** - see `src/lib/area.ts`. The
+map's area is columns, since it has no height to give; the 3D view's has the heights of the two
+blocks the drag started and ended on, and is drawn as a cage around every block in it.
+
 ### Paths are drawn in both views
 
 Remaining solid, walked faint, a hollow square at the destination. On the map, **segments more than

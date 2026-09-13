@@ -7,6 +7,7 @@ import { loadPalette } from '../lib/mapPalette'
 import { EMPTY, TILE, decodeTile, paintTile, tileKey, type DecodedTile, type Palette, type TilePayload } from '../lib/mapTiles'
 import { useAgentStore } from '../stores/agents'
 import { IDENTITY, panBy, zoomAt, type Limits, type View } from '../lib/panZoom'
+import { afterShiftPress, areaUnderway, type Area, type AreaPicked, type Corner, type ShiftPress } from '../lib/area'
 
 /**
  * The world as the fleet has charted it, drawn one pixel per block column.
@@ -28,6 +29,11 @@ const props = defineProps<{
   marks: Mark[]
   /** Where the fleet is going. Drawn under the marks, so a line never covers a face. */
   paths: PathLine[]
+  /**
+   * An area already dragged out, drawn over everything until whoever opened a panel about it lets
+   * it go. Held by the caller, because the panel is the caller's.
+   */
+  area?: Area | null
 }>()
 
 /**
@@ -60,7 +66,7 @@ export interface PathLine {
  * to draw a panel there. Working that out again from the block coordinate would mean a second copy
  * of the projection, in a component that has no business owning one.
  */
-const emit = defineEmits<{ pick: [Picked] }>()
+const emit = defineEmits<{ pick: [Picked]; select: [AreaPicked] }>()
 
 export interface Picked {
   x: number
@@ -399,6 +405,7 @@ function draw(): void {
 
   drawPaths(context)
   drawMarks(context)
+  drawArea(context)
 }
 
 // ---- the fleet and everyone else ---------------------------------------------------------------
@@ -523,6 +530,8 @@ interface Ink {
   theirs: string
   ink: string
   ground: string
+  /** An area being dragged out: the one mark about the operator's hand rather than the world. */
+  accent: string
 }
 
 let inks: Ink | null = null
@@ -540,8 +549,39 @@ function themeInks(): Ink {
     // What a label is outlined in. The page's own ground rather than white or black, so the halo
     // belongs to the theme in both of them.
     ground: read('--color-base-100', '#ffffff'),
+    accent: read('--color-accent', '#38bdf8'),
   }
   return inks
+}
+
+/** How much of the accent an area is washed with, so the terrain under it still reads. */
+const AREA_FILL = 0.18
+
+/** An area being dragged out, or the one a panel is open about. Over everything else. */
+function drawArea(context: CanvasRenderingContext2D): void {
+  const area = live.value ?? props.area ?? null
+  if (!area) return
+
+  const { accent, ground } = themeInks()
+  const left = view.value.x + area.west * view.value.k
+  const top = view.value.y + area.north * view.value.k
+  // Inclusive at both ends: a block is k pixels wide, and the last one is in the area too.
+  const width = (area.east - area.west + 1) * view.value.k
+  const height = (area.south - area.north + 1) * view.value.k
+
+  context.globalAlpha = AREA_FILL
+  context.fillStyle = accent
+  context.fillRect(left, top, width, height)
+  context.globalAlpha = 1
+
+  // Haloed in the page's ground like the names, so the edge holds against terrain of any colour.
+  context.lineJoin = 'miter'
+  context.lineWidth = LABEL_HALO
+  context.strokeStyle = ground
+  context.strokeRect(left, top, width, height)
+  context.lineWidth = 1.5
+  context.strokeStyle = accent
+  context.strokeRect(left, top, width, height)
 }
 
 /**
@@ -852,10 +892,48 @@ let pressed: { x: number; y: number; moved: boolean } | null = null
 /** Pixels of travel before a press stops being a click. About the slop in a firm mouse click. */
 const SLOP = 4
 
+/**
+ * An area being dragged out: the block the drag started on and the one under the pointer now.
+ *
+ * **Shift turns a drag from a pan into an area.** A plain drag is how the map is moved, and far more
+ * common than choosing a stretch of it, so it keeps the plain gesture and this one asks for a key.
+ * A shift click is one corner instead, and the next is the other - see `afterShiftPress`.
+ */
+let selecting: (ShiftPress & { x: number; y: number }) | null = null
+
+/** A first corner a shift click left, waiting for the second. Any press without shift lets it go. */
+let waiting: Corner | null = null
+
+/** The box of that drag, for drawing while it is being made. */
+const live = shallowRef<Area | null>(null)
+
+/** The block under the pointer, for one end of an area. */
+function cornerAt(event: PointerEvent): Corner | undefined {
+  const box = canvas.value?.getBoundingClientRect()
+  if (!box) return undefined
+  const at = blockAt(event.clientX - box.left, event.clientY - box.top)
+  return { x: Math.floor(at.x), z: Math.floor(at.z) }
+}
+
 function onPointerDown(event: PointerEvent): void {
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+
+  const corner = event.shiftKey && event.button === 0 ? cornerAt(event) : undefined
+  if (corner) {
+    selecting = { start: corner, end: corner, moved: false, x: event.clientX, y: event.clientY }
+    live.value = areaUnderway(waiting, selecting, corner)
+    schedule()
+    return
+  }
+
+  if (waiting) {
+    waiting = null
+    live.value = null
+    schedule()
+  }
+
   dragging = { x: event.clientX, y: event.clientY }
   pressed = { x: event.clientX, y: event.clientY, moved: false }
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
 function onPointerMove(event: PointerEvent): void {
@@ -863,6 +941,26 @@ function onPointerMove(event: PointerEvent): void {
   if (box) {
     const at = blockAt(event.clientX - box.left, event.clientY - box.top)
     pointer.value = { x: Math.floor(at.x), z: Math.floor(at.z) }
+  }
+
+  if (selecting) {
+    if (Math.abs(event.clientX - selecting.x) + Math.abs(event.clientY - selecting.y) > SLOP) selecting.moved = true
+    const corner = cornerAt(event)
+    if (corner) {
+      selecting.end = corner
+      live.value = areaUnderway(waiting, selecting, corner)
+      schedule()
+    }
+    return
+  }
+
+  // A first corner waiting for its second: the area it would make, following the pointer.
+  if (waiting) {
+    const corner = cornerAt(event)
+    if (corner) {
+      live.value = areaUnderway(waiting, null, corner)
+      schedule()
+    }
   }
 
   if (pressed && !pressed.moved) {
@@ -880,6 +978,28 @@ function onPointerMove(event: PointerEvent): void {
 function onPointerUp(event: PointerEvent): void {
   dragging = null
   ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
+
+  if (selecting) {
+    const press = selecting
+    selecting = null
+
+    // A cancelled drag - the pointer taken away by the browser - chose nothing.
+    const box = canvas.value?.getBoundingClientRect()
+    if (event.type === 'pointercancel' || !box) {
+      waiting = null
+      live.value = null
+      schedule()
+      return
+    }
+
+    const after = afterShiftPress(waiting, press)
+    waiting = after.waiting
+    live.value = after.chosen ? null : areaUnderway(waiting, null, press.end)
+    schedule()
+
+    if (after.chosen) emit('select', { area: after.chosen, px: event.clientX - box.left, py: event.clientY - box.top })
+    return
+  }
 
   const press = pressed
   pressed = null
@@ -918,6 +1038,12 @@ function centreOn(x: number, z: number, k = view.value.k): void {
 }
 
 defineExpose({ centreOn })
+
+// Drawn over the terrain, so a panel opening or closing about an area redraws it.
+watch(
+  () => props.area,
+  () => schedule(),
+)
 
 // ---- lifecycle ------------------------------------------------------------------------------------
 
@@ -1033,7 +1159,7 @@ const scale = computed(() => {
       class="bg-base-200/80 pointer-events-none absolute bottom-2 left-2 rounded px-2 py-1 font-mono text-xs tabular-nums shadow-sm"
     >
       <span v-if="pointer">{{ t('map.at', { x: pointer.x, z: pointer.z }) }}</span>
-      <span v-else class="opacity-60">{{ t('map.scale', { n: scale }) }}</span>
+      <span v-else class="opacity-60">{{ t('map.scale', { n: scale }) }} · {{ t('map.selectHint') }}</span>
     </div>
 
     <div
