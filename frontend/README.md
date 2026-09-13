@@ -560,7 +560,7 @@ the game is a decision about where an agent belongs, and a host is never allowed
 those. The backend reads that key, and the host ignores it like any other it does not know.
 
 The fields render from the schema by **type** rather than from markup per setting — `regex`, `text`,
-`switch`, `choice` — and so do the tabs, one per group, so adding a group needs nothing in the view.
+`switch`, `choice`, `range` — and so do the tabs, one per group, so adding a group needs nothing in the view.
 The groups exist because a chat pattern and a reconnect policy are not read in the same sitting;
 underneath, it is still **one form**. Every tab edits the same map and Update sends the whole of it,
 which is why the buttons sit outside the tabs: a save inside one would look like it covered only
@@ -570,6 +570,11 @@ what was on screen.
 already read as "no", so writing the word would give "turned off" and "never touched" two spellings
 of one answer. A setting where off and unset genuinely differ is a `choice` with three options
 instead, which is what `mc.knockback` is — unset means "decide from the version".
+
+**A trade between two things is a slider, not a number.** `path.haste` runs from the shortest route
+to the fastest search, and both ends are named rather than numbered, because 0 and 100 do not say
+which way is which. Unset draws the thumb in the middle, which is also what a host takes unset to
+mean, so the thumb never says something different from what the agent does.
 
 The form is seeded from the **first agent checked** and pushed to every agent checked. Two agents
 can hold different values for one field and there is no honest way to show both in one input, so one
@@ -872,6 +877,26 @@ fetches a whole transcript, which takes long enough that a single centred word r
 panel; it now draws skeleton lines in place of what it is about to show. Paging older keeps the one
 line, because the conversation is still on screen and the wait happens off the top edge.
 
+### Reading a long transcript
+
+**A rule where a day starts**, rather than a date on every line. The time is what places a line within
+its day, and the same date repeated down the panel is noise. The day being read sticks to the top of
+the transcript, on the panel's own background so it reads as part of the list rather than as a bar
+laid over it. No rule is drawn above the oldest line fetched: the day may have started on a page that
+has not been loaded, and a seam there would be a claim nothing supports.
+
+**A search shows a spinner beside the box**, and leaves the lines below as the last answer until the
+next one arrives. What is being typed belongs to the input and not to the transcript, so a keystroke
+redraws the box and nothing else — every letter used to redraw the whole list, and a long one made
+the browser crawl.
+
+**A burst says "catching up" where the newest line goes**, rather than as a notice floating over the
+conversation it is about.
+
+**A new line draws one row.** Each row is memoised on what it is drawn from — `drawnFrom` in
+`ChatPanel.vue` — and the memo sits on the element carrying the `v-for`, because that is the only
+place `v-memo` does anything; on a row inside the loop it is silently ignored.
+
 ### Chat is drawn as the server styled it
 
 A line arrives with the **components** the server sent, not only the flattened string, and
@@ -969,6 +994,28 @@ never reported success, and the fix is one message rather than four: deleting is
 whose outcome is invisible where it happened — an unselected row simply disappears from a list of
 thirty, and the file is gone for good. Upload, re-read and split all announce themselves by changing
 what is drawn, so banners for those would be noise rather than news.
+
+### The corner, for what happened somewhere else
+
+The notices in the corner (`src/stores/toasts.ts`, drawn by `ToastStack.vue`) are for two things
+only: a receipt for an act whose page has just gone, and something the stream reported while the
+operator was looking elsewhere. Which stream updates earn one is decided in `src/lib/announce.ts`,
+as plain functions over the update and what it replaced:
+
+- **a journey** arriving, giving up — with the host's reason as a sentence of its own in either
+  language — or walking a route that only gets as close as the search could;
+- **an agent** dropping out of the game, leaving it, failing to join, needing to be linked again, or
+  Osmium giving up on bringing it back;
+- **a schematic** finishing being read, or failing to be;
+- **a job** finishing or a piece of it failing, and **a host** going quiet.
+
+**Every one links to what it is about**, and following the link dismisses it: a notice that an agent
+dropped out is half useful if finding that agent is left to the operator.
+
+**Nothing is announced back to whoever caused it.** A Disconnect pressed in this tab is remembered
+until the agent is out, a stop reports `IDLE` and says nothing, and something seen for the first
+time — a page that has just loaded — is never news. A reason from a host newer than this build is
+shown in the host's own words rather than dropped.
 
 ## The sign-in screen
 
@@ -1128,6 +1175,26 @@ socket.io straight to a host, and Osmium's hosts dial out and are never reachabl
 
 Free camera and first person are a **camera choice** over the same stream. Neither sends anything to
 the agent; watching is all `agent.view` grants, and driving one would be a second node.
+
+### Moving the camera
+
+A legend in the bottom left, in the map's style, says what each gesture does: drag to turn,
+right-drag to pan, the wheel to zoom, shift for faster, ctrl to move the pivot.
+
+**Pan and zoom are measured against what is being looked at, not against the pivot.** Upstream's
+`OrbitControls` scales both by the distance to its pivot, and in a viewer whose pivot is stuck to an
+agent that is not the distance to anything on screen: zoomed in, the landscape fifty blocks away
+barely moves. `src/lib/orbit.ts` rescales the drag so what is under the pointer travels with it.
+
+**The wheel moves at a flat rate, and leaves the pivot where it is.** Each notch slides the camera
+a fixed distance towards what is under the cursor, eased over the frames that follow. A step that is
+a fraction of the distance left gets weaker the closer it gets and never arrives. Ctrl — ⌘ on a Mac
+— carries the pivot along with the camera instead, which is how to move into the world, and back out
+again to where it was.
+
+**The pivot is drawn only while it moves**, as a cross sized in the world rather than on the screen:
+solid where there is a clear line to it, dashed where the world is in front of it. Nothing is drawn
+while following, because the pivot is then the agent in the middle of the view.
 
 ### Its assets are built, not shipped
 
@@ -1305,6 +1372,23 @@ left/right pairs are not mirror images, the other which limbs intersect their ow
 partner does not. The first alone is too noisy to act on — a wolf's legs are genuinely off-centre in
 vanilla, and a blaze's twelve rods are not six pairs.
 
+### Mobs newer than the renderer
+
+The renderer's entity table stops years back, so the warden, allay, sniffer, camel, armadillo,
+breeze, creaking, frog, tadpole, goat, axolotl, end crystal and both wind charges came out as magenta
+boxes. Their geometry is **Mojang's own**, from `bedrock-samples`, converted to the older layout the
+renderer reads and vendored as `scripts/entity-models.json` so a build needs no network. Each is added
+only where the table has no entry of that name, and each one's declared texture size was checked
+against the Java texture it wears — a mismatch there is exactly what scrambled the sheep. A mob with
+variants wears one of them: a pink axolotl, a temperate frog. TNT is a cube built here, because in
+game it is the block. The textures are copied from the newest `minecraft-assets` release that has
+them.
+
+Six are **drawn as nothing** rather than as a box: dropped items, falling blocks, both item frames,
+paintings and lightning. What each looks like depends on the instance — which item, which block,
+which picture — and the table only knows the kind. Nothing is a better answer than a magenta cube,
+which reads as a fault.
+
 ### Names and boxes over what matters
 
 Every player carries a nametag and a box, and the agent's own body carries both too — it is not one
@@ -1344,7 +1428,9 @@ draws them with dedicated renderers. They appear as holes.
 An entity type the streaming library does not recognise arrives without a name, and upstream then
 falls through to a box sized from a width and height that a movement update does not carry either.
 Those are filtered out rather than shown as the magenta box upstream substitutes. Entity *models*
-are no longer among them: the six that could not be assembled now build — see above.
+are no longer among them: the six that could not be assembled now build, and every entity the
+server can send has an entry — see above. The six whose look depends on the instance are drawn as
+nothing, and the fishing bobber's model asks for a texture sheet no release ships.
 
 ### Sending an agent somewhere
 
@@ -1366,6 +1452,9 @@ front of it.
 The map reads the destination's height out of the same heightmap the shading is drawn from. Where
 nothing has been charted there is no height to send, and the agent is told to reach that *column* at
 whatever height the ground turns out to be — which is a real instruction, not a refusal.
+
+What came of it is announced in the corner — arrived, gave up and why, or walking only as close as
+the search could get — and the notice links back to the agent. See **Saying what happened**.
 
 ### Paths are drawn in both views
 
@@ -1756,7 +1845,7 @@ Same source of truth, so there is no duplicated role logic. Route guards use `me
 npm test
 ```
 
-389 unit tests on Vitest with jsdom, in two groups.
+545 unit tests on Vitest with jsdom, in two groups.
 
 **Where a bug is invisible** until someone is locked out or over-privileged: the route guard, the
 auth store, the API client's middleware, the fleet store's derived state, the cursor paging in
@@ -1774,7 +1863,10 @@ belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), what the tab 
 chosen in projected space rather than on a grid that is projected afterwards — the obvious way
 round gives a 2:1 diamond, a perfectly good render of the wrong shape — and the rotatable box in
 Operations (`box3d.ts`), where drawing the faces turned away renders a box that reads inside out and
-fitting each box to itself draws every segment of a split the same size.
+fitting each box to itself draws every segment of a split the same size. Also which stream update
+earns a notice and where it links (`announce.ts`), where a missed rule is a silent corner and a
+loose one is a column of noise about the operator's own clicks, and how the camera pans and zooms
+against what it is looking at (`orbit.ts`).
 
 No component or browser tests. That is a deliberate limit rather than an omission — every frontend
 bug so far has been a **daisyUI class or CSS selector** problem, and jsdom evaluates no CSS, so a

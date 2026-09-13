@@ -26,6 +26,11 @@ OSMIUM_HOST_TOKEN=osm_host_…  OSMIUM_WS_URL=wss://…/ws/host  npm start
 same volume, so a container that keeps `/agent` keeps its accounts. `OSMIUM_LOG` takes `error`,
 `warn`, `info` or `debug`.
 
+`OSMIUM_SEARCH_COST=true` has every finished route search log, at `debug`, what it cost: how many
+squares it expanded, how long it spent thinking against the wall clock, and how much of that went
+into reading the world. Off by default - it is a line per search, and the accounting reads the clock
+inside the search's own loop.
+
 Accounts are normally added through the interface: "Sign in with Microsoft" when setting an agent up
 puts the code in that agent's activity feed. `osmium-link` does the same from a shell, for a host
 that is not enrolled yet or for a session token nothing can obtain — and it is the **only** way to
@@ -73,14 +78,17 @@ pointing an agent at it and reading the activity feed to find out it was wrong.
 ### Tests, CI and the image
 
 ```
-npm test          # 156 tests
+npm test          # 563 tests
 npm run build     # tsc, which type-checks as it emits
 ```
 
 The suite covers the protocol codec, the NBT decoding, the chat formats — against lines captured
 from real servers rather than invented ones — and the chat command system, including an adversarial
 pass over the one input this program takes from strangers. See `test/injection.test.ts`, which is
-written as an audit rather than as coverage.
+written as an audit rather than as coverage. The route search and the driver that walks it are
+tested against a fake world ticked by hand (`test/search.test.ts`, `test/drive.test.ts`): what a
+jump lands on, when a landing brakes, when a journey gives up and when it only gets as close as it
+can.
 
 `host-tests.yml` runs both on a pull request; `host-image.yml` runs them again on `main` and only
 then publishes `ghcr.io/integr-dev/osmium/host`, tagged with the version in `package.json` plus
@@ -341,6 +349,7 @@ one would otherwise run on defaults with nothing saying so.
 | `path.bridge` | `true` to place blocks from its own inventory to cross a gap or pillar up. Only what it is carrying, so an empty inventory is the same as off. |
 | `path.parkour` | `true` to take running jumps across gaps instead of walking round. Quicker and less reliable; a missed jump near lava is the end of the session. |
 | `path.maxDrop` | The furthest the agent will step off, in blocks. Four is where fall damage starts, so the default of three is the drop that costs nothing. |
+| `path.haste` | `0` to `100`: how far the search may trade a shorter route for finding one sooner. `0` is the most direct route the rules allow, however long it takes to work out; `100` commits soonest and the route can wander. Matters most on long bridges and towers, where the search is slowest. Unset, or anything that is not a number, means `50`, which is how agents always planned. Read when a waypoint is sought. |
 | `connect.proxy` | The name of one of this host's proxies — see **Proxies** below. Blank connects from this machine's own address. A name this host does not hold is **not** a fallback to a direct connection: the attempt is refused, an activity entry says why, and the agent reports `failed_connection`. |
 | `connect.rejoin` | `true` to put this agent back into the game by itself after a drop. **Not yours to act on** — it is listed here only because it arrives with the rest and you will see it. Reconnecting is a decision about where an agent belongs, and a host never makes one of those; the backend owns this key and sends an ordinary `connect` when it decides. Ignore it exactly as you would ignore a key you did not recognise. |
 
@@ -1209,8 +1218,23 @@ with work queued, which is the thing §5.1 spends its length avoiding.
 | `dimension` | no | so a map of somewhere else does not draw the line |
 | `goal` | no | where the journey ends; `y` absent means a column — see `path_to` |
 | `nodes` | no | the whole path, oldest first. **Absent means it has not changed** |
+| `work` | no | blocks the route still means to change, in order: `{ x, y, z, kind }`, `kind` `place` or `break`. The block itself, not a standing position. Rides the same updates `nodes` does, and again whenever one is done |
 | `progress` | no | how far along `nodes` the agent is |
 | `reason` | no | why it gave up, for `failed` |
+| `closest` | no | `true` once per journey: the route being walked only gets as close as the search could, because nothing the agent can walk, climb or build reaches the goal. Absent otherwise |
+
+**`reason` is read by the interface, word for word.** It is written for a log, and the interface
+matches these whole to give each a sentence of its own in the operator's language: `there is no
+route there`, `the search ran out of time`, `it has run out of blocks to build with`, `the world
+around it has not arrived yet`, `it could not work out how to get there`, `it could not place a
+block on the way`, `it could not break a block on the way`, `the server kept putting it back`. Any
+other reason is still shown, in your words.
+
+**`closest` is news, not state.** A search that runs out of world before reaching the goal walks the
+nearest it found, once — the world may have more of itself loaded by the time the agent gets there —
+and a second search that says the same gives up with `there is no route there`. A search that runs
+out of *time* is not this: a long walk is several searches, and the next starts where the last one
+stopped.
 
 **Never stored.** A path is current by definition: an old position is still the only answer there is
 about where somebody was, and an old path is simply *wrong* about where somebody is going. The

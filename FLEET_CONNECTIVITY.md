@@ -724,8 +724,9 @@ A hard minimum is reserved for a deliberately breaking protocol change.
 
 ## Live updates to the frontend
 
-> **Built.** Hosts, agents, chat, activity and telemetry all stream, and telemetry is coalesced onto
-> a fixed tick rather than forwarded sample by sample.
+> **Built.** Hosts, agents, chat, activity, telemetry, inventories, journeys, schematics and build
+> jobs all stream, and telemetry is coalesced onto a fixed tick rather than forwarded sample by
+> sample.
 
 The browser channel is **receive-only**. Commands already travel over REST, where they are
 node-gated and audited; the frontend only needs to be told what changed.

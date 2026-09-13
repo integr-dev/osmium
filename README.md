@@ -23,16 +23,17 @@ what needs attention, and what is being said in game.
 > went, so the map can say who was standing there an hour ago. An agent's connection can be routed
 > through one of its host's proxies, chosen by name, with the credential for it never leaving that
 > machine. **An agent can be sent somewhere** — clicked on the map or in the 3D view, typed as a
-> coordinate, or asked for in game — and the route it takes is drawn in both views as it walks. An
+> coordinate, or asked for in game — and the route it takes is drawn in both views as it walks, and
+what came of it is announced in the corner, linked back to the agent. An
 > administrator can see what all of that costs on disk, and free it.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 627 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 485 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 440 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 632 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 545 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 563 tests |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
@@ -123,16 +124,17 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 627 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 485 tests
-cd host && npm test              # 440 tests
+cd backend && ./gradlew test     # 632 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 545 tests
+cd host && npm test              # 563 tests
 ```
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
 clients over real host sockets, and unit tests on an injected clock for anything about the passage of
 time. The frontend covers the route guard, the auth store, the API client middleware, the fleet
-store's derived state, cursor paging, the geometry behind the charts and the box viewer, and that
-the English and German copy stay in step. The host covers the protocol codec, the chat formats
+store's derived state, cursor paging, the geometry behind the charts and the box viewer, which stream
+updates earn a notice, and that the English and German copy stay in step. The host covers the
+protocol codec, the route search and the driver that walks it, the chat formats
 against lines captured from real servers, the chat command system — including an adversarial pass on
 the one input it takes from strangers — the world stream, where the columns a viewer actually puts
 on the wire are checked against the ones its own spiral asked for, the proxy file and what counts as

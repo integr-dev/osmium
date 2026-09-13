@@ -611,9 +611,11 @@ on REST, where they are node-gated and audited.
 | `agent-removed` | `agent.read` | `{ id }` | drops it |
 | `host-removed` | `host.read` | `{ id }` | drops it |
 | `chat` | `chat.read` | one new line | appends it to the feed |
+| `chat-suppressed` | `chat.read` | how many lines have been refused as repetition so far | grows the one row standing in for them |
 | `activity` | `activity.read` | one new line | appends it to the feed |
 | `telemetry` | `agent.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
 | `inventory` | `agent.read` | `{ agentId, inventory }` | replaces what the agent is carrying |
+| `path` | `agent.read` | one journey update, as the host sent it | merges it into the journey; an ending drops it |
 | `user` | `user.read` | the account | replaces it in the list |
 | `user-removed` | `user.read` | `{ id }` | drops it |
 | `audit` | `audit.read` | one new entry | appends it to the trail |
@@ -918,7 +920,8 @@ the state. `HostReportService` splits the two halves on receipt, because they be
   itself rides the first update of a journey and every re-plan after it, because a few hundred points
   a second is bandwidth spent redrawing something that moved by one node. What goes on the stream is
   the update as it arrived — a browser merges it the same way, and sending the merge would undo the
-  saving.
+  saving. `closest` is the one field that is **not** held: it is true on the single update saying the
+  route only gets as close as the search could, and news is not state.
 
 Treating them alike would give either an `agent` event per report — the whole resource, several
 times a minute per agent, to carry a few numbers — or vitals that only update when an agent
@@ -1713,7 +1716,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-496 tests across 39 classes. Most run against a real Postgres 18 through Testcontainers with
+632 tests across 51 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,
