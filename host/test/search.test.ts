@@ -225,3 +225,32 @@ describe('Search', () => {
     expect(route.cost).toBeCloseTo(4, 6)
   })
 })
+
+/**
+ * What a search spent, which is kept only for a search that asks.
+ *
+ * Keeping it reads the clock twice for every square expanded, inside the loop a slow search is slow in,
+ * so it has to be a cost the agent does not pay unless somebody wants the numbers.
+ */
+describe('the accounts a search keeps', () => {
+  const reaching = (x: number, z: number): Goal => ({
+    reached: (at) => at.x === x && at.z === z,
+    estimate: (at) => Math.max(Math.abs(x - at.x), Math.abs(z - at.z)),
+  })
+
+  it('keeps none unless it was asked to', () => {
+    const search = new Search(square(0, 0, 0), openGround(), reaching(10, 0))
+    search.run(1_000)
+
+    expect(search.spent.asked).toBe(0)
+    expect(search.spent.asking).toBe(0)
+  })
+
+  it('counts every call to the rules when it was', () => {
+    const search = new Search(square(0, 0, 0), openGround(), reaching(10, 0), { measured: true })
+    const found = search.run(1_000)
+
+    expect(found.outcome).toBe('found')
+    expect(search.spent.asked).toBe(found.looked)
+  })
+})

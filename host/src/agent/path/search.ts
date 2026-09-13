@@ -113,6 +113,14 @@ export interface Limits {
    * agent. Absent means no bound.
    */
   reach?: number
+  /**
+   * Whether to keep {@link Search.spent}.
+   *
+   * Off unless asked for. Keeping it reads the clock twice for every square expanded, which is not
+   * nothing inside the loop a slow search is slow in - and the numbers are for somebody working out
+   * why, not for the agent.
+   */
+  measured?: boolean
 }
 
 /**
@@ -131,6 +139,7 @@ export class Search {
   private readonly budget: number
   private readonly slice: number
   private readonly ceiling: number
+  private readonly measured: boolean
 
   /** The expanded square that has come closest, which is what an unfinished search has to offer. */
   private best: Held
@@ -140,7 +149,7 @@ export class Search {
   /**
    * What the search actually spent, for telling a slow search from a throttled one.
    *
-   * Diagnostic. `waited` is wall clock from the first slice to the last, `thought` is the time
+   * Diagnostic, and only kept for a search made `measured`. `waited` is wall clock from the first slice to the last, `thought` is the time
    * inside {@link run}, and `asking` is the part of that spent in the neighbour source - which
    * is upstream's `getNeighbors` and reads the world. A search that is slow because it thinks
    * too much and one that is slow because it is only allowed a fifth of each tick look
@@ -156,6 +165,7 @@ export class Search {
   ) {
     this.budget = limits.budget ?? BUDGET
     this.slice = limits.slice ?? SLICE
+    this.measured = limits.measured ?? false
 
     const h = this.goal.estimate(start)
     const first: Held = { step: start, g: 0, h, f: h, dx: 0, dz: 0, from: undefined }
@@ -218,11 +228,18 @@ export class Search {
     return what
   }
 
-  private expand(node: Held): void {
+  /** The neighbour source, with the time it took charged to {@link spent}. */
+  private timed(from: Step): readonly Step[] {
     const asked = Date.now()
-    const offered = this.neighbours(node.step)
+    const offered = this.neighbours(from)
     this.spent.asking += Date.now() - asked
     this.spent.asked++
+
+    return offered
+  }
+
+  private expand(node: Held): void {
+    const offered = this.measured ? this.timed(node.step) : this.neighbours(node.step)
 
     for (const step of offered) {
       if (this.done.has(step.hash)) continue

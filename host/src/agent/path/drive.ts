@@ -307,6 +307,15 @@ const LOOKAHEAD = 16
  */
 const STANDING_STILL = 3
 
+/**
+ * Whether finished searches report what they cost. See {@link Driver.cost}.
+ *
+ * Off by default, and on with `OSMIUM_SEARCH_COST=true`. A line per search is a lot of log for a fleet
+ * that is working, and the accounting behind it reads the clock inside the search's hottest loop; it is
+ * there for the afternoon somebody is working out why routes are slow.
+ */
+const MEASURED = process.env['OSMIUM_SEARCH_COST'] === 'true'
+
 /** How close to a square counts as standing in it. Upstream's numbers, and its simulation's. */
 const NEAR = 0.35
 
@@ -790,7 +799,7 @@ export class Driver {
       `Agent ${this.id} is planning from ${from.x} ${from.y} ${from.z} with ${this.carrying} blocks to build with`,
     )
 
-    this.plotting = new Search(from, walkingFrom(movements), goal, { budget, slice, reach })
+    this.plotting = new Search(from, walkingFrom(movements), goal, { budget, slice, reach, measured: MEASURED })
   }
 
   /**
@@ -820,13 +829,15 @@ export class Driver {
   /**
    * What a finished search cost, once per search.
    *
-   * Diagnostic. Three numbers decide what to do about a slow search and none of them is visible
+   * Diagnostic, and silent unless {@link MEASURED}. Three numbers decide what to do about a slow search and none of them is visible
    * from outside it: how many squares it expanded, how much of the wall clock it was actually
    * allowed to think for, and how much of *that* went into the neighbour source rather than the
    * search. A search that is slow because the world is hard to read, one that expands far too
    * much, and one that is simply throttled all look the same from a stopwatch.
    */
   private cost(what: string, search: Search, found: Route): void {
+    if (!MEASURED) return
+
     const { slices, thought, asking, asked } = search.spent
     const waited = Date.now() - (search as unknown as { startedAt: number }).startedAt
 
@@ -1135,7 +1146,7 @@ export class Driver {
         `${left} steps ahead of it`,
     )
 
-    this.extending = new Search(last.end, walkingFrom(movements), goal, { budget, slice, reach })
+    this.extending = new Search(last.end, walkingFrom(movements), goal, { budget, slice, reach, measured: MEASURED })
   }
 
   /**
@@ -2762,6 +2773,7 @@ export class Driver {
         budget,
         slice,
         reach,
+        measured: MEASURED,
       }),
     }
   }
