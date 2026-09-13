@@ -1153,7 +1153,7 @@ function fillTheEntityTable() {
 
   // No geometry, so `Entity` builds an empty group rather than throwing. Drawn as nothing, on
   // purpose, which is what the game does with them too.
-  for (const name of UNDRAWN) entities[name] ??= { geometry: {}, textures: {} }
+  for (const name of [...UNDRAWN, ...UNSHAPED]) entities[name] ??= { geometry: {}, textures: {} }
 
   if (JSON.stringify(entities) === before) return
 
@@ -1161,7 +1161,7 @@ function fillTheEntityTable() {
   dropDepCache()
   console.log(
     `viewer-assets: ${Object.keys(LIKE).length} entities drawn as what they are a variant of, ` +
-      `${UNDRAWN.length} drawn as nothing`,
+      `${UNDRAWN.length + UNSHAPED.length} drawn as nothing`,
   )
 }
 
@@ -1219,6 +1219,152 @@ const UNDRAWN = [
   'text_display',
   'ominous_item_spawner',
 ]
+
+/**
+ * Entities no single model can stand in for.
+ *
+ * A dropped item is whichever item it is, a falling block whichever block, a painting whichever
+ * picture, and an item frame whatever it holds on whichever wall it hangs from. None of that is in a
+ * table keyed by the kind of entity, so one model drawn for all of them is wrong for nearly every one -
+ * and a floating magenta cube for each is worse than wrong, because it looks like a bug. Lightning is
+ * the other kind of exception: a flash rather than a body, gone before a model of it would be worth
+ * building.
+ *
+ * Drawn as nothing until what distinguishes each one travels with it.
+ */
+const UNSHAPED = ['item', 'falling_block', 'item_frame', 'glow_item_frame', 'painting', 'lightning_bolt']
+/**
+ * Entities newer than the renderer's table, from Mojang's own models.
+ *
+ * **The geometry is Mojang's, not ours.** The table stops at the mobs of 1.16, so everything since -
+ * the allay, the warden, the camel, the sniffer and the rest - came out a magenta box, and a model is
+ * not something to draw by eye. `entity-models.json` beside this file is Mojang's published Bedrock
+ * geometry for each (`resource_pack/models/entity` in the bedrock-samples repository), converted only
+ * as far as this table's shape needs: `minecraft:geometry` unwrapped, and the texture size moved onto
+ * the names the builder reads. No bone or cube was changed.
+ *
+ * Checked before it was kept, against the thing that went wrong for the sheep and the zombie: every
+ * one declares exactly the size of the Java texture it is drawn with.
+ *
+ * Vendored rather than fetched, so a build does not depend on a repository being reachable and the
+ * models that ship are the ones that were checked. Only ever adds - a name the table already has keeps
+ * its own model.
+ */
+function addNewerEntities() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+  const newer = { ...JSON.parse(readFileSync(NEWER_MODELS, 'utf8')), ...BUILT_HERE }
+
+  const added = Object.keys(newer).filter((name) => !entities[name])
+  if (added.length === 0) return
+
+  for (const name of added) entities[name] = newer[name]
+
+  writeFileSync(file, JSON.stringify(entities))
+  dropDepCache()
+  console.log(`viewer-assets: added ${added.length} entities newer than the renderer's table`)
+}
+
+/** Mojang's models for everything since the table was written. See {@link addNewerEntities}. */
+const NEWER_MODELS = path.join(here, 'entity-models.json')
+
+/**
+ * The one model written here rather than taken from Mojang: primed TNT, which in the game is simply the
+ * block and so has no entity model to take. A cube the size of one with the side of the block on every
+ * face - the top and bottom differ, and a lit TNT is recognised by its side.
+ */
+const BUILT_HERE = {
+  tnt: {
+    identifier: 'minecraft:tnt',
+    geometry: {
+      default: {
+        texturewidth: 16,
+        textureheight: 16,
+        bones: [
+          {
+            name: 'block',
+            pivot: [0, 0, 0],
+            cubes: [
+              {
+                origin: [-8, 0, -8],
+                size: [16, 16, 16],
+                uv: Object.fromEntries(
+                  ['north', 'south', 'east', 'west', 'up', 'down'].map((face) => [face, { uv: [0, 0], uv_size: [16, 16] }]),
+                ),
+              },
+            ],
+          },
+        ],
+      },
+    },
+    textures: { default: 'textures/blocks/tnt_side' },
+  },
+}
+
+/**
+ * Textures for entities the staged 1.16 set has no picture for.
+ *
+ * `stageEntityTextures` copies the renderer's own 1.16 folder and stops, so anything newer has nothing
+ * to draw with - the models above, and also the projectiles the table has always pointed at `items/`
+ * pictures that were never copied. Each missing file is taken from the newest release in
+ * minecraft-assets that has it and put where the renderer looks.
+ *
+ * Per file, and only where missing: the 1.16 pictures already staged are the ones the older models were
+ * drawn for, and a newer picture of the same mob is not always laid out the same way.
+ */
+function stageNewerEntityTextures() {
+  const file = path.join(viewerRoot, 'viewer', 'lib', 'entity', 'entities.json')
+  const entities = JSON.parse(readFileSync(file, 'utf8'))
+
+  const assets = path.resolve(here, '../node_modules/minecraft-assets/minecraft-assets/data')
+  if (!existsSync(assets)) {
+    throw new Error('viewer-assets: minecraft-assets is not installed, so newer entities have nothing to be drawn with')
+  }
+
+  const releases = readdirSync(assets)
+    .filter((name) => /^\d+(\.\d+)*$/.test(name))
+    .sort(newestFirst)
+
+  let copied = 0
+  const nowhere = new Set()
+
+  for (const entity of Object.values(entities)) {
+    for (const texture of Object.values(entity.textures ?? {})) {
+      const target = staged(texture.replace('textures', path.join('textures', ENTITY_VERSION)) + '.png')
+      if (existsSync(target)) continue
+
+      const rest = texture.replace(/^textures\//, '') + '.png'
+      const source = releases.map((release) => path.join(assets, release, rest)).find((one) => existsSync(one))
+      if (!source) {
+        nowhere.add(texture)
+        continue
+      }
+
+      mkdirSync(path.dirname(target), { recursive: true })
+      cpSync(source, target)
+      copied++
+    }
+  }
+
+  if (copied) console.log(`viewer-assets: staged ${copied} entity texture(s) from minecraft-assets`)
+  if (nowhere.size) {
+    console.log(`viewer-assets: ${nowhere.size} entity texture(s) are in no release - ${[...nowhere].join(', ')}`)
+  }
+}
+
+/** Release names newest first, by number rather than by string: `1.21.10` comes before `1.21.9`. */
+function newestFirst(one, other) {
+  const a = one.split('.').map(Number)
+  const b = other.split('.').map(Number)
+
+  for (let at = 0; at < Math.max(a.length, b.length); at++) {
+    const difference = (b[at] ?? 0) - (a[at] ?? 0)
+    if (difference !== 0) return difference
+  }
+
+  return 0
+}
+
 /**
  * Drops Vite's pre-bundle, because the table just written is **inlined into it**.
  *
@@ -1932,9 +2078,11 @@ placeStrandedBones()
 mirrorOpposingLimbs()
 stageSlimPlayer()
 pairLimbTextures()
+addNewerEntities()
 fillTheEntityTable()
 await stageWorker()
 stageEntityTextures()
+stageNewerEntityTextures()
 sizeTexturesFromTheSheet()
 for (const version of VERSIONS) {
   stageVersion(version)
