@@ -67,7 +67,8 @@ const spread = ref(false)
  */
 function layout(): void {
   const box = deck.value
-  const cards = box?.querySelectorAll<HTMLElement>('[data-toast]')
+  // Not the ones on their way out: `leave` owns those, and laying them out would put them back.
+  const cards = box?.querySelectorAll<HTMLElement>('[data-toast]:not([data-leaving])')
   if (!box || !cards) return
 
   const total = cards.length
@@ -114,6 +115,36 @@ function layout(): void {
   box.style.height = spread.value ? `${Math.max(0, stacked - GAP_PX)}px` : ''
 }
 
+/**
+ * A dismissed card slides out towards the edge it came from.
+ *
+ * **Driven from here rather than by the leave classes**, because every card is positioned by inline
+ * styles and an inline style beats a class: `.toast-leave-to` asked for a fade and a slide that the
+ * card's own `opacity` and `translate` simply overruled, so a dismissed notice vanished on the spot.
+ * So the card is marked as leaving - which takes it out of {@link layout}, and lets the rest restack
+ * behind it - and its own inline styles are moved to where it is going.
+ *
+ * Finished on a timer rather than on `transitionend`: with reduced motion there is no transition to
+ * end, and a card waiting for one would never leave.
+ */
+function leave(element: Element, done: () => void): void {
+  const card = element as HTMLElement
+  card.dataset['leaving'] = ''
+  card.style.pointerEvents = 'none'
+
+  // Across from wherever it stands in the deck, so a card leaving from the back of an open deck
+  // slides out of its own row rather than dropping to the corner first.
+  const [, rise = '0px'] = (card.style.translate || '0 0px').split(' ')
+  card.style.opacity = '0'
+  card.style.translate = `1.5rem ${rise}`
+
+  window.setTimeout(done, LEAVE_MS)
+  void relayout()
+}
+
+/** The longer of the two leave transitions in `style.css`. */
+const LEAVE_MS = 220
+
 /** After the DOM has the change: every number here comes off cards that are already laid out. */
 async function relayout(): Promise<void> {
   await nextTick()
@@ -158,7 +189,7 @@ onBeforeUnmount(() => sizes?.disconnect())
     @focusin="spread = true"
     @focusout="spread = false"
   >
-    <TransitionGroup name="toast">
+    <TransitionGroup name="toast" @leave="leave">
       <div
         v-for="toast in toasts.toasts"
         :key="toast.id"
