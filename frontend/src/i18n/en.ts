@@ -998,6 +998,28 @@ export const en = {
         label: 'Search distance',
         hint: 'How far from the agent a route may be searched for, in blocks. A search cannot see past the chunks the server has sent — a dozen wide at most — so a larger number does not find longer routes, it spends the search on ground the host has not got. Long journeys are walked as a run of short ones. Default 128.',
       },
+      path_mode: {
+        label: 'Getting around',
+        hint: 'Walk, or fly where the server lets the agent fly - creative mode, or a server that allows flight. A flying agent goes straight where the air is clear and around what is in the way where it is not, then lands. Where flying is not allowed, or the air has no way through, it walks instead and says so in its activity.',
+        options: {
+          auto: 'Walk',
+          fly: 'Fly',
+        },
+      },
+      path_flyCommand: {
+        label: 'Command to allow flight',
+        hint: 'Run in game when the server has not let the agent fly yet — /fly on servers that grant flight that way. Only run when flying is not already allowed, because most of these switch flight off as well as on. If the server still has not allowed it a few seconds later, the agent flies anyway when the switch below is on, and walks otherwise.',
+      },
+      path_flySpeed: {
+        label: 'Flying speed',
+        hint: 'Multiplies how fast the agent flies and climbs. Unset is ×1, the server\'s own flying speed. Faster covers ground sooner and is easier for anti-cheat to notice, especially with forced flight.',
+        low: 'Slower',
+        high: 'Faster',
+      },
+      path_forceFly: {
+        label: 'Fly even where not allowed',
+        hint: 'Flies on servers that do not allow it, by dipping now and then so the server does not kick for floating, and by claiming to stand on the ground so the landing costs nothing. Anti-cheat plugins catch it, and some ban for it.',
+      },
       path_dig: {
         label: 'May dig',
         hint: 'Lets the agent break blocks to get through rather than walking around. Faster, and it changes somebody else\'s world: a route that saves nine blocks by tunnelling through a wall leaves the wall with a hole in it. Off, a route that needs digging is simply not found.',

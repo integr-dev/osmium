@@ -806,6 +806,28 @@ export const de: Copy = {
         label: 'Suchweite',
         hint: 'Wie weit vom Agenten entfernt nach einer Route gesucht werden darf, in Blöcken. Eine Suche sieht nicht über die vom Server gesendeten Chunks hinaus — höchstens ein Dutzend breit — ein größerer Wert findet also keine längeren Routen, sondern verbraucht die Suche auf Boden, den der Host nicht hat. Lange Wege werden als Folge kurzer gegangen. Standard 128.',
       },
+      path_mode: {
+        label: 'Fortbewegung',
+        hint: 'Laufen, oder fliegen, wo der Server den Agenten fliegen lässt - im Kreativmodus oder auf einem Server, der Fliegen erlaubt. Ein fliegender Agent fliegt geradeaus, wo die Luft frei ist, und um Hindernisse herum, wo nicht, und landet dann. Wo Fliegen nicht erlaubt ist oder die Luft keinen Weg bietet, läuft er stattdessen und meldet das in seinen Aktivitäten.',
+        options: {
+          auto: 'Laufen',
+          fly: 'Fliegen',
+        },
+      },
+      path_flyCommand: {
+        label: 'Befehl zum Erlauben des Fliegens',
+        hint: 'Wird im Spiel ausgeführt, wenn der Server den Agenten noch nicht fliegen lässt — /fly auf Servern, die Fliegen so freigeben. Nur, wenn Fliegen nicht schon erlaubt ist, weil die meisten dieser Befehle Fliegen auch wieder ausschalten. Ist es ein paar Sekunden später immer noch nicht erlaubt, fliegt der Agent trotzdem, wenn der Schalter darunter an ist, und läuft sonst.',
+      },
+      path_flySpeed: {
+        label: 'Fluggeschwindigkeit',
+        hint: 'Multipliziert, wie schnell der Agent fliegt und steigt. Leer ist ×1, die eigene Fluggeschwindigkeit des Servers. Schneller kommt früher an und fällt Anti-Cheat leichter auf, besonders beim erzwungenen Fliegen.',
+        low: 'Langsamer',
+        high: 'Schneller',
+      },
+      path_forceFly: {
+        label: 'Auch fliegen, wo es nicht erlaubt ist',
+        hint: 'Fliegt auf Servern, die es nicht erlauben, indem der Agent ab und zu etwas absinkt, damit der Server ihn nicht wegen Schwebens kickt, und behauptet, auf dem Boden zu stehen, damit die Landung keinen Schaden macht. Anti-Cheat-Plugins erkennen das, und manche bannen dafür.',
+      },
       path_dig: {
         label: 'Darf graben',
         hint: 'Erlaubt dem Agenten, Blöcke abzubauen statt außen herum zu gehen. Schneller, und es verändert die Welt anderer Leute: eine Route, die neun Blöcke spart, indem sie durch eine Wand gräbt, hinterlässt ein Loch in dieser Wand. Ist es aus, wird eine Route, die Graben erfordert, schlicht nicht gefunden.',

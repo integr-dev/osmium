@@ -46,6 +46,11 @@ export interface SettingField {
   max?: number
   step?: number
   /**
+   * For a `range` whose position is a number somebody reads - a multiplier - rather than a trade, the
+   * value is shown between its two ends. Its `default` is where the thumb sits while it is unset.
+   */
+  readout?: boolean
+  /**
    * Whether this field is worth showing at all, given the rest.
    *
    * For a setting that only means something when another is set a particular way. A predicate rather
@@ -173,6 +178,26 @@ export const SETTING_GROUPS: SettingGroup[] = [
      */
     key: 'path',
     fields: [
+      // Walks unless flight is asked for. The host flies only where the server allows it, unless the
+      // second switch says to fly anyway - which only means anything once flying is asked for.
+      { key: 'path.mode', type: 'choice', options: ['', 'fly'] },
+      {
+        key: 'path.flyCommand',
+        type: 'text',
+        placeholder: '/fly',
+        showWhen: (settings) => settings['path.mode'] === 'fly',
+      },
+      {
+        key: 'path.flySpeed',
+        type: 'range',
+        min: 0.25,
+        max: 5,
+        step: 0.25,
+        default: '1',
+        readout: true,
+        showWhen: (settings) => settings['path.mode'] === 'fly',
+      },
+      { key: 'path.forceFly', type: 'switch', showWhen: (settings) => settings['path.mode'] === 'fly' },
       {
         // A search cannot see past the chunks the server has sent, which is a dozen wide at most -
         // so a bigger number here does not find longer routes, it spends the budget looking at

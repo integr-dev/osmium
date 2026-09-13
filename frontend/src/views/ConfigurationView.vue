@@ -421,17 +421,25 @@ async function update() {
                         reads as the middle, which is also what the host takes an unset one to mean,
                         so the thumb never says something different from what the agent does.
                       -->
+                      <!--
+                        A slider whose unset value is not its middle - a speed multiplier's is 1 - is
+                        drawn at that value instead, and still writes nothing until it is moved.
+                      -->
                       <div v-else-if="field.type === 'range'" class="flex w-full max-w-xs flex-col gap-1">
                         <input
-                          v-model="settings[field.key]"
+                          :value="settings[field.key] || field.default || ''"
                           type="range"
                           class="range range-primary range-xs"
                           :min="field.min"
                           :max="field.max"
                           :step="field.step"
+                          @input="settings[field.key] = ($event.target as HTMLInputElement).value"
                         />
-                        <span class="flex justify-between text-xs opacity-60">
+                        <span class="flex justify-between gap-2 text-xs opacity-60">
                           <span>{{ t(rangeEnd(field.key, 'low')) }}</span>
+                          <span v-if="field.readout" class="tabular-nums">
+                            ×{{ settings[field.key] || field.default }}
+                          </span>
                           <span>{{ t(rangeEnd(field.key, 'high')) }}</span>
                         </span>
                       </div>
