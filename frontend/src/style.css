@@ -1,10 +1,23 @@
 @import "tailwindcss";
 @plugin "daisyui";
 
+/*
+ * **The themes.** Every colour in the application comes out of one of these blocks, picked by
+ * `data-theme` on the root element — see `src/lib/theme.ts`, which lists them, and `theme.spec.ts`,
+ * which checks each one is readable and complete.
+ *
+ * Beyond daisyUI's own tokens, each block defines Osmium's: the two agent states with no daisyUI
+ * colour of their own, and the scrim and shadows a dialog and a notice lie on, which a light page
+ * wants far fainter than a dark one. A block that leaves one out would fall back to another theme's
+ * value, so the spec insists every block names the same set.
+ *
+ * `--color-primary` is **the fleet's colour** everywhere something is drawn — the map, the 3D view,
+ * a route — and `--color-error` is everybody else's, so the two must never be mistakable in any
+ * theme.
+ */
 @plugin "daisyui/theme" {
-  name: "light";
+  name: "osmium";
   default: true;
-  prefersdark: true;
   color-scheme: "dark";
   --color-base-100: oklch(16% 0.014 145);
   --color-base-200: oklch(20.5% 0.017 145);
@@ -34,6 +47,163 @@
   --border: 1px;
   --depth: 0;
   --noise: 0;
+  --osmium-building: oklch(72% 0.16 300);
+  --osmium-pending: oklch(74% 0.13 248);
+  --osmium-scrim: oklch(0% 0 0 / 0.6);
+  --osmium-modal-shadow: oklch(0% 0 0 / 0.7);
+  --osmium-toast-shadow: oklch(0% 0 0 / 0.18);
+}
+
+@plugin "daisyui/theme" {
+  name: "osmium-light";
+  color-scheme: "light";
+  --color-base-100: oklch(98.5% 0.006 145);
+  --color-base-200: oklch(95.5% 0.01 145);
+  --color-base-300: oklch(90.5% 0.016 145);
+  --color-base-content: oklch(25% 0.02 145);
+  --color-primary: oklch(50% 0.11 138);
+  --color-primary-content: oklch(98.5% 0.006 145);
+  --color-secondary: oklch(45% 0.08 138);
+  --color-secondary-content: oklch(98.5% 0.006 145);
+  --color-accent: oklch(52% 0.12 152);
+  --color-accent-content: oklch(98.5% 0.006 145);
+  --color-neutral: oklch(32% 0.02 145);
+  --color-neutral-content: oklch(97% 0.005 145);
+  --color-info: oklch(50% 0.11 235);
+  --color-info-content: oklch(98.5% 0.006 235);
+  --color-success: oklch(50% 0.11 152);
+  --color-success-content: oklch(98.5% 0.006 152);
+  --color-warning: oklch(64% 0.14 70);
+  --color-warning-content: oklch(22% 0.05 60);
+  --color-error: oklch(52% 0.18 25);
+  --color-error-content: oklch(98.5% 0.006 25);
+  --radius-selector: 0.25rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+  --osmium-building: oklch(50% 0.17 300);
+  --osmium-pending: oklch(55% 0.13 248);
+  --osmium-scrim: oklch(25% 0.02 145 / 0.35);
+  --osmium-modal-shadow: oklch(25% 0.02 145 / 0.22);
+  --osmium-toast-shadow: oklch(25% 0.02 145 / 0.12);
+}
+
+@plugin "daisyui/theme" {
+  name: "midnight";
+  color-scheme: "dark";
+  --color-base-100: oklch(17% 0.028 262);
+  --color-base-200: oklch(21% 0.032 262);
+  --color-base-300: oklch(27% 0.036 262);
+  --color-base-content: oklch(94% 0.012 262);
+  --color-primary: oklch(74% 0.12 250);
+  --color-primary-content: oklch(19% 0.04 262);
+  --color-secondary: oklch(68% 0.1 285);
+  --color-secondary-content: oklch(18% 0.03 285);
+  --color-accent: oklch(80% 0.11 195);
+  --color-accent-content: oklch(20% 0.04 200);
+  --color-neutral: oklch(31% 0.035 262);
+  --color-neutral-content: oklch(95% 0.01 262);
+  --color-info: oklch(82% 0.1 215);
+  --color-info-content: oklch(25% 0.05 230);
+  --color-success: oklch(84% 0.14 158);
+  --color-success-content: oklch(26% 0.05 165);
+  --color-warning: oklch(90% 0.13 95);
+  --color-warning-content: oklch(27% 0.07 60);
+  --color-error: oklch(76% 0.13 18);
+  --color-error-content: oklch(25% 0.08 15);
+  --radius-selector: 0.25rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+  --osmium-building: oklch(74% 0.15 325);
+  --osmium-pending: oklch(80% 0.1 225);
+  --osmium-scrim: oklch(8% 0.02 262 / 0.6);
+  --osmium-modal-shadow: oklch(0% 0 0 / 0.7);
+  --osmium-toast-shadow: oklch(0% 0 0 / 0.3);
+}
+
+@plugin "daisyui/theme" {
+  name: "graphite";
+  color-scheme: "dark";
+  --color-base-100: oklch(18% 0.003 270);
+  --color-base-200: oklch(22% 0.004 270);
+  --color-base-300: oklch(28.5% 0.005 270);
+  --color-base-content: oklch(94% 0.003 270);
+  --color-primary: oklch(79% 0.14 75);
+  --color-primary-content: oklch(22% 0.04 60);
+  --color-secondary: oklch(70% 0.1 55);
+  --color-secondary-content: oklch(20% 0.03 55);
+  --color-accent: oklch(80% 0.1 185);
+  --color-accent-content: oklch(20% 0.03 190);
+  --color-neutral: oklch(32% 0.005 270);
+  --color-neutral-content: oklch(95% 0.003 270);
+  --color-info: oklch(82% 0.1 225);
+  --color-info-content: oklch(26% 0.05 235);
+  --color-success: oklch(84% 0.14 155);
+  --color-success-content: oklch(26% 0.05 165);
+  --color-warning: oklch(90% 0.14 100);
+  --color-warning-content: oklch(27% 0.07 60);
+  --color-error: oklch(74% 0.16 15);
+  --color-error-content: oklch(24% 0.08 15);
+  --radius-selector: 0.25rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+  --osmium-building: oklch(72% 0.16 300);
+  --osmium-pending: oklch(76% 0.12 245);
+  --osmium-scrim: oklch(0% 0 0 / 0.6);
+  --osmium-modal-shadow: oklch(0% 0 0 / 0.7);
+  --osmium-toast-shadow: oklch(0% 0 0 / 0.3);
+}
+
+@plugin "daisyui/theme" {
+  name: "paper";
+  color-scheme: "light";
+  --color-base-100: oklch(97.5% 0.012 85);
+  --color-base-200: oklch(94% 0.018 85);
+  --color-base-300: oklch(88.5% 0.026 80);
+  --color-base-content: oklch(27% 0.025 60);
+  --color-primary: oklch(50% 0.09 190);
+  --color-primary-content: oklch(98% 0.01 190);
+  --color-secondary: oklch(46% 0.07 55);
+  --color-secondary-content: oklch(98% 0.01 60);
+  --color-accent: oklch(50% 0.12 275);
+  --color-accent-content: oklch(98% 0.01 275);
+  --color-neutral: oklch(35% 0.03 60);
+  --color-neutral-content: oklch(97% 0.01 85);
+  --color-info: oklch(50% 0.11 240);
+  --color-info-content: oklch(98% 0.01 240);
+  --color-success: oklch(50% 0.11 150);
+  --color-success-content: oklch(98% 0.01 150);
+  --color-warning: oklch(64% 0.14 65);
+  --color-warning-content: oklch(22% 0.05 55);
+  --color-error: oklch(52% 0.18 28);
+  --color-error-content: oklch(98% 0.01 28);
+  --radius-selector: 0.25rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+  --osmium-building: oklch(50% 0.16 305);
+  --osmium-pending: oklch(55% 0.13 245);
+  --osmium-scrim: oklch(27% 0.025 60 / 0.35);
+  --osmium-modal-shadow: oklch(27% 0.025 60 / 0.22);
+  --osmium-toast-shadow: oklch(27% 0.025 60 / 0.12);
 }
 
 /*
@@ -418,11 +588,11 @@ progress::-moz-progress-bar {
 .modal-box {
   background-color: var(--color-base-200);
   border: 1px solid var(--color-base-300);
-  box-shadow: 0 1.5rem 3.5rem -0.75rem oklch(0% 0 0 / 0.7);
+  box-shadow: 0 1.5rem 3.5rem -0.75rem var(--osmium-modal-shadow);
 }
 
 .modal[open] {
-  background-color: oklch(0% 0 0 / 0.6);
+  background-color: var(--osmium-scrim);
 }
 /*
  * The two quiet states: set up but not in the game, and not set up at all.
@@ -451,10 +621,6 @@ progress::-moz-progress-bar {
  * Building does not pulse, deliberately. It is a steady thing an agent does for an hour at a
  * time, and a fleet of twenty of them breathing in a sidebar is a screen nobody can read past.
  */
-:root {
-  --osmium-building: oklch(72% 0.16 300);
-}
-
 .osmium-dot-building {
   background-color: var(--osmium-building);
 }
@@ -483,17 +649,17 @@ progress::-moz-progress-bar {
  * covers what it sits on.
  */
 .osmium-dot-pending {
-  background-color: oklch(74% 0.13 248);
+  background-color: var(--osmium-pending);
   animation: osmium-ping 1.6s ease-out infinite;
 }
 
 @keyframes osmium-ping {
   from {
-    box-shadow: 0 0 0 0 color-mix(in oklab, oklch(74% 0.13 248) 60%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--osmium-pending) 60%, transparent);
   }
 
   to {
-    box-shadow: 0 0 0 5px oklch(74% 0.13 248 / 0);
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--osmium-pending) 0%, transparent);
   }
 }
 /*
@@ -751,7 +917,7 @@ progress::-moz-progress-bar {
  * daisyUI turns the shadow off for a soft alert because in its usual place it would be noise.
  */
 .osmium-toast {
-  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.18);
+  box-shadow: 0 8px 24px var(--osmium-toast-shadow);
   /* Scaled from the edge that stays put, so a card behind the front one shows a sliver of its top
      rather than shrinking away from the corner on both sides at once. */
   transform-origin: bottom center;

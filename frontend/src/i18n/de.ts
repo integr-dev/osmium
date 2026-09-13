@@ -43,6 +43,16 @@ export const de: Copy = {
     de: 'Deutsch',
   },
 
+  theme: {
+    label: 'Farbschema',
+    system: 'System',
+    osmium: 'Osmium',
+    osmiumLight: 'Osmium Hell',
+    midnight: 'Mitternacht',
+    graphite: 'Graphit',
+    paper: 'Papier',
+  },
+
   nav: {
     openNavigation: 'Navigation öffnen',
     closeNavigation: 'Navigation schließen',
@@ -108,6 +118,7 @@ export const de: Copy = {
     chatServer: 'Chat: {server}',
     refresh: 'Flotte neu laden',
     language: 'Sprache: {name}',
+    theme: 'Farbschema: {name}',
     section: {
       navigate: 'Seiten',
       agents: 'Agenten',

@@ -33,6 +33,7 @@ import AddHostModal from '../components/AddHostModal.vue'
 import ChatRail from '../components/ChatRail.vue'
 import CommandPalette from '../components/CommandPalette.vue'
 import LanguagePicker from '../components/LanguagePicker.vue'
+import ThemePicker from '../components/ThemePicker.vue'
 import NavRail from '../components/NavRail.vue'
 import InitialTile from '../components/InitialTile.vue'
 import PlayerHead from '../components/PlayerHead.vue'
@@ -806,6 +807,7 @@ async function logout() {
           <div class="border-base-300 border-t p-3">
             <NavRail>
               <ul class="menu w-full gap-0.5 p-0">
+                <ThemePicker />
                 <LanguagePicker />
                 <li>
                   <RouterLink :to="{ name: 'account' }" class="gap-3">

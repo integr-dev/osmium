@@ -7,6 +7,11 @@ import { i18n } from './i18n'
 import { setUnauthorizedHandler } from './api/client'
 import { useAuthStore } from './stores/auth'
 import { useToastStore } from './stores/toasts'
+import { startTheme } from './lib/theme'
+
+// Before anything mounts. The page is already in the right theme - see `public/theme.js` - so this
+// only starts following the operating system for an operator on System.
+startTheme()
 
 const app = createApp(App)
 app.use(createPinia())

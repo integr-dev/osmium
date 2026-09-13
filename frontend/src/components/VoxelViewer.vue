@@ -6,6 +6,7 @@ import { clampPitch, clampZoom, DEFAULT_PITCH, DEFAULT_YAW, rotation, type Vec3 
 import { drawOrder, FACE_SHADES, visibleFaces, type DrawOrder } from '../lib/voxels'
 import { palette } from '../lib/blockColours'
 import type { ShapeResponse } from '../api/schematics'
+import { onThemeChange } from '../lib/theme'
 
 /**
  * The schematic itself, as a voxel model that can be turned.
@@ -405,14 +406,19 @@ watch([() => props.shape, yaw, pitch, zoom], schedule)
 
 let observer: ResizeObserver | null = null
 
+/** The ground grid is drawn in the page's text colour, which a canvas only learns by being redrawn. */
+let stopTheme: (() => void) | null = null
+
 onMounted(() => {
   draw()
   observer = new ResizeObserver(schedule)
   if (canvas.value) observer.observe(canvas.value)
+  stopTheme = onThemeChange(schedule)
 })
 
 onUnmounted(() => {
   observer?.disconnect()
+  stopTheme?.()
   if (frame) cancelAnimationFrame(frame)
 })
 

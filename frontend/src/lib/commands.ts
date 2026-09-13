@@ -4,6 +4,7 @@ import { isOnline } from '../stores/agents'
 import type { HostResponse } from '../api/client'
 import { shortcutLabel } from './shortcuts'
 import { LOCALES, t, type Locale } from '../i18n'
+import { THEME_CHOICES, themeName, type ThemeChoice } from './theme'
 
 /**
  * What the command palette can do, and how a query picks among it.
@@ -47,6 +48,9 @@ export interface CommandContext {
    *  this stays a pure function of its input. */
   locale: Locale
   setLocale: (locale: Locale) => void
+  /** The theme chosen, and how to change it, injected for the same reason. */
+  theme: ThemeChoice
+  setTheme: (choice: ThemeChoice) => void
   logout: () => Promise<void>
 }
 
@@ -181,6 +185,18 @@ export function buildCommands(context: CommandContext): Command[] {
       section: 'actions',
       label: t('palette.language', { name: t(`language.${locale}`) }),
       run: () => context.setLocale(locale),
+    })
+  }
+
+  // The theme picker sits beside the language one, so it is offered the same way: every choice but
+  // the one in use.
+  for (const choice of THEME_CHOICES) {
+    if (choice === context.theme) continue
+    commands.push({
+      id: `theme:${choice}`,
+      section: 'actions',
+      label: t('palette.theme', { name: t(themeName(choice)) }),
+      run: () => context.setTheme(choice),
     })
   }
 

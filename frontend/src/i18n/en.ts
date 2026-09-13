@@ -42,6 +42,18 @@ export const en = {
     de: 'Deutsch',
   },
 
+  /** The palettes. Osmium is a name; the others say what they look like. */
+  theme: {
+    label: 'Theme',
+    /** Follows the operating system between Osmium and Osmium Light. */
+    system: 'System',
+    osmium: 'Osmium',
+    osmiumLight: 'Osmium Light',
+    midnight: 'Midnight',
+    graphite: 'Graphite',
+    paper: 'Paper',
+  },
+
   nav: {
     openNavigation: 'Open navigation',
     closeNavigation: 'Close navigation',
@@ -75,6 +87,7 @@ export const en = {
     chatServer: 'Chat: {server}',
     refresh: 'Refresh the fleet',
     language: 'Language: {name}',
+    theme: 'Theme: {name}',
     section: {
       navigate: 'Pages',
       agents: 'Agents',

@@ -1958,8 +1958,48 @@ so `safeRedirect` in `src/router/index.ts` accepts a single-slash path and nothi
 
 ## Theme
 
-daisyUI 5 on Tailwind 4, configured CSS-first in `src/style.css`. The base ramp is evenly spaced and
-tinted toward the primary green; `--depth: 0` means borders, not shadows, do the separating.
+daisyUI 5 on Tailwind 4, configured CSS-first in `src/style.css`. Every theme keeps the same shape —
+`--depth: 0`, so borders rather than shadows do the separating, and the same radii — and differs only
+in colour.
+
+| Theme | | |
+|---|---|---|
+| **Osmium** | dark | the original: a ramp tinted toward the logo's green |
+| **Osmium Light** | light | the same green, darkened until it reads on white |
+| **Midnight** | dark | deep blue, with a blue fleet colour |
+| **Graphite** | dark | near-neutral grey, with an amber fleet colour |
+| **Paper** | light | warm off-white, with a teal fleet colour |
+
+**System**, the default, follows the operating system between Osmium and Osmium Light and switches
+the moment it does. The choice is remembered per browser, like the language, and picked from the
+sidebar above the language or from the palette.
+
+**One stylesheet block per theme, and every colour comes out of one.** Besides daisyUI's tokens each
+block defines Osmium's own: `--osmium-building` and `--osmium-pending`, the two agent states with no
+daisyUI colour, and the scrim and shadows a dialog and a notice lie on, which a light page wants far
+fainter than a dark one. `--color-primary` is the fleet's colour wherever something is drawn and
+`--color-error` is everybody else's.
+
+**What a stylesheet cannot reach listens for the change.** A canvas, a WebGL material and a favicon
+built as a file read a token once and keep it, so each resolves it through `themeColour` in
+`src/lib/theme.ts` and redraws on `onThemeChange`: the map, the 3D viewer's boxes, route, cursor,
+pivot and work boxes and the rings round its nametags, the schematic's voxel view, and the dot on
+the tab's icon. Minecraft's own colours — chat, the world, block colours on the map — are the game's
+and stay as they are.
+
+**The picker draws each theme with the theme.** `ThemeSwatch.vue` sets `data-theme` on its own
+element, so the preview is the real palette at thumbnail size and cannot drift from the stylesheet.
+
+**No flash on load.** `public/theme.js` puts the stored theme on the page before the stylesheet paints.
+A file rather than an inline script, because the Content-Security-Policy allows scripts from this
+origin only; `theme.spec.ts` runs that very file against `resolveTheme`, so the two agree about every
+stored value.
+
+**The palettes are tested, not eyeballed.** `theme.spec.ts` reads the blocks out of the stylesheet
+and holds each theme to account: every block names the same tokens, text reaches 7:1 on the page and
+the cards and 4.5:1 on the deepest ground, the words on a status colour reach 4.5:1, status colours
+are readable as text on the page, and the fleet colour sits far enough from the error colour, in
+Oklab, that the map can never draw one as the other.
 
 ## Docker
 

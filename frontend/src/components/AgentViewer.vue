@@ -15,6 +15,7 @@ import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
 import { dollyToward, easeZoom, panRate, wheelTurn, zoomFactor, type Point } from '../lib/orbit'
 import { axisCross, cornerArms } from '../lib/reticle'
+import { onThemeChange, themeColour as tokenColour } from '../lib/theme'
 
 /**
  * An agent's world, rendered live.
@@ -179,6 +180,13 @@ interface Scene {
    * same tokens, or the two would disagree about what "ours" looks like.
    */
   tones: Record<Tone, string>
+  /**
+   * Resolves every theme colour the scene was built with again, and puts it on the materials.
+   *
+   * A WebGL material is out of the stylesheet's reach: without this a viewer left open across a
+   * change of theme went on drawing the fleet, the route and the cursor in the old one.
+   */
+  retint?: () => void
   /** The agent's own body, which nothing in the stream describes - see {@link showAgent}. */
   body?: Mesh
   /** Makes one, from the renderer's player model. Held so `showAgent` needs no imports. */
@@ -381,6 +389,10 @@ interface ViewerLike {
 
 onMounted(() => void connect())
 onBeforeUnmount(teardown)
+
+let stopTheme: (() => void) | undefined
+onMounted(() => (stopTheme = onThemeChange(() => scene.value?.retint?.())))
+onBeforeUnmount(() => stopTheme?.())
 
 // Cleared rather than kept: the step measured from a position several minutes old would throw the
 // camera across the world on the frame following it being switched back on.
@@ -1126,9 +1138,9 @@ function labelOne(current: Scene, mesh: Mesh, name: string | undefined, tone: To
     const head = headFor(current, name)
 
     // The face counts as part of what is drawn, so its arrival has to count as a change: it is
-    // fetched, and it lands long after the first label was painted. So does the tone, which is
-    // what the face is outlined in.
-    const text = `${mark?.label ?? ''}|${detail ?? ''}|${head ? 'face' : ''}|${tone}`
+    // fetched, and it lands long after the first label was painted. So does the tone's colour, which
+    // is what the face is outlined in - and which a change of theme changes under the same tone.
+    const text = `${mark?.label ?? ''}|${detail ?? ''}|${head ? 'face' : ''}|${current.tones[tone]}`
     if (child.userData['osmiumLabel'] === text) continue
     child.userData['osmiumLabel'] = text
 
@@ -1364,30 +1376,13 @@ const NAMETAG_ORDER = 1000
 
 /**
  * The box takes the interface's own accent, so a viewer looks like the rest of Osmium and follows a
- * change of theme without a second place to edit.
+ * change of theme without a second place to edit - see {@link Scene.retint}.
  *
- * Resolved through a canvas rather than parsed: the token is authored in oklch, which three's colour
- * parser does not read, and a one-pixel fill is the browser's own converter. Falls back to the
- * accent's default if the token is missing or in some notation the canvas also refuses.
+ * As a number, which is what three takes. The token is authored in oklch, which three's colour
+ * parser does not read, so it is resolved by the browser - see `themeColour` in `lib/theme.ts`.
  */
 function themeColour(name: string, fallback: number): number {
-  const token = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  if (!token) return fallback
-
-  const probe = document.createElement('canvas')
-  probe.width = 1
-  probe.height = 1
-  const ctx = probe.getContext('2d')
-  if (!ctx) return fallback
-
-  // An unreadable value leaves fillStyle untouched, so a sentinel says whether it was understood.
-  ctx.fillStyle = '#000000'
-  ctx.fillStyle = token
-  if (ctx.fillStyle === '#000000') return fallback
-
-  ctx.fillRect(0, 0, 1, 1)
-  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
-  return ((r ?? 0) << 16) | ((g ?? 0) << 8) | (b ?? 0)
+  return parseInt(tokenColour(name, '#' + fallback.toString(16).padStart(6, '0')).slice(1), 16)
 }
 
 /**
@@ -2406,11 +2401,19 @@ async function mount(world: { version: string; minY?: number; height?: number },
   // Resolved once, here, because two things are drawn in them: the box around a body and the ring
   // around the face on its label. Resolving the tokens twice is two chances for the same player to
   // be outlined in two colours.
-  const tones: Record<Tone, number> = {
+  const toneColours = (): Record<Tone, number> => ({
     ours: themeColour('--color-primary', OUTLINE_OURS),
     theirs: themeColour('--color-error', OUTLINE_THEIRS),
     gone: OUTLINE_GONE,
-  }
+  })
+  const tones = toneColours()
+
+  // As CSS, for the canvas a label's face is ringed on.
+  const cssTones = (from: Record<Tone, number>) =>
+    Object.fromEntries(TONES.map((tone) => [tone, '#' + from[tone].toString(16).padStart(6, '0')])) as Record<
+      Tone,
+      string
+    >
 
   // A width is measured in pixels, so each has to be told the size of the canvas - see `resize`.
   // Built in the order `TONES` names them, which is how `buildOutline` finds one.
@@ -2779,9 +2782,24 @@ async function mount(world: { version: string; minY?: number; height?: number },
     sizes: new Map(),
     ghosts: new Map(),
     heads: new Map(),
-    tones: Object.fromEntries(
-      TONES.map((tone) => [tone, '#' + tones[tone].toString(16).padStart(6, '0')]),
-    ) as Record<Tone, string>,
+    tones: cssTones(tones),
+    retint: () => {
+      // Every one of these has a `color`; the line material's typings simply do not declare it.
+      const tint = (material: unknown, colour: number) =>
+        (material as { color: { set(value: number): void } }).color.set(colour)
+
+      const next = toneColours()
+      outlineMaterials.forEach((material, at) => tint(material, next[TONES[at]!]))
+      for (const material of [...pathMaterials, ...nodeMaterials]) tint(material, next.ours)
+      tint(hoverMaterial, themeColour('--color-base-content', 0x111111))
+      tint(gimbalMaterial, themeColour('--color-accent', 0x38bdf8))
+      tint(ghostMaterial, themeColour('--color-accent', 0x38bdf8))
+      tint(workMaterial, themeColour('--color-success', 0x22c55e))
+
+      // The labels key their redraw on this colour, so the next pass repaints every ring.
+      built.tones = cssTones(next)
+      shapeNametags(built)
+    },
   }
   scene.value = built
   status.value = 'watching'

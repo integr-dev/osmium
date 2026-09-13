@@ -9,6 +9,7 @@ import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
 import { setLocale, type Locale } from '../i18n'
+import { setTheme, themeChoice } from '../lib/theme'
 
 /**
  * Ctrl/⌘-K: go anywhere, or act on an agent, without reaching for the mouse.
@@ -80,6 +81,8 @@ function open() {
     refresh: agentStore.refresh,
     locale: locale.value as Locale,
     setLocale,
+    theme: themeChoice.value,
+    setTheme,
     logout: async () => {
       agentStore.disconnectLiveUpdates()
       await auth.logout()

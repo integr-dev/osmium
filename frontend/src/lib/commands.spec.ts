@@ -40,6 +40,8 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     refresh: vi.fn(),
     locale: 'en',
     setLocale: vi.fn(),
+    theme: 'system',
+    setTheme: vi.fn(),
     logout: vi.fn(),
     ...overrides,
   }
@@ -123,6 +125,19 @@ describe('what the palette offers', () => {
 
     expect(offered).toContain('locale:de')
     expect(offered).not.toContain('locale:en')
+  })
+
+  it('offers every theme but the one in use, System included', () => {
+    const setTheme = vi.fn()
+    const commands = buildCommands(context({ theme: 'midnight', setTheme }))
+    const offered = ids(commands)
+
+    expect(offered).toContain('theme:system')
+    expect(offered).toContain('theme:paper')
+    expect(offered).not.toContain('theme:midnight')
+
+    void commands.find((command) => command.id === 'theme:paper')?.run?.()
+    expect(setTheme).toHaveBeenCalledWith('paper')
   })
 
   /** A palette is for fast, reversible moves. One wrong Enter must not destroy anything. */

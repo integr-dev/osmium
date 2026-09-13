@@ -3,6 +3,7 @@ import { backendReachable } from '../api/client'
 import { t } from '../i18n'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
+import { onThemeChange, themeColour } from './theme'
 
 /**
  * What the tab says while nobody is looking at the page.
@@ -60,12 +61,12 @@ export function titleFrames(summary: FleetSummary): string[] {
  * right — a tab sits in a strip of other tabs with nothing else to say, so an absent dot would read
  * as an icon that has not loaded rather than as a fleet that is fine.
  */
-export function faviconSvg(source: string, status: ConnectionStatus): string {
+export function faviconSvg(source: string, status: ConnectionStatus, inks: FaviconInks = DOT_INKS): string {
   // A ring in the page background separates the dot from whatever it lands on, which at 16px is the
   // difference between a status and a smudge.
   const badge =
-    `<circle cx="${DOT_X}" cy="${DOT_Y}" r="${DOT_RADIUS + DOT_RING}" fill="${DOT_BACKDROP}"/>` +
-    `<circle cx="${DOT_X}" cy="${DOT_Y}" r="${DOT_RADIUS}" fill="${DOT_FILL[status]}"/>`
+    `<circle cx="${DOT_X}" cy="${DOT_Y}" r="${DOT_RADIUS + DOT_RING}" fill="${inks.backdrop}"/>` +
+    `<circle cx="${DOT_X}" cy="${DOT_Y}" r="${DOT_RADIUS}" fill="${inks[status]}"/>`
 
   return source.replace('</svg>', `${badge}</svg>`)
 }
@@ -76,17 +77,28 @@ const DOT_Y = 640
 const DOT_RADIUS = 195
 const DOT_RING = 55
 
-// The theme's own `--color-success`, `--color-warning`, `--color-error` and `--color-base-100`, as
-// hex: a favicon is fetched as a file and never sees the stylesheet's custom properties. Success is
-// the theme's green rather than the brand one, which is the logo's own colour and would vanish
-// into it.
-const DOT_FILL: Record<ConnectionStatus, string> = {
+/** What the dot and its ring are painted in: one colour per status, and the page ground behind. */
+export type FaviconInks = Record<ConnectionStatus | 'backdrop', string>
+
+// The theme's own `--color-success`, `--color-warning`, `--color-error` and `--color-base-100`,
+// resolved to hex when the icon is painted: a favicon is a file and never sees the stylesheet's
+// custom properties. These are Osmium's values, for when a token cannot be read. Success is the
+// theme's green rather than the brand one, which is the logo's own colour and would vanish into it.
+const DOT_INKS: FaviconInks = {
   ok: '#6ee7a0',
   stale: '#f2e35c',
   offline: '#f4a7a3',
+  backdrop: '#141a15',
 }
 
-const DOT_BACKDROP = '#141a15'
+function themeInks(): FaviconInks {
+  return {
+    ok: themeColour('--color-success', DOT_INKS.ok),
+    stale: themeColour('--color-warning', DOT_INKS.stale),
+    offline: themeColour('--color-error', DOT_INKS.offline),
+    backdrop: themeColour('--color-base-100', DOT_INKS.backdrop),
+  }
+}
 
 /**
  * Keeps the tab's title and icon telling the truth.
@@ -132,7 +144,13 @@ export function useBrowserStatus(): void {
 
   watch(status, paint, { immediate: true })
 
-  onBeforeUnmount(() => window.clearInterval(timer))
+  // The dot is in the theme's colours, so a new theme is a new icon.
+  const stopTheme = onThemeChange(() => void paint(status.value))
+
+  onBeforeUnmount(() => {
+    window.clearInterval(timer)
+    stopTheme()
+  })
 }
 
 const ROTATE_MS = 5000
@@ -147,7 +165,7 @@ async function paint(status: ConnectionStatus): Promise<void> {
     const link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')
     if (!link) return
     link.type = 'image/svg+xml'
-    link.href = `data:image/svg+xml,${encodeURIComponent(faviconSvg(await logoSource, status))}`
+    link.href = `data:image/svg+xml,${encodeURIComponent(faviconSvg(await logoSource, status, themeInks()))}`
   } catch {
     // The tab keeps whatever icon it already has. A favicon is not worth a visible failure, and the
     // sidebar says the same thing in words.
