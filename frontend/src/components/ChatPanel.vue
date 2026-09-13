@@ -40,7 +40,7 @@ import { atTime, dayKey, onDay } from '../lib/time'
  */
 const props = defineProps<{ scope: ChatScope; speaker: FleetAgent | null }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 
@@ -366,6 +366,35 @@ const agentsHere = computed(() => {
 })
 
 /**
+ * Everything a row of the transcript is drawn from, for `v-memo`.
+ *
+ * **A line arriving used to redraw every line already there.** The feed is a list, a new line is a new
+ * list, and the template walks all of it - so a busy server re-rendered the whole transcript once per
+ * message, and the transcript is paged in a hundred lines at a time and never trimmed. A row whose
+ * inputs have not changed is now skipped outright, so the work a new line does is the work of drawing
+ * one line.
+ *
+ * **On the element that carries the `v-for`**, which is a wrapper around the row and the day rule above
+ * it, because that is the only place `v-memo` means anything. Set on the row inside the loop it is not
+ * a memo at all - Vue ignores it there, and the linter says so - which is how the first go at this
+ * changed nothing. Whether a row opens a day is on the list for the same reason the rule is inside
+ * the wrapper.
+ *
+ * The list is short and exact, because anything left off it is something a row stops updating for. A
+ * spoken line never changes once it has arrived, so its id stands for its text, sender and time; what
+ * can still move is who in the fleet an account belongs to, whether the server has more than one agent
+ * to tell apart, and the language. A gap row is rewritten in place as more is suppressed into it - see
+ * `foldRun` - so its count, time and name are on the list as well.
+ */
+function drawnFrom(line: ChatRow, at: number): unknown[] {
+  const seam = opensDay(at)
+
+  return isSuppressed(line)
+    ? [line.id, line.at, line.count, line.from, seam, locale.value]
+    : [line.id, line.at, seam, fleetNames.value, agentsHere.value, locale.value]
+}
+
+/**
  * Whether a line is the first of its day, reading the transcript downwards.
  *
  * `items` runs newest first, so the line after this one in the list is the one before it in time.
@@ -578,7 +607,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
           it, which nobody can see in a scrolling panel anyway.
         -->
         <TransitionGroup :name="items.length > SETTLED_LINES ? '' : 'feed'" tag="div" class="flex flex-col-reverse gap-1">
-          <template v-for="(line, at) in items" :key="line.id">
+          <div v-for="(line, at) in items" :key="line.id" v-memo="drawnFrom(line, at)" class="flex flex-col-reverse gap-1">
             <!--
               A gap, drawn as one row that grows rather than as the lines it stands for — which is
               the point, since those were refused precisely so they would not be kept. Dimmed and
@@ -665,7 +694,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
               <span class="font-mono text-[0.65rem] tracking-wide opacity-50">{{ onDay(line.at) }}</span>
               <span class="border-base-content/15 h-px flex-1 border-t"></span>
             </div>
-          </template>
+          </div>
         </TransitionGroup>
 
         <!--
