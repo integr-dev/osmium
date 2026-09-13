@@ -260,12 +260,17 @@ async function update() {
 </script>
 
 <template>
-  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto">
+  <!--
+    Laid out the way Operations is: the title stays put and everything under it scrolls as one, with
+    the cards at their own height rather than cut to the height of the window.
+  -->
+  <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('configuration.title') }}</h1>
       <p class="text-sm opacity-60">{{ t('configuration.subtitle') }}</p>
     </header>
 
+    <div class="min-h-0 flex-1 overflow-y-auto">
     <div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
       <!-- Left: who to configure. Shared with Operations, so the two cannot drift apart. -->
       <AgentPicker v-model="selected" :agents="agentStore.agents" />
@@ -324,6 +329,13 @@ async function update() {
               it was being cut off against those same edges. The panel carries the room for it and
               the frame gives back the width, which leaves every field aligned with the tabs above.
             -->
+            <!--
+              The fields scroll inside the card, the way the schematic library's list does: the card
+              keeps its own height up to a ceiling, and the tabs above and Update below stay in view
+              while a long tab is read. The padding is the focus ring's room again, because a scroller
+              clips sideways too.
+            -->
+            <div class="-mx-1.5 max-h-[32rem] overflow-y-auto px-1.5">
             <SwapBox class="-mx-1.5">
               <Transition :name="slide">
                 <div
@@ -458,6 +470,7 @@ async function update() {
                 </div>
               </Transition>
             </SwapBox>
+            </div>
 
             <!--
               Update sends the tab on screen and nothing else, so what it will and will not send has
@@ -504,6 +517,7 @@ async function update() {
           </template>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </template>
