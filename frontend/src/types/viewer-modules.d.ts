@@ -63,6 +63,8 @@ declare module 'three' {
       setSize(width: number, height: number, updateStyle?: boolean): void
       render(scene: unknown, camera: unknown): void
       dispose(): void
+      /** Hands the WebGL context back to the browser, which `dispose` does not. */
+      forceContextLoss(): void
     }
   }
   export = THREE

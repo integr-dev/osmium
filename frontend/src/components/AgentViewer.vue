@@ -134,6 +134,7 @@ interface Scene {
     setSize(w: number, h: number, updateStyle?: boolean): void
     render(s: unknown, c: unknown): void
     dispose(): void
+    forceContextLoss(): void
   }
   /** Watches the canvas, not the window - see {@link resize}. */
   watcher?: ResizeObserver
@@ -432,7 +433,25 @@ async function connect(): Promise<void> {
   socket.binaryType = 'arraybuffer'
   live = socket
 
-  socket.onmessage = (message) => void receive(message.data as ArrayBuffer, socket)
+  /*
+   * **One frame at a time, in the order they were sent.**
+   *
+   * Decoding is asynchronous, and a gzipped column takes far longer than a bare position or an
+   * unload. Handed to `receive` as they arrived, frames were applied in whatever order they finished
+   * decoding: an unload landed before the load it undid, leaving a column in the scene - and in every
+   * meshing worker - that nothing would ever remove again, which is a viewer that grows for as long as
+   * the agent walks. And across a respawn a frame from the life before could land after the new
+   * stream had started, putting the old world back and aiming the camera at the place the agent died.
+   *
+   * A frame that throws is logged and the queue goes on: one bad frame must not stop every later one.
+   */
+  let arriving = Promise.resolve()
+  socket.onmessage = (message) => {
+    const buffer = message.data as ArrayBuffer
+    arriving = arriving
+      .then(() => receive(buffer, socket))
+      .catch((err: unknown) => console.error('[osmium] viewer frame failed', err))
+  }
 
   // A socket that never opened and one that dropped are different failures, and saying so matters:
   // the first is a handshake that was refused or never proxied, the second is an agent that went
@@ -654,6 +673,64 @@ function disposeGeometry(mesh: { geometry?: GeometryLike } | undefined): void {
 }
 
 /**
+ * Textures built here for one body: skins and drained copies, freed with the body they were made for.
+ *
+ * A set rather than a mark on the texture, because the renderer's three predates `Texture.userData` -
+ * writing one threw inside `buildTexture`, and every skin after it silently failed to go on.
+ */
+const ownedTextures = new WeakSet<object>()
+
+/** The parts of a three object that {@link release} frees, without the rest of its type. */
+interface Releasable {
+  children?: unknown[]
+  geometry?: { dispose(): void }
+  skeleton?: { dispose(): void }
+  isSprite?: boolean
+  userData?: Record<string, unknown>
+  material?: { map?: unknown; dispose?(): void } | null
+}
+
+/**
+ * Frees everything one body holds, all the way down.
+ *
+ * **Upstream frees the wrong object.** Its `dispose3` is handed an entity's root, which is a bare
+ * `Object3D` with no geometry of its own: the body, its skeleton, its nametag and the box drawn here
+ * all hang below it. So every mob that walked out of view left its geometry, its materials and its
+ * label behind for the life of the page, and a viewer left open on a busy spot grew by gigabytes.
+ *
+ * **What is shared is left alone.** The box's material is one per colour for the whole scene, and a
+ * texture from upstream's cache is worn by every entity naming that file. What goes is what was built
+ * for this body: its geometry, skeleton and materials, its nametag's texture - one canvas per label,
+ * upstream's and ours alike - and any skin or drained copy built here, which {@link ownedTextures} holds.
+ */
+function release(object: unknown): void {
+  const node = object as Releasable | undefined
+  if (!node) return
+
+  for (const child of node.children ?? []) release(child)
+
+  node.geometry?.dispose()
+  node.skeleton?.dispose()
+
+  // One material per colour, for every box in the scene.
+  if (node.userData?.['osmiumOutline']) return
+
+  const ownTexture = (texture: unknown) => {
+    if (texture && typeof texture === 'object' && ownedTextures.has(texture)) {
+      ;(texture as { dispose?(): void }).dispose?.()
+    }
+  }
+  ownTexture(node.userData?.['osmiumGreyed'])
+  ownTexture(node.userData?.['osmiumLively'])
+
+  const material = node.material
+  if (!material) return
+  if (node.isSprite) (material.map as { dispose?(): void } | undefined)?.dispose?.()
+  else ownTexture(material.map)
+  material.dispose?.()
+}
+
+/**
  * The entity types the renderer can actually build, which is fewer than the ones it lists.
  *
  * Six of its models name a parent bone they never define - a piglin's `leftItem` hangs off a
@@ -827,6 +904,8 @@ function dress(current: Scene, mesh: Mesh, worn: Skin): void {
     for (const child of [...(mesh.children ?? [])]) {
       if (child.isSprite || child.userData['osmiumOutline'] || !child.geometry) continue
       mesh.remove?.(child)
+      // The wide body being replaced, which nothing else will ever free.
+      release(child)
     }
     for (const child of [...(replacement.children ?? [])]) mesh.add(child)
     // A body that arrives this way has not been through the pass that walks the renderer's list.
@@ -879,7 +958,9 @@ function outlineOne(
 
   if (mesh.userData['osmiumOutlined']) {
     for (const child of [...(mesh.children ?? [])]) {
-      if (child.userData['osmiumOutline']) mesh.remove?.(child)
+      if (!child.userData['osmiumOutline']) continue
+      mesh.remove?.(child)
+      release(child)
     }
   }
 
@@ -1526,6 +1607,13 @@ function restream(current: Scene, world: { version: string; minY?: number; heigh
   current.sizes.clear()
   current.received = 0
 
+  // A new stream is a new place: a respawn, another dimension, a rejoin. The camera is aimed at the
+  // agent afresh when its first position arrives, rather than left looking at where it last was -
+  // which after a death is ground the new stream never sends, and reads as an empty world.
+  delete current.lastAt
+  delete current.shown
+  delete current.followed
+
   console.info(
     `[osmium] viewer restreamed: ${world.version} y ${current.bounds.minY}..${current.bounds.maxY}`,
   )
@@ -1551,6 +1639,9 @@ async function receive(buffer: ArrayBuffer, socket: WebSocket): Promise<void> {
     if (err instanceof FrameError) return fail(t('viewer.unsupported'))
     return
   }
+
+  // A socket this screen has since closed or replaced. Its frames describe a stream nobody is on.
+  if (socket !== live) return
 
   for (const event of batch.events) {
     // The host states the version before anything that depends on it, so this is where the scene is
@@ -2214,6 +2305,25 @@ async function mount(world: { version: string; minY?: number; height?: number },
     }
   }
 
+  // Removed bodies are freed all the way down, which upstream's own removal does not - see `release`.
+  const bodies = viewer.entities as unknown as {
+    entities: Record<string, unknown>
+    update(entity: { id: number; delete?: true }): void
+    clear(): void
+  }
+  const updateBody = bodies.update.bind(bodies)
+  bodies.update = (entity) => {
+    const leaving = entity.delete ? bodies.entities[entity.id] : undefined
+    updateBody(entity)
+    release(leaving)
+  }
+  const clearBodies = bodies.clear.bind(bodies)
+  bodies.clear = () => {
+    const leaving = Object.values(bodies.entities)
+    clearBodies()
+    for (const body of leaving) release(body)
+  }
+
   viewer.world.texturesDataUrl = `${ASSETS}/textures/${version}.png`
 
   /*
@@ -2481,6 +2591,8 @@ async function mount(world: { version: string; minY?: number; height?: number },
       texture.wrapS = THREE.RepeatWrapping
       texture.wrapT = THREE.RepeatWrapping
       texture.needsUpdate = true
+      // Built for one body, so freed with it - see `release`. The renderer's cached sheets are not.
+      ownedTextures.add(texture)
       return texture as unknown as TextureLike
     },
     // In world units, not model units: what an entity is attached to is a plain Object3D, and the
@@ -3062,11 +3174,30 @@ function teardown(): void {
     current.viewer.world.scene.remove(box)
     disposeGeometry(box)
   }
+  // Every body, the agent's own included, and every column - see `release`.
+  for (const body of Object.values(current.viewer.entities?.entities ?? {})) release(body)
+  release(current.body)
+  for (const mesh of Object.values(current.viewer.world.sectionMeshs ?? {})) mesh?.geometry?.dispose()
+  current.heads.clear()
+
+  /*
+   * **The workers are what kept all of it alive.** Each holds its own copy of the world and of the
+   * block states, and its message handler holds the renderer and everything in its scene - so a worker
+   * left running after its screen closed kept a whole world, and a viewer opened ten times held ten.
+   */
+  for (const worker of current.viewer.world.workers) {
+    worker.onmessage = null
+    worker.terminate()
+  }
+
   clearTimeout(current.summary)
   cancelAnimationFrame(current.frame)
   current.emitter.removeAllListeners()
   current.controls?.dispose()
   current.renderer.dispose()
+  // `dispose` frees what three allocated and keeps the context; the browser holds a context's memory
+  // until the page is gone unless it is told to let go.
+  current.renderer.forceContextLoss()
   if (current.socket.readyState <= WebSocket.OPEN) current.socket.close()
 }
 
