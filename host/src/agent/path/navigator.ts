@@ -18,6 +18,7 @@ import type { Movements } from 'mineflayer-pathfinder'
 import { log } from '../../log.ts'
 import type { Schedule } from '../schedule.ts'
 import { Driver, type Rules } from './drive.ts'
+import { FlightDriver, type FlightRules, type Permit, takeoff } from './fly.ts'
 import { over, standsAt, type Walk, within } from './ground.ts'
 import type { PathSettings } from './settings.ts'
 import { advanced, nodesOf, type PathNode, type PathWork } from './track.ts'
@@ -59,6 +60,16 @@ export interface Waypoint {
   z: number
 }
 
+/** What the navigator needs to know about flying from the session it runs in. */
+export interface Sky {
+  /** What the server currently allows. Asked per waypoint, because a game mode can change. */
+  permit(): Permit
+  /** Says something an operator should know, in the agent's activity. */
+  tell(text: string): void
+  /** Runs a command in game, as the agent: the one that asks the server for flight. */
+  ask(command: string): void
+}
+
 export interface PathUpdate {
   state: PathState
   /** Where it is ultimately going. Absent when it is going nowhere. */
@@ -98,6 +109,15 @@ const WAYPOINT_NEAR = 3
 
 /** How often progress goes out while the agent is moving. */
 const REPORT_MS = 1_000
+
+/**
+ * How long to wait for the server to answer a command asking for flight.
+ *
+ * The answer is an abilities packet, which a server sends at once when it grants anything - so a few
+ * seconds is long enough to mean it is not coming, and short enough that nobody watching thinks the
+ * agent has stopped listening.
+ */
+const FLY_COMMAND_WAIT_MS = 3_000
 
 /**
  * How long one search may run, in wall clock.
@@ -190,6 +210,24 @@ export class AgentNavigator {
    */
   private readonly driver: Driver
 
+  /** The other engine, which flies. See `fly.ts`. */
+  private readonly flyer: FlightDriver
+
+  /** Whether the waypoint being sought is being flown to. */
+  private aloft = false
+
+  /** Whether this journey's flight found no way through the air, so the rest of it is walked. */
+  private walkingInstead = false
+
+  /** Whether this journey has already said it is walking because flying is not allowed. */
+  private toldWalking = false
+
+  /** Whether this journey has already run the command asking for flight. Once, because it may toggle. */
+  private askedToFly = false
+
+  /** Checks for the server granting flight after the command, while it is being waited for. */
+  private waiting: NodeJS.Timeout | undefined
+
   /**
    * The rules the engine walks by, built once per waypoint rather than per search.
    *
@@ -237,6 +275,8 @@ export class AgentNavigator {
     private readonly report: (update: PathUpdate) => void,
     /** Handed straight to the engine: walking is this class's business, the hands are not. */
     hands: Schedule,
+    /** What the server allows about flying, and how to tell an operator it is walking instead. */
+    private readonly sky: Sky,
   ) {
     this.onForced = () => this.putBack()
 
@@ -250,15 +290,22 @@ export class AgentNavigator {
         route: (steps, settled) => this.routed(steps, settled),
         arrived: () => this.reached(),
         lost: (why) => this.finish('failed', why),
-        closest: () => {
-          if (this.toldClosest) return
-          this.toldClosest = true
-          this.closest = true
-        },
+        closest: () => this.nearest(),
         stalled: () => log.debug(`Agent ${this.id} was stuck ${this.physics()}`),
       },
       hands,
     )
+
+    // The same journey underneath: a flight draws, arrives and gives up through exactly what a walk
+    // does, and one the air has no way through carries on as a walk.
+    this.flyer = new FlightDriver(id, bot, () => this.flightRules(), {
+      route: (steps, settled) => this.routed(steps, settled),
+      arrived: () => this.reached(),
+      lost: (why) => this.finish('failed', why),
+      closest: () => this.nearest(),
+      stalled: () => {},
+      grounded: (why) => this.walkInstead(why),
+    })
 
     // Cheap: three numbers copied twenty times a second, which is what makes a teleport measurable
     // at all - by the time `forcedMove` is raised, the position it replaced is already gone.
@@ -270,6 +317,7 @@ export class AgentNavigator {
 
   start(): void {
     this.driver.start()
+    this.flyer.start()
 
     // Typed through mineflayer's own augmentation of its events, which declares its payload types
     // without importing them - so they arrive here as `any` and are given a shape at the edge.
@@ -304,6 +352,7 @@ export class AgentNavigator {
     // Best effort. The bot may already be gone, in which case there is nothing left to tell.
     try {
       this.driver.stop()
+      this.flyer.stop()
     } catch (err) {
       log.debug(`Agent ${this.id} could not stop its engine: ${(err as Error).message}`)
     }
@@ -326,6 +375,9 @@ export class AgentNavigator {
     this.at = 0
     this.refused = []
     this.toldClosest = false
+    this.walkingInstead = false
+    this.toldWalking = false
+    this.askedToFly = false
     this.seek()
   }
 
@@ -344,7 +396,28 @@ export class AgentNavigator {
 
   /** Whether the route it is walking still has blocks to lay or break. See `Driver.building`. */
   building(): boolean {
-    return this.driver.building()
+    return !this.aloft && this.driver.building()
+  }
+
+  /** Whether the agent is flying where it is not allowed, and so has to claim the ground. See `fly.ts`. */
+  claimsGround(): boolean {
+    return this.flyer.claimsGround()
+  }
+
+  /**
+   * The operator switched between walking and flying.
+   *
+   * The one setting a journey already under way is planned again for: somebody who turns flight on
+   * while an agent walks is waiting to watch it take off, not for the journey after this one.
+   */
+  reconsider(): void {
+    if (this.waypoints.length === 0) return
+
+    log.info(`Agent ${this.id} was switched between walking and flying mid-journey, and is planning again`)
+    this.walkingInstead = false
+    this.toldWalking = false
+    this.askedToFly = false
+    this.seek()
   }
 
   /**
@@ -507,19 +580,53 @@ export class AgentNavigator {
 
     this.rules = this.ruleset()
 
-    // A column when no height was given, a point when one was, and the difference is the one worth
-    // keeping: a column is satisfied by standing over the spot, which is what "somewhere around
-    // there" means when nobody has charted the ground.
-    this.driver.go(
-      target.y === undefined
-        ? over(target.x, target.z, near, wanted.lean)
-        : within(target.x, target.y, target.z, near, wanted.lean),
-    )
+    // Flown where flight was asked for and is possible, walked everywhere else - and walked for the
+    // rest of a journey whose flight found no way through the air. Said once per journey, because an
+    // operator who asked for flight and got a walk would otherwise be looking at the wrong engine.
+    const choice = this.walkingInstead ? 'walk' : takeoff(wanted, this.sky.permit(), this.askedToFly)
+
+    // **Asked for before anything else is tried.** Some servers grant flight to whoever runs a command
+    // for it, and flight granted that way is worth more than forcing it or walking. Nothing moves until
+    // the server has answered or plainly is not going to - see `awaitFlight`.
+    if (choice === 'ask') {
+      this.askedToFly = true
+      log.info(`Agent ${this.id} is not allowed to fly, and is running ${wanted.flyCommand} to be`)
+      this.sky.ask(wanted.flyCommand)
+      this.driver.halt()
+      this.report({ state: 'planning', goal: this.waypoints[this.waypoints.length - 1] ?? target })
+      this.awaitFlight()
+      return
+    }
+
+    const flying = choice === 'fly'
+    if (wanted.mode === 'fly' && !flying && !this.walkingInstead && !this.toldWalking) {
+      this.toldWalking = true
+      this.sky.tell(
+        `Flying is not allowed on this server${this.askedToFly ? `, even after ${wanted.flyCommand}` : ''}, ` +
+          'so the agent is walking. Turn on flying where not allowed to fly anyway.',
+      )
+    }
+    this.aloft = flying
+
+    if (flying) {
+      this.driver.halt()
+      this.flyer.go(target, near)
+    } else {
+      this.flyer.release()
+      // A column when no height was given, a point when one was, and the difference is the one worth
+      // keeping: a column is satisfied by standing over the spot, which is what "somewhere around
+      // there" means when nobody has charted the ground.
+      this.driver.go(
+        target.y === undefined
+          ? over(target.x, target.z, near, wanted.lean)
+          : within(target.x, target.y, target.z, near, wanted.lean),
+      )
+    }
 
     log.info(
-      `Agent ${this.id} is heading for ${target.x} ${target.y ?? 'any'} ${target.z}` +
+      `Agent ${this.id} is ${flying ? 'flying' : 'heading'} for ${target.x} ${target.y ?? 'any'} ${target.z}` +
         `${last ? '' : ` (waypoint ${this.at + 1} of ${this.waypoints.length})`}` +
-        `, searching ${wanted.range} blocks out`,
+        `${flying ? '' : `, searching ${wanted.range} blocks out`}`,
     )
 
     // The destination, not the waypoint being sought. What an operator asked for is where the
@@ -678,6 +785,7 @@ export class AgentNavigator {
 
     try {
       this.driver.halt()
+      this.flyer.halt()
     } catch (err) {
       log.debug(`Agent ${this.id} could not stop its engine: ${(err as Error).message}`)
     }
@@ -699,6 +807,71 @@ export class AgentNavigator {
     this.redrawn = false
     this.closest = false
     this.toldClosest = false
+    this.aloft = false
+    this.walkingInstead = false
+    this.toldWalking = false
+    this.askedToFly = false
+    clearInterval(this.waiting)
+    this.waiting = undefined
+  }
+
+  /**
+   * Waits for the server's answer to the command asking for flight, then seeks the waypoint again.
+   *
+   * Polled rather than hooked: the answer is whatever the session last read from an abilities packet,
+   * and the question is only whether it has changed - which a tenth of a second at a time answers
+   * without the navigator having to know how the session reads packets.
+   */
+  private awaitFlight(): void {
+    clearInterval(this.waiting)
+    const until = Date.now() + FLY_COMMAND_WAIT_MS
+
+    this.waiting = setInterval(() => {
+      if (this.waypoints.length === 0) {
+        clearInterval(this.waiting)
+        this.waiting = undefined
+        return
+      }
+
+      const granted = this.sky.permit().mayFly
+      if (!granted && Date.now() < until) return
+
+      clearInterval(this.waiting)
+      this.waiting = undefined
+      log.info(`Agent ${this.id} ${granted ? 'was allowed to fly' : 'was still not allowed to fly after asking'}`)
+      this.seek()
+    }, 100)
+  }
+
+  /** The route only gets as close as it can. Said once per journey, whichever engine found it. */
+  private nearest(): void {
+    if (this.toldClosest) return
+    this.toldClosest = true
+    this.closest = true
+  }
+
+  /** What the operator's settings and the server's leave come down to, as the flying engine wants them. */
+  private flightRules(): FlightRules {
+    const wanted = this.wanted()
+    const permit = this.sky.permit()
+
+    return {
+      reach: wanted.range,
+      slice: SLICE,
+      budget: THINK_MS,
+      sprint: wanted.sprint,
+      lean: wanted.lean,
+      forced: !permit.mayFly,
+      speed: permit.speed,
+      boost: wanted.flySpeed,
+    }
+  }
+
+  /** The air has no way there, so the rest of the journey is walked from wherever the flight stopped. */
+  private walkInstead(why: string): void {
+    this.walkingInstead = true
+    this.sky.tell(`Could not fly: ${why}. Walking instead.`)
+    this.seek()
   }
 
   private destination(): Waypoint | undefined {

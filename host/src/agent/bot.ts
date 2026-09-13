@@ -12,6 +12,7 @@ import { Schedule } from './schedule.ts'
 import { speedUpTools, timeDigsProperly } from './tool.ts'
 import { type Box, CLEARANCE, freed, hullAt, HULL_HEIGHT, HULL_WIDTH, overlaps } from './unembed.ts'
 import { AgentNavigator, type Waypoint } from './path/navigator.ts'
+import { FLY_SPEED, type Permit } from './path/fly.ts'
 import { type PathSettings, pathSettingsFrom } from './path/settings.ts'
 import { type Component, componentsOf } from './chat.ts'
 import {
@@ -264,6 +265,9 @@ export class Agent {
 
   /** How it gets from one place to another. Read per plan, like the utility settings. */
   private pathing: PathSettings = pathSettingsFrom({})
+
+  /** What the server allows about flying, from its abilities packet. See `fly.ts`. */
+  private sky: Permit = { mayFly: false, speed: FLY_SPEED }
 
   private navigator: AgentNavigator | undefined
 
@@ -718,6 +722,19 @@ export class Agent {
     bot._client.on('login', named)
     bot._client.on('respawn', named)
 
+    // Whether this server lets the agent fly, and how fast. mineflayer reads neither. The packet comes
+    // with the login - before the navigator exists to ask - and again whenever the game mode changes,
+    // so it is kept here for the navigator to read per waypoint.
+    this.sky = { mayFly: false, speed: FLY_SPEED }
+    bot._client.on('abilities', (packet: { flags?: number; flyingSpeed?: number }) => {
+      if (this.bot !== bot) return
+      const speed = packet.flyingSpeed
+      this.sky = {
+        mayFly: ((packet.flags ?? 0) & 4) !== 0,
+        speed: speed !== undefined && speed > 0 ? speed : FLY_SPEED,
+      }
+    })
+
     bot.on(
       'death',
       live(() => {
@@ -941,6 +958,11 @@ export class Agent {
       'path.bridge',
       'path.parkour',
       'path.maxDrop',
+      'path.haste',
+      'path.mode',
+      'path.forceFly',
+      'path.flyCommand',
+      'path.flySpeed',
     ])
     const unknown = Object.keys(values).filter((key) => !known.has(key))
 
@@ -995,10 +1017,16 @@ export class Agent {
     // Read per plan by the navigator, so a toggle applies to the next search rather than the next
     // session. What is already being walked is left alone: re-planning under an agent because a box
     // was ticked is a surprise, and the path it is on was legal when it was drawn.
+    const before = this.pathing
     this.pathing = pathSettingsFrom(values)
 
+    // Except flying or walking, which a journey under way is planned again for - see `reconsider`.
+    if (before.mode !== this.pathing.mode || before.forceFly !== this.pathing.forceFly) this.navigator?.reconsider()
+
     log.info(
-      `Agent ${this.id} paths within ${this.pathing.range} blocks, ` +
+      `Agent ${this.id} ` +
+        `${this.pathing.mode === 'fly' ? (this.pathing.forceFly ? 'flies even where not allowed' : 'flies where allowed') : 'walks'}, ` +
+        `paths within ${this.pathing.range} blocks, ` +
         `${this.pathing.dig ? 'digging' : 'without digging'}, ` +
         `${this.pathing.bridge ? 'bridging' : 'without bridging'}, ` +
         `${this.pathing.parkour ? 'jumping gaps' : 'without jumping gaps'}, ` +
@@ -1580,6 +1608,7 @@ export class Agent {
         trusted: (name) => this.trusted.has(name.toLowerCase()),
         flee: (who, distance) => this.retreat(who, distance),
         building: () => this.navigator?.building() === true,
+        claimGround: () => this.navigator?.claimsGround() === true,
       },
       this.hands,
     )
@@ -1660,6 +1689,11 @@ export class Agent {
         })
       },
       this.hands,
+      {
+        permit: () => this.sky,
+        tell: (text) => this.activity(ActivityScope.System, Severity.Warning, text),
+        ask: (command) => this.say(command),
+      },
     )
     this.navigator.start()
   }

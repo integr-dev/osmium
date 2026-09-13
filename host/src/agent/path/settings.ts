@@ -39,6 +39,14 @@ export interface PathSettings {
    * search fills in a huge area before it commits.
    */
   lean: number
+  /** Walking, or flying wherever flying is possible - see `fly.ts`. */
+  mode: 'walk' | 'fly'
+  /** Whether to fly where the server has not granted flight. Only means anything in `fly` mode. */
+  forceFly: boolean
+  /** A command that asks the server for flight, such as `/fly`. Empty is none. See `takeoff` in fly.ts. */
+  flyCommand: string
+  /** What flying speed is multiplied by, between a tenth and ten. Unset is 1. */
+  flySpeed: number
 }
 
 /**
@@ -89,6 +97,11 @@ export function pathSettingsFrom(values: Record<string, string>): PathSettings {
     maxDrop: counted(values['path.maxDrop'], DEFAULT_DROP, MOST_DROP),
     sprint: antiHungerFrom(values['util.antiHunger']) !== 'careful',
     lean: leanFor(values['path.haste']),
+    // Anything but `fly` walks, which is what an agent nobody configured has always done.
+    mode: values['path.mode']?.trim() === 'fly' ? 'fly' : 'walk',
+    forceFly: flag(values['path.forceFly']),
+    flyCommand: values['path.flyCommand']?.trim() ?? '',
+    flySpeed: multiplier(values['path.flySpeed']),
   }
 }
 
@@ -123,6 +136,19 @@ function counted(written: string | undefined, fallback: number, most: number): n
   const value = Math.floor(Number(written?.trim()))
   if (!Number.isFinite(value) || value < 1) return fallback
   return Math.min(value, most)
+}
+
+/**
+ * A speed multiplier an operator wrote, held between a tenth and ten.
+ *
+ * Unset, blank or not a positive number is 1 - the fall back {@link counted} gives, for its reason.
+ * Held at ten because past that a flight covers several blocks a tick, which the physics resolves
+ * collisions for one tick at a time.
+ */
+export function multiplier(written: string | undefined): number {
+  const value = Number(written?.trim())
+  if (!written?.trim() || !Number.isFinite(value) || value <= 0) return 1
+  return Math.min(10, Math.max(0.1, value))
 }
 
 /** A switch, which the interface writes as `true` and clears entirely rather than writing `false`. */

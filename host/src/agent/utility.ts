@@ -44,6 +44,13 @@ export interface UtilityHooks {
    * agent stood on a half-built pillar waiting to jump again.
    */
   building: () => boolean
+  /**
+   * Whether the agent is flying where the server has not allowed it, and so has to claim the ground.
+   *
+   * The same lie as no-fall, told for a different reason: forced flight comes down a little every so
+   * often, and the server adds up every one of those as a fall. See `fly.ts`.
+   */
+  claimGround: () => boolean
 }
 
 /**
@@ -589,7 +596,7 @@ export class AgentUtilities {
        * the damage accumulate - and the threshold made the module do nothing at all on a jump, which
        * is where most fall damage comes from in a fight.
        */
-      if (noFall && MOVES.has(name)) {
+      if ((noFall || this.hooks.claimGround()) && MOVES.has(name)) {
         params = grounded(params) ?? params
       }
 
