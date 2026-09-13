@@ -1250,6 +1250,12 @@ about where somebody was, and an old path is simply *wrong* about where somebody
 backend holds it in memory for as long as the journey lasts, so an agent that reconnects plans again
 rather than resuming.
 
+**Say it again on every connect, and answer every stop.** An update sent while the socket was down
+is dropped, and the backend may be a new one that never heard it - so restate the journey as it
+stands whenever a socket comes up, `idle` included. And answer `path_stop` with `idle` even when
+there is nothing to stop: the one a stop sent may be the update that was lost, and a stop that says
+nothing leaves a line drawn for a journey that has ended.
+
 **`nodes` rides only the updates that redrew the line** — the first of a journey, and every re-plan
 after it. The ones in between carry `progress` alone, which is most of them: a few hundred points a
 second is bandwidth spent redrawing something that moved by one node.

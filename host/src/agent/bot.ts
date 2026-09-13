@@ -1744,14 +1744,14 @@ export class Agent {
    * Says again everything the backend keeps only in memory.
    *
    * Called when a socket comes up, which may be a backend that has just restarted and holds none
-   * of it. Only the inventory today: state is restated by the handshake itself, vitals go out on
-   * their own timer within seconds, and map tiles are in Postgres.
+   * of it. The inventory and the journey: state is restated by the handshake itself, vitals go out
+   * on their own timer within seconds, and map tiles are in Postgres.
    *
-   * Safe to call at any time. It asks the reporter to send on its next pass rather than sending
-   * anything here, so an agent between sessions does nothing at all.
+   * Safe to call at any time. An agent between sessions has neither, and does nothing at all.
    */
   restate(): void {
     this.carrying?.refresh()
+    this.navigator?.restate()
   }
 
   private begin_carrying(): void {

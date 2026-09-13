@@ -381,12 +381,44 @@ export class AgentNavigator {
     this.seek()
   }
 
-  /** The operator said stop. Not a failure - it is the outcome they asked for. */
+  /**
+   * The operator said stop. Not a failure - it is the outcome they asked for.
+   *
+   * **Answered even when there is nothing to stop.** The `idle` a stop sends is the only thing that
+   * clears a journey off the backend and every open page, and it goes nowhere while the socket is
+   * down - so a stop in that window left a line drawn for a journey that had ended, and every stop
+   * pressed after it did nothing, because the agent was already not going anywhere.
+   */
   halt(): void {
-    if (this.waypoints.length === 0) return
+    if (this.waypoints.length === 0) {
+      this.report({ state: 'idle' })
+      return
+    }
 
     log.info(`Agent ${this.id} was told to stop where it is`)
     this.finish('idle')
+  }
+
+  /**
+   * Says again where the journey stands, for a backend that may have missed it.
+   *
+   * Journeys are held in the backend's memory and reported only as they change, so one that changed
+   * while the socket was down - or a backend that restarted - would otherwise go on showing whatever
+   * was last heard until the agent next went somewhere.
+   */
+  restate(): void {
+    if (this.waypoints.length === 0) {
+      this.report({ state: 'idle' })
+      return
+    }
+
+    const goal = this.destination()
+    const drawn = this.nodes.length > 0
+    this.report({
+      state: drawn ? 'moving' : 'planning',
+      ...(goal ? { goal } : {}),
+      ...(drawn ? { nodes: this.nodes, work: this.work, progress: this.progress } : {}),
+    })
   }
 
   /** Whether it is on its way somewhere. */
