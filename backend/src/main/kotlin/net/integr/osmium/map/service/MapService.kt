@@ -1,6 +1,11 @@
 package net.integr.osmium.map.service
 
 import net.integr.osmium.agent.model.Agent
+import net.integr.osmium.liveupdates.LiveUpdateBroker
+import net.integr.osmium.liveupdates.LiveUpdateEvent
+import net.integr.osmium.liveupdates.LiveUpdateType
+import net.integr.osmium.map.dto.MapTileChangedResponse
+import net.integr.osmium.map.dto.toResponse
 import net.integr.osmium.map.model.MapTile
 import net.integr.osmium.map.repository.MapExtent
 import net.integr.osmium.map.repository.MapTileRepository
@@ -16,7 +21,10 @@ import org.springframework.transaction.annotation.Transactional
  * between them has charted it between them.
  */
 @Service
-class MapService(private val tiles: MapTileRepository) {
+class MapService(
+    private val tiles: MapTileRepository,
+    private val broker: LiveUpdateBroker,
+) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     /**
@@ -38,6 +46,16 @@ class MapService(private val tiles: MapTileRepository) {
         }
 
         tiles.upsert(server, tile)
+
+        // After the commit, like every other change: a map drawing a tile the row then did not keep
+        // would be showing ground nobody charted.
+        broker.publish(
+            LiveUpdateEvent(
+                type = LiveUpdateType.MAP_TILE,
+                data = MapTileChangedResponse(serverAddress = server, dimension = tile.dimension, tile = tile.toResponse()),
+                agentId = agent.id,
+            ),
+        )
     }
 
     /**

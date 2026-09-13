@@ -1465,6 +1465,18 @@ can fly. In the 3D view they reuse the same `LineSegments2` machinery the ESP bo
 
 ## The map
 
+**It fills in as the fleet moves.** A region of the map is fetched once, when it first comes into view,
+and every chunk an agent charts after that arrives on the live stream as `map-tile` and is drawn into
+the region it belongs to. Without that a map showed the ground charted before it was opened, and a
+flying agent crossed hundreds of chunks nobody saw arrive.
+
+**Zoomed out, it paints less, not the same at a smaller size.** A region with no tiles in it is never
+painted - every region on screen used to get a 512 by 512 canvas whether anything was charted there
+or not, which zoomed right out was a couple of thousand of them and a crawl. Below half size a region
+is painted at a quarter of its resolution, and below an eighth at a sixteenth, sampling each tile's
+middle; that is what the screen shows anyway. Each region is written in one `putImageData` rather than
+one per tile, and painted canvases are dropped oldest first past 256 full-size regions' worth.
+
 The ground the fleet has charted, at `/map`, drawn one pixel per block column — vanilla's zoom
 zero, so it lines up with the coordinates an operator reads off F3. Full bleed like the viewer, with
 every control floating over it: a map is read by looking at a lot of it at once, and a card with a

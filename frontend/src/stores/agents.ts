@@ -381,6 +381,11 @@ export const useAgentStore = defineStore('agents', () => {
         schematicStatuses.delete((data as { id: number }).id)
         for (const listener of feedListeners) listener(name, data)
         break
+      // A chunk an agent has just charted. Only a map on screen wants it, and that map already holds
+      // the ground around it, so it is handed on rather than kept here.
+      case 'map-tile':
+        for (const listener of feedListeners) listener(name, data)
+        break
       // Runs are not a paged list and not owned by one view: an agent's assignment is a fact about
       // the agent, which the fleet list reads without knowing anything about jobs. A job also moves
       // with nobody watching — a segment is freed the moment its agent leaves the game.

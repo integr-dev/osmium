@@ -124,6 +124,15 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      */
     BUILD_JOB_CHANGED("build-job", Nodes.AGENT_READ),
     BUILD_JOB_REMOVED("build-job-removed", Nodes.AGENT_READ),
+
+    /**
+     * A chunk an agent has just charted, with the server and world it belongs to.
+     *
+     * Gated on `agent.read`, which is what reading the map needs. Without it a map open in a browser
+     * showed only ground charted before it was opened, and an agent flying across hundreds of chunks
+     * left no trace on it until the page was reloaded.
+     */
+    MAP_TILE("map-tile", Nodes.AGENT_READ),
 }
 
 /**

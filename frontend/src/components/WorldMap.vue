@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { fetchTiles } from '../api/map'
 import { loadPalette } from '../lib/mapPalette'
-import { EMPTY, TILE, paintTile, tileKey, type DecodedTile, type Palette } from '../lib/mapTiles'
+import { EMPTY, TILE, decodeTile, paintTile, tileKey, type DecodedTile, type Palette, type TilePayload } from '../lib/mapTiles'
+import { useAgentStore } from '../stores/agents'
 import { IDENTITY, panBy, zoomAt, type Limits, type View } from '../lib/panZoom'
 
 /**
@@ -152,6 +153,62 @@ function regionKey(x: number, z: number): string {
 }
 
 /**
+ * How many tiles each region holds.
+ *
+ * **A region with none is never painted.** Most of any world has not been charted, and every region
+ * on screen used to get a 512 by 512 canvas whether it had anything in it or not - zoomed out, that
+ * was a couple of thousand of them, gigabytes of blank pixels, and a crawl.
+ */
+const filled = new Map<string, number>()
+
+/**
+ * How many of a region's pixels each painted pixel stands for, by zoom.
+ *
+ * Every pixel down to half size; zoomed further out, a canvas at full size is being drawn at a
+ * fraction of it, so it is painted at a quarter or a sixteenth of its size instead - which is what the
+ * screen shows anyway, at a sixteenth or a two hundred and fifty-sixth of the memory and the drawing.
+ */
+const DETAILS = [1, 4, 16] as const
+type Detail = (typeof DETAILS)[number]
+
+function detailFor(k: number): Detail {
+  return k >= 0.5 ? 1 : k >= 0.125 ? 4 : 16
+}
+
+/** Pixels held in painted canvases, against {@link paintedMost}. */
+let paintedPixels = 0
+
+/** The most painted pixels kept: two hundred and fifty-six full-size regions' worth. */
+function paintedMost(): number {
+  return 256 * (REGION * TILE) ** 2
+}
+
+/** Throws away every painting of a region, at every detail, so the next draw paints it afresh. */
+function unpaint(region: string): void {
+  for (const detail of DETAILS) {
+    const key = `${region}@${detail}`
+    const held = painted.get(key)
+    if (!held) continue
+    paintedPixels -= held.width * held.height
+    painted.delete(key)
+  }
+}
+
+/** Holds a tile, counts it into its region, and throws away the paintings it changes. */
+function holdTile(tile: DecodedTile, into: Map<string, DecodedTile>): void {
+  const key = tileKey(tile.x, tile.z)
+  if (!into.has(key)) {
+    const region = regionKey(tile.x, tile.z)
+    filled.set(region, (filled.get(region) ?? 0) + 1)
+  }
+  into.set(key, tile)
+
+  unpaint(regionKey(tile.x, tile.z))
+  // The tile to the south shades against this one, and may live in the region below.
+  unpaint(regionKey(tile.x, tile.z + 1))
+}
+
+/**
  * Regions already fetched, and those being fetched, so nothing is asked for twice.
  *
  * A region that came back empty counts as fetched: most of any world has never been walked, and
@@ -230,21 +287,34 @@ function visible(): { west: number; north: number; east: number; south: number }
  * The northern row of each tile shades against the tile above, which may be in the region above -
  * hence the lookup by chunk rather than within this canvas. A region is discarded when any tile in
  * it, or on its northern border, arrives.
+ *
+ * Painted at the detail the zoom needs - see {@link detailFor} - and into one image written once,
+ * rather than a thousand small writes, one per tile.
  */
-function paintRegion(regionX: number, regionZ: number): HTMLCanvasElement | null {
+function paintRegion(regionX: number, regionZ: number, detail: Detail): HTMLCanvasElement | null {
   if (!palette) return null
 
-  const key = `${regionX},${regionZ}`
+  const region = `${regionX},${regionZ}`
+  if (!filled.get(region)) return null
+
+  const key = `${region}@${detail}`
   const cached = painted.get(key)
   if (cached) return cached
 
+  const side = (REGION * TILE) / detail
   const element = document.createElement('canvas')
-  element.width = REGION * TILE
-  element.height = REGION * TILE
+  element.width = side
+  element.height = side
   const context = element.getContext('2d')
   if (!context) return null
 
-  const image = context.createImageData(TILE, TILE)
+  const out = context.createImageData(side, side)
+  const scratch = new Uint8ClampedArray(TILE * TILE * 4)
+  // Pixels per tile at this detail, and which block of each group of `detail` stands in for it: the
+  // middle one, so a coarse map samples a tile's centre rather than its north-west corner.
+  const cells = TILE / detail
+  const middle = detail >> 1
+
   for (let dz = 0; dz < REGION; dz++) {
     for (let dx = 0; dx < REGION; dx++) {
       const x = regionX * REGION + dx
@@ -253,12 +323,33 @@ function paintRegion(regionX: number, regionZ: number): HTMLCanvasElement | null
       if (!tile) continue
 
       const north = tiles.value.get(tileKey(x, z - 1))
-      paintTile(tile, north?.heights, palette, image.data)
-      context.putImageData(image, dx * TILE, dz * TILE)
+      paintTile(tile, north?.heights, palette, scratch)
+
+      for (let cz = 0; cz < cells; cz++) {
+        for (let cx = 0; cx < cells; cx++) {
+          const from = ((cz * detail + middle) * TILE + cx * detail + middle) * 4
+          const to = ((dz * cells + cz) * side + dx * cells + cx) * 4
+          out.data[to] = scratch[from]!
+          out.data[to + 1] = scratch[from + 1]!
+          out.data[to + 2] = scratch[from + 2]!
+          out.data[to + 3] = scratch[from + 3]!
+        }
+      }
     }
   }
 
+  context.putImageData(out, 0, 0)
   painted.set(key, element)
+  paintedPixels += side * side
+
+  // Oldest first, which is the order a map was painted in: what was on screen a pan ago goes before
+  // what is on screen now.
+  for (const [held, canvasOf] of painted) {
+    if (paintedPixels <= paintedMost() || held === key) break
+    paintedPixels -= canvasOf.width * canvasOf.height
+    painted.delete(held)
+  }
+
   return element
 }
 
@@ -284,6 +375,7 @@ function draw(): void {
   const { west, north, east, south } = visible()
   const span = REGION * TILE
   const step = span * view.value.k
+  const detail = detailFor(view.value.k)
 
   // Over the regions the screen covers, not over every tile ever loaded. Walking the tile map meant
   // touching thousands of entries a frame to draw the handful that are visible.
@@ -294,7 +386,7 @@ function draw(): void {
 
   for (let regionZ = fromZ; regionZ <= toZ; regionZ++) {
     for (let regionX = fromX; regionX <= toX; regionX++) {
-      const image = paintRegion(regionX, regionZ)
+      const image = paintRegion(regionX, regionZ, detail)
       if (!image) continue
 
       // Rounded outwards: at fractional scales two neighbouring regions otherwise land a pixel
@@ -719,12 +811,7 @@ async function fetchRegion(region: { x: number; z: number; key: string }): Promi
     if (server !== props.server || dimension !== props.dimension) return
 
     const next = new Map(tiles.value)
-    for (const tile of found) {
-      next.set(tileKey(tile.x, tile.z), tile)
-      painted.delete(regionKey(tile.x, tile.z))
-      // The tile to the south shades against this one, and may live in the region below.
-      painted.delete(regionKey(tile.x, tile.z + 1))
-    }
+    for (const tile of found) holdTile(tile, next)
     tiles.value = next
     have.add(region.key)
     failure.value = null
@@ -836,6 +923,29 @@ defineExpose({ centreOn })
 
 let observer: ResizeObserver | undefined
 let themes: MutationObserver | undefined
+let stopCharting: (() => void) | undefined
+
+/**
+ * A chunk an agent has just charted, drawn as it arrives.
+ *
+ * **A region is only ever fetched once**, so without this a map showed the ground charted before it
+ * was opened and nothing after - and a region that came back empty stayed empty for as long as the
+ * page was open, however much of it the fleet then flew over. Only the tile's own region and the one
+ * south of it are repainted, which is what a fetched tile throws away too.
+ *
+ * Into the map in place rather than a copy of it: this arrives many times a second while an agent
+ * flies, and copying several thousand tiles for each one is the cost a pan was made cheap to avoid.
+ */
+function charted(event: { serverAddress?: string; dimension?: string; tile?: TilePayload }): void {
+  if (event.serverAddress !== props.server || event.dimension !== props.dimension || !event.tile) return
+
+  const tile = decodeTile(event.tile)
+  if (!tile) return
+
+  holdTile(tile, tiles.value)
+  triggerRef(tiles)
+  schedule()
+}
 
 onMounted(() => {
   const element = canvas.value
@@ -859,6 +969,10 @@ onMounted(() => {
   })
   themes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 
+  stopCharting = useAgentStore().onFeedEvent((name, data) => {
+    if (name === 'map-tile') charted(data as Parameters<typeof charted>[0])
+  })
+
   // Somewhere to start, replaced the moment the fleet reports a position.
   centreOn(0, 0)
 })
@@ -866,6 +980,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   observer?.disconnect()
   themes?.disconnect()
+  stopCharting?.()
   if (frame) cancelAnimationFrame(frame)
 })
 
@@ -877,6 +992,8 @@ watch(
   () => {
     tiles.value = new Map()
     painted.clear()
+    paintedPixels = 0
+    filled.clear()
     have.clear()
     queue = []
     failure.value = null

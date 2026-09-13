@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
+import type { Bot } from 'mineflayer'
 
 import {
+  AgentMap,
   AREA,
   EMPTY,
   TILE,
   UNKNOWN_DIMENSION,
   drawn,
+  nextToChart,
   tileFrom,
   worldOf,
   type Column,
   type MapTile,
+  type Waiting,
 } from '../src/agent/map.ts'
 
 /**
@@ -198,6 +202,76 @@ describe('tileFrom', () => {
 
     expect(tile.palette).toHaveLength(AREA)
     expect(new Set(pixels(tile).map((pixel) => pixel.block)).size).toBe(AREA)
+  })
+})
+
+describe('what gets charted next', () => {
+  const chunk = (x: number, z: number, at = 0, settle = 250): Waiting => ({ key: `${x},${z}`, x, z, at, settle })
+
+  it('reads the ground nearest the agent first, not the ground that arrived first', () => {
+    const waiting = [chunk(9, 0), chunk(1, 0), chunk(5, 0)]
+    const read = nextToChart(waiting, { x: 0, z: 0 }, 1_000)
+
+    expect(read.map((entry) => entry.x)).toEqual([1, 5, 9])
+  })
+
+  it('waits out a chunk that is still settling', () => {
+    const read = nextToChart([chunk(0, 0, 900, 1_500), chunk(1, 0, 900, 50)], { x: 0, z: 0 }, 1_000)
+    expect(read.map((entry) => entry.key)).toEqual(['1,0'])
+  })
+
+  it('reads more a pass the further behind it is, up to a ceiling', () => {
+    const few = nextToChart([0, 1, 2, 3, 4, 5].map((x) => chunk(x, 0)), { x: 0, z: 0 }, 1_000)
+    const many = nextToChart(
+      Array.from({ length: 400 }, (_unused, index) => chunk(index % 16, Math.floor(index / 16))),
+      { x: 0, z: 0 },
+      1_000,
+    )
+
+    expect(few).toHaveLength(4)
+    expect(many).toHaveLength(16)
+  })
+
+  /** Dropping these unread is what left holes all through a flying agent's map. */
+  it('still reads what the agent has left far behind, once the nearer ground is done', () => {
+    const read = nextToChart([chunk(0, 0), chunk(40, 0)], { x: 0, z: 0 }, 1_000)
+    expect(read.map((entry) => entry.key)).toEqual(['0,0', '40,0'])
+  })
+
+  /**
+   * The server takes a chunk away before the queue reaches it more often than not at flying speed, and
+   * the world deletes it before it says so - so it is read in the moment before it goes.
+   */
+  it('maps a waiting chunk as the server unloads it, before it is gone', () => {
+    const sent: MapTile[] = []
+    const handlers = new Map<string, (...args: unknown[]) => void>()
+    const columns = new Map<string, Column>([['0,0', flat(64)]])
+
+    const world = {
+      getColumn: (x: number, z: number) => columns.get(`${x},${z}`),
+      getColumnAt: async () => columns.get('0,0') ?? null,
+      unloadColumn: (x: number, z: number) => void columns.delete(`${x},${z}`),
+    }
+    const bot = {
+      on: (name: string, handler: (...args: unknown[]) => void) => handlers.set(name, handler),
+      removeListener: () => {},
+      world,
+      game: { minY: 0, height: 256 },
+      registry: { blocksByStateId: { [STONE]: { name: 'stone' } } },
+      entity: { position: { x: 0, z: 0 } },
+      version: '1.21.4',
+    }
+
+    const mapper = new AgentMap(1, bot as unknown as Bot, (tile) => sent.push(tile), () => 'minecraft:overworld')
+    mapper.start()
+
+    // Arrived, and unloaded before a pass has read it.
+    handlers.get('chunkColumnLoad')?.({ x: 0, z: 0 })
+    world.unloadColumn(0, 0)
+    mapper.stop()
+
+    expect(sent).toHaveLength(1)
+    expect(columns.has('0,0')).toBe(false)
   })
 })
 

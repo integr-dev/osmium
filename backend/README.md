@@ -616,6 +616,7 @@ on REST, where they are node-gated and audited.
 | `telemetry` | `agent.read` | `{ agentId, telemetry }` | merges the vitals into the agent |
 | `inventory` | `agent.read` | `{ agentId, inventory }` | replaces what the agent is carrying |
 | `path` | `agent.read` | one journey update, as the host sent it | merges it into the journey; an ending drops it |
+| `map-tile` | `agent.read` | `{ serverAddress, dimension, tile }`, the tile as `/api/map/tiles` returns it | draws it into a map of that server and world |
 | `user` | `user.read` | the account | replaces it in the list |
 | `user-removed` | `user.read` | `{ id }` | drops it |
 | `audit` | `audit.read` | one new entry | appends it to the trail |

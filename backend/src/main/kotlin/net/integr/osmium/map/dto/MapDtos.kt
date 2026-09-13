@@ -48,6 +48,16 @@ data class MapTileResponse(
     val at: Instant,
 )
 
+@Schema(
+    description = "A tile an agent has just charted, with the map it belongs to. Sent on the live " +
+        "stream as `map-tile`, so a map on screen fills in as the fleet moves.",
+)
+data class MapTileChangedResponse(
+    val serverAddress: String,
+    val dimension: String,
+    val tile: MapTileResponse,
+)
+
 @Schema(description = "The tiles inside the requested area.")
 data class MapAreaResponse(
     val serverAddress: String,

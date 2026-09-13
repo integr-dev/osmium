@@ -202,11 +202,77 @@ export function drawn(tile: MapTile): boolean {
  */
 const SETTLE = 1_500
 
-/** How many tiles to read per pass. Each is a scan of 256 columns, so this is a frame budget. */
+/**
+ * How long a freshly sent chunk waits, which is far less than a changed one.
+ *
+ * A chunk arriving from the server arrives whole; it is block changes that come in bursts. Giving an
+ * arrival the whole settling time meant a flying agent's map ran a second and a half behind before
+ * the queue had even started, and further behind every second after.
+ */
+const ARRIVED_SETTLE = 250
+
+/** How many tiles to read per pass when nothing is waiting. Each is a scan of 256 columns. */
 const PACE = 4
+
+/** The most tiles a pass will read, however far behind it is. */
+const PACE_MOST = 16
+
+/** How many waiting tiles buy one more read per pass. */
+const BACKLOG_PER_READ = 12
 
 /** How often to look for work. */
 const TICK = 250
+
+/** How often what the mapping did is summed up in the debug log. */
+const TALLY_MS = 10_000
+
+/** A chunk waiting to be read. */
+export interface Waiting {
+  key: string
+  x: number
+  z: number
+  /** When it was last touched. */
+  at: number
+  /** How long it waits after that. */
+  settle: number
+}
+
+/**
+ * Which waiting chunks to read this pass.
+ *
+ * **Nearest the agent first.** In the order they arrived, a flying agent's map filled in behind it:
+ * the queue was still reading ground from a minute ago while the ground under it waited. **Faster the
+ * further behind**, up to a ceiling, so a backlog is worked off rather than carried.
+ *
+ * **Nothing is dropped for being far away.** That was tried, and it left holes all through the map:
+ * at flying speed the chunks nearer the agent kept arriving ahead of one that was still loaded, until
+ * it counted as left behind and was thrown away unread. A chunk that is leaving is read as it leaves
+ * instead - see `AgentMap.leaving`.
+ */
+export function nextToChart(
+  waiting: readonly Waiting[],
+  around: { x: number; z: number } | undefined,
+  now: number,
+): Waiting[] {
+  const away = (entry: Waiting) =>
+    around ? Math.max(Math.abs(entry.x - around.x), Math.abs(entry.z - around.z)) : 0
+
+  const settled = waiting
+    .filter((entry) => now - entry.at >= entry.settle)
+    .sort((one, other) => away(one) - away(other))
+
+  const pace = Math.min(PACE_MOST, PACE + Math.floor(settled.length / BACKLOG_PER_READ))
+  return settled.slice(0, pace)
+}
+
+/** What the mapping has done since it last said so. */
+interface Tally {
+  sent: number
+  same: number
+  empty: number
+  gone: number
+  leaving: number
+}
 
 /**
  * Follows one agent and reports the map under it.
@@ -216,8 +282,8 @@ const TICK = 250
  * around in it.
  */
 export class AgentMap {
-  /** Chunk coordinates waiting to be read, against the time they were last touched. */
-  private readonly dirty = new Map<string, { x: number; z: number; at: number }>()
+  /** Chunks waiting to be read. See {@link nextToChart}. */
+  private readonly dirty = new Map<string, Waiting>()
 
   /** The world this session is in, as of the last tile read. See {@link worldOf}. */
   private dimension = UNKNOWN_DIMENSION
@@ -230,7 +296,7 @@ export class AgentMap {
   private timer: ReturnType<typeof setInterval> | undefined
 
   private readonly onColumn = (point: { x: number; z: number }): void => {
-    this.touch(Math.floor(point.x / TILE), Math.floor(point.z / TILE))
+    this.touch(Math.floor(point.x / TILE), Math.floor(point.z / TILE), ARRIVED_SETTLE)
   }
 
   private readonly onBlock = (oldBlock: unknown, newBlock: { position?: { x: number; z: number } } | null): void => {
@@ -253,6 +319,7 @@ export class AgentMap {
     this.bot.on('chunkColumnLoad', this.onColumn)
     this.bot.on('blockUpdate', this.onBlock)
     this.timer = setInterval(() => void this.drain(), TICK)
+    this.watchUnloads()
 
     log.debug(`Agent ${this.agentId} is mapping ${this.bot.version}`)
   }
@@ -263,24 +330,86 @@ export class AgentMap {
 
     this.bot.removeListener('chunkColumnLoad', this.onColumn)
     this.bot.removeListener('blockUpdate', this.onBlock)
+    this.unwatchUnloads?.()
+    this.unwatchUnloads = undefined
 
     this.dirty.clear()
     // Kept, not cleared: the map is about the world, and the world did not change because this
     // agent stopped looking at it. Clearing would resend every tile on the next session.
   }
 
-  /** Marks a chunk as worth reading again, and restarts its settling time. */
-  private touch(x: number, z: number): void {
-    this.dirty.set(`${x},${z}`, { x, z, at: Date.now() })
+  /**
+   * Marks a chunk as worth reading again, and restarts its settling time.
+   *
+   * A change to one already waiting keeps the longer wait of the two: a chunk that has just arrived
+   * and is already being built in is a chunk in the middle of changing.
+   */
+  private touch(x: number, z: number, settle = SETTLE): void {
+    const key = `${x},${z}`
+    const held = this.dirty.get(key)
+    this.dirty.set(key, { key, x, z, at: Date.now(), settle: Math.max(settle, held?.settle ?? 0) })
   }
 
-  private async drain(): Promise<void> {
-    const now = Date.now()
-    const ready = [...this.dirty.entries()]
-      .filter(([, entry]) => now - entry.at >= SETTLE)
-      .slice(0, PACE)
+  /**
+   * Reads a chunk that is still waiting at the moment the server takes it away.
+   *
+   * **The unload event is too late for this.** The world deletes the column first and says so after,
+   * so there is nothing left to read by the time anything hears about it - which is how a chunk the
+   * queue had not reached yet became a permanent hole in the map. So the world's own unload is
+   * wrapped, and a waiting chunk is read in the moment before it goes.
+   */
+  private watchUnloads(): void {
+    const world = this.bot.world as unknown as {
+      unloadColumn(x: number, z: number): void
+      getColumn(x: number, z: number): Column | undefined
+    }
+    if (typeof world?.unloadColumn !== 'function' || typeof world.getColumn !== 'function') return
 
-    for (const [key, entry] of ready) {
+    const original = world.unloadColumn
+    const wrapped = (x: number, z: number): void => {
+      this.leaving(x, z, world.getColumn(x, z))
+      original.call(world, x, z)
+    }
+
+    world.unloadColumn = wrapped
+    this.unwatchUnloads = () => {
+      // Only if nothing has wrapped it again since, which would otherwise be unwrapped along with it.
+      if (world.unloadColumn === wrapped) world.unloadColumn = original
+    }
+  }
+
+  private unwatchUnloads: (() => void) | undefined
+
+  private leaving(x: number, z: number, column: Column | undefined): void {
+    const key = `${x},${z}`
+    if (!this.dirty.has(key)) return
+    this.dirty.delete(key)
+
+    if (!column) {
+      this.tally.gone++
+      return
+    }
+
+    this.tally.leaving++
+    try {
+      this.chart(key, { x, z }, column)
+    } catch (failure) {
+      log.debug(`Agent ${this.agentId} could not map ${key} as it unloaded: ${String(failure)}`)
+    }
+  }
+
+  private tally: Tally = { sent: 0, same: 0, empty: 0, gone: 0, leaving: 0 }
+  private talliedAt = Date.now()
+
+  private async drain(): Promise<void> {
+    const at = this.bot.entity?.position
+    const around = at ? { x: Math.floor(at.x / TILE), z: Math.floor(at.z / TILE) } : undefined
+    const read = nextToChart([...this.dirty.values()], around, Date.now())
+
+    this.sumUp()
+
+    for (const entry of read) {
+      const key = entry.key
       this.dirty.delete(key)
       try {
         await this.report(key, entry)
@@ -292,10 +421,36 @@ export class AgentMap {
     }
   }
 
+  /** What the mapping did, once every {@link TALLY_MS}, for telling a hole's cause from the log. */
+  private sumUp(): void {
+    const now = Date.now()
+    if (now - this.talliedAt < TALLY_MS) return
+
+    const { sent, same, empty, gone, leaving } = this.tally
+    if (sent + same + empty + gone + leaving > 0 || this.dirty.size > 0) {
+      log.debug(
+        `Agent ${this.agentId} mapping: ${sent} sent, ${same} unchanged, ${empty} empty, ` +
+          `${leaving} read as they unloaded, ${gone} gone before they could be read, ${this.dirty.size} waiting`,
+      )
+    }
+
+    this.tally = { sent: 0, same: 0, empty: 0, gone: 0, leaving: 0 }
+    this.talliedAt = now
+  }
+
   private async report(key: string, at: { x: number; z: number }): Promise<void> {
     const column = (await this.bot.world.getColumnAt(new Vec3(at.x * TILE, 0, at.z * TILE))) as Column | null
-    if (!column) return
+    if (!column) {
+      this.tally.gone++
+      log.debug(`Agent ${this.agentId} found chunk ${key} gone before it could be mapped`)
+      return
+    }
 
+    this.chart(key, at, column)
+  }
+
+  /** Reads one loaded chunk and sends it if what is visible from above has changed. */
+  private chart(key: string, at: { x: number; z: number }, column: Column): void {
     // Typed without them, and absent before 1.18 - which is the pre-caves world, exactly the range
     // the fallbacks describe.
     const game = this.bot.game as unknown as { minY?: number; height?: number }
@@ -326,7 +481,11 @@ export class AgentMap {
       { minY: game.minY ?? 0, height: game.height ?? 256 },
       (stateId) => blocks[stateId]?.name,
     )
-    if (!drawn(tile)) return
+    if (!drawn(tile)) {
+      this.tally.empty++
+      log.debug(`Agent ${this.agentId} read chunk ${key} as empty, so there is nothing to map`)
+      return
+    }
 
     // Sent once per distinct surface. A chunk is touched by every block change in it and by every
     // reload, and most of those leave what is visible from above exactly as it was.
@@ -336,9 +495,13 @@ export class AgentMap {
       .update(tile.blocks)
       .update(tile.heights)
       .digest('base64')
-    if (this.sent.get(key) === shape) return
+    if (this.sent.get(key) === shape) {
+      this.tally.same++
+      return
+    }
     this.sent.set(key, shape)
 
+    this.tally.sent++
     this.send(tile)
   }
 }

@@ -1143,6 +1143,11 @@ Six rules, each of which has already been got wrong once:
   most of those leave the view from above untouched. Wait for the changes to stop, hash the result,
   and send only what differs — otherwise one player building generates dozens of identical tiles a
   second.
+- **Read what is waiting before the server takes it away, nearest the agent first.** The world
+  deletes a column *before* it raises `chunkColumnUnload`, so a chunk still settling when the agent
+  leaves it is gone by the time anything hears - which at flying speed left holes all through the
+  map. Read a waiting chunk in the moment before the unload instead, and never drop one for being far
+  away: in arrival order a flying agent's map fills in behind it.
 
 A tile of the wrong length, or one indexing past its own palette, is refused by the backend rather
 than stored.
