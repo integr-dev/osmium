@@ -137,7 +137,7 @@ export function standingAt(bot: Bot, movements: Movements): Walk {
  * open ground, and {@link LEAN} is what stops that exactness costing thirty seconds. See `search.ts`
  * for what the tie-breaking does with it.
  */
-export function within(x: number, y: number, z: number, range: number): Goal {
+export function within(x: number, y: number, z: number, range: number, lean = LEAN): Goal {
   const rangeSq = range * range
 
   return {
@@ -147,7 +147,7 @@ export function within(x: number, y: number, z: number, range: number): Goal {
       const dz = z - at.z
       return dx * dx + dy * dy + dz * dz <= rangeSq
     },
-    estimate: (at) => octile(x - at.x, z - at.z) * LEAN + Math.abs(y - at.y) * CLIMB,
+    estimate: (at) => octile(x - at.x, z - at.z) * lean + Math.abs(y - at.y) * CLIMB,
   }
 }
 
@@ -159,7 +159,7 @@ export function within(x: number, y: number, z: number, range: number): Goal {
  * estimate says nothing about height for the same reason - guessing one would push the search up or
  * down for no reason.
  */
-export function over(x: number, z: number, range: number): Goal {
+export function over(x: number, z: number, range: number, lean = LEAN): Goal {
   const rangeSq = range * range
 
   return {
@@ -168,7 +168,7 @@ export function over(x: number, z: number, range: number): Goal {
       const dz = z - at.z
       return dx * dx + dz * dz <= rangeSq
     },
-    estimate: (at) => octile(x - at.x, z - at.z) * LEAN,
+    estimate: (at) => octile(x - at.x, z - at.z) * lean,
   }
 }
 
@@ -198,6 +198,9 @@ export function over(x: number, z: number, range: number): Goal {
  * than it costs, and leaning on that as well tips the search into climbing towards anything above it
  * before it has gone anywhere - measured, a goal 150 out and 25 up went from 125091 squares to
  * timing out at 600000.
+ *
+ * **The default rather than a constant.** An operator moves it with `path.haste`; `leanFor` in
+ * settings.ts says where its ends are and what each costs.
  */
 const LEAN = 1.5
 

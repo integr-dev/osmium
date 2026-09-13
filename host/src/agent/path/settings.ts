@@ -30,6 +30,15 @@ export interface PathSettings {
    * unrelated things happened to be registered in.
    */
   sprint: boolean
+  /**
+   * How hard the search leans on the distance left - see `LEAN` in ground.ts for what that buys.
+   *
+   * Handed to an operator because the right trade is not the same everywhere. An agent picking its way
+   * through a base wants the shortest line; a builder bridging long spans spends most of its search on
+   * ground it cannot walk, where the default lean is half of what a step there really costs, and the
+   * search fills in a huge area before it commits.
+   */
+  lean: number
 }
 
 /**
@@ -60,6 +69,9 @@ export const DEFAULT_DROP = 3
  */
 export const MOST_DROP = 384
 
+/** Where the route-quality setting sits when nobody has moved it. See {@link leanFor}. */
+export const DEFAULT_HASTE = 50
+
 /**
  * Everything under `path.`, from the flat map the backend relays.
  *
@@ -76,7 +88,29 @@ export function pathSettingsFrom(values: Record<string, string>): PathSettings {
     parkour: flag(values['path.parkour']),
     maxDrop: counted(values['path.maxDrop'], DEFAULT_DROP, MOST_DROP),
     sprint: antiHungerFrom(values['util.antiHunger']) !== 'careful',
+    lean: leanFor(values['path.haste']),
   }
+}
+
+/**
+ * The lean for a `path.haste` between 0 and 100.
+ *
+ * Through three points rather than along one line, because the two halves are different trades. Zero
+ * is exact: an estimate that never overstates, so the route is the cheapest the rules allow however
+ * long finding it takes. Fifty is 1.5, which is what this was before it was a setting, so an agent
+ * nobody has configured plans exactly as it always did. A hundred is 3, which is what a step costs
+ * where a block has to be laid to take it - measured on a bridge, the same route went from 4718 squares
+ * expanded to 885, and routes over open ground come back noticeably less direct.
+ *
+ * Unset, blank or not a number is the default rather than an error, for the reason {@link counted}
+ * gives.
+ */
+export function leanFor(written: string | undefined): number {
+  const typed = written?.trim()
+  const value = typed ? Number(typed) : Number.NaN
+  const haste = Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : DEFAULT_HASTE
+
+  return haste <= 50 ? 1 + haste / 100 : 1.5 + ((haste - 50) / 50) * 1.5
 }
 
 /**

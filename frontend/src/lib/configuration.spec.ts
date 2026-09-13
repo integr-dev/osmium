@@ -11,6 +11,7 @@ import {
   settingsOf,
   KNOWN_KEYS,
   SETTING_GROUPS,
+  rangeEnd,
 } from './configuration'
 import { LOCALES } from '../i18n'
 import type { FleetAgent } from '../stores/agents'
@@ -194,6 +195,19 @@ describe('the copy behind the form', () => {
   it('finds nothing where there is nothing', () => {
     expect(copy('en', settingLabel('path.notASetting'))).toBeUndefined()
     expect(copy('en', groupLabel('notAGroup'))).toBeUndefined()
+  })
+
+  /** A slider with only a number at each end would not say which way is which. */
+  it('names both ends of every slider', () => {
+    const sliders = SETTING_GROUPS.flatMap((group) => group.fields).filter((field) => field.type === 'range')
+    expect(sliders.length).toBeGreaterThan(0)
+
+    for (const locale of locales) {
+      for (const field of sliders) {
+        expect(copy(locale, rangeEnd(field.key, 'low')), `${field.key} low`).toEqual(expect.any(String))
+        expect(copy(locale, rangeEnd(field.key, 'high')), `${field.key} high`).toEqual(expect.any(String))
+      }
+    }
   })
 
   it('names every group', () => {

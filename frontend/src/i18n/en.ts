@@ -974,6 +974,12 @@ export const en = {
         label: 'Longest drop',
         hint: 'The furthest the agent will step off, in blocks. Four is where fall damage starts, so the default of three is the drop that costs nothing. Higher trades health for shorter routes.',
       },
+      path_haste: {
+        label: 'Route quality',
+        hint: 'How far the search may trade a shorter route for finding one sooner. Towards the shortest route, the agent takes the most direct line the rules allow however long that takes to work out; towards the fastest search, it commits sooner and the route can wander. Long bridges and towers are where this matters most, because the search is slowest across ground the agent cannot walk. The middle is how agents have always planned.',
+        low: 'Shortest route',
+        high: 'Fastest search',
+      },
       util_noFall: {
         label: 'No fall',
         hint: 'Claims to be standing on the ground while falling, so the landing costs nothing. Only while a fall is far enough along to hurt. This tells the server something untrue and is what anticheat plugins look for — a ban is the one thing here that cannot be undone.',

@@ -3,7 +3,8 @@ import registryFor from 'prismarine-registry'
 import { describe, expect, it } from 'vitest'
 
 import { advanced, nodesOf } from '../src/agent/path/track.ts'
-import { DEFAULT_DROP, DEFAULT_RANGE, MOST_DROP, MOST_RANGE, pathSettingsFrom } from '../src/agent/path/settings.ts'
+import { DEFAULT_DROP, DEFAULT_RANGE, leanFor, MOST_DROP, MOST_RANGE, pathSettingsFrom } from '../src/agent/path/settings.ts'
+import { within } from '../src/agent/path/ground.ts'
 import { movementsFor, type Refused } from '../src/agent/path/walk.ts'
 
 /**
@@ -68,6 +69,34 @@ describe('pathSettingsFrom', () => {
    * The interface writes `true` or clears the key, so only the word is on. Anything else is a
    * setting written by something that is not this interface, and a switch is not the place to guess.
    */
+  /** Unset is the middle, and the middle is the lean agents planned with before it was a setting. */
+  it('plans as it always did when route quality has not been touched', () => {
+    expect(pathSettingsFrom({}).lean).toBe(1.5)
+    expect(leanFor(undefined)).toBe(1.5)
+    expect(leanFor('')).toBe(1.5)
+    expect(leanFor('quick')).toBe(1.5)
+  })
+
+  it('runs from exact to hasty through the old default', () => {
+    expect(leanFor('0')).toBe(1)
+    expect(leanFor('50')).toBe(1.5)
+    expect(leanFor('75')).toBe(2.25)
+    expect(leanFor('100')).toBe(3)
+  })
+
+  it('holds route quality to its ends', () => {
+    expect(leanFor('-20')).toBe(1)
+    expect(leanFor('400')).toBe(3)
+  })
+
+  /** The setting is only worth anything if it reaches the estimate the search is guided by. */
+  it('leans on the distance left as hard as route quality says', () => {
+    const at = { x: 0, y: 64, z: 0, hash: '0,64,0', cost: 0 }
+
+    expect(within(10, 64, 0, 0.5).estimate(at)).toBeCloseTo(15, 10)
+    expect(within(10, 64, 0, 0.5, leanFor('100')).estimate(at)).toBeCloseTo(30, 10)
+  })
+
   it('reads a switch as the interface writes one', () => {
     expect(pathSettingsFrom({ 'path.dig': 'true' }).dig).toBe(true)
     expect(pathSettingsFrom({ 'path.dig': ' true ' }).dig).toBe(true)

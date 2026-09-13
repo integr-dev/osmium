@@ -12,6 +12,7 @@ import {
   SETTING_GROUPS,
   type AgentSettings,
   type SettingField,
+  rangeEnd,
 } from '../lib/configuration'
 import AgentPicker from '../components/AgentPicker.vue'
 import PlayerListField from '../components/PlayerListField.vue'
@@ -414,6 +415,26 @@ async function update() {
                           {{ t(optionLabel(field.key, value)) }}
                         </option>
                       </select>
+
+                      <!--
+                        A position between two trades rather than a number anybody would type. Unset
+                        reads as the middle, which is also what the host takes an unset one to mean,
+                        so the thumb never says something different from what the agent does.
+                      -->
+                      <div v-else-if="field.type === 'range'" class="flex w-full max-w-xs flex-col gap-1">
+                        <input
+                          v-model="settings[field.key]"
+                          type="range"
+                          class="range range-primary range-xs"
+                          :min="field.min"
+                          :max="field.max"
+                          :step="field.step"
+                        />
+                        <span class="flex justify-between text-xs opacity-60">
+                          <span>{{ t(rangeEnd(field.key, 'low')) }}</span>
+                          <span>{{ t(rangeEnd(field.key, 'high')) }}</span>
+                        </span>
+                      </div>
 
                       <input
                         v-else

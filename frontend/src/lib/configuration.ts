@@ -22,7 +22,7 @@ import type { FleetAgent } from '../stores/agents'
 export interface SettingField {
   key: string
   /** Chosen by what the value *is*, so the view never switches on the key itself. */
-  type: 'regex' | 'text' | 'switch' | 'choice' | 'players' | 'proxy'
+  type: 'regex' | 'text' | 'switch' | 'choice' | 'players' | 'proxy' | 'range'
   /** Filled into the box when an operator asks for a starting point, and what the host falls back
    * to when nothing is set. Shown rather than silently applied. */
   default?: string
@@ -37,6 +37,14 @@ export interface SettingField {
    * "off". The labels come from i18n, keyed by the field and the value.
    */
   options?: string[]
+  /**
+   * For a `range`, the ends and the notch. The words for the two ends come from i18n, keyed by the
+   * field - see {@link rangeEnd} - because a slider is a trade, and a bare number at either end would
+   * not say which way is which.
+   */
+  min?: number
+  max?: number
+  step?: number
   /**
    * Whether this field is worth showing at all, given the rest.
    *
@@ -180,6 +188,18 @@ export const SETTING_GROUPS: SettingGroup[] = [
         key: 'path.maxDrop',
         type: 'text',
         placeholder: '3',
+      },
+      {
+        /*
+         * Route quality against search speed, as a position rather than a number - see `leanFor` in the
+         * host's settings.ts for what the ends are worth. Unset is the middle, which is exactly how
+         * agents planned before this was a setting, so nobody's agent changes because the field appeared.
+         */
+        key: 'path.haste',
+        type: 'range',
+        min: 0,
+        max: 100,
+        step: 5,
       },
     ],
   },
@@ -411,6 +431,11 @@ export function groupLabel(key: string): string {
  * key cannot be blank. */
 export function optionLabel(key: string, value: string): string {
   return `configuration.settings.${key.replaceAll('.', '_')}.options.${value || 'auto'}`
+}
+
+/** The i18n key for one end of a `range` field: `low` is its minimum, `high` its maximum. */
+export function rangeEnd(key: string, end: 'low' | 'high'): string {
+  return `configuration.settings.${key.replaceAll('.', '_')}.${end}`
 }
 
 /**

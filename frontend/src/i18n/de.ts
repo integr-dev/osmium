@@ -786,6 +786,12 @@ export const de: Copy = {
         label: 'Größter Absprung',
         hint: 'Wie tief der Agent höchstens hinunterspringt, in Blöcken. Ab vier beginnt Fallschaden, der Standard von drei ist also der Absprung, der nichts kostet. Höher tauscht Leben gegen kürzere Wege.',
       },
+      path_haste: {
+        label: 'Routenqualität',
+        hint: 'Wie weit die Suche eine kürzere Route gegen eine schnellere Antwort tauschen darf. Richtung kürzeste Route nimmt der Agent den direktesten Weg, den die Regeln erlauben, egal wie lange das Ausrechnen dauert; Richtung schnellste Suche legt er sich früher fest und die Route kann Umwege machen. Am meisten zählt das bei langen Brücken und Türmen, weil die Suche über Boden, den der Agent nicht begehen kann, am langsamsten ist. Die Mitte ist, wie Agenten schon immer geplant haben.',
+        low: 'Kürzeste Route',
+        high: 'Schnellste Suche',
+      },
       util_noFall: {
         label: 'Kein Fallschaden',
         hint: 'Meldet während des Fallens Bodenkontakt, sodass die Landung nichts kostet – nur wenn ein Sturz weit genug ist, um zu schaden. Das meldet dem Server etwas Unwahres und ist genau das, wonach Anticheat-Plugins suchen.',

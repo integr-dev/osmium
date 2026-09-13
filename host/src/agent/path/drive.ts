@@ -269,6 +269,14 @@ export interface Rules {
   slice: number
   /** How long a whole search may run before it gives up. */
   budget: number
+  /**
+   * How hard a search leans on the distance left - see `leanFor` in settings.ts.
+   *
+   * Only read where the driver draws a goal of its own, which is mending a stretch; every other search
+   * is handed the operator's goal, and the lean is already in it. Optional so a caller with no view on
+   * route quality gets the lean agents always had.
+   */
+  lean?: number
 }
 
 /**
@@ -2753,7 +2761,7 @@ export class Driver {
 
     if (this.mending) return
 
-    const { movements, reach, slice, budget } = this.rules()
+    const { movements, reach, slice, budget, lean } = this.rules()
 
     // From where the agent stands for the stretch under its feet, and from the end of the one before
     // for any other - so what comes back joins onto what is already being walked.
@@ -2769,7 +2777,7 @@ export class Driver {
 
     this.mending = {
       index,
-      search: new Search(from, walkingFrom(movements), within(section.end.x, section.end.y, section.end.z, 0.5), {
+      search: new Search(from, walkingFrom(movements), within(section.end.x, section.end.y, section.end.z, 0.5, lean), {
         budget,
         slice,
         reach,

@@ -458,6 +458,7 @@ export class AgentNavigator {
       movements: movementsFor(this.bot, wanted, this.refused) as Movements,
       reach: wanted.range,
       sprint: wanted.sprint,
+      lean: wanted.lean,
       slice: SLICE,
       budget: THINK_MS,
     }
@@ -489,7 +490,9 @@ export class AgentNavigator {
     // keeping: a column is satisfied by standing over the spot, which is what "somewhere around
     // there" means when nobody has charted the ground.
     this.driver.go(
-      target.y === undefined ? over(target.x, target.z, near) : within(target.x, target.y, target.z, near),
+      target.y === undefined
+        ? over(target.x, target.z, near, wanted.lean)
+        : within(target.x, target.y, target.z, near, wanted.lean),
     )
 
     log.info(
