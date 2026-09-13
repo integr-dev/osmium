@@ -219,14 +219,7 @@ const OFFSETS: ReadonlyArray<readonly [number, number, number]> = [-1, 0, 1].fla
 export function flyingFrom(blockAt: BlockAt): Neighbours {
   // Each block read once per search. The margin kept from burning blocks reads a few dozen around
   // every square, and neighbouring squares share nearly all of them.
-  const seen = new Map<string, ReturnType<BlockAt>>()
-  const cached: BlockAt = (x, y, z) => {
-    const key = `${x},${y},${z}`
-    if (seen.has(key)) return seen.get(key)!
-    const block = blockAt(x, y, z)
-    seen.set(key, block)
-    return block
-  }
+  const cached = remembered(blockAt)
 
   return (from) => {
     const steps: Walk[] = []
@@ -553,8 +546,14 @@ const CRUISE_BEYOND = 24
  */
 const GLIDE = 0.35
 
-/** How much of the {@link GLIDE} distance a climb tries, in order, before going straight up. */
-const RAMP_SHARES = [1, 0.5, 0.25, 0]
+/**
+ * The most points along the way a climb or a descent is tried from, one a block on anything shorter.
+ *
+ * **Sampled, not picked from a few slopes.** Four fixed slopes missed every one between them: a wall
+ * a little short of the spot let none of them past, and the descent fell back to straight down - level
+ * all the way across, then a drop the height of the climb.
+ */
+const RAMP_SAMPLES = 32
 
 /**
  * How far off the straight way a stretch will turn to go round something too tall to fly over, in
@@ -916,16 +915,20 @@ export class FlightDriver {
   /**
    * A stretch to `end`, with its change of height flown along the way.
    *
-   * The whole stretch as one sloping line where the air allows it; otherwise up (or down) along the
-   * first part of it and level for the rest, steeper each time something is in the way, and straight
-   * up only when nothing else is clear.
+   * The whole stretch as one sloping line where the air allows it; otherwise the longest slope that is
+   * clear and level for the rest, and straight up only when nothing else is. The longest slope is the
+   * shortest route, so the first that is clear is the one flown.
    */
   private rampTo(from: Point, end: Point, ux: number, uz: number, length: number): Point[] | undefined {
     const rise = Math.abs(end.y - from.y)
     if (rise < 0.5) return clearLine(this.blocks, from, end) ? [end] : undefined
 
-    for (const share of RAMP_SHARES) {
-      const along = Math.min(length, (rise / GLIDE) * share)
+    const stride = Math.max(1, length / RAMP_SAMPLES)
+    const alongs = [length]
+    for (let along = length - stride; along > 0; along -= stride) alongs.push(along)
+    alongs.push(0)
+
+    for (const along of alongs) {
       const top = { x: from.x + ux * along, y: end.y, z: from.z + uz * along }
       if (!clearLine(this.blocks, from, top)) continue
       if (along >= length - 0.01) return [end]
@@ -985,44 +988,92 @@ export class FlightDriver {
     const ground = this.highestAlong(from, dx / across, dz / across, across, this.lookUnder(Math.max(from.y, aim.y)))
     if (ground.known < across) return undefined
 
-    // As high as it takes, up to the highest it can climb: the lowest that clears the ground first,
-    // and higher over whatever else is in the way.
+    // Clear of everything in the columns between, which is sure to clear the way and often far higher
+    // than it needs - so it is what is flown only when nothing lower is clear. See `overLevels`.
     const wanted = Math.max(from.y, aim.y, ground.top + 1 + OVER_BY)
 
     const ux = dx / across
     const uz = dz / across
 
-    const apart = (one: Point, other: Point) => Math.hypot(one.x - other.x, one.y - other.y, one.z - other.z) > 0.01
+    // One plan's worth of block reads, shared by every line below: they cross the same air many times.
+    const blocks = remembered(this.blocks)
+    const low = Math.min(from.y, aim.y)
+    const high = Math.max(from.y, aim.y)
 
-    for (const height of levels(wanted, this.ceilingAbove(from))) {
-      // Up along the way and down along the way, each as shallow as the air there allows - see GLIDE.
-      // Apart: a wall right in front makes the climb steep, and nothing about it makes the far side's
-      // descent steep too.
-      for (const upShare of RAMP_SHARES) {
-        const up = Math.min(across, (Math.abs(height - from.y) / GLIDE) * upShare)
-        const top = { x: from.x + ux * up, y: height, z: from.z + uz * up }
-        if (apart(from, top) && !clearLine(this.blocks, from, top)) continue
+    /*
+     * **Between the two ends first, and the shortest of those.** Going no lower than the higher end
+     * meant a spot under a cliff or an overhang, with every slope from up there blocked, was reached
+     * by flying level all the way across and dropping the whole height onto it. Coming down part of
+     * the way first, then across, then the rest, is shorter - so a few heights between the ends are
+     * all measured, and the best of them is flown.
+     */
+    let best: { points: Point[]; length: number } | undefined
+    for (const height of betweenLevels(low, high)) {
+      const route = this.shortestOver(blocks, from, aim, height, ux, uz, across)
+      if (route && (!best || route.length < best.length)) best = route
+    }
+    if (best) return best.points
 
-        for (const downShare of RAMP_SHARES) {
-          const down = Math.min(across - up, (Math.abs(height - aim.y) / GLIDE) * downShare)
-          const brow = { x: aim.x - ux * down, y: height, z: aim.z - uz * down }
-
-          const points = [top, brow, aim].filter((point, index, all) => apart(point, index === 0 ? from : all[index - 1]!))
-          let at = from
-          let clear = true
-          for (const point of points) {
-            // The climb is already known to be clear.
-            if (point !== top && !clearLine(this.blocks, at, point)) {
-              clear = false
-              break
-            }
-            at = point
-          }
-          if (clear) return points
-        }
-      }
+    // Then above both ends, lowest first: higher only ever adds to the climb.
+    for (const height of overLevels(high + OVER_STEP, wanted, this.ceilingAbove(from))) {
+      const route = this.shortestOver(blocks, from, aim, height, ux, uz, across)
+      if (route) return route.points
     }
     return undefined
+  }
+
+  /**
+   * The shortest way to a spot close by at one height: a climb to it, a level stretch, and a descent.
+   *
+   * **Measured rather than chosen from a few slopes.** Points along the way are sampled - see
+   * {@link RAMP_SAMPLES} - and for each it is known whether a climb from the start to that point is
+   * clear, whether a descent from it to the spot is, and whether the level line past it is. Every
+   * climb and descent that a clear level line joins is a route, and the shortest of them is flown: the
+   * descent begins the moment the air allows it rather than over the spot, and a climb and a descent
+   * that meet at one point make a single peak.
+   */
+  private shortestOver(
+    blocks: BlockAt,
+    from: Point,
+    aim: Point,
+    height: number,
+    ux: number,
+    uz: number,
+    across: number,
+  ): { points: Point[]; length: number } | undefined {
+    const stride = Math.max(1, across / RAMP_SAMPLES)
+    const along: number[] = []
+    for (let d = 0; d < across - 1e-6; d += stride) along.push(d)
+    along.push(across)
+
+    const at = (d: number): Point => ({ x: from.x + ux * d, y: height, z: from.z + uz * d })
+    const up = along.map((d) => clearLine(blocks, from, at(d)))
+    const down = along.map((d) => clearLine(blocks, at(d), aim))
+
+    // How many blocked pieces of the level line lie before each point, so a level stretch between two
+    // points is clear exactly when the two counts are the same.
+    const blocked = [0]
+    for (let i = 1; i < along.length; i++) {
+      blocked.push(blocked[i - 1]! + (clearLine(blocks, at(along[i - 1]!), at(along[i]!)) ? 0 : 1))
+    }
+
+    let best: { top: Point; brow: Point; length: number } | undefined
+    for (let i = 0; i < along.length; i++) {
+      if (!up[i]) continue
+      const top = at(along[i]!)
+      const climb = lengthBetween(from, top)
+
+      for (let j = i; j < along.length && blocked[j] === blocked[i]; j++) {
+        if (!down[j]) continue
+        const brow = at(along[j]!)
+        const length = climb + (along[j]! - along[i]!) + lengthBetween(brow, aim)
+        if (!best || length < best.length) best = { top, brow, length }
+      }
+    }
+
+    if (!best) return undefined
+    const { top, brow, length } = best
+    return { points: [top, brow, aim].filter((point, index, all) => apart(point, index === 0 ? from : all[index - 1]!)), length }
   }
 
   /**
@@ -1631,6 +1682,67 @@ function levels(wanted: number, ceiling: number): number[] {
   }
   heights.push(ceiling)
   return heights
+}
+
+/** How far apart the heights a climb over something close by tries are, below the one it wants. */
+const OVER_STEP = 2
+
+/**
+ * The heights a climb over something close by tries, lowest first.
+ *
+ * **As low as clears it, not as high as the tallest thing near it.** The height it wants is worked
+ * out from the tallest block in the columns between - which counts a canopy over the way, an
+ * overhang, the roof of the cave the destination is in - and flown at, that sent an agent thirty
+ * blocks up to cross a wall two high and then straight down onto the spot. So every couple of blocks
+ * from the higher of the two ends is tried first, and each is only taken if the air along it is
+ * clear; the height it wants, and everything above it, are what is left when none of those are.
+ */
+function overLevels(base: number, wanted: number, ceiling: number): number[] {
+  const low: number[] = []
+  for (let height = base; height < Math.min(wanted, ceiling); height += OVER_STEP) low.push(height)
+  return [...low, ...levels(wanted, ceiling)]
+}
+
+/** The most heights between the two ends of a climb over something close by that are measured. */
+const BETWEEN_LEVELS = 6
+
+/**
+ * Heights from the lower end of a flight to the higher, both ends included, evenly spread and no
+ * closer together than {@link OVER_STEP}. Just the one height when the ends are level.
+ */
+function betweenLevels(low: number, high: number): number[] {
+  if (high - low < OVER_STEP) return [high]
+
+  const count = Math.min(BETWEEN_LEVELS, Math.ceil((high - low) / OVER_STEP))
+  return Array.from({ length: count + 1 }, (_unused, index) => low + ((high - low) * index) / count)
+}
+
+/**
+ * The same world, each block read from it once.
+ *
+ * For a plan that sweeps many lines through the same air: a hull and the margin kept from anything
+ * burning read dozens of blocks for every quarter block of a line, and lines side by side share
+ * nearly all of them.
+ */
+function remembered(blockAt: BlockAt): BlockAt {
+  const seen = new Map<string, ReturnType<BlockAt>>()
+  return (x, y, z) => {
+    const key = `${x},${y},${z}`
+    if (seen.has(key)) return seen.get(key)!
+    const block = blockAt(x, y, z)
+    seen.set(key, block)
+    return block
+  }
+}
+
+/** How far apart two points are. */
+function lengthBetween(one: Point, other: Point): number {
+  return Math.hypot(one.x - other.x, one.y - other.y, one.z - other.z)
+}
+
+/** Whether two points are far enough apart to be a leg between them. */
+function apart(one: Point, other: Point): boolean {
+  return lengthBetween(one, other) > 0.01
 }
 
 /** A velocity moved towards another by at most `step`, along the difference between them. */

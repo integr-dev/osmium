@@ -456,6 +456,81 @@ describe('flying', () => {
     expect(agent.entity.position.y).toBeLessThan(88)
   })
 
+  /**
+   * The height a climb over something wants counts everything above the way, a canopy included, and
+   * flown at, it sent an agent thirty blocks up to cross a wall two high.
+   */
+  it('climbs over a low wall only as high as it takes, not up to what is above the way', () => {
+    const blocks: Record<string, typeof STONE> = {}
+    for (let z = -8; z <= 8; z++) for (let y = 64; y <= 65; y++) blocks[`10,${y},${z}`] = STONE
+    for (let x = 4; x <= 16; x++) for (let z = -8; z <= 8; z++) blocks[`${x},85,${z}`] = STONE
+
+    const agent = flyer(world(blocks), false)
+    agent.driver.go({ x: 20, y: 64, z: 0 }, 1)
+
+    let highest = 0
+    for (let at = 0; at < 600 && agent.said.arrived === 0; at++) {
+      agent.tick()
+      highest = Math.max(highest, agent.entity.position.y)
+    }
+
+    expect(agent.said.arrived).toBe(1)
+    expect(agent.said.grounded).toEqual([])
+    expect(highest).toBeLessThan(75)
+  })
+
+  /**
+   * A descent tried at four fixed slopes, none of which cleared a wall a little short of the spot, fell
+   * back to straight down: level all the way across, then a drop the height of the climb - an L.
+   */
+  it('comes down along the shortest line the air allows, not across and then straight down', () => {
+    const blocks: Record<string, typeof STONE> = {}
+    for (let z = -8; z <= 8; z++) for (let y = 64; y <= 80; y++) blocks[`25,${y},${z}`] = STONE
+
+    const agent = flyer(world(blocks), false)
+    agent.driver.go({ x: 0, y: 90, z: 0 }, 1)
+    for (let at = 0; at < 400 && agent.said.arrived === 0; at++) agent.tick()
+    expect(agent.entity.position.y).toBeGreaterThan(89)
+
+    agent.driver.go({ x: 35, y: 64, z: 0 }, 1)
+    for (let at = 0; at < 600 && agent.entity.position.y > 75; at++) agent.tick()
+
+    // Still coming down at a slope when it passes y 75, rather than already over the spot and dropping.
+    expect(agent.entity.position.y).toBeLessThanOrEqual(75)
+    expect(agent.entity.position.x).toBeLessThan(34)
+
+    for (let at = 0; at < 600 && agent.said.arrived < 2; at++) agent.tick()
+    expect(agent.said.arrived).toBe(2)
+  })
+
+  /**
+   * No lower than the higher end, a spot under an overhang was reached by flying level all the way
+   * across and dropping the whole height onto it - or not at all, when even that was blocked.
+   */
+  it('comes down part of the way first when that is the way in, under an overhang', () => {
+    const blocks: Record<string, typeof STONE> = {}
+    // From x 5, so the straight line down to the spot runs into it as well.
+    for (let x = 5; x <= 40; x++) for (let z = -8; z <= 8; z++) blocks[`${x},80,${z}`] = STONE
+
+    // A search this small cannot find the way in by itself.
+    const agent = flyer(world(blocks), false, { reach: 2, budget: 50 })
+    agent.driver.go({ x: 0, y: 92, z: 0 }, 1)
+    for (let at = 0; at < 400 && agent.said.arrived === 0; at++) agent.tick()
+    expect(agent.entity.position.y).toBeGreaterThan(91)
+
+    agent.driver.go({ x: 35, y: 64, z: 0 }, 1)
+    let underneath = true
+    for (let at = 0; at < 800 && agent.said.arrived < 2 && agent.said.grounded.length === 0; at++) {
+      agent.tick()
+      const { x, y } = agent.entity.position
+      if (x >= 5 && y >= 79) underneath = false
+    }
+
+    expect(agent.said.grounded).toEqual([])
+    expect(agent.said.arrived).toBe(2)
+    expect(underneath).toBe(true)
+  })
+
   /** Skimming the ground, every hill in the line is something to climb over or search round. */
   it('cruises well above the ground on a long flight', () => {
     const agent = flyer(world({}, 400), false)
