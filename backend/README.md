@@ -717,6 +717,13 @@ stays JSON and this stays bytes. `HostMessageHandler` overrides `handleBinaryMes
 `TextWebSocketHandler` answers a binary frame by closing the connection, so without that override
 the first world a host streamed would take its control socket with it.
 
+**A text frame from a host may be up to 4 MiB.** Tomcat's default is 8 KiB, and a route searched
+128 blocks out is hundreds of nodes of JSON; a frame over the limit closes the socket with 1009, the
+host restated the same route on reconnect, and was closed again once a second with every command in
+between refused as undeliverable. Set in `HostLinkConfig` as Tomcat's
+`org.apache.tomcat.websocket.textBufferSize` context parameter rather than through
+`ServletServerContainerFactoryBean`, which needs a running container and fails every test context.
+
 Nothing here parses a frame. A six-byte header names the agent; the body is the renderer's business.
 
 ### It only runs while somebody is watching

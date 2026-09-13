@@ -4,6 +4,8 @@ import net.integr.osmium.hostlink.HostHandshakeAuthenticator
 import net.integr.osmium.hostlink.HostMessageHandler
 import net.integr.osmium.viewer.ViewerHandshakeAuthenticator
 import net.integr.osmium.viewer.ViewerSocketHandler
+import org.springframework.boot.tomcat.TomcatContextCustomizer
+import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.socket.config.annotation.EnableWebSocket
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer
@@ -30,4 +32,24 @@ class HostLinkConfig(
         registry.addHandler(viewerHandler, "/ws/viewer").addInterceptors(viewerInterceptor)
     }
 
+    /**
+     * How large one text frame from a host may be.
+     *
+     * **Tomcat's default is 8 KiB, and a route is bigger than that.** A walk searched 128 blocks out
+     * is hundreds of nodes, each a few dozen bytes of JSON, and a frame over the limit closes the
+     * socket with 1009 - so the host reconnected, restated the same route, and was closed again, once
+     * a second, with every command in between refused as undeliverable.
+     */
+    //
+    // Set on Tomcat's context rather than through `ServletServerContainerFactoryBean`, which needs a
+    // running container to find - and so failed every test context, which has none.
+    @Bean
+    fun webSocketTextBuffer(): TomcatContextCustomizer = TomcatContextCustomizer { context ->
+        context.addParameter(TEXT_BUFFER_PARAMETER, MAX_TEXT_FRAME_BYTES.toString())
+    }
+
+    private companion object {
+        const val TEXT_BUFFER_PARAMETER = "org.apache.tomcat.websocket.textBufferSize"
+        const val MAX_TEXT_FRAME_BYTES = 4 * 1024 * 1024
+    }
 }
