@@ -949,6 +949,14 @@ progress::-moz-progress-bar {
   }
 }
 
+/* Rides the top of the spread deck on the same easing as the cards it sits on. */
+.osmium-toast-clear {
+  opacity: 0;
+  transition:
+    translate 0.3s var(--osmium-ease),
+    opacity 0.2s ease-out;
+}
+
 .toast-enter-active {
   opacity: 0;
   animation: osmium-toast-in 0.24s var(--osmium-ease) both;
@@ -1046,6 +1054,7 @@ progress::-moz-progress-bar {
   .toast-leave-active,
   /* The deck still opens and closes; it simply arrives in each state rather than easing into it. */
   .osmium-toast,
+  .osmium-toast-clear,
   /* Still marks the row it is on — only the travel between rows stops. */
   .osmium-nav-marker,
   /* Likewise: the ring still says which square is in hand, it just stops sliding there. */

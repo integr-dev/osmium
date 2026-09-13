@@ -552,7 +552,8 @@ async function confirmRemove() {
     await agentStore.removeAgent(agent.value.id)
     removeDialog.value?.close()
     // Same reason as a removed host: the page that would have shown this is the one being left.
-    toasts.notify('success', 'toast.agentRemoved', { params: { name: removed } })
+    // A receipt, which fades: the agent's absence from the dashboard says the rest.
+    toasts.notify('success', 'toast.agentRemoved', { params: { name: removed }, fade: true })
     void router.push({ name: 'dashboard' })
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : t('errors.removeAgent')

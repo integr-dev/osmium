@@ -138,6 +138,7 @@ export const de: Copy = {
   },
 
   toast: {
+    clearAll: 'Alle schließen ({count})',
     hostRemoved: '{name} entfernt. Die zugehörigen Agenten ebenfalls.',
     agentRemoved: '{name} entfernt.',
     jobDone: '{name} ist fertig — alle Teile stehen.',

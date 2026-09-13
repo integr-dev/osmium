@@ -496,12 +496,18 @@ describe('journeys', () => {
     await store.refresh()
 
     store.applyEvent('path', journey({ closest: true }))
-    store.applyEvent('path', journey({ state: 'FAILED', reason: 'there is no route there', nodes: null }))
 
     expect(useToastStore().toasts).toMatchObject([
       { kind: 'warning', key: 'toast.path.closest', params: { name: 'Mason_6', goal: '128, 64, -340' } },
+    ])
+
+    store.applyEvent('path', journey({ state: 'FAILED', reason: 'there is no route there', nodes: null }))
+
+    // The journey that was only getting close has ended, so saying it is getting close is out of date.
+    expect(useToastStore().toasts).toMatchObject([
       { kind: 'error', key: 'toast.path.none', to: { name: 'agent', params: { id: '6' } } },
     ])
+    expect(useToastStore().toasts).toHaveLength(1)
   })
 })
 

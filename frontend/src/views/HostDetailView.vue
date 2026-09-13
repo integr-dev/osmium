@@ -54,7 +54,8 @@ onMounted(() => {
  * lands on a list of hosts with one fewer row than it had, and an absence is not a receipt.
  */
 function afterRemove(removed: HostResponse) {
-  toasts.notify('success', 'toast.hostRemoved', { params: { name: removed.name } })
+  // A receipt, which fades: the host's absence from the list says the rest.
+  toasts.notify('success', 'toast.hostRemoved', { params: { name: removed.name }, fade: true })
   void router.push({ name: 'resources' })
 }
 </script>

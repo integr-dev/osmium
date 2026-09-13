@@ -472,7 +472,13 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   function tell(notice: Notice | null): void {
-    if (notice) useToastStore().notify(notice.kind, notice.key, { params: notice.params, to: notice.to })
+    if (!notice) return
+    useToastStore().notify(notice.kind, notice.key, {
+      params: notice.params,
+      to: notice.to,
+      ...(notice.fade ? { fade: true } : {}),
+      ...(notice.topic !== undefined ? { topic: notice.topic } : {}),
+    })
   }
 
   /**

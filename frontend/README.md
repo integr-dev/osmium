@@ -1017,6 +1017,21 @@ until the agent is out, a stop reports `IDLE` and says nothing, and something se
 time — a page that has just loaded — is never news. A reason from a host newer than this build is
 shown in the host's own words rather than dropped.
 
+**What only says things went as asked closes by itself.** An arrival and the receipts for removing
+an agent or a host are posted with `fade`, and go after eight seconds - unless the deck is open,
+which holds them until it shuts and then gives them two more. Everything else stays until it is
+dismissed. **What a newer notice makes untrue is replaced by it**: every journey notice carries its
+agent's `topic`, so a failure takes the place of that agent's earlier arrival, and an ending takes
+the place of "only getting as close as it can".
+
+**The open deck has a Clear all**, over its top card, whenever there are two or more to clear.
+
+**It opens and shuts on the deck, not on each card.** `pointerout` fires on every crossing inside a
+card - onto its text, onto its button - and closing on those shut and reopened the deck between two
+handlers, which with the card heights read in between made the cards twitch while the pointer moved
+down them. It closes only for a pointer or focus whose `relatedTarget` is outside the deck, and the
+layout reads every height before it writes any position.
+
 ## The sign-in screen
 
 **The status line asks for itself.** It reads `backendReachable`, which every request writes as a

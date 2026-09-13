@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useToastStore } from './toasts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FADES_MS, RELEASE_MS, useToastStore } from './toasts'
 
 describe('toast store', () => {
   beforeEach(() => setActivePinia(createPinia()))
@@ -101,5 +101,63 @@ describe('toast store', () => {
     toasts.clear()
 
     expect(toasts.toasts).toHaveLength(0)
+  })
+
+  describe('closing by themselves', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    /** "Arrived" is a receipt nobody comes back to, and a corner full of them hid the ones that mattered. */
+    it('closes a notice that only says something went as asked', () => {
+      const toasts = useToastStore()
+
+      toasts.notify('success', 'toast.path.arrived', { params: { name: 'Mason_01' }, fade: true })
+      toasts.notify('error', 'toast.path.failed', { params: { name: 'Mason_02' } })
+      vi.advanceTimersByTime(FADES_MS)
+
+      expect(toasts.toasts.map((toast) => toast.key)).toEqual(['toast.path.failed'])
+    })
+
+    it('holds it while the deck is being read, and lets it go a moment after', () => {
+      const toasts = useToastStore()
+
+      toasts.notify('success', 'toast.path.arrived', { params: { name: 'Mason_01' }, fade: true })
+      toasts.hold(true)
+      vi.advanceTimersByTime(FADES_MS * 3)
+      expect(toasts.toasts).toHaveLength(1)
+
+      toasts.hold(false)
+      vi.advanceTimersByTime(RELEASE_MS - 1)
+      expect(toasts.toasts).toHaveLength(1)
+
+      vi.advanceTimersByTime(1)
+      expect(toasts.toasts).toHaveLength(0)
+    })
+
+    it('starts the clock over when the same thing happens again', () => {
+      const toasts = useToastStore()
+
+      toasts.notify('success', 'toast.path.arrived', { params: { name: 'Mason_01' }, fade: true })
+      vi.advanceTimersByTime(FADES_MS - 1_000)
+      toasts.notify('success', 'toast.path.arrived', { params: { name: 'Mason_01' }, fade: true })
+      vi.advanceTimersByTime(FADES_MS - 1_000)
+
+      expect(toasts.toasts).toHaveLength(1)
+      expect(toasts.toasts[0]!.count).toBe(2)
+    })
+
+    /** An arrival is untrue once the same agent reports a failure, and the other way round. */
+    it('replaces an older notice on the same topic with the newer one', () => {
+      const toasts = useToastStore()
+
+      toasts.notify('error', 'toast.path.failed', { params: { name: 'Mason_01' }, topic: 'path:1' })
+      toasts.notify('error', 'toast.path.failed', { params: { name: 'Mason_02' }, topic: 'path:2' })
+      toasts.notify('success', 'toast.path.arrived', { params: { name: 'Mason_01' }, topic: 'path:1', fade: true })
+
+      expect(toasts.toasts.map((toast) => `${toast.key} ${String(toast.params.name)}`)).toEqual([
+        'toast.path.failed Mason_02',
+        'toast.path.arrived Mason_01',
+      ])
+    })
   })
 })

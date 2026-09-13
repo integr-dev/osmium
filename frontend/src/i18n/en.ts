@@ -170,6 +170,8 @@ export const en = {
    * a notice that expires is not the place to explain anything.
    */
   toast: {
+    /** Over the spread deck, only with two or more notices up. */
+    clearAll: 'Clear all ({count})',
     hostRemoved: 'Removed {name}. Its agents went with it.',
     agentRemoved: 'Removed {name}.',
     jobDone: '{name} finished — every piece is built.',

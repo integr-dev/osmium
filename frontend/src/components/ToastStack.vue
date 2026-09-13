@@ -51,7 +51,23 @@ const LAYERS = 3
 const GAP_PX = 8
 
 const deck = ref<HTMLElement | null>(null)
+const clearAll = ref<HTMLElement | null>(null)
 const spread = ref(false)
+
+/**
+ * Closes the deck, but only for a pointer or focus that has actually left it.
+ *
+ * **`pointerout` fires on every crossing inside a card too** - onto its text, onto its dismiss
+ * button - and `pointerover` reopens it straight after. Vue runs its update between the two
+ * handlers, so the deck was laid out shut and then open again on every such crossing; with the
+ * heights read in between, the browser applied the shut position and the cards started sliding
+ * down and back. That was the jitter while moving down a spread deck.
+ */
+function left(event: PointerEvent | FocusEvent): void {
+  const into = event.relatedTarget
+  if (into instanceof Node && deck.value?.contains(into)) return
+  spread.value = false
+}
 
 /**
  * Every card is absolutely positioned against the same corner and moved from here, rather than laid
@@ -74,6 +90,13 @@ function layout(): void {
   const total = cards.length
   let stacked = 0
 
+  // **Every height read before any style is written.** A height read after moving the card before it
+  // makes the browser apply that move there and then, and a move applied mid-flight is a transition
+  // already under way - which a later write in the same pass reverses into a twitch.
+  const heights = Array.from(cards, (card) => card.offsetHeight)
+  const clearing = clearAll.value
+  const clearHeight = clearing?.offsetHeight ?? 0
+
   // Back to front, because a spread card's offset is the sum of the heights of the ones in front of
   // it — which are the ones nearer the corner, and therefore later in the list.
   for (let index = total - 1; index >= 0; index -= 1) {
@@ -88,7 +111,7 @@ function layout(): void {
       // Every card is readable now, so every card takes the pointer again — including the ones the
       // collapsed deck had switched off, whose dismiss button would otherwise not answer.
       card.style.pointerEvents = ''
-      stacked += card.offsetHeight + GAP_PX
+      stacked += heights[index]! + GAP_PX
     } else {
       card.style.translate = `0 ${-depth * PEEK_PX}px`
       card.style.scale = `${1 - depth * PEEK_SCALE}`
@@ -102,6 +125,16 @@ function layout(): void {
 
     // The front card is the one that can be read, so it is the one on top.
     card.style.zIndex = `${total - depth}`
+  }
+
+  // Clearing sits on top of the spread deck, right-aligned over the oldest card, and is tucked away
+  // behind the front card while the deck is shut - there is nothing to clear that cannot be seen.
+  if (clearing) {
+    clearing.style.translate = `0 ${spread.value ? -stacked : 0}px`
+    clearing.style.opacity = spread.value ? '1' : '0'
+    clearing.style.pointerEvents = spread.value ? '' : 'none'
+    clearing.style.zIndex = `${total + 1}`
+    if (spread.value) stacked += clearHeight + GAP_PX
   }
 
   /*
@@ -151,7 +184,11 @@ async function relayout(): Promise<void> {
   layout()
 }
 
-watch(spread, layout)
+watch(spread, (open) => {
+  // Nothing closes by itself while it is being read. See `hold` in the store.
+  toasts.hold(open)
+  layout()
+})
 watch(() => toasts.toasts.map((toast) => `${toast.id}:${toast.count}`).join('|'), relayout)
 
 let sizes: ResizeObserver | null = null
@@ -185,9 +222,9 @@ onBeforeUnmount(() => sizes?.disconnect())
     role="status"
     aria-live="polite"
     @pointerover="spread = true"
-    @pointerout="spread = false"
+    @pointerout="left"
     @focusin="spread = true"
-    @focusout="spread = false"
+    @focusout="left"
   >
     <TransitionGroup name="toast" @leave="leave">
       <div
@@ -225,5 +262,20 @@ onBeforeUnmount(() => sizes?.disconnect())
         </button>
       </div>
     </TransitionGroup>
+    <!--
+      Only with more than one to clear: a single notice already has its own dismiss, and a second
+      button beside it saying the same thing is noise. Out of the tab order while the deck is shut,
+      because it is not on screen then; focusing any card opens the deck and brings it back.
+    -->
+    <button
+      v-if="toasts.toasts.length > 1"
+      ref="clearAll"
+      type="button"
+      class="btn btn-xs btn-soft osmium-toast-clear absolute right-0 bottom-0"
+      :tabindex="spread ? 0 : -1"
+      @click="toasts.clear()"
+    >
+      {{ t('toast.clearAll', { count: toasts.toasts.length }) }}
+    </button>
   </div>
 </template>

@@ -48,7 +48,23 @@ describe('what a journey says', () => {
       key: 'toast.path.arrived',
       params: { name: 'Mason_6', goal: '128, 64, -341' },
       to: { name: 'agent', params: { id: '6' } },
+      topic: 'path:6',
+      fade: true,
     })
+  })
+
+  /**
+   * Every one is the latest word on that agent's journey, so the next replaces it - and only an
+   * arrival, which says nothing needs doing, closes by itself.
+   */
+  it('files every outcome under its agent journey, and lets only an arrival fade', () => {
+    const failed = pathNotice(path({ state: 'FAILED', reason: null }), 'Mason_6')
+    const closest = pathNotice(path({ closest: true }), 'Mason_6')
+
+    expect(failed).toMatchObject({ topic: 'path:6' })
+    expect(closest).toMatchObject({ topic: 'path:6' })
+    expect(failed).not.toHaveProperty('fade')
+    expect(closest).not.toHaveProperty('fade')
   })
 
   it('names a column by the two numbers it has', () => {

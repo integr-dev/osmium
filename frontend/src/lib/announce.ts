@@ -17,6 +17,10 @@ export interface Notice {
   key: string
   params: Record<string, unknown>
   to: RouteLocationRaw
+  /** Closes by itself: it only says something went as asked. See the toast store. */
+  fade?: boolean
+  /** What it is the latest word on, so a newer notice about the same thing replaces it. */
+  topic?: string
 }
 
 export function agentPage(id: number): RouteLocationRaw {
@@ -64,24 +68,30 @@ function goalOf(goal: AgentPathResponse['goal']): string {
  * How a journey ended, or that the route being walked is only the closest the search could find.
  *
  * `IDLE` says nothing: it is what a stop reports, and the operator who pressed stop knows.
+ *
+ * **All of them are the latest word on one agent's journey**, so each replaces the last: an arrival
+ * is out of date once the same agent reports a failure, and "only getting as close as it can" once
+ * the journey has ended either way. An arrival also fades by itself - it is the one outcome that
+ * only says things went as asked.
  */
 export function pathNotice(path: AgentPathResponse, name: string): Notice | null {
   const params = { name, goal: goalOf(path.goal) }
   const to = agentPage(path.agentId)
+  const topic = `path:${path.agentId}`
 
   switch (path.state) {
     case 'ARRIVED':
-      return { kind: 'success', key: 'toast.path.arrived', params, to }
+      return { kind: 'success', key: 'toast.path.arrived', params, to, topic, fade: true }
     case 'FAILED': {
-      if (!path.reason) return { kind: 'error', key: 'toast.path.failed', params, to }
+      if (!path.reason) return { kind: 'error', key: 'toast.path.failed', params, to, topic }
       const key = PATH_REASONS[path.reason]
       return key
-        ? { kind: 'error', key, params, to }
-        : { kind: 'error', key: 'toast.path.failedBecause', params: { ...params, reason: path.reason }, to }
+        ? { kind: 'error', key, params, to, topic }
+        : { kind: 'error', key: 'toast.path.failedBecause', params: { ...params, reason: path.reason }, to, topic }
     }
     case 'PLANNING':
     case 'MOVING':
-      return path.closest ? { kind: 'warning', key: 'toast.path.closest', params, to } : null
+      return path.closest ? { kind: 'warning', key: 'toast.path.closest', params, to, topic } : null
     default:
       return null
   }
