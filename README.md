@@ -3,8 +3,9 @@
 Orchestration for a fleet of Minecraft agents that build a large schematic together.
 
 An operator uploads a schematic, picks the agents to work it, and Osmium splits it into segments and
-hands each agent its own slice. The dashboard shows what the fleet is doing: progress, throughput,
-what needs attention, and what is being said in game.
+hands each agent its own slice. The dashboard shows what the fleet is doing over the last six hours:
+blocks left burning down, throughput, the traffic every host moves, what needs attention, and what
+happened.
 
 > **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
 > telemetry, live updates and the host transport are built and tested, and so is the build pipeline
@@ -32,9 +33,9 @@ what needs attention, and what is being said in game.
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 632 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 582 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 599 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 642 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 606 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 623 tests |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
