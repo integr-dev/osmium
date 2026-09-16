@@ -133,6 +133,15 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
      * left no trace on it until the page was reloaded.
      */
     MAP_TILE("map-tile", Nodes.AGENT_READ),
+
+    /**
+     * One more point on the dashboard's charts, every ten seconds. See
+     * [net.integr.osmium.dashboard.service.DashboardHistory].
+     *
+     * Gated on `agent.read`, like everything the dashboard shows: how many agents are online, how
+     * far their builds have got and how much their hosts are moving are facts about the fleet.
+     */
+    DASHBOARD_SAMPLE("dashboard-sample", Nodes.AGENT_READ),
 }
 
 /**

@@ -263,6 +263,17 @@ object CommandType {
 
 /** Events the backend understands. Anything else is logged and ignored, never fatal. */
 object EventType {
+    /**
+     * This host is alive, every ten seconds:
+     *
+     * ```jsonc
+     * { "hostVersion": "0.12.0", "traffic": { "sent": 18233, "received": 4410291 } }
+     * ```
+     *
+     * `traffic` is optional: bytes all of this host's agents have sent to and received from their
+     * Minecraft servers since the host started. Running totals rather than rates, so a missed
+     * heartbeat loses no bytes - see [HostTraffic].
+     */
     const val HEARTBEAT = "heartbeat"
 
     /**

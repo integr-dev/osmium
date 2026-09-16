@@ -1032,6 +1032,28 @@ A working listener is never displaced — a new agent joining does not take the 
 only happens when the incumbent is lost. `Agent.onlineSince` ranks the candidates and resets on
 every entry into `ONLINE`, so an agent that keeps reconnecting cannot out-rank a stable one.
 
+## Dashboard history
+
+`GET /api/dashboard/history` (`agent.read`) returns the last six hours, a point every ten seconds,
+oldest first; each new point is also published as `dashboard-sample`. A point holds the fleet and
+each server — agents online and assigned, blocks placed and in unfinished jobs, blocks a minute
+measured the way the frontend's `jobFigures` does — and every host's traffic in bytes a second.
+
+**In memory, deliberately.** Every figure is either already stored (agents, jobs) or worthless an
+hour later (traffic), so a table would be a retention policy guarding numbers that can be
+recomputed. A backend restart starts the history again, and the dashboard says how much it has.
+
+Traffic has two sources (`HostTraffic`):
+
+- **The host link** is counted here, as frames cross the socket in either direction, so it needs
+  nothing from the host and cannot disagree with what was actually sent.
+- **The game link** — every agent's connection to its server — only the host can see. It reports
+  running totals on its heartbeat and the rate comes from two of them. A total lower than the last
+  one is a host that restarted and sets a new baseline; a host silent past the heartbeat grace has
+  no rate at all, rather than a flat line at its last one.
+
+The sample interval is `osmium.dashboard.sample-ms` (default 10000).
+
 ## Player heads
 
 `GET /api/avatars/{name-or-uuid}` returns a Minecraft head, fetched from a skin service and cached

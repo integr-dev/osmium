@@ -16,7 +16,10 @@ import net.integr.osmium.host.model.Host
  * rewrite - see the note on multiple instances in FLEET_CONNECTIVITY.md.
  */
 @Component
-class HostConnections(private val objectMapper: ObjectMapper) {
+class HostConnections(
+    private val objectMapper: ObjectMapper,
+    private val traffic: HostTraffic,
+) {
 
     private val log = LoggerFactory.getLogger(javaClass)
     private val sessions = ConcurrentHashMap<Long, WebSocketSession>()
@@ -108,7 +111,9 @@ class HostConnections(private val objectMapper: ObjectMapper) {
 
         return try {
             // WebSocketSession is not thread safe, and REST requests dispatch concurrently.
-            synchronized(session) { session.sendMessage(TextMessage(objectMapper.writeValueAsString(envelope))) }
+            val bytes = objectMapper.writeValueAsBytes(envelope)
+            synchronized(session) { session.sendMessage(TextMessage(bytes)) }
+            traffic.sent(hostId, bytes.size)
             true
         } catch (failure: Exception) {
             log.warn("Failed writing {} to host {}", envelope.type, hostId, failure)

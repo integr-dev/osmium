@@ -69,6 +69,7 @@ class HostLinkTest {
     @Autowired private lateinit var roleRepository: RoleRepository
     @Autowired private lateinit var passwordEncoder: PasswordEncoder
     @Autowired private lateinit var objectMapper: ObjectMapper
+    @Autowired private lateinit var traffic: HostTraffic
 
     private lateinit var host: Host
     private lateinit var agent: Agent
@@ -127,6 +128,25 @@ class HostLinkTest {
         // Observed on connect, which is why enrolment never asks for one. Recorded on the host
         // and deliberately absent from HostResponse — see HostDtos.
         assertTrue(refreshed.address != null)
+
+        socket.close()
+    }
+
+    @Test
+    fun `a heartbeat's game totals and every frame's size are counted`() {
+        val socket = connect(token())
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.HEARTBEAT,
+                payload = objectMapper.valueToTree(
+                    mapOf("hostVersion" to "0.9.9-probe", "traffic" to mapOf("sent" to 10, "received" to 20)),
+                ),
+            ),
+        )
+
+        awaitUntil { traffic.gameRates().containsKey(host.id!!) }
+        assertTrue(traffic.linkTotals().getValue(host.id!!).second > 0)
 
         socket.close()
     }

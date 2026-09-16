@@ -410,8 +410,10 @@ across the top level**.
 { "id": "cmd-9c21", "kind": "command", "type": "settings", "agentId": 42,
   "payload": { "values": { "chat.sender": "^\\[[^\\]]+\\]\\s+([A-Za-z0-9_]{1,16}):\\s" } } }
 
-// host-scoped, so no agentId
-{ "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
+// host-scoped, so no agentId. `traffic` is optional: bytes every agent has sent to and received
+// from its server since the host started. Running totals, so a missed heartbeat loses nothing.
+{ "kind": "event", "type": "heartbeat",
+  "payload": { "hostVersion": "0.3.1", "traffic": { "sent": 18233, "received": 4410291 } } }
 
 // host-scoped, sent once on connect: what this host is, every key optional
 { "kind": "event", "type": "handshake",

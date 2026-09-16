@@ -67,6 +67,7 @@ class HostReportService(
     private val broker: LiveUpdateBroker,
     private val mapService: MapService,
     private val registry: HostConnections,
+    private val traffic: HostTraffic,
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -88,11 +89,14 @@ class HostReportService(
 
     private fun onEvent(hostId: Long, envelope: HostEnvelope) {
         when (envelope.type) {
-            EventType.HEARTBEAT -> hostService.recordHeartbeat(
-                hostId = hostId,
-                hostVersion = envelope.payload?.get("hostVersion")?.asString(),
-                address = null,
-            )
+            EventType.HEARTBEAT -> {
+                hostService.recordHeartbeat(
+                    hostId = hostId,
+                    hostVersion = envelope.payload?.get("hostVersion")?.asString(),
+                    address = null,
+                )
+                recordTraffic(hostId, envelope.payload?.get("traffic"))
+            }
 
             EventType.HANDSHAKE -> handshake(hostId, envelope)
 
@@ -116,6 +120,16 @@ class HostReportService(
             // learned about yet is normal, so it is logged and dropped rather than fatal.
             else -> log.debug("Ignoring unknown event '{}' from host {}", envelope.type, hostId)
         }
+    }
+
+    /**
+     * The running game totals a heartbeat carries. Optional: a host older than this backend sends
+     * none, and its agents' traffic is then simply not charted.
+     */
+    private fun recordTraffic(hostId: Long, node: JsonNode?) {
+        val sent = node?.get("sent")?.takeIf { it.isNumber }?.asLong() ?: return
+        val received = node.get("received")?.takeIf { it.isNumber }?.asLong() ?: return
+        traffic.reported(hostId, sent, received)
     }
 
     private fun onResult(hostId: Long, envelope: HostEnvelope) {

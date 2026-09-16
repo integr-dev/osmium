@@ -18,6 +18,7 @@ class HostMessageHandler(
     private val events: HostReportService,
     private val objectMapper: ObjectMapper,
     private val viewers: ViewerConnections,
+    private val traffic: HostTraffic,
 ) : TextWebSocketHandler() {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -59,6 +60,7 @@ class HostMessageHandler(
      */
     override fun handleBinaryMessage(session: WebSocketSession, message: BinaryMessage) {
         val hostId = session.hostId() ?: return
+        traffic.received(hostId, message.payloadLength)
         val refused = viewers.relay(hostId, message.payload)
         // Either malformed, or about an agent this host was never asked to stream. Neither is
         // grounds to drop a working control socket, and both are worth knowing about.
@@ -67,6 +69,7 @@ class HostMessageHandler(
 
     override fun handleTextMessage(session: WebSocketSession, message: TextMessage) {
         val hostId = session.hostId() ?: return
+        traffic.received(hostId, message.payloadLength)
 
         val envelope = try {
             objectMapper.readValue(message.payload, HostEnvelope::class.java)
