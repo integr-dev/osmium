@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { areaPath, bucketByHour, linePath, VIEW_HEIGHT, VIEW_WIDTH } from './series'
+import { areaPath, linePath, niceCeiling, timePath, VIEW_HEIGHT, VIEW_WIDTH } from './series'
 
 /**
  * The three cases a sparkline actually meets — nothing yet, one sample, and a series that never
@@ -50,35 +50,44 @@ describe('the line', () => {
   })
 })
 
-describe('hourly buckets', () => {
-  const HOUR = 3_600_000
-  const noon = Date.parse('2026-08-14T12:00:00Z')
+describe('a line on a time axis', () => {
+  it('places points by time against a fixed scale', () => {
+    const { line, area } = timePath(
+      [
+        { at: 0, value: 0 },
+        { at: 50, value: 5 },
+        { at: 100, value: 10 },
+      ],
+      0,
+      100,
+      10,
+      1000,
+      200,
+    )
 
-  it('returns one bucket per hour, oldest first', () => {
-    const buckets = bucketByHour([], noon + 30 * 60_000, 4)
-
-    expect(buckets).toHaveLength(4)
-    expect(buckets[0]!.at).toBe(noon - 3 * HOUR)
-    expect(buckets[3]!.at).toBe(noon)
+    expect(line).toBe('M0 200 L500 100 L1000 0')
+    expect(area).toBe('M0 200 L500 100 L1000 0 L1000 200 L0 200 Z')
   })
 
-  it('counts each time into the hour it happened in', () => {
-    const buckets = bucketByHour([noon + 60_000, noon + 120_000, noon - HOUR], noon, 2)
+  /** A short history reads as short rather than being stretched across the whole chart. */
+  it('leaves the part of the axis with no points empty', () => {
+    const { line } = timePath([{ at: 75, value: 1 }, { at: 100, value: 1 }], 0, 100, 2, 1000, 200)
 
-    expect(buckets.map((b) => b.count)).toEqual([1, 2])
+    expect(line).toBe('M750 100 L1000 100')
   })
 
-  /** Folding them in would put a spike on the oldest bar every time the window moved. */
-  it('drops what falls outside the window rather than piling it on the end', () => {
-    const buckets = bucketByHour([noon - 10 * HOUR, noon + 5 * HOUR], noon, 3)
-
-    expect(buckets.map((b) => b.count)).toEqual([0, 0, 0])
+  it('draws nothing for points outside the axis', () => {
+    expect(timePath([{ at: -5, value: 1 }], 0, 100, 1, 1000, 200)).toEqual({ line: '', area: '' })
   })
+})
 
-  /** On the hour, not on a rolling offset: the bars would otherwise slide sideways every second. */
-  it('aligns to the clock', () => {
-    const buckets = bucketByHour([], noon + 59 * 60_000, 1)
-
-    expect(buckets[0]!.at).toBe(noon)
+describe('a round scale', () => {
+  it('rounds up to 1, 2 or 5 of the magnitude', () => {
+    expect(niceCeiling(0)).toBe(1)
+    expect(niceCeiling(0.3)).toBeCloseTo(0.5)
+    expect(niceCeiling(7)).toBe(10)
+    expect(niceCeiling(120)).toBe(200)
+    expect(niceCeiling(2000)).toBe(2000)
+    expect(niceCeiling(4100)).toBe(5000)
   })
 })

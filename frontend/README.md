@@ -104,7 +104,7 @@ allowed, while this decides what the next connection targets and is refused whil
 online. Every place the address is displayed names the empty case rather than showing a blank.
 
 Telemetry is **absent rather than zeroed** when an agent has not reported: `agent.telemetry` is
-null, the vitals panel says so, and **Needs attention** raises nothing. Zeroes would render as an
+null, the agent page says so, and **Needs attention** raises nothing. Zeroes would render as an
 agent on no health standing at the world origin, which is a much more convincing lie than an empty
 panel.
 
@@ -629,24 +629,60 @@ pattern that matches and captures nothing is the mistake worth catching — it c
 
 ## Charts
 
-Every figure the API reports is **instantaneous** — how many agents are online, what the throughput
-is, where an agent is standing. There is no series to ask for, because nothing stores one.
+Every figure the API reports about the fleet is **instantaneous** — how many agents are online, what
+the throughput is, where an agent is standing. The dashboard's past comes from one place:
+`GET /api/dashboard/history`, a point every ten seconds for the last six hours, kept in the
+backend's memory and pushed live as `dashboard-sample`. `src/stores/history.ts` loads it whenever the
+stream connects (points published while it was down are gone) and appends each new one, so a reload
+or a second tab opens on the same trend. A backend restart does start it again; the caption under
+the sparklines says how much past there is rather than letting a short chart read as an idle fleet.
 
-So the browser keeps its own. `src/stores/history.ts` samples the live figures every ten seconds and
-holds the last half hour, which is what the sparklines under the stat tiles draw. That makes them
-**session-scoped by construction**: a reload starts an empty chart, and the caption says how much
-past there is rather than letting an empty chart read as an idle fleet. A durable series would be a
-table, an endpoint and a retention policy — this is the version that pays for itself immediately.
+The dashboard draws four things from it, over a range picked at the top (15 min, 1 h, 6 h):
 
-**Incidents per hour** is different: it is real stored data, bucketed client-side from the activity
-page already on screen. The window stops at the oldest entry loaded rather than running a fixed
-twelve hours back — the feed is paged, so earlier hours are not empty, they are *unread*, and
-drawing them as empty bars would state something the client cannot know.
+- **Sparklines** under the online and throughput tiles.
+- **Blocks remaining**, a burndown in place of the old progress bar, with a dashed line to zero at
+  the current rate. The axis runs a third past now while there is something to project, and the ETA
+  tile names the time it lands.
+- **Traffic**, bytes a second across every host: the backend link both ways, and every agent's
+  connection to its server both ways. The legend is also the switch, so a quiet line can be hidden
+  to see the others' scale. Traffic is counted per host and a host is not on a server, so the server
+  picker does not narrow it. A host too old to report game traffic draws no game line rather than
+  a flat zero.
+- **Hosts**, each with its link state, agents in game and the newest rates.
 
-`src/lib/series.ts` holds the geometry, away from the components, because the cases that actually
-break a sparkline are arithmetic: nothing sampled yet, one sample, and a series that never moves are
-all divide-by-zero, and all three look like a bug on screen rather than throwing. Marks follow the
-usual rules — one series each, so no legend and no palette to validate; the heading names it.
+Charts on a time axis (`TimeChart.vue`) take the axis as given rather than fitting it to the data,
+so six minutes of history on a six-hour chart reads as six minutes. Six hours is 2160 points, so a
+line is thinned to 360, keeping each bucket's peak so a burst survives.
+
+**Activity** is different: it is stored data, counted client-side from the activity pages already
+on screen, one line per severity over the same range as the charts above (a point a minute for
+15 min, five for an hour, fifteen for six). Time older than the oldest entry loaded is left off the
+chart rather than drawn as zero — the feed is paged, so it is *unread*, not quiet — and the caption
+says how far back the feed reaches. The severity chips narrow both the chart and the feed. On a
+wide screen the chart and the feed share one fixed-height row, and the feed scrolls inside it rather
+than lengthening the page.
+
+**A filter narrows what is loaded; it does not page.** A filtered list is short, so the
+infinite-scroll sentinel stays in view, and paging on it fetched the entire history back to back and
+froze the page. Paging resumes when the filter is cleared, and the list is redrawn rather than
+animated whenever the filter changes.
+
+**Needs attention** leads with one pill per cause and its count, then lists the agents, each with
+its cause and the reading that put it there. Picking a pill narrows the list to that cause; the pills
+always count everything. There is no vitals panel any more: the worst reading of each kind was
+already what this list raises.
+
+The server picker is a row of tabs while four servers or fewer fit, and a menu past that.
+
+Every chip that switches something — a traffic line, an attention cause, an activity severity — is
+`FilterChip.vue`. Its mark carries both the colour of what it stands for and the state: filled
+with a check when on, an empty ring when off, the same size either way so nothing moves. Off is a
+quiet outline rather than a faded copy of on, which would read as disabled. Choosing between views of one list is a
+`TabBar`, not a chip.
+
+`src/lib/series.ts` and `src/lib/dashboard.ts` hold the arithmetic, away from the components, because
+the cases that break a chart are arithmetic and look like a bug on screen rather than throwing:
+nothing sampled yet, one sample, a flat series, a projection past the edge of its chart.
 
 ## Command palette
 
@@ -1909,7 +1945,8 @@ translation parity, where a missing placeholder swallows a value without errorin
 **Where a bug renders as a plausible wrong answer** rather than an error. Everything in `src/lib`
 that computes something is a plain function with its own spec, because the failures are arithmetic
 and they all look fine on screen: a sparkline with one sample or a flat series (`series.ts`),
-distance measured across a dimension or a server (`vitals.ts`), how far along a job is and what the
+a burndown projected past the edge of its chart (`dashboard.ts`),
+how far along a job is and what the
 fleet places per minute (`jobs.ts`), where rounding up would call a build finished one block short
 of it and a rate measured over too short a window reads as an ETA of minutes, which chat scope a live line
 belongs in (`chat.ts`), which pane a drag widens (`resizable.ts`), what the tab says

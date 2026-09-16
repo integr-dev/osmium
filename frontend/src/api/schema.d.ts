@@ -1043,6 +1043,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dashboard/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The last six hours, a point every ten seconds.
+         * @description Oldest first. Kept in memory, so it starts empty when the backend starts. Each new point is also pushed on the live stream as `dashboard-sample`.
+         */
+        get: operations["history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -2066,6 +2086,74 @@ export interface components {
             z?: number;
             /** Format: date-time */
             at?: string;
+        };
+        /** @description Agents and building, for the fleet or for one server. */
+        DashboardReadingResponse: {
+            /**
+             * Format: int32
+             * @description Agents in game whose host is reachable.
+             */
+            online?: number;
+            /**
+             * Format: int32
+             * @description Agents assigned here, in any state.
+             */
+            agents?: number;
+            /**
+             * Format: int64
+             * @description Blocks placed across unfinished jobs.
+             */
+            placed?: number;
+            /**
+             * Format: int64
+             * @description Blocks in unfinished jobs, placed or not.
+             */
+            total?: number;
+            /**
+             * Format: int64
+             * @description Blocks a minute across active jobs, measured since each started. Zero while nothing is building.
+             */
+            perMinute?: number;
+        };
+        /** @description One point on the dashboard's charts: the fleet, each server, and each host, at one moment. */
+        DashboardSampleResponse: {
+            /** Format: date-time */
+            at?: string;
+            /** @description Every server together. */
+            fleet?: components["schemas"]["DashboardReadingResponse"];
+            /** @description The same reading per server address. A server with no agents and no builds is absent. */
+            servers?: {
+                [key: string]: components["schemas"]["DashboardReadingResponse"];
+            };
+            /** @description Every enrolled host, connected or not. */
+            hosts?: components["schemas"]["HostTrafficResponse"][];
+        };
+        /** @description What one host is moving, in bytes a second. */
+        HostTrafficResponse: {
+            /** Format: int64 */
+            hostId?: number;
+            name?: string;
+            reachable?: boolean;
+            /**
+             * Format: int64
+             * @description Backend to host, over the host link.
+             */
+            linkSent?: number;
+            /**
+             * Format: int64
+             * @description Host to backend, over the host link.
+             */
+            linkReceived?: number;
+            /**
+             * Format: int64
+             * @description This host's agents to their servers. Null when the host has not reported it recently.
+             */
+            gameSent?: number | null;
+            /**
+             * Format: int64
+             * @description Servers to this host's agents. Null when the host has not reported it recently.
+             */
+            gameReceived?: number | null;
         };
         /** @description One line of Minecraft chat, as the agent that observed it reported it. */
         ChatMessageResponse: {
@@ -4951,6 +5039,35 @@ export interface operations {
                 };
                 content: {
                     "*/*": string;
+                };
+            };
+        };
+    };
+    history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every point held. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DashboardSampleResponse"][];
+                };
+            };
+            /** @description Missing node `agent.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DashboardSampleResponse"][];
                 };
             };
         };

@@ -1,90 +1,65 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
-import { jobFigures } from '../lib/jobs'
-import { isOnline } from '../lib/agentState'
+import { computed, ref, watch } from 'vue'
+import { fetchDashboardHistory, type DashboardSample } from '../api/dashboard'
 import { useAgentStore } from './agents'
 
 /**
- * The only place in Osmium that remembers what a number used to be.
+ * The dashboard's past, as the backend keeps it: a point every ten seconds for six hours.
  *
- * Nothing is stored server-side: agents, telemetry and throughput are all reported as "right now",
- * and the API has no series to ask for. So the browser keeps its own, sampled while the tab is open.
+ * Loaded whenever the live stream connects — the first time, and after every drop, since points
+ * published while it was down are gone — and appended to as each new point arrives. A reload or a
+ * second tab therefore opens on the same trend rather than an empty chart.
  *
- * That makes this **session-scoped by construction** — a reload starts an empty chart, and the
- * interface says as much rather than implying the fleet was idle. A durable series would be a table,
- * an endpoint and a retention policy; this is the version that pays for itself immediately.
+ * The backend holds this in memory, so a backend restart does start it again; `minutes` is how the
+ * interface says so.
  */
-export interface Reading {
-  online: number
-  perMinute: number
-}
 
-export interface Sample {
-  at: number
-  /** The whole fleet. */
-  all: Reading
-  /** The same reading per server address, so the dashboard's picker has a series to switch to. */
-  byServer: Record<string, Reading>
-}
-
-/** Ten seconds for half an hour. Long enough to show a trend, short enough to stay honest. */
-const SAMPLE_MS = 10_000
-const CAPACITY = 180
+/** Matches `DashboardHistory.CAPACITY` on the backend. */
+const CAPACITY = 2160
 
 export const useHistoryStore = defineStore('history', () => {
-  const samples = ref<Sample[]>([])
+  const samples = ref<DashboardSample[]>([])
+  const error = ref<string | null>(null)
   const agents = useAgentStore()
 
-  function record(): void {
-    // Before the first load every figure is zero, and recording those would draw half an hour of
-    // flatline that never happened.
-    if (!agents.loaded) return
-
-    const byServer: Record<string, Reading> = {}
-
-    for (const address of agents.servers) {
-      const here = agents.agents.filter((agent) => agent.serverAddress === address)
-      byServer[address] = {
-        online: here.filter(isOnline).length,
-        // Measured from the jobs on that server rather than from a rate per builder. A server
-        // with nothing running reads zero, which is the truth rather than an idle guess.
-        perMinute: jobFigures(agents.jobsOn(address)).perMinute,
-      }
+  async function load(): Promise<void> {
+    const result = await fetchDashboardHistory()
+    if ('error' in result) {
+      error.value = result.error
+      return
     }
-
-    samples.value = [
-      ...samples.value,
-      {
-        at: Date.now(),
-        all: { online: agents.online.length, perMinute: agents.blocksPerMinute },
-        byServer,
-      },
-    ].slice(-CAPACITY)
+    error.value = null
+    // A point can arrive while the request is out. Anything newer than what came back is kept.
+    const last = result.at(-1)?.at ?? ''
+    samples.value = [...result, ...samples.value.filter((sample) => sample.at > last)].slice(-CAPACITY)
   }
 
-  // Never cleared: the store lives as long as the app, and the series is the whole point of it.
-  setInterval(record, SAMPLE_MS)
-
-  /**
-   * One reading's series, for the whole fleet or for one server.
-   *
-   * A server that did not exist when a sample was taken reads as zero rather than being skipped: the
-   * gap is real, and dropping the point would compress the timeline and draw a trend that never
-   * happened.
-   */
-  function seriesFor(server: string | null, reading: keyof Reading): number[] {
-    return samples.value.map((sample) =>
-      server === null ? sample.all[reading] : (sample.byServer[server]?.[reading] ?? 0),
-    )
+  function append(sample: DashboardSample): void {
+    const last = samples.value.at(-1)
+    if (last && sample.at <= last.at) return
+    samples.value = [...samples.value, sample].slice(-CAPACITY)
   }
 
-  /** How much of a window the samples actually cover, for the caption under a chart. */
-  const minutes = computed(() => {
-    const first = samples.value[0]
-    const last = samples.value[samples.value.length - 1]
-    if (!first || !last) return 0
-    return Math.round((last.at - first.at) / 60_000)
+  // Never unsubscribed: the store lives as long as the app, and so does the stream.
+  agents.onFeedEvent((name, data) => {
+    if (name === 'dashboard-sample') append(data as DashboardSample)
   })
 
-  return { samples, seriesFor, minutes }
+  watch(
+    () => agents.liveUpdatesConnected,
+    (connected) => {
+      if (connected) void load()
+    },
+    { immediate: true },
+  )
+
+  /** How much time the samples cover, for the caption under a chart. */
+  const minutes = computed(() => {
+    const first = samples.value[0]
+    const last = samples.value.at(-1)
+    if (!first || !last) return 0
+    return Math.round((Date.parse(last.at) - Date.parse(first.at)) / 60_000)
+  })
+
+  return { samples, error, minutes, load, append }
 })

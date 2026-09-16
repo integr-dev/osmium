@@ -1,6 +1,5 @@
 /**
- * Turning a list of numbers into the two shapes a sparkline is made of, and time stamps into hourly
- * counts.
+ * Turning a list of numbers into the shapes a chart is made of.
  *
  * Geometry only, so it can be tested without a DOM. Everything is drawn into a unit box and stretched
  * by the SVG's `preserveAspectRatio="none"`, with `vector-effect="non-scaling-stroke"` keeping the
@@ -51,31 +50,50 @@ function pointsOf(values: number[]): { x: number; y: number }[] {
   }))
 }
 
-export interface HourBucket {
-  /** The start of the hour, as an epoch millisecond value. */
+/** A value at a moment, which is all a line on a time axis is made of. */
+export interface TimePoint {
   at: number
-  count: number
+  value: number
 }
 
 /**
- * How many of [times] fall in each of the last [hours] whole hours, oldest first.
+ * A line across a fixed stretch of time, and its wash, in a [width] × [height] box.
  *
- * Bucketed on the hour rather than on rolling offsets from now, so the bars stop sliding sideways
- * every second and a reader can match one to a clock. Anything outside the window is dropped rather
- * than folded into the end bucket, which would put a spike on the oldest bar every time.
+ * Unlike `linePath` the scale is given rather than fitted: the bottom is zero and the top is
+ * [ceiling], so two lines on one chart are measured against the same thing, and a flat line of
+ * zeros lies on the floor where it belongs. Points outside the stretch are left out.
  */
-export function bucketByHour(times: number[], now: number, hours: number): HourBucket[] {
-  const hour = 3_600_000
-  const end = Math.floor(now / hour) * hour
-  const start = end - (hours - 1) * hour
+export function timePath(
+  points: TimePoint[],
+  from: number,
+  to: number,
+  ceiling: number,
+  width: number,
+  height: number,
+): { line: string; area: string } {
+  const span = to - from || 1
+  const top = ceiling || 1
+  const inside = points.filter((point) => point.at >= from && point.at <= to)
+  if (!inside.length) return { line: '', area: '' }
 
-  const buckets: HourBucket[] = []
-  for (let at = start; at <= end; at += hour) buckets.push({ at, count: 0 })
+  const xy = inside.map((point) => ({
+    x: Number((((point.at - from) / span) * width).toFixed(1)),
+    y: Number((height - (Math.max(0, point.value) / top) * height).toFixed(1)),
+  }))
+  const line = xy.map((p, index) => `${index === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ')
+  const area = `${line} L${xy.at(-1)!.x} ${height} L${xy[0]!.x} ${height} Z`
+  return { line, area }
+}
 
-  for (const time of times) {
-    const index = Math.floor((time - start) / hour)
-    if (index >= 0 && index < buckets.length) buckets[index]!.count += 1
+/**
+ * The top of a scale that fits [value]: the next 1, 2 or 5 of its order of magnitude, so the
+ * labels read as round numbers. Never zero, so an empty chart still has a scale to draw.
+ */
+export function niceCeiling(value: number): number {
+  if (value <= 0) return 1
+  const magnitude = 10 ** Math.floor(Math.log10(value))
+  for (const step of [1, 2, 5, 10]) {
+    if (value <= step * magnitude) return step * magnitude
   }
-
-  return buckets
+  return 10 * magnitude
 }

@@ -98,9 +98,15 @@ export interface Assignment {
   blocks: number
 }
 
+/** Why an agent is on the attention list, so the dashboard can fold agents with the same cause. */
+export type AttentionKind = 'hostUnreachable' | 'needsRelink' | 'lowHealth' | 'lowFood' | 'highPing'
+
 export interface Attention {
   agent: FleetAgent
+  kind: AttentionKind
   reason: string
+  /** The reading behind it, like `4/20`. Null when the cause is a state rather than a number. */
+  detail: string | null
   severity: 'error' | 'warning'
 }
 
@@ -384,6 +390,8 @@ export const useAgentStore = defineStore('agents', () => {
       // A chunk an agent has just charted. Only a map on screen wants it, and that map already holds
       // the ground around it, so it is handed on rather than kept here.
       case 'map-tile':
+      // A point on the dashboard's charts. The history store keeps those, and listens here.
+      case 'dashboard-sample':
         for (const listener of feedListeners) listener(name, data)
         break
       // Runs are not a paged list and not owned by one view: an agent's assignment is a fact about
@@ -783,11 +791,11 @@ export const useAgentStore = defineStore('agents', () => {
     const found: Attention[] = []
     for (const agent of agents.value) {
       if (agent.state === 'STALE') {
-        found.push({ agent, reason: t('attention.hostUnreachable'), severity: 'error' })
+        found.push({ agent, kind: 'hostUnreachable', reason: t('attention.hostUnreachable'), detail: null, severity: 'error' })
         continue
       }
       if (agent.state === 'NEEDS_RELINK') {
-        found.push({ agent, reason: t('attention.needsRelink'), severity: 'error' })
+        found.push({ agent, kind: 'needsRelink', reason: t('attention.needsRelink'), detail: null, severity: 'error' })
         continue
       }
       if (!isOnline(agent)) continue
@@ -798,13 +806,16 @@ export const useAgentStore = defineStore('agents', () => {
       if (!vitals) continue
 
       if (vitals.health <= 10) {
-        found.push({ agent, reason: `${t('agents.health')} ${vitals.health}/20`, severity: 'error' })
+        const detail = `${vitals.health}/20`
+        found.push({ agent, kind: 'lowHealth', reason: `${t('agents.health')} ${detail}`, detail, severity: 'error' })
       }
       if (vitals.food <= 8) {
-        found.push({ agent, reason: `${t('agents.food')} ${vitals.food}/20`, severity: 'warning' })
+        const detail = `${vitals.food}/20`
+        found.push({ agent, kind: 'lowFood', reason: `${t('agents.food')} ${detail}`, detail, severity: 'warning' })
       }
       if (vitals.pingMs >= 100) {
-        found.push({ agent, reason: `${t('agents.ping')} ${vitals.pingMs} ms`, severity: 'warning' })
+        const detail = `${vitals.pingMs} ms`
+        found.push({ agent, kind: 'highPing', reason: `${t('agents.ping')} ${detail}`, detail, severity: 'warning' })
       }
     }
     return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1))

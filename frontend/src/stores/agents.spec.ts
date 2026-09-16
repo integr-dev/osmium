@@ -185,6 +185,17 @@ describe('fleet store', () => {
       expect(store.attention.find((item) => item.agent.id === 6)?.reason).toBe('Health 4/20')
     })
 
+    /** The dashboard folds by cause, so the cause and the reading have to travel apart too. */
+    it('names the cause and the reading behind it', async () => {
+      fleet()
+      const store = useAgentStore()
+
+      await store.refresh()
+
+      expect(store.attention.find((item) => item.agent.id === 6)).toMatchObject({ kind: 'lowHealth', detail: '4/20' })
+      expect(store.attention.find((item) => item.agent.id === 7)).toMatchObject({ kind: 'hostUnreachable', detail: null })
+    })
+
     it('ignores telemetry thresholds for agents that are not in game', async () => {
       fleet([
         agent({
