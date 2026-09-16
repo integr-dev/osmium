@@ -29,6 +29,7 @@ async function main(): Promise<void> {
   const socket = new HostSocket(url, token, VERSION, {
     connected: () => dispatcher.announce(),
     command: (command) => dispatcher.command(command),
+    traffic: () => dispatcher.traffic(),
   })
 
   const dispatcher = new Dispatcher(

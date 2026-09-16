@@ -3,6 +3,7 @@ import type { Inventory } from '../agent/inventory.ts'
 import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { AdvertisedProxy } from '../agent/proxy.ts'
+import type { Bytes } from '../agent/traffic.ts'
 import type { PathNode, PathState, PathWork, Waypoint } from '../agent/path/navigator.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
 
@@ -140,7 +141,8 @@ export type Event =
       /** The proxies this host holds, by name. Addresses, never credentials - see `proxy.ts`. */
       proxies: AdvertisedProxy[]
     }
-  | { type: 'heartbeat'; version: string }
+  /** Every ten seconds. `traffic` is running totals for every agent's server connection. */
+  | { type: 'heartbeat'; version: string; traffic?: Bytes }
   | {
       type: 'agent_status'
       agentId: number

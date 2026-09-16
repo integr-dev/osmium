@@ -127,6 +127,18 @@ describe('serialize', () => {
     expect(json.type).toBe('heartbeat')
     expect(json.payload.hostVersion).toBe('0.1.0')
     expect(json.agentId).toBeUndefined()
+    expect('traffic' in json.payload).toBe(false)
+  })
+
+  it('carries the traffic totals on the heartbeat', () => {
+    const json = parse(
+      serialize({
+        kind: 'event',
+        body: { type: 'heartbeat', version: '0.1.0', traffic: { sent: 12, received: 3400 } },
+      }),
+    )
+
+    expect(json.payload.traffic).toEqual({ sent: 12, received: 3400 })
   })
 })
 

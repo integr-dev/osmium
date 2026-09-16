@@ -46,8 +46,11 @@ function event(body: Event): Json {
         },
       }
 
-    case 'heartbeat':
-      return { kind: 'event', type: 'heartbeat', payload: { hostVersion: body.version } }
+    case 'heartbeat': {
+      const payload: Json = { hostVersion: body.version }
+      if (body.traffic) put(payload, 'traffic', { sent: body.traffic.sent, received: body.traffic.received })
+      return { kind: 'event', type: 'heartbeat', payload }
+    }
 
     case 'agent_status': {
       const payload: Json = {}

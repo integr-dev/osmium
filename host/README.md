@@ -692,12 +692,20 @@ Events carry no `id` and are never answered.
 ### 4.1 `heartbeat` — every ~10 seconds
 
 ```jsonc
-{ "kind": "event", "type": "heartbeat", "payload": { "hostVersion": "0.3.1" } }
+{ "kind": "event", "type": "heartbeat",
+  "payload": { "hostVersion": "0.3.1", "traffic": { "sent": 18233, "received": 4410291 } } }
 ```
 
 Host-scoped, so **no `agentId`**. This is the only thing that makes a host reachable: miss the
 **30 second** grace window and every agent on this host derives as `STALE` in the UI, and the
 backend refuses to dispatch commands to it with a 503.
+
+`traffic` is optional: the bytes every agent on this host has sent to and received from its
+Minecraft server since the host started, read off each session's socket (`agent/traffic.ts`), so
+compression and encryption are counted as they went over the wire. **Running totals, never rates** —
+a missed heartbeat loses nothing, and the backend divides two of them for the dashboard's traffic
+chart. A session's bytes are kept when it ends and a deleted agent's when it goes, so the total
+only drops when the host restarts, which the backend reads as a new baseline.
 
 `hostVersion` is recorded and logged when it does not match what the backend expects. It is **a
 signal, not a gate** — a mismatch never blocks the connection, because a hard version check would

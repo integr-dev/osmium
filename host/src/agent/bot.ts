@@ -64,6 +64,7 @@ import {
   type AntiHunger,
   type Mode,
 } from './utility.ts'
+import { type Bytes, socketOf, Traffic } from './traffic.ts'
 import { AgentViewer } from './viewer.ts'
 
 import { log, reason } from '../log.ts'
@@ -187,6 +188,7 @@ export class Agent {
    * it. Rebuilt per session, like the watcher, because it holds the bot. */
   private mapper: AgentMap | undefined
   private carrying: AgentInventory | undefined
+  private readonly counted = new Traffic()
 
   /**
    * The segments this host has been handed for this agent and not been told to drop.
@@ -853,6 +855,7 @@ export class Agent {
     // failed its version ping still holds an open socket nothing else will ever close.
     const bot = this.bot
     this.bot = undefined
+    this.counted.retire(socketOf(bot))
     if (bot) close(bot, this.id)
 
     // Deleted while in game. Nothing is owed about an agent the backend has already been told to
@@ -1752,6 +1755,11 @@ export class Agent {
   restate(): void {
     this.carrying?.refresh()
     this.navigator?.restate()
+  }
+
+  /** Bytes to and from the server, across every session this agent has had. */
+  traffic(): Bytes {
+    return this.counted.total(socketOf(this.bot))
   }
 
   private begin_carrying(): void {

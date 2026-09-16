@@ -2,6 +2,7 @@ import { WebSocket } from 'ws'
 
 import { log, reason } from '../log.ts'
 import { deserialize } from '../protocol/deserialize.ts'
+import type { Bytes } from '../agent/traffic.ts'
 import type { Command, Outbound } from '../protocol/message.ts'
 import { serialize } from '../protocol/serialize.ts'
 
@@ -24,6 +25,8 @@ export interface SocketHandlers {
    * it safe to send always - and a host cannot reliably tell the two cases apart anyway. */
   connected(): void
   command(command: Command): void
+  /** What every agent has moved so far, for the heartbeat. */
+  traffic(): Bytes
 }
 
 /**
@@ -89,7 +92,14 @@ export class HostSocket {
       this.backoff = BACKOFF_MIN
       this.complained = false
 
-      this.beat = setInterval(() => this.send({ kind: 'event', body: { type: 'heartbeat', version: this.version } }), HEARTBEAT)
+      this.beat = setInterval(
+        () =>
+          this.send({
+            kind: 'event',
+            body: { type: 'heartbeat', version: this.version, traffic: this.handlers.traffic() },
+          }),
+        HEARTBEAT,
+      )
       this.handlers.connected()
     })
 

@@ -4,6 +4,7 @@ import type { AgentSnapshot, Command, Event, Outbound, SetupResult } from '../pr
 import { ActivityScope, LoginState, Severity } from '../protocol/wire.ts'
 import { advertised, isInteractive, kindFromId, LoginKind, type StoredKind } from '../token/login.ts'
 import type { Proxies } from '../agent/proxy.ts'
+import { add, type Bytes, NO_BYTES } from '../agent/traffic.ts'
 import type { AccountStore } from '../token/store.ts'
 
 interface Running {
@@ -22,6 +23,8 @@ interface Running {
  */
 export class Dispatcher {
   private readonly agents = new Map<number, Running>()
+  /** What agents that are gone moved, so the host's total never goes backwards when one is deleted. */
+  private departed: Bytes = NO_BYTES
 
   constructor(
     private readonly store: AccountStore,
@@ -72,6 +75,13 @@ export class Dispatcher {
     // reported on change and deduplicated, so without this an agent that is standing still would
     // have nothing to say until it next picked something up, and its card would sit empty.
     for (const running of this.agents.values()) running.agent.restate()
+  }
+
+  /** Bytes every agent on this host has moved to and from its server since the host started. */
+  traffic(): Bytes {
+    let total = this.departed
+    for (const running of this.agents.values()) total = add(total, running.agent.traffic())
+    return total
   }
 
   command(command: Command): void {
@@ -163,7 +173,9 @@ export class Dispatcher {
         this.answer(id, agentId, setup)
       },
       finished: () => {
-        if (this.agents.get(agentId) === running) this.agents.delete(agentId)
+        if (this.agents.get(agentId) !== running) return
+        this.departed = add(this.departed, running.agent.traffic())
+        this.agents.delete(agentId)
       },
     })
 
