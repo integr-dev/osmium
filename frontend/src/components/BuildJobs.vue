@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Boxes, Hammer, Pause, Play, Trash2, Undo2, UserPlus, Users, X } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
 import type { BuildJob, JobAgent, JobSegment, JobState, SegmentState } from '../api/jobs'
 import { summarise, type JobSummary } from '../lib/jobs'
 import { atShort } from '../lib/time'
@@ -285,7 +286,7 @@ function restart(job: BuildJob) {
  * audit trail keeps that it happened; nothing keeps what was lost.
  */
 const removing = ref<BuildJob | null>(null)
-const removeDialog = ref<HTMLDialogElement | null>(null)
+const removeDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 
 function askRemove(job: BuildJob) {
   removing.value = job
@@ -332,7 +333,7 @@ function take(job: BuildJob, segment: JobSegment) {
  * were already eligible: an operator looking for a bot that is right there in the fleet was told
  * nothing at all about why it was absent. The picker shows the rest greyed, with the reason.
  */
-const dialogEl = ref<HTMLDialogElement | null>(null)
+const dialogEl = ref<InstanceType<typeof ModalShell> | null>(null)
 const pickingId = ref<number | null>(null)
 const chosen = ref<number[]>([])
 
@@ -406,7 +407,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
         <header class="flex flex-wrap items-start gap-x-4 gap-y-2">
           <div class="min-w-0 flex-1">
             <h3 class="card-title flex items-center gap-2 text-base">
-              <Hammer class="text-primary size-4" />
+              <Hammer class="text-base-content/50 size-4" />
               {{ job.buildName }}
               <span class="badge badge-sm" :class="JOB_BADGE[job.state]">
                 {{ t(`jobs.state.${job.state}`) }}
@@ -757,61 +758,52 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
       Both dialogs are the page’s rather than each card’s: only one can be open at a time, and a
       card that carried its own would build a picker and a confirmation for every job on screen.
     -->
-    <dialog ref="removeDialog" class="modal" @close="removing = null">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <Trash2 class="text-error size-5" />
-          {{ t('jobs.removeTitle', { name: removing?.buildName }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">{{ t('jobs.removeWarning') }}</p>
-        <div class="modal-action">
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            @click="removeDialog?.close()"
-          >
-            {{ t('common.cancel') }}
-          </button>
-          <button type="button" class="btn btn-error btn-sm gap-2" @click="remove()">
-            <Trash2 class="size-4" />
-            {{ t('jobs.remove') }}
-          </button>
-        </div>
+    <ModalShell
+      ref="removeDialog"
+      :title="t('jobs.removeTitle', { name: removing?.buildName })"
+      :icon="Trash2"
+      tone="error"
+      @close="removing = null"
+    >
+      <p class="mt-3 text-sm opacity-70">{{ t('jobs.removeWarning') }}</p>
+      <div class="modal-action">
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          @click="removeDialog?.close()"
+        >
+          {{ t('common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-error btn-sm gap-2" @click="remove()">
+          <Trash2 class="size-4" />
+          {{ t('jobs.remove') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop">
-        <button>{{ t('common.close') }}</button>
-      </form>
-    </dialog>
+    </ModalShell>
 
-    <dialog ref="dialogEl" class="modal" @close="pickingId = null">
-      <div class="modal-box">
-        <h3 class="text-lg font-semibold">{{ t('jobs.addAgent') }}</h3>
-        <p v-if="picking" class="mt-1 text-sm opacity-60">
-          {{ t('jobs.addHint', { name: picking.buildName, server: picking.serverAddress }) }}
-        </p>
+    <ModalShell ref="dialogEl" :title="t('jobs.addAgent')" @close="pickingId = null">
+      <p v-if="picking" class="mt-1 text-sm opacity-60">
+        {{ t('jobs.addHint', { name: picking.buildName, server: picking.serverAddress }) }}
+      </p>
 
-        <div v-if="picking" class="mt-4">
-          <AgentPicker
-            v-model="chosen"
-            :agents="newcomers(picking)"
-            :unavailable="unavailable(picking)"
-            :unavailable-note="t('jobs.pickerUnavailable')"
-            bare
-          />
-        </div>
-
-        <div class="modal-action">
-          <form method="dialog">
-            <button class="btn btn-ghost">{{ t('common.cancel') }}</button>
-          </form>
-          <button type="button" class="btn btn-primary" :disabled="!chosen.length" @click="hire()">
-            {{ t('jobs.addSelected', { count: chosen.length }, chosen.length) }}
-          </button>
-        </div>
+      <div v-if="picking" class="mt-4">
+        <AgentPicker
+          v-model="chosen"
+          :agents="newcomers(picking)"
+          :unavailable="unavailable(picking)"
+          :unavailable-note="t('jobs.pickerUnavailable')"
+          bare
+        />
       </div>
-      <form method="dialog" class="modal-backdrop">
-        <button>{{ t('common.close') }}</button>
-      </form>
-    </dialog>
+
+      <div class="modal-action">
+        <form method="dialog">
+          <button class="btn btn-ghost">{{ t('common.cancel') }}</button>
+        </form>
+        <button type="button" class="btn btn-primary" :disabled="!chosen.length" @click="hire()">
+          {{ t('jobs.addSelected', { count: chosen.length }, chosen.length) }}
+        </button>
+      </div>
+    </ModalShell>
   </div>
 </template>

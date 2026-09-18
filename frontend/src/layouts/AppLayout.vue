@@ -28,6 +28,7 @@ import {
   WifiOff,
   Workflow,
 } from 'lucide-vue-next'
+import AlertNote from '../components/AlertNote.vue'
 import AddAgentModal from '../components/AddAgentModal.vue'
 import AddHostModal from '../components/AddHostModal.vue'
 import ChatRail from '../components/ChatRail.vue'
@@ -336,22 +337,20 @@ async function logout() {
               administrator and not them — and somebody who has just been signed out with no
               explanation should not have to go looking.
             -->
-            <div
+            <AlertNote
               v-if="auth.sessionAlertAt"
-              role="alert"
-              class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
+              kind="warning"
+              :icon="ShieldAlert"
+              class="mx-auto mb-6 max-w-6xl"
+              :title="t('sessions.alertTitle')"
+              :message="t('sessions.alertBody', { when: atShort(auth.sessionAlertAt) })"
             >
-              <ShieldAlert class="mt-0.5 size-5 shrink-0" />
-              <span class="min-w-0 flex-1">
-                <span class="block font-medium">{{ t('sessions.alertTitle') }}</span>
-                <span class="block text-sm opacity-80">
-                  {{ t('sessions.alertBody', { when: atShort(auth.sessionAlertAt) }) }}
-                </span>
-              </span>
-              <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
-                {{ t('sessions.alertDismiss') }}
-              </button>
-            </div>
+              <template #action>
+                <button type="button" class="btn btn-ghost btn-xs" @click="auth.dismissSessionAlert()">
+                  {{ t('sessions.alertDismiss') }}
+                </button>
+              </template>
+            </AlertNote>
 
             <!--
               The one thing nothing on a page can say for itself: what is on screen is real but has
@@ -362,17 +361,14 @@ async function logout() {
               happened; this one is about the state of the screen right now, and it goes away by
               being fixed.
             -->
-            <div
+            <AlertNote
               v-if="streamDown"
-              role="status"
-              class="alert alert-warning alert-soft mx-auto mb-6 flex max-w-6xl items-start gap-3"
-            >
-              <WifiOff class="mt-0.5 size-5 shrink-0" />
-              <span class="min-w-0 flex-1">
-                <span class="block font-medium">{{ t('connection.streamLost') }}</span>
-                <span class="block text-sm opacity-80">{{ t('connection.streamLostBody') }}</span>
-              </span>
-            </div>
+              kind="warning"
+              :icon="WifiOff"
+              class="mx-auto mb-6 max-w-6xl"
+              :title="t('connection.streamLost')"
+              :message="t('connection.streamLostBody')"
+            />
           </div>
 
           <!--

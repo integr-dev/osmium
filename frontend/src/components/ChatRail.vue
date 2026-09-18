@@ -137,7 +137,7 @@ function choose(key: string): void {
     ></div>
 
     <div class="border-base-300 flex items-center gap-2 border-b px-3 py-3">
-      <MessagesSquare class="text-primary size-4 shrink-0" />
+      <MessagesSquare class="text-base-content/50 size-4 shrink-0" />
 
       <select
         v-if="scope"

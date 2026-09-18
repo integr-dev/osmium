@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { EyeOff, Search, Send, Server, TriangleAlert } from 'lucide-vue-next'
+import { EyeOff, Search, Send, Server } from 'lucide-vue-next'
+import AlertNote from './AlertNote.vue'
 import PlayerHead from './PlayerHead.vue'
 import McText from './McText.vue'
 
@@ -527,10 +528,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
       <span>{{ everywhere ? t('chat.searchingEverywhere') : t('chat.searchingHere') }}</span>
     </label>
 
-    <div v-if="error" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span>{{ error }}</span>
-    </div>
+    <AlertNote v-if="error" kind="error" :message="error" />
 
     <div class="relative flex min-h-0 flex-1 flex-col">
       <!--
@@ -613,7 +611,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
               the point, since those were refused precisely so they would not be kept. Dimmed and
               italic because nobody said it: it is the panel talking, not the server.
             -->
-            <p v-if="isSuppressed(line)" class="flex items-center gap-2 px-1 text-xs italic opacity-40">
+            <p v-if="isSuppressed(line)" class="flex items-center gap-2 px-1 text-xs italic opacity-50">
               <span class="shrink-0 font-mono tabular-nums">{{ atTime(line.at) }}</span>
               <EyeOff class="size-3.5 shrink-0" />
               <span class="min-w-0 flex-1 break-words">
@@ -625,7 +623,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
               </span>
             </p>
             <p v-else class="flex items-start gap-2 px-1 text-sm">
-              <span class="shrink-0 pt-0.5 font-mono text-xs tabular-nums opacity-40">{{ atTime(line.at) }}</span>
+              <span class="shrink-0 pt-0.5 font-mono text-xs tabular-nums opacity-50">{{ atTime(line.at) }}</span>
               <!--
                 Global chat is where strangers show up, so a head is not decoration — it is how a player
                 nobody recognises is told apart from an agent at a glance. A line the host could not
@@ -660,7 +658,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
                 and "who was this to" is the whole question a private line raises. On an agent feed it
                 would be the same name on every row.
               -->
-              <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-40">
+              <span v-if="involvesAgent(line)" class="shrink-0 pt-0.5 font-mono text-xs opacity-50">
                 {{ line.agentLabel }}
               </span>
               <!--
@@ -733,10 +731,7 @@ function involvesAgent(line: ChatMessageResponse): boolean {
       -->
       <slot name="speaker" />
 
-      <div v-if="sendError" role="alert" class="alert alert-error alert-soft py-2">
-        <TriangleAlert class="size-4" />
-        <span>{{ sendError }}</span>
-      </div>
+      <AlertNote v-if="sendError" kind="error" class="py-2" :message="sendError" />
 
       <form class="flex gap-2" @submit.prevent="send">
         <!--

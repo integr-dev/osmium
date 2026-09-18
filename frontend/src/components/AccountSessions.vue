@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { LogOut, Monitor, ShieldAlert, TriangleAlert } from 'lucide-vue-next'
+import { LogOut, Monitor, ShieldAlert } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
+import AlertNote from './AlertNote.vue'
 import type { SessionResponse } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
@@ -21,7 +23,7 @@ const sessions = ref<SessionResponse[]>([])
 const loaded = ref(false)
 const error = ref<string | null>(null)
 const ending = ref<number | null>(null)
-const revokeAllDialog = ref<HTMLDialogElement | null>(null)
+const revokeAllDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 
 onMounted(load)
 
@@ -98,16 +100,13 @@ function device(userAgent: string | null): string {
   <div class="card border-base-300 bg-base-200 border">
     <div class="card-body gap-3">
       <h2 class="card-title flex items-center gap-2 text-base">
-        <Monitor class="text-primary size-4" />
+        <Monitor class="text-base-content/50 size-4" />
         {{ t('sessions.title') }}
         <span v-if="loaded" class="badge badge-ghost badge-sm">{{ sessions.length }}</span>
       </h2>
       <p class="text-xs opacity-50">{{ t('sessions.hint') }}</p>
 
-      <div v-if="error" role="alert" class="alert alert-error alert-soft">
-        <TriangleAlert class="size-4" />
-        <span>{{ error }}</span>
-      </div>
+      <AlertNote v-if="error" kind="error" :message="error" />
 
       <!-- Rows, not a spinner: the shape is known and the panel keeps its height. -->
       <div v-if="!loaded" class="flex flex-col gap-2">
@@ -161,24 +160,17 @@ function device(userAgent: string | null): string {
       </div>
     </div>
 
-    <dialog ref="revokeAllDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <ShieldAlert class="text-error size-5" />
-          {{ t('sessions.endAllConfirm') }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">{{ t('sessions.endAllWarning') }}</p>
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="revokeAllDialog?.close()">
-            {{ t('common.cancel') }}
-          </button>
-          <button class="btn btn-error btn-sm gap-2" type="button" @click="endEverywhere">
-            <ShieldAlert class="size-4" />
-            {{ t('sessions.endAll') }}
-          </button>
-        </div>
+    <ModalShell ref="revokeAllDialog" :title="t('sessions.endAllConfirm')" :icon="ShieldAlert" tone="error">
+      <p class="mt-3 text-sm opacity-70">{{ t('sessions.endAllWarning') }}</p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" type="button" @click="revokeAllDialog?.close()">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-error btn-sm gap-2" type="button" @click="endEverywhere">
+          <ShieldAlert class="size-4" />
+          {{ t('sessions.endAll') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+    </ModalShell>
   </div>
 </template>

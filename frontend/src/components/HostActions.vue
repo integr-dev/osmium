@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, KeyRound, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { KeyRound, Server, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
+import TokenReveal from './TokenReveal.vue'
+import AlertNote from './AlertNote.vue'
 import FormField from './FormField.vue'
 import type { HostResponse } from '../api/client'
 import { useAgentStore } from '../stores/agents'
@@ -22,22 +25,19 @@ const agentStore = useAgentStore()
 
 const emit = defineEmits<{ removed: [HostResponse] }>()
 
-const renameDialog = ref<HTMLDialogElement | null>(null)
+const renameDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const renaming = ref<HostResponse | null>(null)
 const renameDraft = ref('')
 const renameError = ref<string | null>(null)
 const renameBusy = ref(false)
 
-const rotateDialog = ref<HTMLDialogElement | null>(null)
+const rotateDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const rotating = ref<HostResponse | null>(null)
 const rotatedToken = ref<string | null>(null)
 const rotateError = ref<string | null>(null)
-const copied = ref(false)
-/** Set when the clipboard refused. The token is shown once, so this cannot be swallowed. */
-const copyFailed = ref(false)
 const rotateBusy = ref(false)
 
-const removeDialog = ref<HTMLDialogElement | null>(null)
+const removeDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const pendingRemove = ref<HostResponse | null>(null)
 const removeError = ref<string | null>(null)
 const removeBusy = ref(false)
@@ -75,8 +75,6 @@ function rotate(host: HostResponse) {
   rotating.value = host
   rotatedToken.value = null
   rotateError.value = null
-  copied.value = false
-  copyFailed.value = false
   rotateBusy.value = false
   rotateDialog.value?.showModal()
 }
@@ -93,23 +91,6 @@ async function confirmRotate() {
     rotateError.value = failure instanceof Error ? failure.message : t('errors.rotateToken')
   } finally {
     rotateBusy.value = false
-  }
-}
-
-/**
- * The one place in the application where a silent failure cannot be recovered from.
- *
- * `writeText` rejects on a denied permission and in any non-secure context. Unhandled, the promise
- * died quietly and the button simply stayed on "Copy" — so an operator who clicked it, saw nothing
- * change, clicked Done and pasted an empty clipboard had permanently lost the host's credential.
- */
-async function copyToken() {
-  if (!rotatedToken.value) return
-  try {
-    await navigator.clipboard.writeText(rotatedToken.value)
-    copied.value = true
-  } catch {
-    copyFailed.value = true
   }
 }
 
@@ -144,43 +125,33 @@ defineExpose({ rename, rotate, remove })
 
 <template>
   <div>
-    <dialog ref="renameDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <SquarePen class="text-primary size-5" />
-          {{ t('hosts.rename') }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">{{ t('hosts.renameHint') }}</p>
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveRename">
-          <FormField
-            v-model="renameDraft"
-            :label="t('hosts.name')"
-            :icon="Server"
-            type="text"
-            maxlength="64"
-            required
-          />
-          <div v-if="renameError" role="alert" class="alert alert-error alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ renameError }}</span>
-          </div>
-          <div class="modal-action">
-            <button
-              class="btn btn-ghost btn-sm"
-              type="button"
-              :disabled="renameBusy"
-              @click="renameDialog?.close()"
-            >
-              {{ t('common.cancel') }}
-            </button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="renameBusy">
-              {{ renameBusy ? t('common.saving') : t('common.save') }}
-            </button>
-          </div>
-        </form>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+    <ModalShell ref="renameDialog" :title="t('hosts.rename')" :icon="SquarePen">
+      <p class="mt-1 text-sm opacity-60">{{ t('hosts.renameHint') }}</p>
+      <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveRename">
+        <FormField
+          v-model="renameDraft"
+          :label="t('hosts.name')"
+          :icon="Server"
+          type="text"
+          maxlength="64"
+          required
+        />
+        <AlertNote v-if="renameError" kind="error" :message="renameError" />
+        <div class="modal-action">
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :disabled="renameBusy"
+            @click="renameDialog?.close()"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-primary btn-sm" type="submit" :disabled="renameBusy">
+            {{ renameBusy ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
 
     <!--
       Escape is refused while the token is on screen. `cancel` is the event a `<dialog>` fires for
@@ -188,119 +159,85 @@ defineExpose({ rename, rotate, remove })
       display of a credential that cannot be retrieved. Done still closes, so nobody is trapped —
       what is blocked is the accidental dismissal, not the deliberate one.
     -->
-    <dialog ref="rotateDialog" class="modal" @cancel="rotatedToken && $event.preventDefault()">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <KeyRound class="text-primary size-5" />
-          {{ t('hosts.rotateTitle', { name: rotating?.name }) }}
-        </h3>
-
-        <div v-if="!rotatedToken" class="mt-4 flex flex-col gap-4">
-          <p class="text-sm opacity-70">{{ t('hosts.rotateIntro') }}</p>
-          <div v-if="rotateError" role="alert" class="alert alert-error alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ rotateError }}</span>
-          </div>
-          <div class="modal-action">
-            <button
-              class="btn btn-ghost btn-sm"
-              type="button"
-              :disabled="rotateBusy"
-              @click="rotateDialog?.close()"
-            >
-              {{ t('common.cancel') }}
-            </button>
-            <button
-              class="btn btn-primary btn-sm"
-              type="button"
-              :disabled="rotateBusy"
-              @click="confirmRotate"
-            >
-              {{ rotateBusy ? t('hosts.rotating') : t('hosts.rotate') }}
-            </button>
-          </div>
-        </div>
-
-        <div v-else class="mt-4 flex flex-col gap-4">
-          <div role="alert" class="alert alert-warning alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ t('hosts.tokenWarning') }}</span>
-          </div>
-          <label class="input w-full">
-            <KeyRound class="size-4 opacity-60" />
-            <input class="font-mono text-sm" :value="rotatedToken" readonly />
-            <button type="button" class="btn btn-ghost btn-xs gap-1" @click="copyToken">
-              <Copy class="size-3.5" />
-              {{ copied ? t('common.copied') : t('common.copy') }}
-            </button>
-          </label>
-          <!-- Says what to do instead. The token is still on screen, so this is recoverable — but
-               only if the operator is told the click did not work. -->
-          <div v-if="copyFailed" role="alert" class="alert alert-warning alert-soft">
-            <TriangleAlert class="size-4" />
-            <span>{{ t('common.copyFailed') }}</span>
-          </div>
-          <div class="modal-action">
-            <button class="btn btn-primary btn-sm" type="button" @click="rotateDialog?.close()">
-              {{ t('common.done') }}
-            </button>
-          </div>
-        </div>
-      </div>
-      <!--
-        The backdrop closes this only up to the point where there is something to lose. daisyUI's
-        backdrop is a form that submits the dialog, so it is simply not rendered once the token is
-        showing — an off-target click there would otherwise take the credential with it.
-      -->
-      <form v-if="!rotatedToken" method="dialog" class="modal-backdrop">
-        <button>{{ t('common.close') }}</button>
-      </form>
-    </dialog>
-
-    <dialog ref="removeDialog" class="modal" @close="pendingRemove = null">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <TriangleAlert class="text-error size-5" />
-          {{ t('hosts.removeTitle', { name: pendingRemove?.name }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">
-          <template v-if="pendingRemove && agentStore.agentsOnHost(pendingRemove.id).length">
-            <!-- The count is passed twice: once to interpolate, once to pick the plural form. -->
-            {{
-              t(
-                'hosts.removeWithAgents',
-                { count: agentStore.agentsOnHost(pendingRemove.id).length },
-                agentStore.agentsOnHost(pendingRemove.id).length,
-              )
-            }}
-          </template>
-          <template v-else>{{ t('hosts.removeNoAgents') }}</template>
-        </p>
-        <div v-if="removeError" role="alert" class="alert alert-error alert-soft mt-4">
-          <TriangleAlert class="size-4" />
-          <span>{{ removeError }}</span>
-        </div>
+    <ModalShell
+      ref="rotateDialog"
+      :title="t('hosts.rotateTitle', { name: rotating?.name })"
+      :icon="KeyRound"
+      :dismissible="!rotatedToken"
+    >
+      <div v-if="!rotatedToken" class="mt-4 flex flex-col gap-4">
+        <p class="text-sm opacity-70">{{ t('hosts.rotateIntro') }}</p>
+        <AlertNote v-if="rotateError" kind="error" :message="rotateError" />
         <div class="modal-action">
           <button
             class="btn btn-ghost btn-sm"
             type="button"
-            :disabled="removeBusy"
-            @click="removeDialog?.close()"
+            :disabled="rotateBusy"
+            @click="rotateDialog?.close()"
           >
             {{ t('common.cancel') }}
           </button>
           <button
-            class="btn btn-error btn-sm gap-2"
+            class="btn btn-primary btn-sm"
             type="button"
-            :disabled="removeBusy"
-            @click="confirmRemove"
+            :disabled="rotateBusy"
+            @click="confirmRotate"
           >
-            <Trash2 class="size-4" />
-            {{ removeBusy ? t('hosts.removing') : t('hosts.removeAction') }}
+            {{ rotateBusy ? t('hosts.rotating') : t('hosts.rotate') }}
           </button>
         </div>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+
+      <div v-else class="mt-4 flex flex-col gap-4">
+        <TokenReveal :token="rotatedToken" />
+        <div class="modal-action">
+          <button class="btn btn-primary btn-sm" type="button" @click="rotateDialog?.close()">
+            {{ t('common.done') }}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+
+    <ModalShell
+      ref="removeDialog"
+      :title="t('hosts.removeTitle', { name: pendingRemove?.name })"
+      :icon="TriangleAlert"
+      tone="error"
+      @close="pendingRemove = null"
+    >
+      <p class="mt-3 text-sm opacity-70">
+        <template v-if="pendingRemove && agentStore.agentsOnHost(pendingRemove.id).length">
+          <!-- The count is passed twice: once to interpolate, once to pick the plural form. -->
+          {{
+            t(
+              'hosts.removeWithAgents',
+              { count: agentStore.agentsOnHost(pendingRemove.id).length },
+              agentStore.agentsOnHost(pendingRemove.id).length,
+            )
+          }}
+        </template>
+        <template v-else>{{ t('hosts.removeNoAgents') }}</template>
+      </p>
+      <AlertNote v-if="removeError" kind="error" class="mt-4" :message="removeError" />
+      <div class="modal-action">
+        <button
+          class="btn btn-ghost btn-sm"
+          type="button"
+          :disabled="removeBusy"
+          @click="removeDialog?.close()"
+        >
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          class="btn btn-error btn-sm gap-2"
+          type="button"
+          :disabled="removeBusy"
+          @click="confirmRemove"
+        >
+          <Trash2 class="size-4" />
+          {{ removeBusy ? t('hosts.removing') : t('hosts.removeAction') }}
+        </button>
+      </div>
+    </ModalShell>
   </div>
 </template>

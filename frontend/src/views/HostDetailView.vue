@@ -9,8 +9,8 @@ import {
   Server,
   SquarePen,
   Trash2,
-  TriangleAlert,
 } from 'lucide-vue-next'
+import AlertNote from '../components/AlertNote.vue'
 import HostActions from '../components/HostActions.vue'
 import type { HostResponse } from '../api/client'
 import PlayerHead from '../components/PlayerHead.vue'
@@ -67,10 +67,7 @@ function afterRemove(removed: HostResponse) {
       {{ t('resources.title') }}
     </RouterLink>
 
-    <div v-if="!host && agentStore.loaded" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span>{{ t('hosts.notFound') }}</span>
-    </div>
+    <AlertNote v-if="!host && agentStore.loaded" kind="error" :message="t('hosts.notFound')" />
 
     <template v-else-if="host">
       <header class="flex flex-wrap items-start justify-between gap-4">

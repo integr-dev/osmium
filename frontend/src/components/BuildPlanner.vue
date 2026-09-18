@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, MapPin, Plus, Replace, SquarePen, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { Check, MapPin, Plus, Replace, SquarePen, Trash2 } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
+import AlertNote from './AlertNote.vue'
 import {
   createBuild,
   deleteBuild,
@@ -237,8 +239,8 @@ function pickedId(event: Event): number | null {
  * ever set — under a comment saying "renaming is the operator's". It was not: there was nothing to
  * rename it with, and no way to reach a second plan to need distinguishing in the first place.
  */
-const renameDialog = ref<HTMLDialogElement | null>(null)
-const removeDialog = ref<HTMLDialogElement | null>(null)
+const renameDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const removeDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const nameDraft = ref('')
 
 function openRename() {
@@ -349,7 +351,7 @@ async function removePlan() {
 
         <div>
           <p class="flex items-center gap-2 text-sm font-medium">
-            <MapPin class="text-primary size-4" />
+            <MapPin class="text-base-content/50 size-4" />
             {{ t('builds.placement') }}
           </p>
           <p class="mt-1 text-xs opacity-60">{{ t('builds.placementHint') }}</p>
@@ -374,7 +376,7 @@ async function removePlan() {
 
         <div class="border-base-300 border-t pt-4">
           <p class="flex items-center gap-2 text-sm font-medium">
-            <Replace class="text-primary size-4" />
+            <Replace class="text-base-content/50 size-4" />
             {{ t('builds.substitutions') }}
           </p>
           <p class="mt-1 text-xs opacity-60">{{ t('builds.substitutionsHint') }}</p>
@@ -408,7 +410,7 @@ async function removePlan() {
                 </button>
               </div>
               <div class="flex items-center gap-1.5">
-                <span class="shrink-0 ps-1 text-xs opacity-40">→</span>
+                <span class="shrink-0 ps-1 text-xs opacity-50">→</span>
                 <!-- Left empty on purpose means "place nothing", which the placeholder says. -->
                 <BlockPicker
                   v-model="rule.to"
@@ -431,10 +433,7 @@ async function removePlan() {
           </button>
         </div>
 
-        <div v-if="error" role="alert" class="alert alert-error alert-soft text-sm">
-          <TriangleAlert class="size-4" />
-          <span>{{ error }}</span>
-        </div>
+        <AlertNote v-if="error" kind="error" class="text-sm" :message="error" />
 
         <!--
           Which of the two is showing is the answer to "did that go through". The same shape
@@ -517,65 +516,56 @@ async function removePlan() {
       </div>
     </div>
 
-    <dialog ref="renameDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <SquarePen class="text-primary size-5" />
-          {{ t('builds.renameTitle') }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">{{ t('builds.renameHint') }}</p>
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveName">
-          <FormField
-            v-model="nameDraft"
-            :label="t('builds.planName')"
-            :icon="SquarePen"
-            type="text"
-            maxlength="128"
-            required
-          />
-          <div class="modal-action">
-            <button
-              class="btn btn-ghost btn-sm"
-              type="button"
-              :disabled="busy"
-              @click="renameDialog?.close()"
-            >
-              {{ t('common.cancel') }}
-            </button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="busy">
-              {{ busy ? t('common.saving') : t('common.save') }}
-            </button>
-          </div>
-        </form>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
-
-    <!-- Asked for like every other destructive act, and it names which plan: the whole point of
-         this row is that there can be more than one. -->
-    <dialog ref="removeDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <Trash2 class="text-error size-5" />
-          {{ t('builds.removeTitle', { name: selected?.name ?? '' }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">{{ t('builds.removeWarning') }}</p>
+    <ModalShell ref="renameDialog" :title="t('builds.renameTitle')" :icon="SquarePen">
+      <p class="mt-1 text-sm opacity-60">{{ t('builds.renameHint') }}</p>
+      <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveName">
+        <FormField
+          v-model="nameDraft"
+          :label="t('builds.planName')"
+          :icon="SquarePen"
+          type="text"
+          maxlength="128"
+          required
+        />
         <div class="modal-action">
           <button
             class="btn btn-ghost btn-sm"
             type="button"
             :disabled="busy"
-            @click="removeDialog?.close()"
+            @click="renameDialog?.close()"
           >
             {{ t('common.cancel') }}
           </button>
-          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="busy" @click="removePlan">
-            <Trash2 class="size-4" />
-            {{ busy ? t('common.deleting') : t('builds.removePlan') }}
+          <button class="btn btn-primary btn-sm" type="submit" :disabled="busy">
+            {{ busy ? t('common.saving') : t('common.save') }}
           </button>
         </div>
+      </form>
+    </ModalShell>
+
+    <!-- Asked for like every other destructive act, and it names which plan: the whole point of
+         this row is that there can be more than one. -->
+    <ModalShell
+      ref="removeDialog"
+      :title="t('builds.removeTitle', { name: selected?.name ?? '' })"
+      :icon="Trash2"
+      tone="error"
+    >
+      <p class="mt-3 text-sm opacity-70">{{ t('builds.removeWarning') }}</p>
+      <div class="modal-action">
+        <button
+          class="btn btn-ghost btn-sm"
+          type="button"
+          :disabled="busy"
+          @click="removeDialog?.close()"
+        >
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-error btn-sm gap-2" type="button" :disabled="busy" @click="removePlan">
+          <Trash2 class="size-4" />
+          {{ busy ? t('common.deleting') : t('builds.removePlan') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+    </ModalShell>
   </div>
 </template>

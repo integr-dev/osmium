@@ -8,10 +8,11 @@ import {
   RotateCw,
   Search,
   Server,
-  TriangleAlert,
   Trash2,
   Upload,
 } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
+import AlertNote from './AlertNote.vue'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
 import TabBar, { type Tab } from './TabBar.vue'
@@ -624,7 +625,7 @@ watch(
  * that may have taken an hour to upload; the question about it should be part of the application.
  */
 const pendingDelete = ref<SchematicResponse | null>(null)
-const deleteDialog = ref<HTMLDialogElement | null>(null)
+const deleteDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const removing = ref(false)
 
 function askToRemove(schematic: SchematicResponse) {
@@ -732,7 +733,7 @@ function progressOf(schematic: SchematicResponse): string | null {
         <div class="card-body gap-2 p-3">
           <div class="flex items-center justify-between px-2 pt-1">
             <h2 class="card-title flex items-center gap-2 text-base">
-              <Box class="text-primary size-4" />
+              <Box class="text-base-content/50 size-4" />
               {{ t('schematics.title') }}
             </h2>
             <button
@@ -841,28 +842,20 @@ function progressOf(schematic: SchematicResponse): string | null {
               </button>
             </div>
 
-            <div v-if="selected.failure" role="alert" class="alert alert-error alert-soft text-sm">
-              {{ selected.failure }}
-            </div>
+            <AlertNote v-if="selected.failure" kind="error" class="text-sm" :message="selected.failure" />
 
             <!--
               Not a refusal — an older Minecraft is accepted on purpose, because most blocks do not
               change between versions. But the ones that were renamed are invisible until an agent
               fails to place one, and this is the only place that can say so before then.
             -->
-            <div
+            <AlertNote
               v-if="selected.content.outdated"
-              role="status"
-              class="alert alert-warning alert-soft items-start text-sm"
-            >
-              <TriangleAlert class="mt-0.5 size-4 shrink-0" />
-              <span>
-                <strong class="font-medium">{{ t('schematics.outdated') }}</strong>
-                <span class="block opacity-80">
-                  {{ t('schematics.outdatedHint', { version: selected.content.dataVersion }) }}
-                </span>
-              </span>
-            </div>
+              kind="warning"
+              class="text-sm"
+              :title="t('schematics.outdated')"
+              :message="t('schematics.outdatedHint', { version: selected.content.dataVersion })"
+            />
 
             <!--
               Shape beside its facts rather than above them. Stacked, the three of them are taller
@@ -905,7 +898,7 @@ function progressOf(schematic: SchematicResponse): string | null {
                     />
                     <!-- The slider's own position, so the control answers during the drag that
                          does not yet ask for anything. -->
-                    <span class="w-20 shrink-0 text-right text-xs tabular-nums opacity-40">
+                    <span class="w-20 shrink-0 text-right text-xs tabular-nums opacity-50">
                       {{ t('schematics.detailAcross', { count: pendingDetail }) }}
                     </span>
                   </label>
@@ -918,7 +911,7 @@ function progressOf(schematic: SchematicResponse): string | null {
                 -->
                 <p
                   v-if="view === 'shape'"
-                  class="min-h-4 truncate text-xs opacity-40"
+                  class="min-h-4 truncate text-xs opacity-50"
                   :title="shapeNote ?? ''"
                 >
                   <span v-if="loadingShape" class="loading loading-spinner loading-xs align-middle"></span>
@@ -964,7 +957,7 @@ function progressOf(schematic: SchematicResponse): string | null {
                   </ul>
                 </div>
 
-                <p class="mt-auto text-xs opacity-40">
+                <p class="mt-auto text-xs opacity-50">
                   {{ t('schematics.uploadedBy', { name: selected.uploadedBy }) }} ·
                   {{ selected.originalFilename }}
                 </p>
@@ -1012,7 +1005,7 @@ function progressOf(schematic: SchematicResponse): string | null {
           -->
           <div class="flex flex-col gap-3 text-sm">
             <p class="flex items-center gap-2">
-              <Box class="text-primary size-4 shrink-0" />
+              <Box class="text-base-content/50 size-4 shrink-0" />
               <span class="opacity-60">{{ t('schematics.buildingWhat') }}</span>
               <span class="font-medium">{{ selected?.name }}</span>
               <!--
@@ -1038,14 +1031,14 @@ function progressOf(schematic: SchematicResponse): string | null {
             </p>
 
             <p class="flex items-center gap-2">
-              <Server class="text-primary size-4 shrink-0" />
+              <Server class="text-base-content/50 size-4 shrink-0" />
               <span class="opacity-60">{{ t('schematics.buildingOn') }}</span>
               <span v-if="buildServer" class="font-mono">{{ buildServer }}</span>
               <span v-else class="italic opacity-60">{{ t('schematics.pickBuilders') }}</span>
             </p>
 
             <p v-if="parts" class="flex items-center gap-2">
-              <Hammer class="text-primary size-4 shrink-0" />
+              <Hammer class="text-base-content/50 size-4 shrink-0" />
               <span class="opacity-60">{{ t('schematics.builders') }}</span>
               <span class="font-medium">{{ parts }}</span>
               <span class="ml-auto tabular-nums opacity-60">
@@ -1214,27 +1207,24 @@ function progressOf(schematic: SchematicResponse): string | null {
 
     <SchematicUploadModal v-model:open="uploadOpen" @created="uploaded" />
 
-    <dialog ref="deleteDialog" class="modal" @close="pendingDelete = null">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <Trash2 class="text-error size-5" />
-          {{ t('schematics.deleteTitle', { name: pendingDelete?.name ?? '' }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">{{ t('schematics.deleteWarning') }}</p>
+    <ModalShell
+      ref="deleteDialog"
+      :title="t('schematics.deleteTitle', { name: pendingDelete?.name ?? '' })"
+      :icon="Trash2"
+      tone="error"
+      @close="pendingDelete = null"
+    >
+      <p class="mt-3 text-sm opacity-70">{{ t('schematics.deleteWarning') }}</p>
 
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="deleteDialog?.close()">
-            {{ t('common.cancel') }}
-          </button>
-          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removing" @click="confirmRemove">
-            <Trash2 class="size-4" />
-            {{ removing ? t('common.deleting') : t('schematics.delete') }}
-          </button>
-        </div>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" type="button" @click="deleteDialog?.close()">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removing" @click="confirmRemove">
+          <Trash2 class="size-4" />
+          {{ removing ? t('common.deleting') : t('schematics.delete') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop">
-        <button>{{ t('common.close') }}</button>
-      </form>
-    </dialog>
+    </ModalShell>
   </div>
 </template>

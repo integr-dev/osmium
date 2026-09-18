@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Backpack, TriangleAlert } from 'lucide-vue-next'
+import AlertNote from './AlertNote.vue'
 import { t } from '../i18n'
 import { useAgentStore, type AgentInventory } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
@@ -340,7 +341,7 @@ function release(slot: number): void {
   <div class="card border-base-300 bg-base-200 border">
     <div class="card-body gap-4">
       <h2 class="card-title flex items-center gap-2 text-base">
-        <Backpack class="text-primary size-4" />
+        <Backpack class="text-base-content/50 size-4" />
         {{ t('inventory.title') }}
       </h2>
 
@@ -513,10 +514,7 @@ function release(slot: number): void {
         </p>
       </template>
 
-      <div v-if="error" role="alert" class="alert alert-error alert-soft">
-        <TriangleAlert class="size-4 shrink-0" />
-        <span>{{ error }}</span>
-      </div>
+      <AlertNote v-if="error" kind="error" :message="error" />
     </div>
   </div>
 </template>

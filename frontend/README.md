@@ -1883,6 +1883,12 @@ translation keeps every `{placeholder}`, and that it keeps the same number of `|
 of those fails silently — a dropped placeholder renders the phrase without the value, a dropped
 plural form loses the singular.
 
+**A heading is not repeated under itself.** Page subtitles that only restated the title — "A record
+of who did what, and when." under **Audit log** — are gone, along with the hint under **Agent
+activity** that said it was alerts and status changes. A line under a heading has to carry something
+the heading does not: what is being built and where (`{schematic} on {server}`), how many agents
+connect without a proxy, that only administrators can create accounts.
+
 **Nothing user-facing is written in a component.** That includes error fallbacks in `<script>` and
 the task and alert wording the fleet store derives — those were the last places English leaked
 through with a locale selected. The rule is worth stating because the compiler cannot enforce it:
@@ -2158,13 +2164,40 @@ test workflow first** and gates publishing on it with `needs`, so a failing suit
 That is also why the test workflow has no `push` trigger: on `main` this one drives it, and the
 suite runs once instead of twice.
 
+## The shared shells
+
+Four pieces of markup had been written out on nearly every screen, and the copies had drifted apart.
+They are components now, and the drift is what each one is for:
+
+- **`ModalShell`** — the `<dialog>`, the box, the heading and the backdrop. Twenty-six dialogs wrote
+  that out by hand. It is opened imperatively, exactly like the element it wraps, so a call site
+  keeps its own `showModal()`, its own state and its own behaviour; what it gains is one heading and
+  one backdrop. `dismissible` is the real prop: a dialog showing a token that cannot be retrieved
+  refuses both Escape and an off-target click, and those two were reasoned out separately, in two
+  comments, in two files.
+- **`AlertNote`** — a failure, a warning or a confirmation said in place. There were fifty-two, and
+  they disagreed: a triangle here and a circle there, one with no icon at all, and `role="alert"` on
+  notices that were not urgent. The kind now picks the icon and the ARIA role together, and a
+  `title` covers the second shape these come in — a line naming what happened over a line
+  explaining it.
+- **`TokenReveal`** — a host's enrolment token, shown once, with the copy button and the warning
+  around it. Enrolling a host and rotating its token both end here, and each had its own copy,
+  including its own handling of a clipboard that refuses.
+- **`ActivityRow`** — one line of the activity feed. The dashboard and an agent's page show the same
+  entries at different scopes; they had a row each, with different padding and a different
+  background for the same fact, and two copies of the severity colour table (now `lib/activity.ts`).
+
+One dialog is deliberately not a `ModalShell`: the command palette, which is a search box in a box
+of its own shape rather than a titled dialog.
+
 ## Layout
 
 ```
 src/api/         generated schema, typed client, token storage, live-update and feed clients,
                  resumable schematic upload
-src/components/  FormField and AgentPicker, the add-host, add-agent and upload modals, the chat
-                 rail and panel, the command palette, the sparkline and hourly bars, the language
+src/components/  the shared shells - ModalShell, AlertNote, FilterChip, TabBar, TokenReveal,
+                 ActivityRow, FormField - plus AgentPicker, the add-host, add-agent and upload
+                 modals, the chat rail and panel, the command palette, the charts, the language
                  picker, the sign-in backdrop, the schematic library, the box and voxel viewers,
                  the build planner and block picker, the agent and host lists and the host
                  action dialogs, the fleet graph, the server-assignment and connection panels
@@ -2177,7 +2210,7 @@ src/lib/         everything computed away from a component: cursor-paged feeds, 
                  roles and permissions. `blockNames.generated.ts` is generated — see
                  `scripts/`
 src/router/      routes and node-based guards
-src/stores/      auth, fleet, the chat rail, and the sampled history behind the sparklines (Pinia)
+src/stores/      auth, fleet, the chat rail, and the dashboard history behind the charts (Pinia)
 src/test/        Vitest setup and the fetch stub
 src/views/       dashboard, map, operations, resources, configuration, agent detail, host detail,
                  accounts, audit, login

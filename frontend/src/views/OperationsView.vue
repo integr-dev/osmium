@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Box, Hammer, Server, TriangleAlert, Workflow } from 'lucide-vue-next'
+import { Box, Hammer, Server, Workflow } from 'lucide-vue-next'
+import AlertNote from '../components/AlertNote.vue'
 import BuildJobs from '../components/BuildJobs.vue'
 import SchematicLibrary from '../components/SchematicLibrary.vue'
 import FleetControls from '../components/FleetControls.vue'
@@ -91,7 +92,6 @@ watch(tab, clearReport)
   <div class="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-6">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('operations.title') }}</h1>
-      <p class="text-sm opacity-60">{{ t('operations.subtitle') }}</p>
     </header>
 
     <TabBar v-model="tab" :tabs="strip" />
@@ -100,20 +100,20 @@ watch(tab, clearReport)
       Dismissible, both of them. A tab change clears the banner on its own, but an operator who has
       read the outcome and wants the room back should not have to leave the tab to get it.
     -->
-    <div v-if="error" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span class="min-w-0 flex-1">{{ error }}</span>
-      <button type="button" class="btn btn-ghost btn-xs" @click="clearReport">
-        {{ t('common.dismiss') }}
-      </button>
-    </div>
-    <div v-if="done" role="alert" class="alert alert-success alert-soft">
-      <Workflow class="size-4" />
-      <span class="min-w-0 flex-1">{{ done }}</span>
-      <button type="button" class="btn btn-ghost btn-xs" @click="clearReport">
-        {{ t('common.dismiss') }}
-      </button>
-    </div>
+    <AlertNote v-if="error" kind="error" :message="error">
+      <template #action>
+        <button type="button" class="btn btn-ghost btn-xs" @click="clearReport">
+          {{ t('common.dismiss') }}
+        </button>
+      </template>
+    </AlertNote>
+    <AlertNote v-if="done" kind="success" :icon="Workflow" :message="done">
+      <template #action>
+        <button type="button" class="btn btn-ghost btn-xs" @click="clearReport">
+          {{ t('common.dismiss') }}
+        </button>
+      </template>
+    </AlertNote>
 
     <!-- One transition over the whole chain: only one panel is ever mounted. -->
     <div class="osmium-slide min-h-0 flex-1">

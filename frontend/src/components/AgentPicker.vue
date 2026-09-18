@@ -118,7 +118,7 @@ watch(
     <div :class="bare ? 'flex flex-col gap-3' : 'card-body gap-3'">
       <div v-if="!bare || selected.length" class="flex items-center justify-between">
         <h2 v-if="!bare" class="card-title flex items-center gap-2 text-base">
-          <Agent class="text-primary size-4" />
+          <Agent class="text-base-content/50 size-4" />
           {{ title || t('configuration.agents') }}
         </h2>
         <span v-if="selected.length" class="badge badge-sm ml-auto">

@@ -175,7 +175,6 @@ export const de: Copy = {
   },
 
   login: {
-    subtitle: 'Zum Fortfahren anmelden',
     username: 'Benutzername',
     password: 'Passwort',
     signIn: 'Anmelden',
@@ -209,7 +208,6 @@ export const de: Copy = {
     progress: 'Verbleibende Blöcke',
     percentComplete: '{percent} % fertig',
     blocksRemaining: 'noch {count} Block | noch {count} Blöcke',
-    activityHint: 'Warnungen und Statusänderungen.',
     trendKept: 'letzte {minutes} Min.',
     trendStarting: 'Verlauf wird aufgebaut…',
     noActivity: 'Nichts zu berichten.',
@@ -290,7 +288,6 @@ export const de: Copy = {
 
   resources: {
     title: 'Ressourcen',
-    subtitle: 'Die Agenten, die Maschinen, die sie ausführen, und wie beides verbunden ist.',
     tabBots: 'Bots',
     tabHosts: 'Hosts',
     tabProxies: 'Proxys',
@@ -580,7 +577,6 @@ export const de: Copy = {
   },
   operations: {
     title: 'Betrieb',
-    subtitle: 'Arbeit über die Flotte hinweg ausführen.',
     empty: 'Noch nichts vorhanden.',
     agents: 'Agenten',
 
@@ -925,7 +921,6 @@ export const de: Copy = {
 
   account: {
     title: 'Mein Konto',
-    subtitle: 'Ihre Identität, Rolle und Berechtigungen.',
     username: 'Benutzername',
     role: 'Rolle',
     noRole: 'Keine Rolle',
@@ -995,6 +990,7 @@ export const de: Copy = {
     renameWarning: 'Eine Umbenennung beendet die Sitzungen dieses Kontos, da sein Token es am Benutzernamen erkennt.',
     newAccount: 'Neues Konto',
     roleHint: 'Ein Konto hat genau eine Rolle. Jede Stufe enthält alles darunter.',
+    roleTitle: 'Rolle für {name}',
     back: 'Zurück',
     passwordOptional: 'Leer lassen, um das bisherige Passwort zu behalten',
     changeRole: 'Rolle ändern',
@@ -1012,7 +1008,6 @@ export const de: Copy = {
 
   storage: {
     title: 'Speicher',
-    subtitle: 'Was Osmium auf der Festplatte hält und wie man weniger davon hält.',
     database: 'Datenbank',
     accounted: '{size} in den Bereichen unten',
     reclaimable: 'Freigegeben, nicht zurückgegeben',
@@ -1061,7 +1056,6 @@ export const de: Copy = {
 
   audit: {
     title: 'Audit-Log',
-    subtitle: 'Aufzeichnung, wer wann was getan hat.',
     filterPlaceholder: 'Konto, Agent, Aktion oder Text suchen',
     when: 'Zeitpunkt',
     who: 'Konto',

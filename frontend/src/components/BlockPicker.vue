@@ -168,7 +168,7 @@ function commit(event: KeyboardEvent) {
           <span class="shrink-0 text-left">{{ entry.name }}</span>
           <!-- Blocks already in this schematic, marked: they are the likely answer. -->
           <span v-if="entry.here" class="badge badge-ghost badge-xs shrink-0">{{ $t('builds.inThisBuild') }}</span>
-          <span class="ms-auto min-w-0 truncate font-mono text-xs opacity-40">{{ entry.id }}</span>
+          <span class="ms-auto min-w-0 truncate font-mono text-xs opacity-50">{{ entry.id }}</span>
         </button>
       </li>
     </ul>

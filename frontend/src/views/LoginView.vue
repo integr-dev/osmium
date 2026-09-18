@@ -3,7 +3,8 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { safeRedirect } from '../router'
-import { CircleAlert, KeyRound, LogIn, TriangleAlert, UserRound } from 'lucide-vue-next'
+import { KeyRound, LogIn, TriangleAlert, UserRound } from 'lucide-vue-next'
+import AlertNote from '../components/AlertNote.vue'
 import { backendReachable } from '../api/client'
 import { probeBackend } from '../api/reachability'
 import FormField from '../components/FormField.vue'
@@ -114,10 +115,7 @@ async function submit() {
           <div class="card-body gap-6 p-8">
             <div class="flex flex-col items-center gap-3">
               <img src="/logo.svg" alt="" class="size-14" />
-              <div class="text-center">
-                <h1 class="text-2xl font-semibold tracking-tight">Osmium</h1>
-                <p class="text-sm opacity-60">{{ t('login.subtitle') }}</p>
-              </div>
+              <h1 class="text-2xl font-semibold tracking-tight">Osmium</h1>
             </div>
 
             <form class="flex flex-col gap-4" @submit.prevent="submit">
@@ -153,19 +151,13 @@ async function submit() {
                 </p>
               </div>
 
-              <div v-if="error" role="alert" class="alert alert-error alert-soft">
-                <CircleAlert class="size-4" />
-                <span>{{ error }}</span>
-              </div>
+              <AlertNote v-if="error" kind="error" :message="error" />
 
               <!--
                 Above the sign-in button rather than below it: whoever is reading this has to decide
                 whether to keep going or go and pull the plug, and that decision comes first.
               -->
-              <div v-if="revokeFailed" role="alert" class="alert alert-warning alert-soft items-start">
-                <TriangleAlert class="mt-0.5 size-4 shrink-0" />
-                <span>{{ t('sessions.endAllFailed') }}</span>
-              </div>
+              <AlertNote v-if="revokeFailed" kind="warning" :message="t('sessions.endAllFailed')" />
 
               <button class="btn btn-primary btn-block gap-2" type="submit" :disabled="busy">
                 <span v-if="busy" class="loading loading-spinner loading-sm"></span>
@@ -200,7 +192,7 @@ async function submit() {
           {{ backendReachable ? t('login.reachable') : t('login.unreachable') }}
         </p>
 
-        <p class="text-xs opacity-40">{{ t('login.noSignUp') }}</p>
+        <p class="text-xs opacity-50">{{ t('login.noSignUp') }}</p>
       </div>
     </div>
   </div>

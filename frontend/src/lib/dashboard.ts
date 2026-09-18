@@ -1,6 +1,7 @@
 import type { DashboardReading, DashboardSample } from '../api/dashboard'
 import type { ActivityEntryResponse } from '../api/client'
 import type { Attention, AttentionKind, FleetAgent } from '../stores/agents'
+import { bytes } from './bytes'
 import type { TimePoint } from './series'
 
 /**
@@ -111,17 +112,14 @@ export function projection(
   return { line: [{ at: now, value: remaining }, { at: end, value: left }], finishAt }
 }
 
-/** A rate a person can read: 0 B/s, 812 B/s, 4.2 KB/s, 1.1 MB/s. Binary kilobytes. */
+/**
+ * A rate a person can read: 0 B/s, 812 B/s, 4.2 KB/s, 150 MB/s.
+ *
+ * The same formatter file sizes go through, so a chart and a size in the library cannot come to
+ * disagree about what a megabyte is.
+ */
 export function formatRate(bytesPerSecond: number): string {
-  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
-  let value = Math.max(0, bytesPerSecond)
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
-  }
-  const digits = unit === 0 || value >= 100 ? 0 : 1
-  return `${value.toFixed(digits)} ${units[unit]}`
+  return `${bytes(bytesPerSecond)}/s`
 }
 
 /** A count a person can read at a glance: 950, 12.4k, 3.1M. */

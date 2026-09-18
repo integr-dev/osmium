@@ -20,12 +20,13 @@ import {
   ShieldCheck,
   SquarePen,
   Trash2,
-  TriangleAlert,
   Upload,
   User,
   UserPlus,
   Users,
 } from 'lucide-vue-next'
+import ModalShell from '../components/ModalShell.vue'
+import AlertNote from '../components/AlertNote.vue'
 import type { AuditEntryResponse } from '../api/client'
 import { fetchAuditPage } from '../api/feeds'
 import { downloadAuditCsv } from '../api/auditExport'
@@ -213,7 +214,7 @@ const exportFrom = ref(asDay(new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000)
 const exporting = ref(false)
 const exportError = ref<string | null>(null)
 
-const exportDialog = ref<HTMLDialogElement | null>(null)
+const exportDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 
 // Guarded here as well as on the server: a range that runs backwards is a slip, and a 400 is a
 // worse way to learn about it than a disabled button.
@@ -241,10 +242,7 @@ function asDay(date: Date): string {
 <template>
   <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-semibold tracking-tight">{{ t('audit.title') }}</h1>
-        <p class="text-sm opacity-60">{{ t('audit.subtitle') }}</p>
-      </div>
+      <h1 class="text-2xl font-semibold tracking-tight">{{ t('audit.title') }}</h1>
       <!--
         `w-full` on the search box made it claim the whole row, so the button wrapped underneath it
         rather than sitting beside it. A fixed width leaves room for both on one line.
@@ -266,55 +264,42 @@ function asDay(date: Date): string {
       </div>
     </header>
 
-    <dialog ref="exportDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <Download class="text-primary size-5" />
-          {{ t('audit.exportTitle') }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">{{ t('audit.exportHint') }}</p>
+    <ModalShell ref="exportDialog" :title="t('audit.exportTitle')" :icon="Download">
+      <p class="mt-1 text-sm opacity-60">{{ t('audit.exportHint') }}</p>
 
-        <div class="mt-5 grid gap-4 sm:grid-cols-2">
-          <label class="flex flex-col gap-1">
-            <span class="text-xs opacity-60">{{ t('audit.exportFrom') }}</span>
-            <input v-model="exportFrom" type="date" class="input input-sm w-full" />
-          </label>
-          <label class="flex flex-col gap-1">
-            <span class="text-xs opacity-60">{{ t('audit.exportTo') }}</span>
-            <input v-model="exportTo" type="date" class="input input-sm w-full" />
-          </label>
-        </div>
-
-        <p v-if="!rangeOrdered" class="text-warning mt-3 text-sm">{{ t('audit.exportOrder') }}</p>
-        <p v-else class="mt-3 text-xs opacity-50">{{ t('audit.exportRecorded') }}</p>
-
-        <div v-if="exportError" role="alert" class="alert alert-error alert-soft mt-4">
-          <TriangleAlert class="size-4" />
-          <span>{{ exportError }}</span>
-        </div>
-
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="exportDialog?.close()">
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            class="btn btn-primary btn-sm gap-2"
-            type="button"
-            :disabled="exporting || !rangeOrdered"
-            @click="runExport"
-          >
-            <Download class="size-4" />
-            {{ exporting ? t('audit.exporting') : t('audit.export') }}
-          </button>
-        </div>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2">
+        <label class="flex flex-col gap-1">
+          <span class="text-xs opacity-60">{{ t('audit.exportFrom') }}</span>
+          <input v-model="exportFrom" type="date" class="input input-sm w-full" />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs opacity-60">{{ t('audit.exportTo') }}</span>
+          <input v-model="exportTo" type="date" class="input input-sm w-full" />
+        </label>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
 
-    <div v-if="error" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span>{{ error }}</span>
-    </div>
+      <p v-if="!rangeOrdered" class="text-warning mt-3 text-sm">{{ t('audit.exportOrder') }}</p>
+      <p v-else class="mt-3 text-xs opacity-50">{{ t('audit.exportRecorded') }}</p>
+
+      <AlertNote v-if="exportError" kind="error" class="mt-4" :message="exportError" />
+
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" type="button" @click="exportDialog?.close()">
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          class="btn btn-primary btn-sm gap-2"
+          type="button"
+          :disabled="exporting || !rangeOrdered"
+          @click="runExport"
+        >
+          <Download class="size-4" />
+          {{ exporting ? t('audit.exporting') : t('audit.export') }}
+        </button>
+      </div>
+    </ModalShell>
+
+    <AlertNote v-if="error" kind="error" :message="error" />
 
     <!--
       The scroller, and the element the sentinel below is measured against. The page cannot

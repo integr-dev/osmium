@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
-import { Route, ShieldCheck, TriangleAlert } from 'lucide-vue-next'
+import { Route, ShieldCheck } from 'lucide-vue-next'
+import AlertNote from './AlertNote.vue'
 
 import { useAgentStore } from '../stores/agents'
 
@@ -161,20 +162,17 @@ const direct = computed(
               </tbody>
             </table>
 
-            <div
+            <AlertNote
               v-for="agent in machine.stranded"
               :key="agent.id"
-              role="alert"
-              class="alert alert-warning alert-soft py-2 text-sm"
+              kind="warning"
+              class="py-2 text-sm"
             >
-              <TriangleAlert class="size-4 shrink-0" />
-              <span>
-                <RouterLink :to="{ name: 'agent', params: { id: agent.id } }" class="link-hover link">
-                  {{ agent.label }}
-                </RouterLink>
-                {{ ' ' }}{{ t('proxies.stranded', { name: agent.wanted }) }}
-              </span>
-            </div>
+              <RouterLink :to="{ name: 'agent', params: { id: agent.id } }" class="link-hover link">
+                {{ agent.label }}
+              </RouterLink>
+              {{ ' ' }}{{ t('proxies.stranded', { name: agent.wanted }) }}
+            </AlertNote>
           </div>
         </div>
       </div>

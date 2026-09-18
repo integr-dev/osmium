@@ -174,7 +174,7 @@ async function run(clear = false) {
     <div class="card border-base-300 bg-base-200 h-fit border">
       <div class="card-body gap-4">
         <h2 class="card-title flex items-center gap-2 text-base">
-          <Server class="text-primary size-4" />
+          <Server class="text-base-content/50 size-4" />
           {{ t('operations.fleetTitle') }}
         </h2>
 

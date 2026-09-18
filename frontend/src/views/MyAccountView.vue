@@ -3,14 +3,14 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   CheckCheck,
-  CircleAlert,
-  CircleCheck,
   KeyRound,
   PencilLine,
   ShieldCheck,
   TriangleAlert,
   UserRound,
 } from 'lucide-vue-next'
+import ModalShell from '../components/ModalShell.vue'
+import AlertNote from '../components/AlertNote.vue'
 import { api, errorMessage, type RoleResponse } from '../api/client'
 import AccountSessions from '../components/AccountSessions.vue'
 import FormField from '../components/FormField.vue'
@@ -63,8 +63,8 @@ onMounted(async () => {
 })
 
 /** Held by refs, like every other dialog in the application. */
-const renameDialog = ref<HTMLDialogElement | null>(null)
-const passwordDialog = ref<HTMLDialogElement | null>(null)
+const renameDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const passwordDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 
 function openRename() {
   username.value = auth.user?.username ?? ''
@@ -124,7 +124,6 @@ async function changePassword() {
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
       <header>
         <h1 class="text-2xl font-semibold tracking-tight">{{ t('account.title') }}</h1>
-        <p class="text-sm opacity-60">{{ t('account.subtitle') }}</p>
       </header>
 
       <div class="grid gap-6 lg:grid-cols-3">
@@ -171,7 +170,7 @@ async function changePassword() {
         <div class="card border-base-300 bg-base-200 border lg:col-span-2">
           <div class="card-body gap-3">
             <h2 class="card-title flex items-center gap-2 text-base">
-              <ShieldCheck class="text-primary size-4" />
+              <ShieldCheck class="text-base-content/50 size-4" />
               {{ t('account.role') }}
             </h2>
             <p class="text-sm opacity-60">
@@ -223,7 +222,7 @@ async function changePassword() {
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <KeyRound class="text-primary size-4" />
+            <KeyRound class="text-base-content/50 size-4" />
             {{ t('account.permissions') }}
             <span class="badge badge-ghost badge-sm">{{ auth.user?.nodes?.length ?? 0 }}</span>
           </h2>
@@ -236,10 +235,10 @@ async function changePassword() {
               :key="node"
               class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2"
             >
-              <KeyRound class="text-primary size-3.5 shrink-0 opacity-70" />
+              <KeyRound class="text-base-content/50 size-3.5 shrink-0" />
               <span class="min-w-0">
                 <span class="block truncate text-sm">{{ nodeLabel(node) }}</span>
-                <span class="block truncate font-mono text-[0.7rem] opacity-40">{{ node }}</span>
+                <span class="block truncate font-mono text-[0.7rem] opacity-50">{{ node }}</span>
               </span>
             </div>
             <span v-if="!auth.user?.nodes?.length" class="text-sm opacity-60">{{ t('account.noPermissions') }}</span>
@@ -247,101 +246,75 @@ async function changePassword() {
         </div>
       </div>
 
-      <dialog ref="renameDialog" class="modal">
-        <div class="modal-box">
-          <h3 class="flex items-center gap-2 text-lg font-semibold">
-            <PencilLine class="text-primary size-5" />
-            {{ t('account.rename') }}
-          </h3>
-          <p class="mt-1 text-sm opacity-60">
-            {{ t('account.renameWarning') }}
-          </p>
-          <form class="mt-5 flex flex-col gap-4" @submit.prevent="rename">
-            <FormField
-              v-model="username"
-              :label="t('account.username')"
-              :icon="UserRound"
-              type="text"
-              maxlength="64"
-              required
-            />
+      <ModalShell ref="renameDialog" :title="t('account.rename')" :icon="PencilLine">
+        <p class="mt-1 text-sm opacity-60">
+          {{ t('account.renameWarning') }}
+        </p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="rename">
+          <FormField
+            v-model="username"
+            :label="t('account.username')"
+            :icon="UserRound"
+            type="text"
+            maxlength="64"
+            required
+          />
 
-            <div v-if="renameState.error" role="alert" class="alert alert-error alert-soft">
-              <CircleAlert class="size-4" />
-              <span>{{ renameState.error }}</span>
-            </div>
-            <div v-else-if="renameState.done" role="alert" class="alert alert-warning alert-soft">
-              <TriangleAlert class="size-4" />
-              <span>{{ t('account.renamed') }}</span>
-            </div>
+          <AlertNote v-if="renameState.error" kind="error" :message="renameState.error" />
+          <AlertNote v-else-if="renameState.done" kind="warning" :message="t('account.renamed')" />
 
-            <div class="modal-action">
-              <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">
-                {{ t('common.close') }}
-              </button>
-              <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
-            </div>
-          </form>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-      </dialog>
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="renameDialog?.close()">
+              {{ t('common.close') }}
+            </button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('common.save') }}</button>
+          </div>
+        </form>
+      </ModalShell>
 
-      <dialog ref="passwordDialog" class="modal">
-        <div class="modal-box">
-          <h3 class="flex items-center gap-2 text-lg font-semibold">
-            <KeyRound class="text-primary size-5" />
-            {{ t('account.changePassword') }}
-          </h3>
-          <p class="mt-1 text-sm opacity-60">{{ t('account.passwordHint') }}</p>
-          <form class="mt-5 flex flex-col gap-4" @submit.prevent="changePassword">
-            <FormField
-              v-model="currentPassword"
-              :label="t('account.currentPassword')"
-              :icon="KeyRound"
-              type="password"
-              autocomplete="current-password"
-              required
-            />
-            <FormField
-              v-model="newPassword"
-              :label="t('account.newPassword')"
-              :icon="KeyRound"
-              type="password"
-              autocomplete="new-password"
-              minlength="4"
-              maxlength="72"
-              required
-            />
-            <FormField
-              v-model="confirmPassword"
-              :label="t('account.confirmPassword')"
-              :placeholder="t('account.confirmPlaceholder')"
-              :icon="CheckCheck"
-              :invalid="Boolean(confirmPassword) && confirmPassword !== newPassword"
-              type="password"
-              autocomplete="new-password"
-              required
-            />
+      <ModalShell ref="passwordDialog" :title="t('account.changePassword')" :icon="KeyRound">
+        <p class="mt-1 text-sm opacity-60">{{ t('account.passwordHint') }}</p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="changePassword">
+          <FormField
+            v-model="currentPassword"
+            :label="t('account.currentPassword')"
+            :icon="KeyRound"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <FormField
+            v-model="newPassword"
+            :label="t('account.newPassword')"
+            :icon="KeyRound"
+            type="password"
+            autocomplete="new-password"
+            minlength="4"
+            maxlength="72"
+            required
+          />
+          <FormField
+            v-model="confirmPassword"
+            :label="t('account.confirmPassword')"
+            :placeholder="t('account.confirmPlaceholder')"
+            :icon="CheckCheck"
+            :invalid="Boolean(confirmPassword) && confirmPassword !== newPassword"
+            type="password"
+            autocomplete="new-password"
+            required
+          />
 
-            <div v-if="passwordState.error" role="alert" class="alert alert-error alert-soft">
-              <CircleAlert class="size-4" />
-              <span>{{ passwordState.error }}</span>
-            </div>
-            <div v-else-if="passwordState.done" role="alert" class="alert alert-success alert-soft">
-              <CircleCheck class="size-4" />
-              <span>{{ t('account.passwordChanged') }}</span>
-            </div>
+          <AlertNote v-if="passwordState.error" kind="error" :message="passwordState.error" />
+          <AlertNote v-else-if="passwordState.done" kind="success" :message="t('account.passwordChanged')" />
 
-            <div class="modal-action">
-              <button class="btn btn-ghost btn-sm" type="button" @click="passwordDialog?.close()">
-                {{ t('common.close') }}
-              </button>
-              <button class="btn btn-primary btn-sm" type="submit">{{ t('account.changePassword') }}</button>
-            </div>
-          </form>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-      </dialog>
+          <div class="modal-action">
+            <button class="btn btn-ghost btn-sm" type="button" @click="passwordDialog?.close()">
+              {{ t('common.close') }}
+            </button>
+            <button class="btn btn-primary btn-sm" type="submit">{{ t('account.changePassword') }}</button>
+          </div>
+        </form>
+      </ModalShell>
     </div>
   </div>
 </template>

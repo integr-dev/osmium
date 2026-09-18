@@ -284,7 +284,7 @@ async function update() {
           -->
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h2 class="card-title flex items-center gap-2 text-base">
-              <SlidersHorizontal class="text-primary size-4" />
+              <SlidersHorizontal class="text-base-content/50 size-4" />
               {{ t('configuration.title') }}
             </h2>
             <!--

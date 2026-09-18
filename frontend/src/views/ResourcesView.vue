@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot as Agent, Route, Server, Share2, TriangleAlert } from 'lucide-vue-next'
+import { Bot as Agent, Route, Server, Share2 } from 'lucide-vue-next'
+import AlertNote from '../components/AlertNote.vue'
 import AgentList from '../components/AgentList.vue'
 import FleetGraph from '../components/FleetGraph.vue'
 import HostList from '../components/HostList.vue'
@@ -57,15 +58,11 @@ onMounted(() => {
   <div class="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6">
     <header>
       <h1 class="text-2xl font-semibold tracking-tight">{{ t('resources.title') }}</h1>
-      <p class="text-sm opacity-60">{{ t('resources.subtitle') }}</p>
     </header>
 
     <TabBar v-model="tab" :tabs="strip" />
 
-    <div v-if="agentStore.error" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span>{{ agentStore.error }}</span>
-    </div>
+    <AlertNote v-if="agentStore.error" kind="error" :message="agentStore.error" />
 
     <div class="osmium-slide min-h-0 flex-1">
       <Transition :name="slide">

@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { Bot as Agent, CornerDownLeft, Search, Server, TriangleAlert, Zap } from 'lucide-vue-next'
+import { Bot as Agent, CornerDownLeft, Search, Server, Zap } from 'lucide-vue-next'
+import AlertNote from './AlertNote.vue'
 import { buildCommands, rank, type Command, type CommandSection } from '../lib/commands'
 import { isShortcut } from '../lib/shortcuts'
 import { useAgentStore } from '../stores/agents'
@@ -190,10 +191,7 @@ defineExpose({ open })
         <kbd class="kbd kbd-sm">esc</kbd>
       </label>
 
-      <div v-if="error" role="alert" class="alert alert-error alert-soft m-3">
-        <TriangleAlert class="size-4" />
-        <span>{{ error }}</span>
-      </div>
+      <AlertNote v-if="error" kind="error" class="m-3" :message="error" />
 
       <!--
         `scroll-py-4` is what stops a keyboard-scrolled row landing flush against the edge.
@@ -204,7 +202,7 @@ defineExpose({ open })
       -->
       <div ref="list" class="max-h-[50vh] scroll-py-4 overflow-y-auto p-2">
         <template v-for="group in grouped" :key="group.section">
-          <p class="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide uppercase opacity-40">
+          <p class="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide uppercase opacity-50">
             {{ t(`palette.section.${group.section}`) }}
           </p>
           <button

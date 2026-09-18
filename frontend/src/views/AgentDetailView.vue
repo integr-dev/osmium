@@ -29,8 +29,11 @@ import {
   TriangleAlert,
   Users,
 } from 'lucide-vue-next'
+import ModalShell from '../components/ModalShell.vue'
+import AlertNote from '../components/AlertNote.vue'
 import AgentInventory from '../components/AgentInventory.vue'
 import FormField from '../components/FormField.vue'
+import ActivityRow from '../components/ActivityRow.vue'
 import PlayerHead from '../components/PlayerHead.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
@@ -42,7 +45,6 @@ import { isOnline, uptimeOf, useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
 import { useToastStore } from '../stores/toasts'
-import { atTime } from '../lib/time'
 
 const { t, n } = useI18n()
 const route = useRoute()
@@ -55,9 +57,9 @@ const toasts = useToastStore()
 const error = ref<string | null>(null)
 const busy = ref(false)
 
-const editDialog = ref<HTMLDialogElement | null>(null)
-const removeDialog = ref<HTMLDialogElement | null>(null)
-const setupDialog = ref<HTMLDialogElement | null>(null)
+const editDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const removeDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const setupDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const draft = ref({ label: '' })
 const editError = ref<string | null>(null)
 const setupMethod = ref('')
@@ -135,12 +137,6 @@ function playerOut(el: Element, done: () => void) {
 
   departure.onfinish = done
   departure.oncancel = done
-}
-
-const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
-  INFO: 'bg-base-content/30',
-  WARNING: 'bg-warning',
-  ERROR: 'bg-error',
 }
 
 /**
@@ -492,7 +488,7 @@ function openEdit() {
  * connection targets, so the backend refuses it while the agent is online, where a rename is always
  * allowed. Clearing the field unassigns, which leaves the agent set up and idle.
  */
-const serverDialog = ref<HTMLDialogElement | null>(null)
+const serverDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 const serverDraft = ref('')
 const serverError = ref<string | null>(null)
 
@@ -672,7 +668,7 @@ async function confirmRemove() {
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-4">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <Power class="text-primary size-4" />
+            <Power class="text-base-content/50 size-4" />
             {{ t('common.actions') }}
           </h2>
 
@@ -687,25 +683,24 @@ async function confirmRemove() {
             The copy is careful about what this does. It stops Osmium waiting; it does not reach into
             the host and cancel anything, and a login finished afterwards still links the agent.
           -->
-          <div
+          <AlertNote
             v-if="agent.state === 'SETUP_PENDING' && auth.can('agent.setup')"
-            role="status"
-            class="alert alert-info alert-soft items-start"
+            kind="info"
+            :icon="KeyRound"
+            :title="t('agents.pendingTitle', { host: agent.hostName })"
+            :message="t('agents.pendingBody')"
           >
-            <KeyRound class="mt-0.5 size-4 shrink-0" />
-            <span class="min-w-0 flex-1">
-              <span class="block font-medium">{{ t('agents.pendingTitle', { host: agent.hostName }) }}</span>
-              <span class="block text-sm opacity-80">{{ t('agents.pendingBody') }}</span>
-            </span>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs"
-              :disabled="busy"
-              @click="run(() => agentStore.cancelSetup(agent!.id))"
-            >
-              {{ t('agents.stopWaiting') }}
-            </button>
-          </div>
+            <template #action>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs"
+                :disabled="busy"
+                @click="run(() => agentStore.cancelSetup(agent!.id))"
+              >
+                {{ t('agents.stopWaiting') }}
+              </button>
+            </template>
+          </AlertNote>
 
           <div class="flex flex-wrap gap-x-8 gap-y-4">
             <!--
@@ -882,26 +877,16 @@ async function confirmRemove() {
       </div>
 
 
-      <div v-if="error" role="alert" class="alert alert-error alert-soft">
-        <TriangleAlert class="size-4" />
-        <span>{{ error }}</span>
-      </div>
+      <AlertNote v-if="error" kind="error" :message="error" />
 
-      <div v-if="!hostReachable" role="alert" class="alert alert-warning alert-soft">
-        <TriangleAlert class="size-4 shrink-0" />
-        <span>{{ t('agents.hostOffline', { host: agent.hostName }) }}</span>
-      </div>
+      <AlertNote v-if="!hostReachable" kind="warning" :message="t('agents.hostOffline', { host: agent.hostName })" />
 
-      <div
+      <AlertNote
         v-else-if="agent.state === 'UNLINKED' || agent.state === 'NEEDS_RELINK'"
-        role="alert"
-        class="alert alert-info alert-soft"
-      >
-        <KeyRound class="size-4 shrink-0" />
-        <span>
-          {{ t('agents.notSetUp') }}
-        </span>
-      </div>
+        kind="info"
+        :icon="KeyRound"
+        :message="t('agents.notSetUp')"
+      />
 
       <!--
         Vitals are the host's, and absent until it reports. Nothing is invented in their place: an
@@ -910,7 +895,7 @@ async function confirmRemove() {
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-4">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <Agent class="text-primary size-4" />
+            <Agent class="text-base-content/50 size-4" />
             {{ t('agents.stats') }}
           </h2>
 
@@ -943,7 +928,7 @@ async function confirmRemove() {
 
           <div class="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
             <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-              <MapPin class="text-primary size-3.5 shrink-0 opacity-70" />
+              <MapPin class="text-base-content/50 size-3.5 shrink-0" />
               <span class="min-w-0">
                 <span class="block text-xs opacity-50">{{ t('agents.position') }}</span>
                 <span class="block truncate font-mono text-sm tabular-nums">
@@ -952,14 +937,14 @@ async function confirmRemove() {
               </span>
             </div>
             <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-              <Layers class="text-primary size-3.5 shrink-0 opacity-70" />
+              <Layers class="text-base-content/50 size-3.5 shrink-0" />
               <span class="min-w-0">
                 <span class="block text-xs opacity-50">{{ t('agents.dimension') }}</span>
                 <span class="block truncate text-sm">{{ dimensionLabel(vitals.dimension) }}</span>
               </span>
             </div>
             <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-              <Signal class="text-primary size-3.5 shrink-0 opacity-70" />
+              <Signal class="text-base-content/50 size-3.5 shrink-0" />
               <span class="min-w-0">
                 <span class="block text-xs opacity-50">{{ t('agents.ping') }}</span>
                 <span class="block truncate text-sm tabular-nums">{{ vitals.pingMs }} ms</span>
@@ -967,7 +952,7 @@ async function confirmRemove() {
             </div>
             <!-- Still mock: nothing reports build progress until the schematic pipeline lands. -->
             <div class="rounded-field bg-base-300/30 flex items-center gap-2.5 px-3 py-2">
-              <Hammer class="text-primary size-3.5 shrink-0 opacity-70" />
+              <Hammer class="text-base-content/50 size-3.5 shrink-0" />
               <span class="min-w-0">
                 <span class="block text-xs opacity-50">{{ t('agents.blocksPlaced') }}</span>
                 <!--
@@ -1019,7 +1004,7 @@ async function confirmRemove() {
         <div class="card border-base-300 bg-base-200 min-w-0 border">
           <div class="card-body gap-3">
             <h2 class="card-title flex items-center gap-2 text-base">
-              <Users class="text-primary size-4" />
+              <Users class="text-base-content/50 size-4" />
               {{ t('agents.nearbyPlayers') }}
               <span class="badge badge-ghost badge-sm">{{ vitals?.nearby.length ?? 0 }}</span>
             </h2>
@@ -1078,7 +1063,7 @@ async function confirmRemove() {
                       of padded with dashes — and a player with no coordinates is still listed,
                       because that somebody is there is the point.
                     -->
-                    <span class="block truncate text-xs tabular-nums opacity-40">
+                    <span class="block truncate text-xs tabular-nums opacity-50">
                       <span v-if="player.position" class="font-mono">{{ formatPosition(player.position) }}</span>
                       <template v-if="playerVitals(player)">
                         <span v-if="player.position" class="opacity-60"> · </span>{{ playerVitals(player) }}
@@ -1105,22 +1090,14 @@ async function confirmRemove() {
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <Activity class="text-primary size-4" />
+            <Activity class="text-base-content/50 size-4" />
             {{ t('agents.activity') }}
           </h2>
 
           <div ref="activityBox" class="flex max-h-72 flex-col gap-1 overflow-y-auto">
             <!-- Insertions animate, the first render does not. See the dashboard for the full note. -->
             <TransitionGroup name="feed" tag="div" class="flex flex-col gap-1">
-              <div
-                v-for="line in activity"
-                :key="line.id"
-                class="rounded-field bg-base-300/30 flex items-center gap-3 px-3 py-2 text-sm"
-              >
-                <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
-                <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
-                <span class="min-w-0 flex-1">{{ line.text }}</span>
-              </div>
+              <ActivityRow v-for="line in activity" :key="line.id" :line="line" />
             </TransitionGroup>
 
             <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
@@ -1136,147 +1113,120 @@ async function confirmRemove() {
         </div>
       </div>
 
-      <dialog ref="editDialog" class="modal">
-        <div class="modal-box">
-          <h3 class="flex items-center gap-2 text-lg font-semibold">
-            <SquarePen class="text-primary size-5" />
-            {{ t('agents.editTitle', { name: agent.label }) }}
-          </h3>
-          <p class="mt-1 text-sm opacity-60">{{ t('agents.editHint') }}</p>
-          <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveEdit">
-            <FormField
-              v-model="draft.label"
-              :label="t('agents.label')"
-              :icon="Agent"
-              type="text"
-              maxlength="64"
-              required
-            />
-            <div v-if="editError" role="alert" class="alert alert-error alert-soft">
-              <TriangleAlert class="size-4" />
-              <span>{{ editError }}</span>
-            </div>
-
-            <div class="modal-action">
-              <button class="btn btn-ghost btn-sm" type="button" :disabled="editBusy" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
-              <button class="btn btn-primary btn-sm" type="submit" :disabled="editBusy">
-                {{ editBusy ? t('common.saving') : t('common.save') }}
-              </button>
-            </div>
-          </form>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-      </dialog>
-
-      <dialog ref="serverDialog" class="modal">
-        <div class="modal-box">
-          <h3 class="flex items-center gap-2 text-lg font-semibold">
-            <Server class="text-primary size-5" />
-            {{ t('agents.setServerTitle', { name: agent.label }) }}
-          </h3>
-          <p class="mt-1 text-sm opacity-60">{{ t('agents.setServerHint') }}</p>
-          <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveServer">
-            <FormField
-              v-model="serverDraft"
-              :label="t('agents.server')"
-              :placeholder="t('agents.serverPlaceholder')"
-              :icon="Server"
-              type="text"
-              :disabled="isOnline(agent)"
-            />
-            <!-- Emptying the field is how an agent is taken off a server, so it is said out loud. -->
-            <p class="text-xs opacity-60">
-              {{ isOnline(agent) ? t('agents.moveOffline') : t('agents.unassignHint') }}
-            </p>
-
-            <div v-if="serverError" role="alert" class="alert alert-error alert-soft">
-              <TriangleAlert class="size-4" />
-              <span>{{ serverError }}</span>
-            </div>
-
-            <div class="modal-action">
-              <button class="btn btn-ghost btn-sm" type="button" :disabled="serverBusy" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
-              <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent) || serverBusy">
-                {{ serverBusy ? t('common.saving') : t('common.save') }}
-              </button>
-            </div>
-          </form>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-      </dialog>
-
-      <dialog ref="setupDialog" class="modal">
-        <div class="modal-box">
-          <h3 class="flex items-center gap-2 text-lg font-semibold">
-            <KeyRound class="text-primary size-5" />
-            {{ t('agents.setUpTitle', { name: agent.label }) }}
-          </h3>
-          <p class="mt-3 text-sm opacity-70">{{ t('agents.setUpBody', { host: agent.hostName }) }}</p>
-
-          <!--
-            The host's list, not ours. Its copy comes from the host too: it is the only party that
-            knows what its mechanisms are, so it is the only one that can describe them. The id is
-            shown when it sends none, which is at least the string it will be asked to act on.
-          -->
-          <ul v-if="loginMethods.length" class="list bg-base-100 border-base-300 mt-4 rounded-box border">
-            <li v-for="method in loginMethods" :key="method.id" class="list-row items-center">
-              <label class="flex w-full cursor-pointer items-center gap-3">
-                <input
-                  v-model="setupMethod"
-                  type="radio"
-                  :value="method.id"
-                  class="radio radio-sm radio-primary"
-                />
-                <span class="min-w-0 flex-1">
-                  <span class="block text-sm font-medium">{{ method.label || method.id }}</span>
-                  <span v-if="method.description" class="block text-xs opacity-60">
-                    {{ method.description }}
-                  </span>
-                </span>
-              </label>
-            </li>
-          </ul>
-
-          <div v-else role="alert" class="alert alert-warning alert-soft mt-4 text-sm">
-            <TriangleAlert class="size-4 shrink-0" />
-            <span>{{ t('agents.noLoginMethods', { host: agent.hostName }) }}</span>
-          </div>
+      <ModalShell ref="editDialog" :title="t('agents.editTitle', { name: agent.label })" :icon="SquarePen">
+        <p class="mt-1 text-sm opacity-60">{{ t('agents.editHint') }}</p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveEdit">
+          <FormField
+            v-model="draft.label"
+            :label="t('agents.label')"
+            :icon="Agent"
+            type="text"
+            maxlength="64"
+            required
+          />
+          <AlertNote v-if="editError" kind="error" :message="editError" />
 
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">{{ t('common.cancel') }}</button>
-            <button
-              class="btn btn-primary btn-sm gap-2"
-              type="button"
-              :disabled="!setupMethod"
-              @click="confirmSetup"
-            >
-              <KeyRound class="size-4" />
-              {{ t('agents.setUpStart') }}
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="editBusy" @click="editDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="editBusy">
+              {{ editBusy ? t('common.saving') : t('common.save') }}
             </button>
           </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-      </dialog>
+        </form>
+      </ModalShell>
 
-      <dialog ref="removeDialog" class="modal">
-        <div class="modal-box">
-          <h3 class="flex items-center gap-2 text-lg font-semibold">
-            <TriangleAlert class="text-error size-5" />
-            {{ t('agents.removeTitle', { name: agent.label }) }}
-          </h3>
-          <p class="mt-3 text-sm opacity-70">
-            {{ t('agents.removeWarning', { host: agent.hostName }) }}
+      <ModalShell ref="serverDialog" :title="t('agents.setServerTitle', { name: agent.label })" :icon="Server">
+        <p class="mt-1 text-sm opacity-60">{{ t('agents.setServerHint') }}</p>
+        <form class="mt-5 flex flex-col gap-4" @submit.prevent="saveServer">
+          <FormField
+            v-model="serverDraft"
+            :label="t('agents.server')"
+            :placeholder="t('agents.serverPlaceholder')"
+            :icon="Server"
+            type="text"
+            :disabled="isOnline(agent)"
+          />
+          <!-- Emptying the field is how an agent is taken off a server, so it is said out loud. -->
+          <p class="text-xs opacity-60">
+            {{ isOnline(agent) ? t('agents.moveOffline') : t('agents.unassignHint') }}
           </p>
+
+          <AlertNote v-if="serverError" kind="error" :message="serverError" />
+
           <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="removeBusy" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
-            <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
-              <Trash2 class="size-4" />
-              {{ removeBusy ? t('common.deleting') : t('common.delete') }}
+            <button class="btn btn-ghost btn-sm" type="button" :disabled="serverBusy" @click="serverDialog?.close()">{{ t('common.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="isOnline(agent) || serverBusy">
+              {{ serverBusy ? t('common.saving') : t('common.save') }}
             </button>
           </div>
+        </form>
+      </ModalShell>
+
+      <ModalShell ref="setupDialog" :title="t('agents.setUpTitle', { name: agent.label })" :icon="KeyRound">
+        <p class="mt-3 text-sm opacity-70">{{ t('agents.setUpBody', { host: agent.hostName }) }}</p>
+
+        <!--
+          The host's list, not ours. Its copy comes from the host too: it is the only party that
+          knows what its mechanisms are, so it is the only one that can describe them. The id is
+          shown when it sends none, which is at least the string it will be asked to act on.
+        -->
+        <ul v-if="loginMethods.length" class="list bg-base-100 border-base-300 mt-4 rounded-box border">
+          <li v-for="method in loginMethods" :key="method.id" class="list-row items-center">
+            <label class="flex w-full cursor-pointer items-center gap-3">
+              <input
+                v-model="setupMethod"
+                type="radio"
+                :value="method.id"
+                class="radio radio-sm radio-primary"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block text-sm font-medium">{{ method.label || method.id }}</span>
+                <span v-if="method.description" class="block text-xs opacity-60">
+                  {{ method.description }}
+                </span>
+              </span>
+            </label>
+          </li>
+        </ul>
+
+        <AlertNote
+          v-else
+          kind="warning"
+          class="mt-4 text-sm"
+          :message="t('agents.noLoginMethods', { host: agent.hostName })"
+        />
+
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" type="button" @click="setupDialog?.close()">{{ t('common.cancel') }}</button>
+          <button
+            class="btn btn-primary btn-sm gap-2"
+            type="button"
+            :disabled="!setupMethod"
+            @click="confirmSetup"
+          >
+            <KeyRound class="size-4" />
+            {{ t('agents.setUpStart') }}
+          </button>
         </div>
-        <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-      </dialog>
+      </ModalShell>
+
+      <ModalShell
+        ref="removeDialog"
+        :title="t('agents.removeTitle', { name: agent.label })"
+        :icon="TriangleAlert"
+        tone="error"
+      >
+        <p class="mt-3 text-sm opacity-70">
+          {{ t('agents.removeWarning', { host: agent.hostName }) }}
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="removeBusy" @click="removeDialog?.close()">{{ t('common.cancel') }}</button>
+          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
+            <Trash2 class="size-4" />
+            {{ removeBusy ? t('common.deleting') : t('common.delete') }}
+          </button>
+        </div>
+      </ModalShell>
     </div>
   </div>
 

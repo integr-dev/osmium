@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Box, Info, TriangleAlert, Upload } from 'lucide-vue-next'
+import { Box, Info, Upload } from 'lucide-vue-next'
+import ModalShell from './ModalShell.vue'
+import AlertNote from './AlertNote.vue'
 import FormField from './FormField.vue'
 import { uploadSchematic, type SchematicResponse } from '../api/schematics'
 import { bytes } from '../lib/bytes'
@@ -22,7 +24,7 @@ const emit = defineEmits<{ created: [SchematicResponse] }>()
 
 const { t } = useI18n()
 
-const dialogEl = ref<HTMLDialogElement | null>(null)
+const dialogEl = ref<InstanceType<typeof ModalShell> | null>(null)
 const name = ref('')
 const file = ref<File | null>(null)
 const error = ref<string | null>(null)
@@ -104,92 +106,76 @@ async function send() {
 </script>
 
 <template>
-  <dialog ref="dialogEl" class="modal" @close="open = false">
-    <div class="modal-box">
-      <h3 class="flex items-center gap-2 text-lg font-semibold">
-        <Box class="text-primary size-5" />
-        {{ t('schematics.uploadTitle') }}
-      </h3>
+  <ModalShell ref="dialogEl" :title="t('schematics.uploadTitle')" :icon="Box" @close="open = false">
+    <form class="mt-5 flex flex-col gap-4" @submit.prevent="send">
+      <p class="text-sm opacity-60">{{ t('schematics.uploadIntro') }}</p>
 
-      <form class="mt-5 flex flex-col gap-4" @submit.prevent="send">
-        <p class="text-sm opacity-60">{{ t('schematics.uploadIntro') }}</p>
+      <FormField
+        v-model="name"
+        :label="t('schematics.name')"
+        :placeholder="t('schematics.namePlaceholder')"
+        :icon="Box"
+        type="text"
+        maxlength="128"
+        :disabled="sending"
+        required
+      />
 
-        <FormField
-          v-model="name"
-          :label="t('schematics.name')"
-          :placeholder="t('schematics.namePlaceholder')"
-          :icon="Box"
-          type="text"
-          maxlength="128"
-          :disabled="sending"
-          required
-        />
+      <!-- Native: a file picker is the browser's own control, and a floating label over it would
+           cover the button that makes it work. -->
+      <input
+        type="file"
+        accept=".litematic,.schem,.schematic"
+        class="file-input w-full"
+        :disabled="sending"
+        @change="pick"
+      />
 
-        <!-- Native: a file picker is the browser's own control, and a floating label over it would
-             cover the button that makes it work. -->
-        <input
-          type="file"
-          accept=".litematic,.schem,.schematic"
-          class="file-input w-full"
-          :disabled="sending"
-          @change="pick"
-        />
+      <div v-if="sending" class="flex flex-col gap-1">
+        <progress class="progress progress-primary w-full" :value="percent" max="100"></progress>
+        <p class="text-xs tabular-nums opacity-60">
+          {{
+            t('schematics.uploading', {
+              sent: bytes(sent),
+              total: bytes(file?.size ?? 0),
+              percent,
+            })
+          }}
+        </p>
+      </div>
 
-        <div v-if="sending" class="flex flex-col gap-1">
-          <progress class="progress progress-primary w-full" :value="percent" max="100"></progress>
-          <p class="text-xs tabular-nums opacity-60">
-            {{
-              t('schematics.uploading', {
-                sent: bytes(sent),
-                total: bytes(file?.size ?? 0),
-                percent,
-              })
-            }}
-          </p>
-        </div>
+      <AlertNote v-if="error" kind="error" :message="error" />
 
-        <div v-if="error" role="alert" class="alert alert-error alert-soft">
-          <TriangleAlert class="size-4" />
-          <span>{{ error }}</span>
-        </div>
+      <!--
+        Info rather than a warning: the operator asked for this. What it has to say is what became
+        of the bytes already sent, because once the bar disappears there is nothing on screen to
+        say the half-finished row now sitting in the library came from here.
+      -->
+      <AlertNote v-if="cancelled" kind="info" :icon="Info" :message="cancelled" />
 
-        <!--
-          Info rather than a warning: the operator asked for this. What it has to say is what became
-          of the bytes already sent, because once the bar disappears there is nothing on screen to
-          say the half-finished row now sitting in the library came from here.
-        -->
-        <div v-if="cancelled" role="status" class="alert alert-info alert-soft">
-          <Info class="size-4" />
-          <span>{{ cancelled }}</span>
-        </div>
+      <div class="modal-action">
+        <!-- Closing leaves the transfer running; cancelling stops it and keeps what arrived. -->
+        <button
+          v-if="sending"
+          class="btn btn-ghost btn-sm"
+          type="button"
+          @click="upload?.abort()"
+        >
+          {{ t('schematics.cancel') }}
+        </button>
+        <button v-else class="btn btn-ghost btn-sm" type="button" @click="open = false">
+          {{ t('common.cancel') }}
+        </button>
 
-        <div class="modal-action">
-          <!-- Closing leaves the transfer running; cancelling stops it and keeps what arrived. -->
-          <button
-            v-if="sending"
-            class="btn btn-ghost btn-sm"
-            type="button"
-            @click="upload?.abort()"
-          >
-            {{ t('schematics.cancel') }}
-          </button>
-          <button v-else class="btn btn-ghost btn-sm" type="button" @click="open = false">
-            {{ t('common.cancel') }}
-          </button>
-
-          <button
-            class="btn btn-primary btn-sm gap-2"
-            type="submit"
-            :disabled="sending || !file || !name.trim()"
-          >
-            <Upload class="size-4" />
-            {{ t('schematics.upload') }}
-          </button>
-        </div>
-      </form>
-    </div>
-    <form method="dialog" class="modal-backdrop">
-      <button>{{ t('common.close') }}</button>
+        <button
+          class="btn btn-primary btn-sm gap-2"
+          type="submit"
+          :disabled="sending || !file || !name.trim()"
+        >
+          <Upload class="size-4" />
+          {{ t('schematics.upload') }}
+        </button>
+      </div>
     </form>
-  </dialog>
+  </ModalShell>
 </template>

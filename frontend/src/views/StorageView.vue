@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   Boxes,
-  CircleAlert,
   Database,
   HardDrive,
   Hammer,
@@ -17,6 +16,8 @@ import {
   Users,
   Waypoints,
 } from 'lucide-vue-next'
+import ModalShell from '../components/ModalShell.vue'
+import AlertNote from '../components/AlertNote.vue'
 import {
   api,
   errorMessage,
@@ -46,12 +47,23 @@ const error = ref<string | null>(null)
 
 /** Which area's purge dialog is open, or null. */
 const purging = ref<StorageArea | null>(null)
+const purgeDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+
+/**
+ * Shown as a **modal**, which is what `showModal()` and the `open` attribute differ over: an open
+ * attribute renders the dialog in the page, without a backdrop, without trapping the focus and
+ * without answering Escape. Every other dialog here is modal; this one was the exception.
+ */
+watch(purging, (area) => {
+  if (area) purgeDialog.value?.showModal()
+  else purgeDialog.value?.close()
+})
 
 /** How much to keep, in days. Zero here means the whole area, which the dialog spells out. */
 const keepDays = ref(30)
 const working = ref(false)
 
-const reclaimDialog = ref<HTMLDialogElement | null>(null)
+const reclaimDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 
 /** An icon per area, so the list is scannable as a list of *things* rather than of words. */
 const ICONS: Record<StorageArea, typeof Database> = {
@@ -170,10 +182,7 @@ async function confirmReclaim(): Promise<void> {
   <div class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
       <header class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-semibold tracking-tight">{{ t('storage.title') }}</h1>
-          <p class="text-sm opacity-60">{{ t('storage.subtitle') }}</p>
-        </div>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ t('storage.title') }}</h1>
         <button class="btn btn-ghost btn-sm gap-2" :disabled="loading" @click="load">
           <RefreshCw class="size-4" :class="loading ? 'animate-spin' : ''" />
           {{ t('common.refresh') }}
@@ -196,15 +205,12 @@ async function confirmReclaim(): Promise<void> {
         </div>
       </div>
 
-      <div v-if="error" role="alert" class="alert alert-error alert-soft">
-        <CircleAlert class="size-4 shrink-0" />
-        <span>{{ error }}</span>
-      </div>
+      <AlertNote v-if="error" kind="error" :message="error" />
 
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <Database class="text-primary size-4" />
+            <Database class="text-base-content/50 size-4" />
             {{ t('storage.byArea') }}
           </h2>
           <!-- What the bar is a share of, since a bar on its own is an unlabelled axis. -->
@@ -225,7 +231,7 @@ async function confirmReclaim(): Promise<void> {
               :key="area.area"
               class="rounded-field bg-base-300/30 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_9rem_5rem_6rem_8rem]"
             >
-              <component :is="ICONS[area.area]" class="text-primary size-4 shrink-0 opacity-70" />
+              <component :is="ICONS[area.area]" class="text-base-content/50 size-4 shrink-0" />
 
               <span class="min-w-0">
                 <span class="block text-sm font-medium">{{ t(`storage.areas.${area.area}`) }}</span>
@@ -270,7 +276,7 @@ async function confirmReclaim(): Promise<void> {
                 when the space is waiting on the reclaim button below. That case reads differently
                 from an area that genuinely has records somewhere else.
               -->
-              <span v-else class="col-span-full text-right text-xs opacity-40 sm:col-span-1">
+              <span v-else class="col-span-full text-right text-xs opacity-50 sm:col-span-1">
                 {{ why(area) }}
               </span>
             </li>
@@ -281,7 +287,7 @@ async function confirmReclaim(): Promise<void> {
       <div v-if="auth.can('storage.purge')" class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <RefreshCw class="text-primary size-4" />
+            <RefreshCw class="text-base-content/50 size-4" />
             {{ t('storage.reclaimTitle') }}
           </h2>
           <p class="text-sm opacity-70">{{ t('storage.reclaimBody') }}</p>
@@ -300,26 +306,31 @@ async function confirmReclaim(): Promise<void> {
       gets one: the row it is about stays visible behind it, and the sentence naming what goes has
       to be read before the button under it can be pressed.
     -->
-    <dialog class="modal" :open="purging !== null" @close="purging = null">
-      <div v-if="target" class="modal-box">
-        <h3 class="text-lg font-semibold">
-          {{ t('storage.purgeTitle', { area: t(`storage.areas.${target.area}`) }) }}
-        </h3>
-
+    <ModalShell
+      ref="purgeDialog"
+      :title="target ? t('storage.purgeTitle', { area: t(`storage.areas.${target.area}`) }) : ''"
+      @close="purging = null"
+    >
+      <template v-if="target">
         <label class="fieldset mt-4">
           <span class="fieldset-legend">{{ t('storage.keep') }}</span>
           <input v-model.number="keepDays" type="number" min="0" class="input w-full" />
           <span class="label">{{ t('storage.keepHint') }}</span>
         </label>
 
-        <div v-if="keepDays > 0" role="status" class="alert alert-info alert-soft mt-4 text-sm">
-          <TriangleAlert class="size-4 shrink-0" />
-          <span>{{ t('storage.purgeOlder', { days: keepDays }) }}</span>
-        </div>
-        <div v-else role="alert" class="alert alert-error alert-soft mt-4 text-sm">
-          <TriangleAlert class="size-4 shrink-0" />
-          <span>{{ t('storage.purgeAll', { area: t(`storage.areas.${target.area}`) }) }}</span>
-        </div>
+        <AlertNote
+          v-if="keepDays > 0"
+          kind="info"
+          :icon="TriangleAlert"
+          class="mt-4 text-sm"
+          :message="t('storage.purgeOlder', { days: keepDays })"
+        />
+        <AlertNote
+          v-else
+          kind="error"
+          class="mt-4 text-sm"
+          :message="t('storage.purgeAll', { area: t(`storage.areas.${target.area}`) })"
+        />
 
         <!-- The part that surprises people, said before they press it rather than after. -->
         <p class="mt-3 text-xs opacity-60">{{ t('storage.purgeNote') }}</p>
@@ -332,30 +343,22 @@ async function confirmReclaim(): Promise<void> {
             {{ working ? t('storage.purging') : t('storage.purge') }}
           </button>
         </div>
+      </template>
+    </ModalShell>
+
+    <ModalShell ref="reclaimDialog" :title="t('storage.reclaimTitle')">
+      <p class="mt-2 text-sm opacity-70">{{ t('storage.reclaimConfirm', { size: bytes(reclaimable) }) }}</p>
+
+      <AlertNote kind="warning" class="mt-4 text-sm" :message="t('storage.reclaimLock')" />
+
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" :disabled="working" @click="reclaimDialog?.close()">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-warning btn-sm" :disabled="working" @click="confirmReclaim">
+          {{ working ? t('storage.reclaiming') : t('storage.reclaimAction') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
-
-    <dialog ref="reclaimDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="text-lg font-semibold">{{ t('storage.reclaimTitle') }}</h3>
-        <p class="mt-2 text-sm opacity-70">{{ t('storage.reclaimConfirm', { size: bytes(reclaimable) }) }}</p>
-
-        <div role="alert" class="alert alert-warning alert-soft mt-4 text-sm">
-          <TriangleAlert class="size-4 shrink-0" />
-          <span>{{ t('storage.reclaimLock') }}</span>
-        </div>
-
-        <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" :disabled="working" @click="reclaimDialog?.close()">
-            {{ t('common.cancel') }}
-          </button>
-          <button class="btn btn-warning btn-sm" :disabled="working" @click="confirmReclaim">
-            {{ working ? t('storage.reclaiming') : t('storage.reclaimAction') }}
-          </button>
-        </div>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+    </ModalShell>
   </div>
 </template>

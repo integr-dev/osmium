@@ -40,7 +40,7 @@ const rows = computed(() =>
   <div class="card border-base-300 bg-base-200 flex min-h-0 flex-col border">
     <div class="card-body min-h-0 gap-2">
       <h2 class="card-title flex items-center gap-2 text-base">
-        <Server class="text-primary size-4" />
+        <Server class="text-base-content/50 size-4" />
         {{ t('dashboard.hosts') }}
         <span class="badge badge-ghost badge-sm">{{ rows.length }}</span>
       </h2>

@@ -5,7 +5,6 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
-  CircleAlert,
   CircleSlash2,
   KeyRound,
   Plus,
@@ -18,6 +17,8 @@ import {
   UserRoundCog,
   Users,
 } from 'lucide-vue-next'
+import ModalShell from '../components/ModalShell.vue'
+import AlertNote from '../components/AlertNote.vue'
 import { api, errorMessage, type RoleResponse, type UserResponse } from '../api/client'
 import FormField from '../components/FormField.vue'
 import StepBar, { type Step } from '../components/StepBar.vue'
@@ -129,11 +130,11 @@ function upsertUser(user: UserResponse) {
  * `getElementById` worked, and meant a template id and a string in a handler had to agree with
  * nothing checking that they did — rename one and the button silently stops opening anything.
  */
-const createDialog = ref<HTMLDialogElement | null>(null)
-const editDialog = ref<HTMLDialogElement | null>(null)
-const roleDialog = ref<HTMLDialogElement | null>(null)
-const signOutDialog = ref<HTMLDialogElement | null>(null)
-const removeDialog = ref<HTMLDialogElement | null>(null)
+const createDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const editDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const roleDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const signOutDialog = ref<InstanceType<typeof ModalShell> | null>(null)
+const removeDialog = ref<InstanceType<typeof ModalShell> | null>(null)
 
 async function loadUsers() {
   const { data, error: failure } = await api.GET('/api/users')
@@ -376,16 +377,10 @@ function openEdit(user: UserResponse) {
       </div>
     </div>
 
-    <div v-if="error" role="alert" class="alert alert-error alert-soft">
-      <CircleAlert class="size-4" />
-      <span>{{ error }}</span>
-    </div>
+    <AlertNote v-if="error" kind="error" :message="error" />
 
     <!-- Nothing on the row changes when sessions end, so the confirmation has to be said out loud. -->
-    <div v-if="signedOut" role="alert" class="alert alert-success alert-soft">
-      <CheckCheck class="size-4" />
-      <span>{{ signedOut }}</span>
-    </div>
+    <AlertNote v-if="signedOut" kind="success" :icon="CheckCheck" :message="signedOut" />
 
     <div class="card border-base-300 bg-base-200 min-h-0 overflow-hidden border">
       <div class="h-full overflow-auto">
@@ -489,144 +484,17 @@ function openEdit(user: UserResponse) {
       </div>
     </div>
 
-    <dialog ref="createDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <UserPlus class="text-primary size-5" />
-          {{ t('accounts.newAccount') }}
-        </h3>
-        <div class="mt-4">
-          <StepBar :steps="beads" :current="String(createStep)" />
-        </div>
-
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="submitCreate">
-          <SwapBox>
-            <Transition :name="slide">
-          <div v-if="createStep === 1" class="flex flex-col gap-4">
-            <FormField
-              v-model="draft.username"
-              :label="t('accounts.username')"
-              :icon="UserRound"
-              type="text"
-              maxlength="64"
-              required
-            />
-            <FormField
-              v-model="draft.password"
-              :label="t('accounts.password')"
-              :placeholder="t('accounts.passwordPlaceholder')"
-              :icon="KeyRound"
-              type="password"
-              autocomplete="new-password"
-              minlength="4"
-              maxlength="72"
-              required
-            />
-            <FormField
-              v-model="draft.confirmPassword"
-              :label="t('accounts.confirmPassword')"
-              :placeholder="t('accounts.confirmPlaceholder')"
-              :icon="CheckCheck"
-              :invalid="Boolean(draft.confirmPassword) && draft.confirmPassword !== draft.password"
-              type="password"
-              autocomplete="new-password"
-              required
-            />
-          </div>
-
-          <div v-else class="flex flex-col gap-4">
-            <p class="text-sm opacity-60">
-              {{ t('accounts.roleHint') }}
-            </p>
-            <ul class="flex flex-col gap-1">
-              <li v-for="role in roles" :key="role.id">
-                <label
-                  class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
-                >
-                  <input
-                    v-model="draft.role"
-                    type="radio"
-                    name="create-role"
-                    class="radio radio-sm radio-primary mt-0.5 shrink-0"
-                    :value="role.name"
-                  />
-                  <component :is="roleIcon(role.name)" class="text-primary mt-0.5 size-5 shrink-0" />
-                  <span class="min-w-0 flex-1">
-                    <span class="block font-medium capitalize">{{ role.name }}</span>
-                    <span class="block text-xs opacity-60">
-                      {{ role.nodes.map(nodeLabel).join(', ') }}
-                    </span>
-                  </span>
-                </label>
-              </li>
-              <li>
-                <label
-                  class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
-                >
-                  <input
-                    v-model="draft.role"
-                    type="radio"
-                    name="create-role"
-                    class="radio radio-sm mt-0.5 shrink-0"
-                    :value="null"
-                  />
-                  <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
-                  <span class="min-w-0 flex-1">
-                    <span class="block font-medium">{{ t('accounts.noRole') }}</span>
-                    <span class="block text-xs opacity-60">{{ t('accounts.noRoleHint') }}</span>
-                  </span>
-                </label>
-              </li>
-            </ul>
-          </div>
-            </Transition>
-          </SwapBox>
-
-          <div v-if="createError" role="alert" class="alert alert-error alert-soft">
-            <CircleAlert class="size-4" />
-            <span>{{ createError }}</span>
-          </div>
-
-          <div class="modal-action">
-            <button
-              v-if="createStep === 2"
-              class="btn btn-ghost btn-sm gap-1"
-              type="button"
-              @click="createStep = 1"
-            >
-              <ChevronLeft class="size-4" />
-              {{ t('accounts.back') }}
-            </button>
-            <button
-              v-else
-              class="btn btn-ghost btn-sm"
-              type="button"
-              @click="createDialog?.close()"
-            >
-              {{ t('common.cancel') }}
-            </button>
-            <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="submitting">
-              {{ createStep === 1 ? t('accounts.next') : submitting ? t('common.saving') : t('accounts.create') }}
-              <ChevronRight v-if="createStep === 1" class="size-4" />
-            </button>
-          </div>
-        </form>
+    <ModalShell ref="createDialog" :title="t('accounts.newAccount')" :icon="UserPlus">
+      <div class="mt-4">
+        <StepBar :steps="beads" :current="String(createStep)" />
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
 
-    <dialog ref="editDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <SquarePen class="text-primary size-5" />
-          {{ t('accounts.editTitle', { name: editingUser?.user.username }) }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">
-          {{ t('accounts.renameWarning') }}
-        </p>
-        <form v-if="editingUser" class="mt-5 flex flex-col gap-4" @submit.prevent="saveUser">
+      <form class="mt-5 flex flex-col gap-4" @submit.prevent="submitCreate">
+        <SwapBox>
+          <Transition :name="slide">
+        <div v-if="createStep === 1" class="flex flex-col gap-4">
           <FormField
-            v-model="editingUser.username"
+            v-model="draft.username"
             :label="t('accounts.username')"
             :icon="UserRound"
             type="text"
@@ -634,72 +502,45 @@ function openEdit(user: UserResponse) {
             required
           />
           <FormField
-            v-model="editingUser.password"
-            :label="t('accounts.newPassword')"
-            :placeholder="t('accounts.passwordOptional')"
+            v-model="draft.password"
+            :label="t('accounts.password')"
+            :placeholder="t('accounts.passwordPlaceholder')"
             :icon="KeyRound"
             type="password"
             autocomplete="new-password"
             minlength="4"
             maxlength="72"
+            required
           />
-          <!--
-            Said before the fact, not after. Setting a password here ends every session that account
-            has, which is right — it is the response to a compromise — but an administrator who did
-            not expect it would read the operator being thrown out as a fault.
-          -->
-          <p v-if="editingUser.password" class="text-xs opacity-60">
-            {{ t('accounts.passwordResetWarning') }}
-          </p>
           <FormField
-            v-model="editingUser.confirmPassword"
-            :label="t('accounts.confirmNewPassword')"
-            :placeholder="t('accounts.confirmNewPlaceholder')"
+            v-model="draft.confirmPassword"
+            :label="t('accounts.confirmPassword')"
+            :placeholder="t('accounts.confirmPlaceholder')"
             :icon="CheckCheck"
-            :invalid="editingUser.confirmPassword !== editingUser.password"
+            :invalid="Boolean(draft.confirmPassword) && draft.confirmPassword !== draft.password"
             type="password"
             autocomplete="new-password"
-            :disabled="!editingUser.password"
+            required
           />
-          <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">
-              {{ t('common.cancel') }}
-            </button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
-              {{ submitting ? t('common.saving') : t('common.save') }}
-            </button>
-          </div>
-        </form>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+        </div>
 
-    <dialog ref="roleDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <UserRoundCog class="text-primary size-5" />
-          Role for {{ editing?.user.username }}
-        </h3>
-        <p class="mt-1 text-sm opacity-60">
-          {{ t('accounts.roleHint') }}
-        </p>
-        <form class="mt-4 flex flex-col gap-3" @submit.prevent="saveRole">
-          <ul v-if="editing" class="flex flex-col gap-1">
+        <div v-else class="flex flex-col gap-4">
+          <p class="text-sm opacity-60">
+            {{ t('accounts.roleHint') }}
+          </p>
+          <ul class="flex flex-col gap-1">
             <li v-for="role in roles" :key="role.id">
               <label
                 class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
               >
                 <input
-                  v-model="editing.role"
+                  v-model="draft.role"
                   type="radio"
-                  name="role"
+                  name="create-role"
                   class="radio radio-sm radio-primary mt-0.5 shrink-0"
                   :value="role.name"
                 />
-                <component
-                  :is="roleIcon(role.name)"
-                  class="text-primary mt-0.5 size-5 shrink-0"
-                />
+                <component :is="roleIcon(role.name)" class="text-primary mt-0.5 size-5 shrink-0" />
                 <span class="min-w-0 flex-1">
                   <span class="block font-medium capitalize">{{ role.name }}</span>
                   <span class="block text-xs opacity-60">
@@ -713,82 +554,217 @@ function openEdit(user: UserResponse) {
                 class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
               >
                 <input
-                  v-model="editing.role"
+                  v-model="draft.role"
                   type="radio"
-                  name="role"
+                  name="create-role"
                   class="radio radio-sm mt-0.5 shrink-0"
                   :value="null"
                 />
                 <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
                 <span class="min-w-0 flex-1">
                   <span class="block font-medium">{{ t('accounts.noRole') }}</span>
-                  <span class="block text-xs opacity-60">{{ t('accounts.removeRoleHint') }}</span>
+                  <span class="block text-xs opacity-60">{{ t('accounts.noRoleHint') }}</span>
                 </span>
               </label>
             </li>
           </ul>
-          <div class="modal-action">
-            <button class="btn btn-ghost btn-sm" type="button" @click="roleDialog?.close()">
-              {{ t('common.cancel') }}
-            </button>
-            <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
-              {{ submitting ? t('common.saving') : t('common.save') }}
-            </button>
-          </div>
-        </form>
-      </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+        </div>
+          </Transition>
+        </SwapBox>
 
-    <dialog ref="signOutDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <ShieldAlert class="text-warning size-5" />
-          {{ t('accounts.signOutTitle', { name: signingOut?.username }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">
-          {{ t('accounts.signOutWarning', { name: signingOut?.username }) }}
-        </p>
+        <AlertNote v-if="createError" kind="error" :message="createError" />
+
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" type="button" @click="signOutDialog?.close()">
+          <button
+            v-if="createStep === 2"
+            class="btn btn-ghost btn-sm gap-1"
+            type="button"
+            @click="createStep = 1"
+          >
+            <ChevronLeft class="size-4" />
+            {{ t('accounts.back') }}
+          </button>
+          <button
+            v-else
+            class="btn btn-ghost btn-sm"
+            type="button"
+            @click="createDialog?.close()"
+          >
             {{ t('common.cancel') }}
           </button>
-          <button class="btn btn-warning btn-sm gap-2" type="button" :disabled="submitting" @click="confirmSignOut">
-            <ShieldAlert class="size-4" />
-            {{ t('accounts.signOut') }}
+          <button class="btn btn-primary btn-sm gap-1" type="submit" :disabled="submitting">
+            {{ createStep === 1 ? t('accounts.next') : submitting ? t('common.saving') : t('accounts.create') }}
+            <ChevronRight v-if="createStep === 1" class="size-4" />
           </button>
         </div>
+      </form>
+    </ModalShell>
+
+    <ModalShell
+      ref="editDialog"
+      :title="t('accounts.editTitle', { name: editingUser?.user.username })"
+      :icon="SquarePen"
+    >
+      <p class="mt-1 text-sm opacity-60">
+        {{ t('accounts.renameWarning') }}
+      </p>
+      <form v-if="editingUser" class="mt-5 flex flex-col gap-4" @submit.prevent="saveUser">
+        <FormField
+          v-model="editingUser.username"
+          :label="t('accounts.username')"
+          :icon="UserRound"
+          type="text"
+          maxlength="64"
+          required
+        />
+        <FormField
+          v-model="editingUser.password"
+          :label="t('accounts.newPassword')"
+          :placeholder="t('accounts.passwordOptional')"
+          :icon="KeyRound"
+          type="password"
+          autocomplete="new-password"
+          minlength="4"
+          maxlength="72"
+        />
+        <!--
+          Said before the fact, not after. Setting a password here ends every session that account
+          has, which is right — it is the response to a compromise — but an administrator who did
+          not expect it would read the operator being thrown out as a fault.
+        -->
+        <p v-if="editingUser.password" class="text-xs opacity-60">
+          {{ t('accounts.passwordResetWarning') }}
+        </p>
+        <FormField
+          v-model="editingUser.confirmPassword"
+          :label="t('accounts.confirmNewPassword')"
+          :placeholder="t('accounts.confirmNewPlaceholder')"
+          :icon="CheckCheck"
+          :invalid="editingUser.confirmPassword !== editingUser.password"
+          type="password"
+          autocomplete="new-password"
+          :disabled="!editingUser.password"
+        />
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" type="button" @click="editDialog?.close()">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
+            {{ submitting ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+
+    <ModalShell
+      ref="roleDialog"
+      :title="t('accounts.roleTitle', { name: editing?.user.username })"
+      :icon="UserRoundCog"
+    >
+      <p class="mt-1 text-sm opacity-60">
+        {{ t('accounts.roleHint') }}
+      </p>
+      <form class="mt-4 flex flex-col gap-3" @submit.prevent="saveRole">
+        <ul v-if="editing" class="flex flex-col gap-1">
+          <li v-for="role in roles" :key="role.id">
+            <label
+              class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
+            >
+              <input
+                v-model="editing.role"
+                type="radio"
+                name="role"
+                class="radio radio-sm radio-primary mt-0.5 shrink-0"
+                :value="role.name"
+              />
+              <component
+                :is="roleIcon(role.name)"
+                class="text-primary mt-0.5 size-5 shrink-0"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block font-medium capitalize">{{ role.name }}</span>
+                <span class="block text-xs opacity-60">
+                  {{ role.nodes.map(nodeLabel).join(', ') }}
+                </span>
+              </span>
+            </label>
+          </li>
+          <li>
+            <label
+              class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-start gap-3 p-3"
+            >
+              <input
+                v-model="editing.role"
+                type="radio"
+                name="role"
+                class="radio radio-sm mt-0.5 shrink-0"
+                :value="null"
+              />
+              <CircleSlash2 class="mt-0.5 size-5 shrink-0 opacity-40" />
+              <span class="min-w-0 flex-1">
+                <span class="block font-medium">{{ t('accounts.noRole') }}</span>
+                <span class="block text-xs opacity-60">{{ t('accounts.removeRoleHint') }}</span>
+              </span>
+            </label>
+          </li>
+        </ul>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" type="button" @click="roleDialog?.close()">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
+            {{ submitting ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+
+    <ModalShell
+      ref="signOutDialog"
+      :title="t('accounts.signOutTitle', { name: signingOut?.username })"
+      :icon="ShieldAlert"
+      tone="warning"
+    >
+      <p class="mt-3 text-sm opacity-70">
+        {{ t('accounts.signOutWarning', { name: signingOut?.username }) }}
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" type="button" @click="signOutDialog?.close()">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-warning btn-sm gap-2" type="button" :disabled="submitting" @click="confirmSignOut">
+          <ShieldAlert class="size-4" />
+          {{ t('accounts.signOut') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+    </ModalShell>
 
     <!--
       The destructive one, and the last to get a dialog. Error styling rather than the warning the
       sign-out beside it uses: that ends a session and this ends the account.
     -->
-    <dialog ref="removeDialog" class="modal" @close="removing = null">
-      <div class="modal-box">
-        <h3 class="flex items-center gap-2 text-lg font-semibold">
-          <Trash2 class="text-error size-5" />
-          {{ t('accounts.removeTitle', { name: removing?.username }) }}
-        </h3>
-        <p class="mt-3 text-sm opacity-70">{{ t('accounts.removeWarning') }}</p>
-        <div class="modal-action">
-          <button
-            class="btn btn-ghost btn-sm"
-            type="button"
-            :disabled="removeBusy"
-            @click="removeDialog?.close()"
-          >
-            {{ t('common.cancel') }}
-          </button>
-          <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
-            <Trash2 class="size-4" />
-            {{ removeBusy ? t('accounts.removing') : t('accounts.removeAction') }}
-          </button>
-        </div>
+    <ModalShell
+      ref="removeDialog"
+      :title="t('accounts.removeTitle', { name: removing?.username })"
+      :icon="Trash2"
+      tone="error"
+      @close="removing = null"
+    >
+      <p class="mt-3 text-sm opacity-70">{{ t('accounts.removeWarning') }}</p>
+      <div class="modal-action">
+        <button
+          class="btn btn-ghost btn-sm"
+          type="button"
+          :disabled="removeBusy"
+          @click="removeDialog?.close()"
+        >
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-error btn-sm gap-2" type="button" :disabled="removeBusy" @click="confirmRemove">
+          <Trash2 class="size-4" />
+          {{ removeBusy ? t('accounts.removing') : t('accounts.removeAction') }}
+        </button>
       </div>
-      <form method="dialog" class="modal-backdrop"><button>{{ t('common.close') }}</button></form>
-    </dialog>
+    </ModalShell>
   </div>
 </template>

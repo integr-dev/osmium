@@ -14,7 +14,9 @@ import {
   ShieldAlert,
   TriangleAlert,
 } from 'lucide-vue-next'
+import AlertNote from '../components/AlertNote.vue'
 import FilterChip from '../components/FilterChip.vue'
+import ActivityRow from '../components/ActivityRow.vue'
 import HostsCard from '../components/HostsCard.vue'
 import TabBar, { type Tab } from '../components/TabBar.vue'
 import TimeChart, { type ChartSeries } from '../components/TimeChart.vue'
@@ -40,6 +42,7 @@ import {
   thin,
   type RangeKey,
 } from '../lib/dashboard'
+import { SEVERITIES, SEVERITY_TONE, type Severity } from '../lib/activity'
 import { isOnline, useAgentStore } from '../stores/agents'
 import { nodeLabel } from '../lib/nodeLabel'
 import { useHistoryStore } from '../stores/history'
@@ -101,20 +104,6 @@ async function moreActivity(): Promise<void> {
   if (!activityExhausted.value) await activityScroll.rearm()
 }
 
-const SEVERITY_DOT: Record<ActivityEntryResponse['severity'], string> = {
-  INFO: 'bg-base-content/30',
-  WARNING: 'bg-warning',
-  ERROR: 'bg-error',
-}
-
-/** The same three colours as text, for the chips and the chart lines. */
-const SEVERITY_TONE: Record<ActivityEntryResponse['severity'], string> = {
-  INFO: 'text-base-content/40',
-  WARNING: 'text-warning',
-  ERROR: 'text-error',
-}
-
-const SEVERITIES = ['ERROR', 'WARNING', 'INFO'] as const
 
 const eta = computed(() => {
   const minutes = build.value.etaMinutes
@@ -354,9 +343,9 @@ const scopedActivity = computed(() =>
       ),
 )
 
-const shownSeverities = ref(new Set<ActivityEntryResponse['severity']>(SEVERITIES))
+const shownSeverities = ref(new Set<Severity>(SEVERITIES))
 
-function toggleSeverity(severity: ActivityEntryResponse['severity']): void {
+function toggleSeverity(severity: Severity): void {
   const next = new Set(shownSeverities.value)
   if (next.has(severity)) next.delete(severity)
   else next.add(severity)
@@ -429,13 +418,13 @@ function wholeNumber(value: number): string {
       Why this page rather than the one that was asked for. The guard sends anyone without a route's
       node here, and doing that silently made a bookmarked link look broken instead of restricted.
     -->
-    <div v-if="denied" role="alert" class="alert alert-warning alert-soft">
-      <ShieldAlert class="size-4" />
-      <span>{{ t('errors.deniedRoute', { node: nodeLabel(denied) }) }}</span>
-      <button type="button" class="btn btn-ghost btn-xs" @click="dismissDenied">
-        {{ t('common.dismiss') }}
-      </button>
-    </div>
+    <AlertNote v-if="denied" kind="warning" :icon="ShieldAlert" :message="t('errors.deniedRoute', { node: nodeLabel(denied) })">
+      <template #action>
+        <button type="button" class="btn btn-ghost btn-xs" @click="dismissDenied">
+          {{ t('common.dismiss') }}
+        </button>
+      </template>
+    </AlertNote>
 
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
@@ -501,7 +490,7 @@ function wholeNumber(value: number): string {
         <div class="stat-title">{{ t('dashboard.agentsOnline') }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-20"></div>
         <div v-else class="stat-value text-3xl">
-          <RollingNumber :value="scopedOnline" /><span class="text-lg opacity-40">/{{ scoped.length }}</span>
+          <RollingNumber :value="scopedOnline" /><span class="text-lg opacity-50">/{{ scoped.length }}</span>
         </div>
         <div class="stat-desc mt-1 flex flex-col gap-0.5">
           <TrendLine :values="onlineSeries" :label="t('dashboard.agentsOnline')" />
@@ -539,10 +528,7 @@ function wholeNumber(value: number): string {
       </div>
     </div>
 
-    <div v-if="history.error" role="alert" class="alert alert-error alert-soft">
-      <TriangleAlert class="size-4" />
-      <span>{{ history.error }}</span>
-    </div>
+    <AlertNote v-if="history.error" kind="error" :message="history.error" />
 
     <div class="grid gap-6 lg:grid-cols-2">
       <!-- Burndown: what is left, falling. Replaces a progress bar that said only how far along. -->
@@ -550,7 +536,7 @@ function wholeNumber(value: number): string {
         <div class="card-body gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h2 class="card-title flex items-center gap-2 text-base">
-              <Layers class="text-primary size-4" />
+              <Layers class="text-base-content/50 size-4" />
               {{ t('dashboard.progress') }}
             </h2>
             <span class="text-sm tabular-nums opacity-60">
@@ -583,7 +569,7 @@ function wholeNumber(value: number): string {
       <div class="card border-base-300 bg-base-200 border">
         <div class="card-body gap-3">
           <h2 class="card-title flex items-center gap-2 text-base">
-            <ArrowDownUp class="text-primary size-4" />
+            <ArrowDownUp class="text-base-content/50 size-4" />
             {{ t('dashboard.traffic') }}
             <span class="text-xs font-normal opacity-50">{{ t('dashboard.trafficHint') }}</span>
           </h2>
@@ -628,9 +614,8 @@ function wholeNumber(value: number): string {
         <div class="card-body gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h2 class="card-title flex items-center gap-2 text-base">
-              <Activity class="text-primary size-4" />
+              <Activity class="text-base-content/50 size-4" />
               {{ t('dashboard.activity') }}
-              <span class="text-xs font-normal opacity-50">{{ t('dashboard.activityHint') }}</span>
             </h2>
             <div class="flex flex-wrap gap-1.5">
               <FilterChip
@@ -719,10 +704,7 @@ function wholeNumber(value: number): string {
             </div>
 
           <div class="flex min-h-0 min-w-0 flex-col gap-2">
-              <div v-if="activityError" role="alert" class="alert alert-error alert-soft">
-                <TriangleAlert class="size-4" />
-                <span>{{ activityError }}</span>
-              </div>
+              <AlertNote v-if="activityError" kind="error" :message="activityError" />
 
               <div
                 ref="activityBox"
@@ -734,18 +716,7 @@ function wholeNumber(value: number): string {
                   the sentinel below must stay put or the infinite scroll would observe something moving.
                 -->
                 <TransitionGroup :key="filterKey" name="feed" tag="div" class="flex flex-col gap-0.5">
-                  <component
-                    :is="line.agentId ? RouterLink : 'div'"
-                    v-for="line in shownActivity"
-                    :key="line.id"
-                    :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
-                    class="rounded-field hover:bg-base-300/40 flex items-center gap-2 px-2 py-1 text-sm"
-                  >
-                    <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
-                    <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
-                    <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
-                    <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
-                  </component>
+                  <ActivityRow v-for="line in shownActivity" :key="line.id" :line="line" agent />
                 </TransitionGroup>
 
                 <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">

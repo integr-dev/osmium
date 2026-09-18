@@ -211,7 +211,6 @@ export const en = {
   },
 
   login: {
-    subtitle: 'Sign in to continue',
     username: 'Username',
     password: 'Password',
     signIn: 'Sign in',
@@ -250,7 +249,6 @@ export const en = {
     progress: 'Blocks remaining',
     percentComplete: '{percent}% complete',
     blocksRemaining: '{count} block remaining | {count} blocks remaining',
-    activityHint: 'Alerts and status changes.',
     /** The backend keeps six hours in memory, so a restart starts the trend again. */
     trendKept: 'last {minutes} min',
     trendStarting: 'building a trend…',
@@ -334,7 +332,6 @@ export const en = {
   /** What this deployment is made of, as opposed to what is being done with it. */
   resources: {
     title: 'Resources',
-    subtitle: 'The agents, the machines that run them, and how the two are wired together.',
     tabBots: 'Bots',
     tabHosts: 'Hosts',
     tabProxies: 'Proxies',
@@ -731,7 +728,6 @@ export const en = {
   },
   operations: {
     title: 'Operations',
-    subtitle: 'Run work across the fleet.',
     empty: 'Nothing here yet.',
     agents: 'Agents',
 
@@ -1126,7 +1122,6 @@ export const en = {
 
   account: {
     title: 'My account',
-    subtitle: 'Your identity, role and permissions.',
     username: 'Username',
     role: 'Role',
     noRole: 'No role',
@@ -1212,6 +1207,7 @@ export const en = {
     renameWarning: 'Renaming ends that account’s sessions, since its token identifies it by username.',
     newAccount: 'New account',
     roleHint: 'An account holds one role. Each level includes everything below it.',
+    roleTitle: 'Role for {name}',
     back: 'Back',
     passwordOptional: 'Leave blank to keep the current password',
     changeRole: 'Change role',
@@ -1240,7 +1236,6 @@ export const en = {
    */
   storage: {
     title: 'Storage',
-    subtitle: 'What Osmium is keeping on disk, and how to keep less of it.',
     database: 'Database',
     /** The areas add up to less than the database: the catalogue and free pages are the rest. */
     accounted: '{size} across the areas below',
@@ -1294,7 +1289,6 @@ export const en = {
 
   audit: {
     title: 'Audit log',
-    subtitle: 'A record of who did what, and when.',
     filterPlaceholder: 'Search account, agent, action or text',
     when: 'When',
     who: 'Account',
