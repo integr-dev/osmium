@@ -279,6 +279,28 @@ export const en = {
     loadedSince: 'loaded back to {time}, scroll the feed for more',
   },
 
+  /** Choosing the order the blocks of a piece go down in, and the little cube that shows it. */
+  order: {
+    sweepAxis: 'Sweep {place}',
+    turnAround: 'Run this axis the other way',
+    axisShort: { x: 'X', y: 'Y', z: 'Z' },
+    axis: {
+      yup: 'Bottom to top',
+      ydown: 'Top to bottom',
+      zup: 'North to south',
+      zdown: 'South to north',
+      xup: 'West to east',
+      xdown: 'East to west',
+    },
+    snake: 'Snake the rows',
+    snakeHint: 'The innermost sweep runs back the way it came instead of returning to the start of the row — the agent turns around where it is standing.',
+    appliesTo: 'Applies to',
+    everyPiece: 'Every piece',
+    sameEverywhere: 'Same everywhere',
+    previewHint: 'The arrows are the three sweeps, numbered outermost first.',
+    spoken: 'A cube filling in this order: {sweeps}.',
+  },
+
   /** Why an agent is on the attention list. Shorter than its state, and about the cause. */
   attention: {
     hostUnreachable: 'Host unreachable',
@@ -779,6 +801,9 @@ export const en = {
     step_schematic: 'Schematic',
     step_plan: 'Plan',
     step_agents: 'Agents',
+    step_order: 'Order',
+    orderTitle: 'Placement order',
+    needSplit: 'Divide it up first.',
     step_split: 'Split',
     back: 'Back',
     next: 'Next',

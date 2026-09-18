@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  ArrowRightLeft,
   Box,
   Hammer,
   Scissors,
@@ -16,7 +17,17 @@ import AlertNote from './AlertNote.vue'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
 import TabBar, { type Tab } from './TabBar.vue'
+import OrderPreview from './OrderPreview.vue'
 import StepBar, { type Step as Bead } from './StepBar.vue'
+import {
+  AXES,
+  DEFAULT_ORDER,
+  formatOrder,
+  reorder,
+  reverse,
+  type Axis,
+  type PlacementOrder,
+} from '../lib/placementOrder'
 import SwapBox from './SwapBox.vue'
 import { useSlide } from '../lib/motion'
 import BuildPlanner from './BuildPlanner.vue'
@@ -64,7 +75,7 @@ const agentStore = useAgentStore()
 
 const emit = defineEmits<{ done: [string]; failed: [string]; started: [] }>()
 
-const STEPS = ['schematic', 'plan', 'agents', 'split'] as const
+const STEPS = ['schematic', 'plan', 'agents', 'split', 'order'] as const
 type Step = (typeof STEPS)[number]
 
 /**
@@ -426,7 +437,9 @@ const canAdvance = computed(() =>
       ? true
       : step.value === 'agents'
         ? parts.value > 0
-        : false,
+        : step.value === 'split'
+          ? split.value !== null
+          : false,
 )
 
 
@@ -551,13 +564,78 @@ const blocking = computed<string | null>(() => {
  * the backend recomputes it as it writes the segments down — sending the one on screen would be
  * asking it to trust a division a stale tab could have produced.
  */
+/**
+ * The order the pieces are placed in.
+ *
+ * One order for the build, and an override for the pieces that want their own. A split of sixty-four
+ * is one decision unless the operator wants more, which is the only way a per-piece setting is
+ * usable at that size — and the pieces really are not alike: a floor and the wall above it are swept
+ * differently.
+ */
+const orderDefault = ref<PlacementOrder>(DEFAULT_ORDER)
+const orderOverrides = ref<Record<number, PlacementOrder>>({})
+
+/** Which order the controls are editing: the build's, or one piece's. */
+const editing = ref<number | 'all'>('all')
+
+const orderOf = (ordinal: number): PlacementOrder => orderOverrides.value[ordinal] ?? orderDefault.value
+
+const edited = computed<PlacementOrder>(() =>
+  editing.value === 'all' ? orderDefault.value : orderOf(editing.value),
+)
+
+function setOrder(next: PlacementOrder): void {
+  if (editing.value === 'all') orderDefault.value = next
+  else orderOverrides.value = { ...orderOverrides.value, [editing.value]: next }
+}
+
+const overridden = computed(() => Object.keys(orderOverrides.value).length)
+
+function sameEverywhere(): void {
+  orderOverrides.value = {}
+  editing.value = 'all'
+}
+
+/** The three sweeps as rows: which axis is outermost, then the next, then the innermost. */
+const sweepRows = computed(() =>
+  edited.value.sweeps.map((sweep, place) => ({
+    place,
+    axis: sweep.axis,
+    towards: sweep.towards,
+    direction: `order.axis.${sweep.axis}${sweep.towards === 1 ? 'up' : 'down'}`,
+  })),
+)
+
+function chooseAxis(place: number, axis: Axis): void {
+  setOrder(reorder(edited.value, axis, place))
+}
+
+function turnAround(axis: Axis): void {
+  setOrder(reverse(edited.value, axis))
+}
+
+function snake(on: boolean): void {
+  setOrder({ ...edited.value, serpentine: on })
+}
+
+// A division is what the orders are about: pieces that no longer exist cannot keep their own.
+watch(split, () => {
+  orderOverrides.value = {}
+  editing.value = 'all'
+})
+
 async function startBuilding() {
   const build = plan.value
   if (!build || blocking.value) return
 
   starting.value = true
   try {
-    const job = await agentStore.beginJob(build.id, mode.value, [...builders.value], wantedParts.value)
+    const job = await agentStore.beginJob(build.id, mode.value, [...builders.value], wantedParts.value, {
+      order: formatOrder(orderDefault.value),
+      segmentOrders: Object.fromEntries(
+        Object.entries(orderOverrides.value).map(([ordinal, order]) => [Number(ordinal), formatOrder(order)]),
+      ),
+    })
     emit('done', t('jobs.started', { name: job.buildName, count: job.segments.length }))
     emit('started')
   } catch (failure) {
@@ -1059,7 +1137,7 @@ function progressOf(schematic: SchematicResponse): string | null {
     </div>
 
     <!-- ─── Divide it up ─────────────────────────────────────────────────────── -->
-    <div v-else class="grid gap-6 lg:grid-cols-[20rem_1fr]">
+    <div v-else-if="step === 'split'" class="grid gap-6 lg:grid-cols-[20rem_1fr]">
       <div class="card border-base-300 bg-base-200 h-fit border">
         <div class="card-body gap-4">
           <h2 class="card-title text-base">{{ t('schematics.splitTitle') }}</h2>
@@ -1159,8 +1237,124 @@ function progressOf(schematic: SchematicResponse): string | null {
         </p>
       </div>
     </div>
+    <!-- ─── In what order ────────────────────────────────────────────────────── -->
+    <div v-else class="grid gap-6 lg:grid-cols-[20rem_1fr]">
+      <div class="card border-base-300 bg-base-200 h-fit border">
+        <div class="card-body gap-4">
+          <h2 class="card-title text-base">{{ t('schematics.orderTitle') }}</h2>
+
+          <!--
+            Three sweeps rather than a list of named orders. The names multiply — bottom-up,
+            north-to-south, snaking — and the operator still cannot say the one the fourth name
+            would have been. Six controls say all of them.
+          -->
+          <ol class="flex flex-col gap-2">
+            <li v-for="row in sweepRows" :key="row.place" class="flex items-center gap-2">
+              <span class="w-4 shrink-0 text-xs tabular-nums opacity-50">{{ row.place + 1 }}</span>
+              <select
+                class="select select-sm w-16 shrink-0"
+                :value="row.axis"
+                :aria-label="t('order.sweepAxis', { place: row.place + 1 })"
+                @change="chooseAxis(row.place, ($event.target as HTMLSelectElement).value as Axis)"
+              >
+                <option v-for="axis in AXES" :key="axis" :value="axis">
+                  {{ t(`order.axisShort.${axis}`) }}
+                </option>
+              </select>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm min-w-0 flex-1 justify-start font-normal"
+                :title="t('order.turnAround')"
+                @click="turnAround(row.axis)"
+              >
+                <ArrowRightLeft class="size-3.5 shrink-0 opacity-50" />
+                <span class="truncate">{{ t(row.direction) }}</span>
+              </button>
+            </li>
+          </ol>
+
+          <label class="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              class="toggle toggle-sm"
+              :checked="edited.serpentine"
+              @change="snake(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="flex flex-col gap-0.5">
+              <span class="text-sm">{{ t('order.snake') }}</span>
+              <span class="text-xs opacity-60">{{ t('order.snakeHint') }}</span>
+            </span>
+          </label>
+
+          <!--
+            Which pieces this is about. One order for the build is the ordinary case; a piece that
+            wants its own says so here, and the list says how many have.
+          -->
+          <div class="border-base-300 flex flex-col gap-2 border-t pt-3">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium tracking-wide uppercase opacity-60">
+                {{ t('order.appliesTo') }}
+              </span>
+              <button
+                v-if="overridden"
+                type="button"
+                class="btn btn-ghost btn-xs"
+                @click="sameEverywhere"
+              >
+                {{ t('order.sameEverywhere') }}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              class="rounded-field flex items-center justify-between gap-2 px-2 py-1.5 text-sm"
+              :class="editing === 'all' ? 'bg-base-300' : 'hover:bg-base-300/40'"
+              :aria-pressed="editing === 'all'"
+              @click="editing = 'all'"
+            >
+              <span>{{ t('order.everyPiece') }}</span>
+              <span class="font-mono text-xs opacity-60">{{ formatOrder(orderDefault) }}</span>
+            </button>
+
+            <ul v-if="split" class="flex max-h-56 flex-col overflow-y-auto">
+              <li v-for="segment in split.segments" :key="segment.ordinal">
+                <button
+                  type="button"
+                  class="rounded-field flex w-full items-center justify-between gap-2 px-2 py-1.5 text-sm"
+                  :class="editing === segment.ordinal ? 'bg-base-300' : 'hover:bg-base-300/40'"
+                  :aria-pressed="editing === segment.ordinal"
+                  @click="editing = segment.ordinal"
+                >
+                  <span class="flex items-center gap-2">
+                    <span
+                      class="size-1.5 rounded-full"
+                      :class="orderOverrides[segment.ordinal] ? 'bg-primary' : 'bg-transparent'"
+                    ></span>
+                    {{ t('schematics.segment', { ordinal: segment.ordinal }) }}
+                  </span>
+                  <span class="font-mono text-xs opacity-60">{{ formatOrder(orderOf(segment.ordinal)) }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-3">
+        <div class="card border-base-300 bg-base-200 border">
+          <div class="card-body items-center gap-2">
+            <OrderPreview :order="edited" class="max-w-sm" />
+            <p class="text-center text-xs opacity-60">{{ t('order.previewHint') }}</p>
+          </div>
+        </div>
+
+        <!-- The division these orders are about, so the piece being edited has somewhere to sit. -->
+        <BoxViewer :boxes="splitBoxes ?? placedBoxes" />
+      </div>
+    </div>
 </Transition>
     </SwapBox>
+
 
     <!-- ─── Moving between the steps ─────────────────────────────────────────── -->
     <div class="border-base-300 flex items-center gap-3 border-t pt-4">
@@ -1175,12 +1369,18 @@ function progressOf(schematic: SchematicResponse): string | null {
 
       <!-- Says what is missing rather than only refusing: a disabled button with no reason is the
            interface declining to explain itself. -->
-      <span v-if="!canAdvance && step !== 'split'" class="text-xs opacity-50">
-        {{ step === 'schematic' ? t('schematics.needSchematic') : t('schematics.needBuilders') }}
+      <span v-if="!canAdvance && step !== 'order'" class="text-xs opacity-50">
+        {{
+          step === 'schematic'
+            ? t('schematics.needSchematic')
+            : step === 'split'
+              ? t('schematics.needSplit')
+              : t('schematics.needBuilders')
+        }}
       </span>
 
       <button
-        v-if="step !== 'split'"
+        v-if="step !== 'order'"
         type="button"
         class="btn btn-primary btn-sm ml-auto"
         :disabled="!canAdvance"

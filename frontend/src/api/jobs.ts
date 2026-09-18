@@ -80,7 +80,15 @@ export async function listJobs(buildId?: number): Promise<BuildJob[]> {
  */
 export async function startJob(
   buildId: number,
-  body: { mode: SplitMode; agentIds: number[]; parts?: number },
+  body: {
+    mode: SplitMode
+    agentIds: number[]
+    parts?: number
+    /** The order every piece is placed in, as three signed axes — see `lib/placementOrder.ts`. */
+    order?: string
+    /** An order for particular pieces, by ordinal, where it differs from the one above. */
+    segmentOrders?: Record<number, string>
+  },
 ): Promise<BuildJob> {
   const { data, error } = await api.POST('/api/builds/{buildId}/jobs', {
     params: { path: { buildId } },

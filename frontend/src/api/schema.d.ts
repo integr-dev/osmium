@@ -1656,6 +1656,11 @@ export interface components {
             /** @description PENDING, ASSIGNED, BUILDING, DONE or FAILED. */
             state?: string;
             /**
+             * @description The order this piece is placed in, as three signed axes.
+             * @example y+z+x+
+             */
+            placementOrder?: string;
+            /**
              * Format: int64
              * @description Null when nobody holds it, or when the agent has since been removed.
              */
@@ -1806,6 +1811,15 @@ export interface components {
              * @description Pieces to divide into. Defaults to the size of the pool.
              */
             parts?: number | null;
+            /**
+             * @description The order every piece is placed in: three signed axes, outermost first, optionally ending in 's' for a snaking innermost sweep. Defaults to bottom to top, north to south, west to east.
+             * @example y+z+x+
+             */
+            order?: string | null;
+            /** @description An order for particular pieces, by ordinal, where it differs from the one above. */
+            segmentOrders?: {
+                [key: string]: string;
+            } | null;
         };
         /** @description A freshly issued access token. */
         LoginResponse: {

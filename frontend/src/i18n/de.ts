@@ -237,6 +237,27 @@ export const de: Copy = {
     loadedSince: 'geladen bis {time}, im Verlauf scrollen für mehr',
   },
 
+  order: {
+    sweepAxis: 'Durchlauf {place}',
+    turnAround: 'Diese Achse andersherum durchlaufen',
+    axisShort: { x: 'X', y: 'Y', z: 'Z' },
+    axis: {
+      yup: 'Von unten nach oben',
+      ydown: 'Von oben nach unten',
+      zup: 'Von Norden nach Süden',
+      zdown: 'Von Süden nach Norden',
+      xup: 'Von Westen nach Osten',
+      xdown: 'Von Osten nach Westen',
+    },
+    snake: 'Reihen im Zickzack',
+    snakeHint: 'Der innerste Durchlauf geht zurück, statt wieder am Anfang der Reihe zu beginnen — der Agent dreht dort um, wo er steht.',
+    appliesTo: 'Gilt für',
+    everyPiece: 'Jedes Teil',
+    sameEverywhere: 'Überall gleich',
+    previewHint: 'Die Pfeile sind die drei Durchläufe, beginnend beim äußersten.',
+    spoken: 'Ein Würfel, der sich in dieser Reihenfolge füllt: {sweeps}.',
+  },
+
   attention: {
     hostUnreachable: 'Host nicht erreichbar',
     needsRelink: 'Neue Anmeldung nötig',
@@ -619,6 +640,9 @@ export const de: Copy = {
     step_schematic: 'Bauplan',
     step_plan: 'Planung',
     step_agents: 'Agenten',
+    step_order: 'Reihenfolge',
+    orderTitle: 'Reihenfolge beim Setzen',
+    needSplit: 'Erst aufteilen.',
     step_split: 'Aufteilung',
     back: 'Zurück',
     next: 'Weiter',

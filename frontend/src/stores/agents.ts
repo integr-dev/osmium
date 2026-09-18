@@ -880,8 +880,9 @@ export const useAgentStore = defineStore('agents', () => {
     mode: SplitMode,
     agentIds: number[],
     parts: number | null = null,
+    orders: { order?: string; segmentOrders?: Record<number, string> } = {},
   ): Promise<BuildJob> {
-    const job = await startJob(buildId, { mode, agentIds, ...(parts ? { parts } : {}) })
+    const job = await startJob(buildId, { mode, agentIds, ...(parts ? { parts } : {}), ...orders })
     upsertJob(job)
     return job
   }

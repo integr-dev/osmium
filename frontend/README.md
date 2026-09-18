@@ -282,10 +282,10 @@ size:
   picked under the last one. It says *Select all shown* while a search is active, because a control
   reading "all" and taking four of twenty is the interface misreporting itself.
 
-### The build is four steps
+### The build is five steps
 
 ```
-Schematic  ->  Plan  ->  Agents  ->  Split
+Schematic  ->  Plan  ->  Agents  ->  Split  ->  Order
 ```
 
 The order is strict rather than a preference: nothing can be divided before it has been read, and
@@ -304,6 +304,33 @@ second control for it would be a way to disagree with the agents.
 
 **The count is the selection.** Asking for a number of agents *and* which agents is asking the same
 question twice, and lets the two disagree.
+
+### The order the blocks go down in
+
+The last step is what an agent does *inside* a piece: three nested sweeps — an outer axis, a middle
+one, an inner one, each run one way or the other — and whether the innermost snakes back the way it
+came instead of returning to the start of every row.
+
+**Three sweeps rather than a list of named orders.** "Bottom-up, north to south" is a name, and the
+names multiply: eight directions, six axis orders, snaking or not, and the operator still cannot say
+the one the fourth name would have been. Six controls say all forty-eight.
+
+**And an animation rather than a paragraph.** A sweep across three axes is a paragraph to write down
+and a glance to watch, so `OrderPreview.vue` fills a small cube in the order chosen, draws a numbered
+arrow along each axis, and traces the route through the cells — which is what makes a snaking order
+obvious. It is the same SVG projection the box viewer uses (`lib/box3d.ts`), so it reads as the same
+picture as the split it is about. An operator who has asked for less motion gets the whole sweep at
+once instead, which carries the same information without moving.
+
+**One order, and an override for the pieces that want their own.** A split into sixty-four is one
+decision unless somebody wants more — and the pieces really are not alike: a floor is swept
+differently from the wall above it. The list marks which pieces carry their own, and "same
+everywhere" puts them back.
+
+`y+z+x+` is the wire form, three signed axes with an optional trailing `s`: it travels as one token
+to a column on the segment, to the host on the command that dispatches it, and back through a log
+where it is readable. `lib/placementOrder.ts` holds the arithmetic, including the sequence the
+animation walks, and has its own spec.
 
 ### Starting a job
 
