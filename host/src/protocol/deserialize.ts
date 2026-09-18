@@ -1,4 +1,5 @@
 import type { Waypoint } from '../agent/path/navigator.ts'
+import { orderFrom } from '../agent/order.ts'
 import type { Command, CommandBody } from './message.ts'
 import type { BlockPos } from './wire.ts'
 
@@ -103,6 +104,10 @@ function body(name: string, payload: Json): CommandBody {
         min: blockPos(payload['min'], 'payload.min'),
         max: blockPos(payload['max'], 'payload.max'),
         blocks: num(payload, 'blocks', 'payload.blocks'),
+        // A backend older than the setting sends none, and a token this build cannot read is the
+        // same case: the piece is built in the order everything was built in before it was a
+        // choice, rather than the command being refused and the piece going to nobody.
+        order: orderFrom(payload['order']),
       }
 
     // Slot numbers are validated where they are acted on rather than here: which squares an

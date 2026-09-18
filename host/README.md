@@ -690,6 +690,21 @@ else.
 
 Events carry no `id` and are never answered.
 
+### 4.0 The order a piece is built in
+
+`build_segment` carries an `order`: three signed axes, outermost first, with an optional trailing
+`s`. `y+z+x+` is bottom to top, north to south, west to east — `+y` is up, `+z` is south and `+x`
+is east, as everywhere else on this wire — and `y+z+x+s` is the same with the innermost sweep running
+back the way it came instead of returning to the start of every row, so the agent turns around where
+it is standing.
+
+`agent/order.ts` turns it into positions, lazily: a piece of a real build is millions of blocks, and
+the only one a builder needs is the next.
+
+**Lenient, unlike the backend.** By the time a command arrives the piece is assigned, so a token this
+host cannot read is logged and built bottom-up rather than refused — which is also what a host older
+than the setting does, since it never sees the field at all.
+
 ### 4.1 `heartbeat` — every ~10 seconds
 
 ```jsonc

@@ -3,6 +3,7 @@ import type { Inventory } from '../agent/inventory.ts'
 import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { AdvertisedProxy } from '../agent/proxy.ts'
+import type { PlacementOrder } from '../agent/order.ts'
 import type { Bytes } from '../agent/traffic.ts'
 import type { PathNode, PathState, PathWork, Waypoint } from '../agent/path/navigator.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
@@ -59,6 +60,12 @@ export type CommandBody =
       min: BlockPos
       max: BlockPos
       blocks: number
+      /**
+       * The order to place them in: three signed axes, outermost first, with an optional trailing
+       * `s` for a snaking innermost sweep — see `agent/order.ts`. Absent from a backend older than
+       * the setting, which is why it is optional here and defaulted there rather than refused.
+       */
+      order?: PlacementOrder
     }
   /** Stop building that box. Not an error for one already finished or never started: it asks us to
    * stop, which having stopped satisfies. */
