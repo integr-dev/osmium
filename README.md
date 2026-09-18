@@ -23,7 +23,7 @@ happened.
 > everyone in view with their health — and where each of them *was*, kept past the moment they
 > went, so the map can say who was standing there an hour ago. An agent's connection can be routed
 > through one of its host's proxies, chosen by name, with the credential for it never leaving that
-> machine. **An agent can be sent somewhere** — clicked on the map or in the 3D view, typed as a
+> machine, and pinned to IPv4 or IPv6 where one of the two does not work. **An agent can be sent somewhere** — clicked on the map or in the 3D view, typed as a
 > coordinate, or asked for in game — and it walks there, or flies where the server allows it: high
 > over whatever is in the way, climbing and gliding down along the way. The route is drawn in both
 > views as it goes, and what came of it is announced in the corner, linked back to the agent. An
@@ -34,8 +34,8 @@ happened.
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 642 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 606 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 623 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 621 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 629 tests |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
