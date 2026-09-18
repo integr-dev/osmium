@@ -659,17 +659,19 @@ on screen, one line per severity over the same range as the charts above (a poin
 15 min, five for an hour, fifteen for six). Time older than the oldest entry loaded is left off the
 chart rather than drawn as zero — the feed is paged, so it is *unread*, not quiet — and the caption
 says how far back the feed reaches. The severity chips narrow both the chart and the feed. On a
-wide screen the chart and the feed share one fixed-height row, and the feed scrolls inside it rather
-than lengthening the page.
+wide screen the chart, what needs attention and the feed share one fixed-height row — chart over
+attention on the left, feed on the right — and both lists scroll inside it rather than lengthening
+the page. Hosts sits beside that card, the same height.
 
 **A filter narrows what is loaded; it does not page.** A filtered list is short, so the
 infinite-scroll sentinel stays in view, and paging on it fetched the entire history back to back and
 froze the page. Paging resumes when the filter is cleared, and the list is redrawn rather than
 animated whenever the filter changes.
 
-**Needs attention** leads with one pill per cause and its count, then lists the agents, each with
-its cause and the reading that put it there. Picking a pill narrows the list to that cause; the pills
-always count everything. There is no vitals panel any more: the worst reading of each kind was
+**Needs attention** sits in the same card, under the chart: one row per agent with the reading that
+put it there, grouped by cause and worst cause first, with the cause written once per run. It is not
+filterable — anything wrong with a handful of agents is a short list, and a control over five rows
+hides more than it finds. There is no vitals panel any more: the worst reading of each kind was
 already what this list raises.
 
 The server picker is a row of tabs while four servers or fewer fit, and a menu past that.

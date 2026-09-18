@@ -37,8 +37,8 @@ const rows = computed(() =>
 </script>
 
 <template>
-  <div class="card border-base-300 bg-base-200 border">
-    <div class="card-body gap-2">
+  <div class="card border-base-300 bg-base-200 flex min-h-0 flex-col border">
+    <div class="card-body min-h-0 gap-2">
       <h2 class="card-title flex items-center gap-2 text-base">
         <Server class="text-primary size-4" />
         {{ t('dashboard.hosts') }}
@@ -47,7 +47,7 @@ const rows = computed(() =>
 
       <p v-if="!rows.length" class="text-sm opacity-50">{{ t('dashboard.noHosts') }}</p>
 
-      <ul v-else class="flex flex-col gap-1">
+      <ul v-else class="-mx-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2">
         <li v-for="row in rows" :key="row.id">
           <RouterLink
             :to="{ name: 'host', params: { id: row.id } }"

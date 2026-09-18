@@ -38,7 +38,6 @@ import {
   seriesOf,
   since,
   thin,
-  type AttentionGroup,
   type RangeKey,
 } from '../lib/dashboard'
 import { isOnline, useAgentStore } from '../stores/agents'
@@ -323,28 +322,21 @@ const scopedAttention = computed(() =>
 )
 
 /**
- * One pill per cause, and one row per agent under them. Picking a pill narrows the rows to that
- * cause; the pills themselves always count everything, so the total never hides behind a filter.
+ * One row per agent, grouped by cause: every agent with the same trouble together, worst cause
+ * first. Not filterable — by the time anything is wrong with only a handful of agents the list is
+ * short, and a control over five rows hides more than it finds.
  */
-const attentionGroups = computed(() => groupAttention(scopedAttention.value))
-
-const cause = ref<AttentionGroup['kind'] | null>(null)
-
-function pickCause(kind: AttentionGroup['kind']): void {
-  cause.value = cause.value === kind ? null : kind
-}
-
-/** A filter on a cause that has since cleared would show an empty list with no pill to undo it. */
-const shownCause = computed(() =>
-  attentionGroups.value.some((group) => group.kind === cause.value) ? cause.value : null,
-)
-
 const attentionRows = computed(() =>
-  attentionGroups.value
-    .filter((group) => shownCause.value === null || group.kind === shownCause.value)
-    .flatMap((group) =>
-      group.entries.map((entry) => ({ key: `${group.kind}-${entry.agent.id}`, group, ...entry })),
-    ),
+  groupAttention(scopedAttention.value).flatMap((group) =>
+    group.entries.map((entry, index) => ({
+      key: `${group.kind}-${entry.agent.id}`,
+      kind: group.kind,
+      severity: group.severity,
+      /** Only the first of a run carries the cause, so a column of "Low food" is written once. */
+      heads: index === 0,
+      ...entry,
+    })),
+  ),
 )
 
 // ---- activity --------------------------------------------------------------------------------
@@ -627,150 +619,151 @@ function wholeNumber(value: number): string {
       </div>
     </div>
 
-    <div class="grid items-start gap-6 lg:grid-cols-2">
-      <!--
-        Causes as pills, agents as rows. The pills say what kind of trouble there is and how much at a
-        glance; the rows are the agents to open, each with the reading that put it here.
-      -->
-      <div class="card border-base-300 bg-base-200 border">
+    <!--
+      One card: what is wrong now, and what has happened. They were two, and an operator reads them
+      together - a warning in the feed is usually why a row appears above it.
+    -->
+    <div class="grid gap-6 lg:grid-cols-3">
+      <div class="card border-base-300 bg-base-200 border lg:col-span-2">
         <div class="card-body gap-3">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <TriangleAlert class="text-warning size-4" />
-            {{ t('dashboard.needsAttention') }}
-            <span class="badge badge-ghost badge-sm">{{ scopedAttention.length }}</span>
-          </h2>
-
-          <div v-if="!agentStore.loaded" class="flex flex-col gap-1">
-            <div v-for="row in 3" :key="row" class="skeleton h-7 w-full"></div>
-          </div>
-
-          <p v-else-if="!attentionGroups.length" class="flex items-center gap-2 text-sm opacity-60">
-            <CircleCheck class="text-success size-4" />
-            {{ t('dashboard.allHealthy') }}
-          </p>
-
-          <template v-else>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="card-title flex items-center gap-2 text-base">
+              <Activity class="text-primary size-4" />
+              {{ t('dashboard.activity') }}
+              <span class="text-xs font-normal opacity-50">{{ t('dashboard.activityHint') }}</span>
+            </h2>
             <div class="flex flex-wrap gap-1.5">
               <FilterChip
-                v-for="group in attentionGroups"
-                :key="group.kind"
-                :label="t(`attention.${group.kind}`)"
-                :active="shownCause === group.kind"
-                :tone="group.severity === 'error' ? 'text-error' : 'text-warning'"
-                :value="group.entries.length"
-                @toggle="pickCause(group.kind)"
+                v-for="severity in SEVERITIES"
+                :key="severity"
+                :label="t(`dashboard.severity.${severity}`)"
+                :active="shownSeverities.has(severity)"
+                :tone="SEVERITY_TONE[severity]"
+                @toggle="toggleSeverity(severity)"
               />
             </div>
+          </div>
 
-            <TransitionGroup name="rows" tag="ul" class="-mx-2 flex max-h-60 flex-col overflow-y-auto">
-              <li v-for="row in attentionRows" :key="row.key">
-                <RouterLink
-                  :to="{ name: 'agent', params: { id: row.agent.id } }"
-                  class="rounded-field hover:bg-base-300/40 flex items-center gap-3 px-2 py-1.5 text-sm"
+          <!--
+            Chart and feed side by side on a wide screen, in one fixed-height row, so the card is no
+            taller than the chart and the feed scrolls inside it rather than stretching the page.
+          -->
+          <div class="grid gap-4 lg:h-72 lg:grid-cols-2">
+            <!-- The same range as the charts above, so a spike here lines up with one there. -->
+            <div class="flex min-w-0 flex-col gap-1">
+              <TimeChart
+                :series="activityChart"
+                :from="from"
+                :to="now"
+                :format="wholeNumber"
+                :label="t('dashboard.activity')"
+                whole
+                compact
+              />
+              <p class="text-xs opacity-50">
+                {{ t('dashboard.perBucket', { minutes: ACTIVITY_BUCKET_MS[range] / 60_000 }) }}
+                <template v-if="loadedSince !== null">
+                  · {{ t('dashboard.loadedSince', { time: atTime(loadedSince) }) }}
+                </template>
+              </p>
+
+              <!--
+                Under the chart rather than in a card of its own: an operator reads the two together,
+                since a warning in the feed beside it is usually why a row appears here.
+              -->
+              <div class="border-base-300 flex min-h-0 flex-1 flex-col gap-1.5 border-t pt-2">
+                <span class="flex items-center gap-2 text-xs font-medium tracking-wide uppercase opacity-60">
+                  <TriangleAlert class="text-warning size-3.5" />
+                  {{ t('dashboard.needsAttention') }}
+                  <span v-if="attentionRows.length" class="tabular-nums">{{ attentionRows.length }}</span>
+                </span>
+
+                <div v-if="!agentStore.loaded" class="flex flex-col gap-1">
+                  <div v-for="row in 3" :key="row" class="skeleton h-6 w-full"></div>
+                </div>
+
+                <p
+                  v-else-if="!attentionRows.length"
+                  class="flex flex-1 items-center justify-center gap-2 text-sm opacity-60"
                 >
-                  <span
-                    class="size-2 shrink-0 rounded-full"
-                    :class="row.group.severity === 'error' ? 'bg-error' : 'bg-warning'"
-                  ></span>
-                  <span class="min-w-0 flex-1 truncate font-medium">{{ row.agent.label }}</span>
-                  <span class="shrink-0 text-xs opacity-60">{{ t(`attention.${row.group.kind}`) }}</span>
-                  <span class="w-14 shrink-0 text-right text-xs tabular-nums">{{ row.detail ?? '' }}</span>
-                </RouterLink>
-              </li>
-            </TransitionGroup>
-          </template>
-        </div>
-      </div>
+                  <CircleCheck class="text-success size-4" />
+                  {{ t('dashboard.allHealthy') }}
+                </p>
 
-      <HostsCard :traffic="latestHosts" />
-    </div>
-
-    <div class="card border-base-300 bg-base-200 border">
-      <div class="card-body gap-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="card-title flex items-center gap-2 text-base">
-            <Activity class="text-primary size-4" />
-            {{ t('dashboard.activity') }}
-            <span class="text-xs font-normal opacity-50">{{ t('dashboard.activityHint') }}</span>
-          </h2>
-          <div class="flex flex-wrap gap-1.5">
-            <FilterChip
-              v-for="severity in SEVERITIES"
-              :key="severity"
-              :label="t(`dashboard.severity.${severity}`)"
-              :active="shownSeverities.has(severity)"
-              :tone="SEVERITY_TONE[severity]"
-              @toggle="toggleSeverity(severity)"
-            />
-          </div>
-        </div>
-
-        <!--
-          Chart and feed side by side on a wide screen, in one fixed-height row, so the card is no
-          taller than the chart and the feed scrolls inside it rather than stretching the page.
-        -->
-        <div class="grid gap-4 lg:h-56 lg:grid-cols-2">
-          <!-- The same range as the charts above, so a spike here lines up with one there. -->
-          <div class="flex min-w-0 flex-col gap-1">
-            <TimeChart
-              :series="activityChart"
-              :from="from"
-              :to="now"
-              :format="wholeNumber"
-              :label="t('dashboard.activity')"
-              whole
-            />
-            <p class="text-xs opacity-50">
-              {{ t('dashboard.perBucket', { minutes: ACTIVITY_BUCKET_MS[range] / 60_000 }) }}
-              <template v-if="loadedSince !== null">
-                · {{ t('dashboard.loadedSince', { time: atTime(loadedSince) }) }}
-              </template>
-            </p>
-          </div>
+                <TransitionGroup
+                  v-else
+                  name="rows"
+                  tag="ul"
+                  class="-mx-2 flex min-h-0 flex-1 flex-col overflow-y-auto"
+                >
+                  <li v-for="row in attentionRows" :key="row.key">
+                    <RouterLink
+                      :to="{ name: 'agent', params: { id: row.agent.id } }"
+                      class="rounded-field hover:bg-base-300/40 flex items-center gap-3 px-2 py-1.5 text-sm"
+                    >
+                      <span
+                        class="h-4 w-0.5 shrink-0 rounded-full"
+                        :class="row.severity === 'error' ? 'bg-error' : 'bg-warning'"
+                      ></span>
+                      <span class="min-w-0 flex-1 truncate font-medium">{{ row.agent.label }}</span>
+                      <span class="shrink-0 text-xs opacity-60" :class="row.heads ? '' : 'invisible'">
+                        {{ t(`attention.${row.kind}`) }}
+                      </span>
+                      <span class="w-14 shrink-0 text-right text-xs tabular-nums opacity-80">
+                        {{ row.detail ?? '' }}
+                      </span>
+                    </RouterLink>
+                  </li>
+                </TransitionGroup>
+              </div>
+            </div>
 
           <div class="flex min-h-0 min-w-0 flex-col gap-2">
-            <div v-if="activityError" role="alert" class="alert alert-error alert-soft">
-              <TriangleAlert class="size-4" />
-              <span>{{ activityError }}</span>
-            </div>
+              <div v-if="activityError" role="alert" class="alert alert-error alert-soft">
+                <TriangleAlert class="size-4" />
+                <span>{{ activityError }}</span>
+              </div>
 
-            <div
-              ref="activityBox"
-              class="border-base-300 flex max-h-72 min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-t pt-2 lg:max-h-none lg:border-t-0 lg:border-l lg:pt-0 lg:pl-2"
-            >
-              <!--
-                A TransitionGroup animates insertions but not the first render: an incident arriving
-                live slides in, and a page full of history simply appears. Only the list is wrapped —
-                the sentinel below must stay put or the infinite scroll would observe something moving.
-              -->
-              <TransitionGroup :key="filterKey" name="feed" tag="div" class="flex flex-col gap-0.5">
-                <component
-                  :is="line.agentId ? RouterLink : 'div'"
-                  v-for="line in shownActivity"
-                  :key="line.id"
-                  :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
-                  class="rounded-field hover:bg-base-300/40 flex items-center gap-2 px-2 py-1 text-sm"
-                >
-                  <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
-                  <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
-                  <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
-                  <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
-                </component>
-              </TransitionGroup>
+              <div
+                ref="activityBox"
+                class="border-base-300 flex max-h-72 min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-t pt-2 lg:max-h-none lg:border-t-0 lg:border-l lg:pt-0 lg:pl-2"
+              >
+                <!--
+                  A TransitionGroup animates insertions but not the first render: an incident arriving
+                  live slides in, and a page full of history simply appears. Only the list is wrapped —
+                  the sentinel below must stay put or the infinite scroll would observe something moving.
+                -->
+                <TransitionGroup :key="filterKey" name="feed" tag="div" class="flex flex-col gap-0.5">
+                  <component
+                    :is="line.agentId ? RouterLink : 'div'"
+                    v-for="line in shownActivity"
+                    :key="line.id"
+                    :to="line.agentId ? { name: 'agent', params: { id: line.agentId } } : undefined"
+                    class="rounded-field hover:bg-base-300/40 flex items-center gap-2 px-2 py-1 text-sm"
+                  >
+                    <span class="shrink-0 font-mono text-xs opacity-40">{{ atTime(line.at) }}</span>
+                    <span class="size-1.5 shrink-0 rounded-full" :class="SEVERITY_DOT[line.severity]"></span>
+                    <span class="shrink-0 font-medium">{{ line.agentLabel }}</span>
+                    <span class="min-w-0 flex-1 truncate opacity-70">{{ line.text }}</span>
+                  </component>
+                </TransitionGroup>
 
-              <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
-                {{ t('common.loading') }}
-              </p>
-              <p v-else-if="!shownActivity.length" class="py-10 text-center text-sm opacity-50">
-                {{ t('dashboard.noActivity') }}
-              </p>
+                <p v-if="activityLoading" class="py-10 text-center text-sm opacity-50">
+                  {{ t('common.loading') }}
+                </p>
+                <p v-else-if="!shownActivity.length" class="py-10 text-center text-sm opacity-50">
+                  {{ t('dashboard.noActivity') }}
+                </p>
 
-              <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
-              <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
+                <!-- Reaching this fetches the next, older page. See src/lib/feed.ts. -->
+                <div ref="activitySentinel" aria-hidden="true" class="h-px shrink-0"></div>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <HostsCard :traffic="latestHosts" class="lg:h-full" />
     </div>
   </div>
 </template>
