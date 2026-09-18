@@ -1103,6 +1103,15 @@ export const en = {
         /** Said in place of the picker when nothing can be picked. */
         none: 'No host in this selection is holding any proxies.',
       },
+      connect_family: {
+        label: 'Address family',
+        hint: 'A server whose name has both an A and an AAAA record can be reached two ways, and the machine decides which. Pin it where one of them does not work — a broken IPv6 route, or a server that only answers over IPv4. The name is still what the handshake carries, so a proxy in front of the server routes on it as before. Read when a session opens, and not used while this agent routes through a proxy: the proxy dials the server itself.',
+        options: {
+          auto: 'Whatever the host picks',
+          ipv4: 'IPv4 only',
+          ipv6: 'IPv6 only',
+        },
+      },
       connect_rejoin: {
         label: 'Rejoin automatically',
         hint: 'Puts the agent back after a kick, a server restart or a host reboot, waiting longer between each try. Only after somebody has connected it: an agent you disconnected stays out. Gives up after about half an hour and says so in its activity.',

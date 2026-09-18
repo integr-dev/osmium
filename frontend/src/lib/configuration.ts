@@ -245,6 +245,18 @@ export const SETTING_GROUPS: SettingGroup[] = [
         key: 'connect.proxy',
         type: 'proxy',
       },
+      {
+        /*
+         * Hidden while a proxy is picked, because it would not be honoured: the proxy opens the
+         * connection to the server, and which address family it opens it over is its own business.
+         * The same reasoning as the knockback field above, which hides itself when nothing is
+         * applying knockback in the first place.
+         */
+        key: 'connect.family',
+        type: 'choice',
+        options: ['', 'ipv4', 'ipv6'],
+        showWhen: (settings) => !settings['connect.proxy'],
+      },
     ],
   },
   {

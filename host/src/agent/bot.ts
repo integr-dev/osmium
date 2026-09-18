@@ -68,6 +68,7 @@ import { type Bytes, socketOf, Traffic } from './traffic.ts'
 import { AgentViewer } from './viewer.ts'
 
 import { log, reason } from '../log.ts'
+import { familyFrom, pinned, type Family } from './family.ts'
 import { routed, type Proxies, type ProxyEntry } from './proxy.ts'
 import type { CommandBody, Event, SetupResult, Vitals } from '../protocol/message.ts'
 import { ActivityScope, ChatScope, LoginState, type Player, Severity, type Vec3 } from '../protocol/wire.ts'
@@ -248,6 +249,9 @@ export class Agent {
   /** The name of the proxy to route through, when an operator has picked one. Undefined connects
    * from this machine's own address, which is what an unconfigured agent does - see `connect`. */
   private proxy: string | undefined
+  /** Which address family a direct connection may dial. `auto` leaves the choice to the machine,
+   * which is what an unconfigured agent does - see `family.ts`. */
+  private family: Family = 'auto'
   /** Whether to undo mineflayer's velocity scaling. Undefined means decide from the version, which
    * is what an unconfigured agent does - see `absoluteVelocity`. */
   private knockback: boolean | undefined
@@ -542,7 +546,10 @@ export class Agent {
       log.debug(`Agent ${this.id}: routing ${address} through '${route.name}' (${route.kind})`)
     }
 
-    const version = this.version ?? (await negotiate(endpoint, this.id, route, () => this.cancelling))
+    if (this.family !== 'auto' && !route) log.debug(`Agent ${this.id}: dialling ${address} over ${this.family}`)
+
+    const version =
+      this.version ?? (await negotiate(endpoint, this.id, route, this.family, () => this.cancelling))
     if (this.abandoned()) return
 
     this.open(address, endpoint, version, route)
@@ -589,7 +596,10 @@ export class Agent {
         // Two options, one for each connection a join makes: `connect` opens the game socket and
         // `agent` carries the session-server call that proves the account is joining. Spread last
         // so neither can be written over by anything above.
-        ...(route ? routed(route, endpoint.host, endpoint.port) : {}),
+        //
+        // A proxy wins over a pinned address family: it does the dialling, and what it dials with is
+        // its own business rather than this machine's.
+        ...(route ? routed(route, endpoint.host, endpoint.port) : pinned(this.family, endpoint.host, endpoint.port)),
       } as BotOptions)
     } catch (err) {
       // Failing to resolve the address refuses us as surely as a whitelist would, and reads the same
@@ -956,6 +966,7 @@ export class Agent {
       'util.autoTotem',
       'util.fleeDistance',
       'connect.proxy',
+      'connect.family',
       'path.range',
       'path.dig',
       'path.bridge',
@@ -975,6 +986,10 @@ export class Agent {
     // session opens rather than here: the file is read once at startup, and a name that is not in
     // it has to fail the connection loudly rather than be quietly forgotten at configuration time.
     this.proxy = values['connect.proxy']?.trim() || undefined
+
+    // Read when a session opens, like the pinned version: changing it mid-game is stored now and
+    // dialled on the next connect.
+    this.family = familyFrom(values['connect.family'], `Agent ${this.id}'s address family`)
 
     this.chatSender = compile(values['chat.sender'], `Agent ${this.id}'s chat sender pattern`)
     this.chatWhisper = compile(values['chat.whisper'], `Agent ${this.id}'s whisper pattern`)
@@ -2101,13 +2116,14 @@ async function negotiate(
   endpoint: Endpoint,
   id: number,
   route: ProxyEntry | undefined,
+  family: Family,
   giveUp?: () => boolean,
 ): Promise<string> {
   const address = `${endpoint.host}:${endpoint.port}`
 
   let response: Awaited<ReturnType<typeof status>>
   try {
-    response = await status(endpoint, route, giveUp)
+    response = await status(endpoint, route, family, giveUp)
   } catch (err) {
     log.info(`Agent ${id}: ${address} would not answer a version check (${reason(err)}), assuming ${ASSUMED}`)
     return ASSUMED
@@ -2142,6 +2158,7 @@ async function negotiate(
 function status(
   endpoint: Endpoint,
   route: ProxyEntry | undefined,
+  family: Family,
   giveUp?: () => boolean,
 ): Promise<{ version?: { protocol?: number } } | undefined> {
   return new Promise((resolve, reject) => {
@@ -2173,7 +2190,11 @@ function status(
       }, GIVING_UP)
     }
 
-    const through = route ? { connect: routed(route, endpoint.host, endpoint.port).connect } : {}
+    // The same route and the same family as the session that follows: a check answered over one
+    // address family says nothing about a join over the other.
+    const through = route
+      ? { connect: routed(route, endpoint.host, endpoint.port).connect }
+      : pinned(family, endpoint.host, endpoint.port)
 
     minecraftProtocol.ping({ host: endpoint.host, port: endpoint.port, ...through }, (err, result) => {
       stop()

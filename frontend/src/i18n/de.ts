@@ -903,6 +903,15 @@ export const de: Copy = {
         onHost: '{name} — {host}',
         none: 'Kein Host in dieser Auswahl hält Proxys bereit.',
       },
+      connect_family: {
+        label: 'Adressfamilie',
+        hint: 'Ein Server, dessen Name sowohl einen A- als auch einen AAAA-Eintrag hat, ist auf zwei Wegen erreichbar, und der Rechner entscheidet, welcher genommen wird. Festlegen, wenn einer davon nicht funktioniert — eine kaputte IPv6-Route oder ein Server, der nur über IPv4 antwortet. Im Handshake steht weiterhin der Name, ein Proxy vor dem Server leitet also wie bisher danach weiter. Wird beim Verbinden gelesen und nicht verwendet, solange dieser Agent über einen Proxy läuft: dann wählt der Proxy die Verbindung.',
+        options: {
+          auto: 'Wie der Host entscheidet',
+          ipv4: 'Nur IPv4',
+          ipv6: 'Nur IPv6',
+        },
+      },
       connect_rejoin: {
         label: 'Automatisch neu verbinden',
         hint: 'Bringt den Agenten nach einem Kick, einem Server-Neustart oder einem Host-Neustart zurück und wartet zwischen den Versuchen jeweils länger. Nur wenn jemand ihn verbunden hat: ein selbst getrennter Agent bleibt draußen. Gibt nach etwa einer halben Stunde auf und vermerkt das in seiner Aktivität.',
