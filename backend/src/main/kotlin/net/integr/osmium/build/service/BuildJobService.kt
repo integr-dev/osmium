@@ -8,6 +8,7 @@ import net.integr.osmium.agent.model.AgentState
 import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.service.AuditService
+import net.integr.osmium.build.PlacementOrder
 import net.integr.osmium.build.dto.AssignSegmentRequest
 import net.integr.osmium.build.dto.BuildJobResponse
 import net.integr.osmium.build.dto.StartJobRequest
@@ -123,6 +124,15 @@ class BuildJobService(
         // take and finish, so there can be more of them than there are agents - which is what lets
         // a slow agent take fewer, a returning one take the next, and a build be divided finer than
         // the number of bots pointed at it.
+        // Checked before anything is created. A piece is hours of an agent's work, and a sweep
+        // nobody asked for is worse than a job that refused to start — so a token this backend
+        // cannot read ends the request here rather than being quietly replaced by the default.
+        val order = PlacementOrder.of(request.order)
+            ?: error("'${request.order}' is not a placement order")
+        val perPiece = request.segmentOrders.orEmpty().mapValues { (ordinal, value) ->
+            PlacementOrder.of(value) ?: error("'$value' is not a placement order, for piece $ordinal")
+        }
+
         val parts = request.parts ?: crew.size
         val split = schematics.split(checkNotNull(schematic.id), request.mode, parts)
         check(split.segments.isNotEmpty()) {
@@ -177,6 +187,7 @@ class BuildJobService(
                 maxY = segment.maxY + offsetY,
                 maxZ = segment.maxZ + offsetZ,
                 blocks = segment.blocks,
+                placementOrder = perPiece[segment.ordinal] ?: order,
             )
             job.segments += piece
         }
@@ -952,6 +963,7 @@ class BuildJobService(
         "min" to mapOf("x" to minX, "y" to minY, "z" to minZ),
         "max" to mapOf("x" to maxX, "y" to maxY, "z" to maxZ),
         "blocks" to blocks,
+        "order" to placementOrder,
     )
 
     /**

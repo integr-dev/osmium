@@ -410,6 +410,14 @@ across the top level**.
 { "id": "cmd-9c21", "kind": "command", "type": "settings", "agentId": 42,
   "payload": { "values": { "chat.sender": "^\\[[^\\]]+\\]\\s+([A-Za-z0-9_]{1,16}):\\s" } } }
 
+// the order is three signed axes, outermost first, plus an optional trailing 's' for a snaking
+// innermost sweep: 'y+z+x+' is bottom to top, north to south, west to east
+{ "kind": "command", "type": "build_segment", "agentId": 42,
+  "payload": { "jobId": 7, "segmentId": 31, "ticket": "9f2c…",
+               "min": { "x": 128, "y": 64, "z": -340 },
+               "max": { "x": 160, "y": 96, "z": -308 },
+               "blocks": 20431, "order": "y+z+x+s" } }
+
 // host-scoped, so no agentId. `traffic` is optional: bytes every agent has sent to and received
 // from its server since the host started. Running totals, so a missed heartbeat loses nothing.
 { "kind": "event", "type": "heartbeat",

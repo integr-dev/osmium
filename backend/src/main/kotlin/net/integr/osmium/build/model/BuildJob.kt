@@ -15,6 +15,7 @@ import jakarta.persistence.OneToMany
 import jakarta.persistence.OrderBy
 import jakarta.persistence.Table
 import net.integr.osmium.agent.model.Agent
+import net.integr.osmium.build.PlacementOrder
 import net.integr.osmium.schematic.model.Schematic
 import java.time.Instant
 
@@ -311,6 +312,17 @@ class BuildSegment(
     /** How many blocks are in this box, from the split. Never recomputed. */
     @Column(name = "blocks", nullable = false)
     var blocks: Long = 0,
+
+    /**
+     * The order this piece is placed in: three signed axes, outermost first, with an optional
+     * trailing `s` for a snaking innermost sweep. See [net.integr.osmium.build.PlacementOrder].
+     *
+     * Per piece rather than per job, because the pieces are not alike: a floor is swept differently
+     * from the wall above it, and an operator who can say only one thing about a build of sixty-four
+     * pieces has to say the thing that suits none of them.
+     */
+    @Column(name = "placement_order", nullable = false, length = 8)
+    var placementOrder: String = PlacementOrder.DEFAULT,
 
     @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false, length = 16)

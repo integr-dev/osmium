@@ -1393,6 +1393,16 @@ the substitutions, and the schematic it was divided from — and reads nothing b
 `build_id`. An operator editing a plan mid-job is editing the *next* job, which is the only reading
 that does not leave half a building under one rule set and half under another.
 
+**The order a piece is placed in rides on the piece.** `placement_order` is three signed axes with
+an optional trailing `s` — `y+z+x+s` — and the job carries one per segment rather than one for the
+build, because the pieces are not alike: a floor is swept differently from the wall above it. What
+starts a job sends the order for every piece and an override for the ones that differ.
+
+**Carried, not interpreted.** Which block comes next is the host's arithmetic; this backend checks
+the token says something and hands it on. What it must not do is pass on one the host would have to
+guess at, so an unreadable order fails the request rather than being quietly replaced — a piece is
+hours of an agent's work. See `build/PlacementOrder.kt`.
+
 **Job, not run.** `agent.run` is the permission for operating the fleet and "running the fleet" is
 what an operator does all day; a third meaning for the same word, sitting next to both, was one
 reading too many. Job is the word for a unit of dispatched work and collides with nothing.

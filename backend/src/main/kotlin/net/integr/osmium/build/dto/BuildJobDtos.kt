@@ -36,6 +36,17 @@ data class StartJobRequest(
     @field:Schema(description = "Pieces to divide into. Defaults to the size of the pool.")
     @field:Min(1)
     val parts: Int? = null,
+
+    @field:Schema(
+        description = "The order every piece is placed in: three signed axes, outermost first, " +
+            "optionally ending in 's' for a snaking innermost sweep. Defaults to bottom to top, " +
+            "north to south, west to east.",
+        example = "y+z+x+",
+    )
+    val order: String? = null,
+
+    @field:Schema(description = "An order for particular pieces, by ordinal, where it differs from the one above.")
+    val segmentOrders: Map<Int, String>? = null,
 )
 
 @Schema(description = "Puts one agent on a job. Which piece it gets is the scheduler's business.")
@@ -69,6 +80,9 @@ data class JobSegmentResponse(
 
     @field:Schema(description = "PENDING, ASSIGNED, BUILDING, DONE or FAILED.")
     val state: String,
+
+    @field:Schema(description = "The order this piece is placed in, as three signed axes.", example = "y+z+x+")
+    val placementOrder: String,
 
     @field:Schema(description = "Null when nobody holds it, or when the agent has since been removed.")
     val agentId: Long?,
@@ -165,6 +179,7 @@ fun BuildSegment.toResponse(runTotal: Long, blockedBy: List<Int> = emptyList()):
     blocks = blocks,
     sharePercent = if (runTotal == 0L) 0 else ((blocks * 100) / runTotal).toInt(),
     state = state.name,
+    placementOrder = placementOrder,
     agentId = agent?.id,
     agentLabel = agentLabel,
     blocksPlaced = blocksPlaced,
