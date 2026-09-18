@@ -189,10 +189,10 @@ describe('choosing one', () => {
   })
 
   it('puts a choice on the page and remembers it', () => {
-    setTheme('midnight')
+    setTheme('pine')
 
-    expect(document.documentElement.dataset['theme']).toBe('midnight')
-    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('midnight')
+    expect(document.documentElement.dataset['theme']).toBe('pine')
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('pine')
   })
 
   it('resolves System when it is chosen', () => {

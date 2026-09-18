@@ -492,7 +492,7 @@ const described = computed(() =>
 </script>
 
 <template>
-  <div class="border-base-300 bg-base-100 relative overflow-hidden rounded-lg border">
+  <div class="border-base-300 bg-base-100 relative overflow-hidden rounded-box border">
     <div class="absolute top-2 right-2 z-10 flex gap-1">
       <button
         type="button"

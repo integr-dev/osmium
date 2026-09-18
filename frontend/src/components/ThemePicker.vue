@@ -24,7 +24,7 @@ function choose(choice: ThemeChoice) {
 
     <ul
       tabindex="0"
-      class="dropdown-content menu rounded-box border-base-300 bg-base-100 z-10 mb-1 ms-0 w-60 border p-1 ps-1 shadow-lg before:hidden"
+      class="dropdown-content menu rounded-box border-base-300 bg-base-100 z-10 mb-1 ms-0 max-h-[70vh] w-60 flex-nowrap overflow-y-auto border p-1 ps-1 shadow-lg before:hidden"
     >
       <li v-for="choice in THEME_CHOICES" :key="choice">
         <button type="button" class="gap-3" :aria-pressed="themeChoice === choice" @click="choose(choice)">

@@ -129,12 +129,12 @@ describe('what the palette offers', () => {
 
   it('offers every theme but the one in use, System included', () => {
     const setTheme = vi.fn()
-    const commands = buildCommands(context({ theme: 'midnight', setTheme }))
+    const commands = buildCommands(context({ theme: 'pine', setTheme }))
     const offered = ids(commands)
 
     expect(offered).toContain('theme:system')
     expect(offered).toContain('theme:paper')
-    expect(offered).not.toContain('theme:midnight')
+    expect(offered).not.toContain('theme:pine')
 
     void commands.find((command) => command.id === 'theme:paper')?.run?.()
     expect(setTheme).toHaveBeenCalledWith('paper')

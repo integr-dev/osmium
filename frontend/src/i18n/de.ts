@@ -48,9 +48,12 @@ export const de: Copy = {
     system: 'System',
     osmium: 'Osmium',
     osmiumLight: 'Osmium Hell',
-    midnight: 'Mitternacht',
+    pine: 'Kiefer',
+    meadow: 'Wiese',
     graphite: 'Graphit',
     paper: 'Papier',
+    contrast: 'Kontrast',
+    chalk: 'Kreide',
   },
 
   nav: {

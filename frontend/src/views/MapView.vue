@@ -883,7 +883,7 @@ const worldName = dimensionLabel
     -->
     <div
       v-if="server"
-      class="border-base-300 bg-base-200 absolute top-3 left-3 z-10 w-64 max-w-[calc(100%-1.5rem)] rounded-lg border shadow-md"
+      class="border-base-300 bg-base-200 absolute top-3 left-3 z-10 w-64 max-w-[calc(100%-1.5rem)] rounded-box border shadow-md"
     >
       <div class="flex flex-col gap-3 p-3">
         <label class="flex flex-col gap-1">
@@ -949,7 +949,7 @@ const worldName = dimensionLabel
     -->
     <div
       v-if="shown.length"
-      class="border-base-300 bg-base-200 absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-1.5rem)] flex-col rounded-lg border shadow-md"
+      class="border-base-300 bg-base-200 absolute top-3 right-3 z-10 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-1.5rem)] flex-col rounded-box border shadow-md"
     >
       <!-- One scroller over both lists: a crowded server makes the second one long, and a panel
            with two scrollbars in it is one nobody can find their place in. -->

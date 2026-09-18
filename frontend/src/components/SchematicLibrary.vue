@@ -766,7 +766,7 @@ function progressOf(schematic: SchematicResponse): string | null {
             v-for="schematic in visible"
             :key="schematic.id"
             type="button"
-            class="hover:bg-base-300 flex flex-col gap-1 rounded-lg px-3 py-2 text-left"
+            class="hover:bg-base-300 flex flex-col gap-1 rounded-box px-3 py-2 text-left"
             :class="schematic.id === selectedId ? 'bg-base-300' : ''"
             @click="selectedId = schematic.id"
           >
@@ -940,7 +940,7 @@ function progressOf(schematic: SchematicResponse): string | null {
                   </div>
                 </div>
 
-                <div class="border-base-300 flex min-h-0 flex-col rounded-lg border">
+                <div class="border-base-300 flex min-h-0 flex-col rounded-box border">
                   <p class="border-base-300 border-b px-3 py-2 text-xs font-medium">
                     {{ t('schematics.materials') }}
                     <span class="ml-1 opacity-50">{{ materials.length }}</span>

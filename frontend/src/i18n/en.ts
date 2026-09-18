@@ -49,9 +49,12 @@ export const en = {
     system: 'System',
     osmium: 'Osmium',
     osmiumLight: 'Osmium Light',
-    midnight: 'Midnight',
+    pine: 'Pine',
+    meadow: 'Meadow',
     graphite: 'Graphite',
     paper: 'Paper',
+    contrast: 'Contrast',
+    chalk: 'Chalk',
   },
 
   nav: {

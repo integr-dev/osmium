@@ -52,7 +52,7 @@ defineExpose({ root })
   -->
   <div
     ref="root"
-    class="border-base-300 bg-base-100 absolute z-20 flex w-max -translate-x-1/2 flex-col gap-1 rounded-lg border p-1.5 shadow-lg"
+    class="border-base-300 bg-base-100 absolute z-20 flex w-max -translate-x-1/2 flex-col gap-1 rounded-box border p-1.5 shadow-lg"
     :class="placement === 'under' ? 'top-full left-1/2 mt-1.5' : ''"
     :style="placement === 'at' ? { left: `${x ?? 0}px`, top: `${y ?? 0}px` } : undefined"
     role="group"

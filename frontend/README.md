@@ -2051,17 +2051,51 @@ so `safeRedirect` in `src/router/index.ts` accepts a single-slash path and nothi
 
 ## Theme
 
-daisyUI 5 on Tailwind 4, configured CSS-first in `src/style.css`. Every theme keeps the same shape —
-`--depth: 0`, so borders rather than shadows do the separating, and the same radii — and differs only
-in colour.
+daisyUI 5 on Tailwind 4, configured CSS-first in `src/style.css`. Every theme sets `--depth: 0`, so
+borders rather than shadows do the separating.
+
+**Green, in six shades of ground, plus one monochrome pair.** Green is the product's colour; a blue
+theme and a violet one were two more opinions nobody asked this application to have. What varies
+across the six is how much green is in the *ground* — from a green ramp, through a neutral grey lit
+green, to warm paper — and each pair carries its own shape, because a palette swap alone never
+changes how an interface feels to use.
 
 | Theme | | |
 |---|---|---|
-| **Osmium** | dark | the original: a ramp tinted toward the logo's green |
-| **Osmium Light** | light | the same green, darkened until it reads on white |
-| **Midnight** | dark | deep blue, with a blue fleet colour |
-| **Graphite** | dark | near-neutral grey, with an amber fleet colour |
-| **Paper** | light | warm off-white, with a teal fleet colour |
+| **Osmium** | dark, green | the original: a ramp tinted toward the logo's green |
+| **Osmium Light** | light, green | the same green, darkened until it reads on white |
+| **Pine** | dark, green | green ground rather than green light on a grey one, softer corners |
+| **Meadow** | light, green | the light twin of Pine, the most rounded here (12px fields, 16px cards) |
+| **Graphite** | dark, neutral | a grey ground under the brightest, limest green here |
+| **Paper** | light, neutral | warm off-white under a forest green |
+| **Contrast** | dark, monochrome | white on near-black, square corners and 2px borders |
+| **Chalk** | light, monochrome | the daylight half of Contrast, square and hairline-ruled |
+
+The six greens are spread across the hue so they are not six copies: Graphite's lime at 118°,
+Pine at 128°, Osmium's own at about 135°, Paper's forest at 142°, Meadow at 145°.
+
+Radii and border width are per-theme tokens (`--radius-selector`, `--radius-field`, `--radius-box`,
+`--border`), so nothing in a component hardcodes a corner: the classes are `rounded-field`,
+`rounded-box` and `rounded-selector`, and a theme decides what they come out as. That is why adding
+a square theme changed no component.
+
+**A monochrome theme is still not colourless.** Contrast and Chalk keep status colours — an error
+that reads as grey is an error nobody sees — and the two build states keep theirs. What goes neutral
+there is the *fleet* colour and the shades beside it, which is what makes them monochrome in use.
+
+**Where the fleet is green, `--color-success` is pushed toward teal.** The map marks the fleet in the
+fleet colour, and two greens a badge apart is exactly the confusion the palette spec exists to stop.
+Osmium Light had that clash from the start — its fleet and its success green were all but the same
+colour — and it is fixed here along with the rest.
+
+**Colour is a statement about state, not decoration.** The fleet colour marks agents and their
+routes; error, warning and success mark readings and outcomes. An icon that only labels a heading or
+a field is drawn in `text-base-content/50` — every card heading in a tinted accent was the loudest
+thing on screens where the only real signal is a red dot.
+
+Faded text is held to two steps. Secondary sits at 60%, the quietest metadata — timestamps,
+permission nodes, block ids — at 50%, and nothing goes below that: a scale with five fade levels
+stops reading as hierarchy and starts reading as low contrast.
 
 **System**, the default, follows the operating system between Osmium and Osmium Light and switches
 the moment it does. The choice is remembered per browser, like the language, and picked from the

@@ -7,7 +7,7 @@
  * very file against it, so the two cannot come to disagree about what a stored choice means.
  */
 ;(function () {
-  const themes = ['osmium', 'osmium-light', 'midnight', 'graphite', 'paper']
+  const themes = ['osmium', 'osmium-light', 'pine', 'meadow', 'graphite', 'paper', 'contrast', 'chalk']
   let choice = null
   try {
     choice = window.localStorage.getItem('osmium.theme')

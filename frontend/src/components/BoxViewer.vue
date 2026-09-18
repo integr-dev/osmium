@@ -156,7 +156,7 @@ const axisLabel: Record<string, string> = { x: 'X', y: 'Y', z: 'Z' }
 </script>
 
 <template>
-  <div class="border-base-300 bg-base-100 relative overflow-hidden rounded-lg border">
+  <div class="border-base-300 bg-base-100 relative overflow-hidden rounded-box border">
     <!--
       Controls sit over the picture rather than beside it: the picture is the thing, and a row of
       buttons under it pushes everything below further from the shape they describe.

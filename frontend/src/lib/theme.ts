@@ -16,9 +16,12 @@ import { ref } from 'vue'
 export const THEMES = [
   { id: 'osmium', name: 'theme.osmium', scheme: 'dark' },
   { id: 'osmium-light', name: 'theme.osmiumLight', scheme: 'light' },
-  { id: 'midnight', name: 'theme.midnight', scheme: 'dark' },
+  { id: 'pine', name: 'theme.pine', scheme: 'dark' },
+  { id: 'meadow', name: 'theme.meadow', scheme: 'light' },
   { id: 'graphite', name: 'theme.graphite', scheme: 'dark' },
   { id: 'paper', name: 'theme.paper', scheme: 'light' },
+  { id: 'contrast', name: 'theme.contrast', scheme: 'dark' },
+  { id: 'chalk', name: 'theme.chalk', scheme: 'light' },
 ] as const
 
 export type ThemeId = (typeof THEMES)[number]['id']

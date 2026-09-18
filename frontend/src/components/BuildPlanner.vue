@@ -388,7 +388,7 @@ async function removePlan() {
             <li
               v-for="(rule, index) in rules"
               :key="index"
-              class="border-base-300 flex flex-col gap-1 rounded-lg border p-2"
+              class="border-base-300 flex flex-col gap-1 rounded-box border p-2"
             >
               <div class="flex items-center gap-1">
                 <!-- The source is a block that is actually in the file, so those are offered first. -->
