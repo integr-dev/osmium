@@ -10,9 +10,10 @@ happened.
 > **Status:** early. Authentication, accounts, hosts, agents, the audit log, chat, activity,
 > telemetry, live updates and the host transport are built and tested, and so is the build pipeline
 > end to end: uploading a schematic, reading it, dividing it between agents, recording the result as
-> a **job** — what is being built, where, by whom, and how far along — handing each segment to the
-> host that holds the agent, serving its blocks as block *states*, and taking progress back as they
-> are placed. The host in [`host/`](host/) signs agents in, puts them on a server and reports what
+> a **job** — what is being built, where, by whom, and how far along — choosing the order each piece is placed in — three
+> nested sweeps, shown as a filling cube rather than described — handing each segment to the host
+> that holds the agent, serving its blocks as block *states*, and taking progress back as they are
+> placed. The host in [`host/`](host/) signs agents in, puts them on a server and reports what
 > they see; building is the part of it still to be written. A mock host in this repository speaks the
 > same protocol, and the feeds stay empty until something connects and starts reporting. Remote
 > configuration is wired end to end — what an operator sets is stored, sent to the host, and replayed
@@ -33,9 +34,9 @@ happened.
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 642 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 621 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 629 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 648 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 634 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 640 tests |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
