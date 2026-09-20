@@ -661,12 +661,22 @@ class BuildJobService(
                 segment.state = BuildSegmentState.FAILED
                 segment.failureReason = reason?.take(FAILURE_REASON_MAX)
                 segment.fetchTicket = null
+
+                // **A piece that is mostly built is not a piece that failed.** An agent that
+                // placed nineteen thousand blocks and could not reach the last four has left
+                // something worth going to look at; one that placed nothing has left nothing,
+                // and the two deserve different colours. What separates them is the only thing
+                // the backend knows for certain about the attempt: whether anything went down.
+                val laid = segment.blocksPlaced > 0
                 activityService.record(
                     agent = agent,
                     scope = ActivityScope.SYSTEM,
-                    severity = ActivitySeverity.ERROR,
-                    text = "Could not build segment ${segment.ordinal} of '${job.build.name}'" +
-                        (reason?.let { ": $it" } ?: ""),
+                    severity = if (laid) ActivitySeverity.WARNING else ActivitySeverity.ERROR,
+                    text = buildString {
+                        append(if (laid) "Issues building" else "Could not build")
+                        append(" segment ${segment.ordinal} of '${job.build.name}'")
+                        reason?.let { append(": $it") }
+                    },
                 )
             }
 
