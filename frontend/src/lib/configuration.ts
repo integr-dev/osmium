@@ -275,6 +275,13 @@ export const SETTING_GROUPS: SettingGroup[] = [
         type: 'choice',
         options: ['', 'false'],
       },
+      {
+        // Unset is on here too, and for the same reason: a piece asks for blocks whose neighbours
+        // come later in its own order, and refusing to place those loses them.
+        key: 'build.airPlace',
+        type: 'choice',
+        options: ['', 'false'],
+      },
     ],
   },
   {

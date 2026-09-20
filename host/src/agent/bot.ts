@@ -100,6 +100,15 @@ import { VERSION } from '../version.ts'
  */
 const HOVER = 1
 
+/**
+ * How near the top of a climb counts as having made it.
+ *
+ * Half a block. The climb is one block tall, so the tolerance has to be smaller than the thing it
+ * measures — the three blocks a waypoint on the way is ordinarily satisfied by would be met before
+ * the agent had left the course it was standing on. See `climbFirst`.
+ */
+const CLIMBED = 0.5
+
 /** How often the vitals are sampled while an agent is in game.
  *
  * The backend holds them in memory and lets them go stale after thirty seconds, so this is the rate
@@ -313,6 +322,8 @@ export class Agent {
   private building: BuildSettings = buildSettingsFrom({})
   /** Where the printer last asked to be, so the same request twice does not re-plan a route. */
   private heading: string | undefined
+  /** The height it was last asked to work at, which is how a move to a new course is noticed. */
+  private working: number | undefined
 
   /**
    * The one queue for this agent's hands.
@@ -909,6 +920,7 @@ export class Agent {
     this.printer?.stop()
     this.printer = undefined
     this.heading = undefined
+    this.working = undefined
     this.segments.clear()
 
     // Torn down here, because we may have settled this before the protocol did - an attempt that
@@ -1791,7 +1803,7 @@ export class Agent {
 
     const printer = new Printer(this.id, bot, segment, order, this.hands, {
       progress: (placed) => this.progress(command.segmentId, { blocksPlaced: placed }),
-      steer: (to) => this.headFor(to),
+      steer: (to, clear) => this.headFor(to, clear),
       settings: () => this.building,
       tell: (text, bad) => this.activity(ActivityScope.System, bad ? Severity.Error : Severity.Info, text),
     })
@@ -1805,6 +1817,13 @@ export class Agent {
       outcome = 'failed' as const
     } finally {
       if (this.printer === printer) this.printer = undefined
+      // **The journey belongs to the printer, and the printer has finished.** Nothing else ever
+      // asked for it: it is the last square the printer steered to, and left standing it has the
+      // agent flying on to a block that is not going to be placed, holding a goal an operator can
+      // see, and searching the air for somewhere nobody wants it any more.
+      this.heading = undefined
+      this.working = undefined
+      this.navigator?.halt()
     }
 
     // What came out different from the schematic. Written for whoever reads host logs: the
@@ -1844,7 +1863,7 @@ export class Agent {
    * Nothing is answered, and nothing waits: the printer places whatever is in reach as the agent
    * travels, which is the difference between building along a wall and stopping at every block.
    */
-  private headFor(to: BlockPos): void {
+  private headFor(to: BlockPos, clear: BlockPos): void {
     const navigator = this.navigator
     if (!navigator) return
 
@@ -1852,8 +1871,46 @@ export class Agent {
     const key = `${aim.x},${aim.y ?? ""},${aim.z}`
     if (key === this.heading) return
 
+    const climb = this.climbFirst(aim)
     this.heading = key
-    navigator.goto([aim])
+    this.working = aim.y
+
+    // **The square the block goes in, stated as somewhere not to be.** It is air until it is laid,
+    // so nothing the navigator can see rules it out — and a route that ends there, or a flight that
+    // lands there because the finished course underneath makes it the nicest place to stand, puts
+    // the agent in the one square its next placement needs empty. The placement is then refused,
+    // and a refusal on the block the printer is actually up to is the one it marks as failed.
+    navigator.goto(climb ? [climb, aim] : [aim], [clear])
+  }
+
+  /**
+   * The climb, made its own leg, when the printer moves up to a new course.
+   *
+   * **Straight up where it stands, and only then across.** Asked for a point one layer higher than
+   * the one it is on, a flight draws the single straight line to it — which over the width of a
+   * build is a line that rises a block over fifty, passing through the whole of the course being
+   * left at very nearly its own height. Everything standing on that course is in the way of it:
+   * the agent grazes the tops of what it has just built, the driver spends the crossing mending a
+   * line it cannot hold, and where the hull does fit it is flying through the squares the next
+   * course is about to be laid in.
+   *
+   * Rising first costs the one block of climb and nothing else. From up there the crossing is a
+   * clear line over a finished layer, which is the flight the driver is best at.
+   *
+   * Tight on purpose: three blocks of slack — what a waypoint on the way is ordinarily satisfied
+   * by — is more than the whole climb, so this one names the square it means.
+   */
+  private climbFirst(aim: Waypoint): Waypoint | undefined {
+    if (this.pathing.mode !== 'fly') return undefined
+
+    const at = this.bot?.entity?.position
+    if (!at || aim.y === undefined || this.working === undefined) return undefined
+    // Only a change of course, and only upward: coming down is the flight driver's own case, and
+    // it already descends where it stands rather than sliding down through anything.
+    if (aim.y <= this.working) return undefined
+    if (at.y >= aim.y - CLIMBED) return undefined
+
+    return { x: Math.floor(at.x), y: aim.y, z: Math.floor(at.z), within: CLIMBED }
   }
 
   /**

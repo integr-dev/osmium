@@ -952,6 +952,14 @@ export const de: Copy = {
           false: 'So lassen, wie gesetzt',
         },
       },
+      build_airPlace: {
+        label: 'Setzen ohne Block daneben',
+        hint: 'Ein Block wird normalerweise gesetzt, indem man einen danebenstehenden anklickt — und ein Teil verlangt regelmäßig einen, dessen Nachbarn in seiner eigenen Reihenfolge erst später kommen: ein Boden, der in einer Ecke beginnt, eine Wand, unter deren erstem Block noch nichts steht. Klickt man das leere Feld selbst an, wird es trotzdem gefüllt — für Blöcke, die nichts von dem ablesen, woran sie gesetzt wurden. Treppen, Fackeln, Stufen und dergleichen werden nie so gesetzt, weil genau die angeklickte Fläche entscheidet, wie sie herauskommen. Ein Server, der den Klick prüft, lehnt ihn ab, und der Block wartet wie bisher auf seinen Nachbarn.',
+        options: {
+          auto: 'Leeres Feld füllen, wo der Block es zulässt',
+          false: 'Nur an einen stehenden Block setzen',
+        },
+      },
       connect_family: {
         label: 'Adressfamilie',
         hint: 'Ein Server, dessen Name sowohl einen A- als auch einen AAAA-Eintrag hat, ist auf zwei Wegen erreichbar, und der Rechner entscheidet, welcher genommen wird. Festlegen, wenn einer davon nicht funktioniert — eine kaputte IPv6-Route oder ein Server, der nur über IPv4 antwortet. Im Handshake steht weiterhin der Name, ein Proxy vor dem Server leitet also wie bisher danach weiter. Wird beim Verbinden gelesen und nicht verwendet, solange dieser Agent über einen Proxy läuft: dann wählt der Proxy die Verbindung.',

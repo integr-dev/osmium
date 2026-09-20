@@ -1153,6 +1153,14 @@ export const en = {
           false: 'Leave them as placed',
         },
       },
+      build_airPlace: {
+        label: 'Placing with nothing to place against',
+        hint: 'A block is normally put down by clicking one already standing beside it, and a piece regularly asks for one whose neighbours come later in its own order — a floor laid from a corner, a wall whose first block has nothing under it yet. Clicking the empty square itself fills it anyway, for blocks that read nothing off what they were placed against; stairs, torches, slabs and the like are never placed this way, because the face they were put on is what decides how they come out. A server that checks the click refuses it and the block waits for its neighbour as before.',
+        options: {
+          auto: 'Fill an empty square where the block allows it',
+          false: 'Only place against a block already standing',
+        },
+      },
       connect_family: {
         label: 'Address family',
         hint: 'A server whose name has both an A and an AAAA record can be reached two ways, and the machine decides which. Pin it where one of them does not work — a broken IPv6 route, or a server that only answers over IPv4. The name is still what the handshake carries, so a proxy in front of the server routes on it as before. Read when a session opens, and not used while this agent routes through a proxy: the proxy dials the server itself.',

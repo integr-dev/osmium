@@ -73,6 +73,35 @@ const PARKED = 3
  */
 const MOST_SWEEPS = 8
 
+/**
+ * How many times one course is gone back over before the piece is allowed to rise off it.
+ *
+ * Three. A course is the cheapest place a block on it will ever be — see {@link Printer.closeOut}
+ * — but the agent is standing on the piece, not auditing it, and a course whose leftovers are
+ * genuinely impossible would otherwise hold the whole build at that height.
+ */
+const LAYER_ROUNDS = 3
+
+/**
+ * How many times a block that was put to the back is tried again in passing.
+ *
+ * **A block put to the back is not finished with.** It was refused from one position, and the
+ * agent is travelling: a few seconds later it is somewhere else entirely, the support that was
+ * missing has landed, and the square is simply in reach again. Retrying it then costs one click,
+ * and it is far and away the cheapest chance the block will ever get — the alternative is waiting
+ * for the whole piece to be swept again, which for a big piece is minutes.
+ *
+ * Finite because the cheapness cuts both ways: a square nothing can ever be placed in is in reach
+ * just as often, and without a budget the agent would spend the build clicking at it.
+ *
+ * **Its own budget, and not the sweep's.** A retry is an attempt from wherever the agent happens
+ * to be, which is the worst position it will ever try from; the sweep's attempt is made from the
+ * one position chosen for that block. Counting both against one budget had the cheap attempts
+ * spending the good one's chance — measured on a piece of 1889 blocks, it ended the build with
+ * no sweeps at all and nine blocks that earlier builds had recovered on the second pass.
+ */
+const RETRIES = 5
+
 /** How long to wait for the server to show a block where one was just placed. */
 const SETTLE_MS = 400
 
@@ -181,8 +210,12 @@ export interface PrinterHooks {
    * not changed. It does not answer, and nothing waits on it: how an agent travels is the
    * navigator's business, and a printer that waited for each arrival would spend the build
    * standing still. Placing happens whenever something is in reach, moving or not.
+   *
+   * `clear` is the square the block itself goes in, which the journey has to keep the agent out
+   * of: it is air until it is laid, so nothing about the world stops a route ending in it — and
+   * an agent standing in the hole cannot fill it.
    */
-  steer(to: BlockPos): void
+  steer(to: BlockPos, clear: BlockPos): void
   /** What the operator has configured, read per pass rather than captured. */
   settings(): BuildSettings
   /** Something an operator should see in the agent's activity. */
@@ -193,7 +226,10 @@ export class Printer {
   /** Block indices, in the order the piece is to be built. */
   private readonly queue: Int32Array
   private readonly status: Uint8Array
+  /** How many times each block has been put to the back, which is one per sweep at most. */
   private readonly attempts: Uint8Array
+  /** How many times each block has been tried again in passing. Its own budget — see {@link RETRIES}. */
+  private readonly retried: Uint8Array
 
   private cursor = 0
   private placed = 0
@@ -210,11 +246,20 @@ export class Printer {
   private aimingFor: number | undefined
   /** Where the agent was sent for that block. */
   private sending: BlockPos | undefined
+  /** The square that block goes in, which is the one square the agent may not be standing in. */
+  private laying: BlockPos | undefined
 
   /** Where the agent was last sent, so a move can be told from staying put. */
   private bound: string | undefined
   /** Sweeps in a row that placed nothing, which is the only honest sign of a piece that is stuck. */
   private fruitless = 0
+
+  /** Whether this piece is built in layers, which is what makes leaving one mean something. */
+  private readonly layered: boolean
+  /** The height the cursor is working at, so the moment it would rise can be caught. */
+  private course: number | undefined
+  /** The last course closed out: which it was, and how many goes it has had. */
+  private closed: { course: number; rounds: number } | undefined
 
   /**
    * What the agent is carrying in each of its first eight hotbar squares.
@@ -242,6 +287,25 @@ export class Printer {
    * waits here instead, until the agent is near it again.
    */
   private pending: number[] = []
+
+  /**
+   * Blocks that were refused and still have attempts left, waiting for the agent to come past.
+   *
+   * Kept as a list of its own because they are *behind* the cursor: the sweep looks forward from
+   * where it has got to, and nothing that looks forward will ever find them again. See
+   * {@link RETRIES}.
+   */
+  private readonly stale = new Set<number>()
+
+  /**
+   * Why each refused block was refused, last time it was.
+   *
+   * **Because "9 blocks could not be placed" is not a fault report.** Every refusal was for one of
+   * seven stated reasons, and which one it was is the difference between a bug in `plan.ts`, a
+   * server that will not take the placement, and a block whose support the schematic itself never
+   * put in. It was being thrown away, and the only way to find out was to watch the build.
+   */
+  private readonly stuck = new Map<number, string>()
   /** The rotation this printer last put on the wire, to notice when something else moves it. */
   private turned: number | undefined
   /** Where the current placement needs the agent pointing, so it can be said again on the way in. */
@@ -266,8 +330,13 @@ export class Printer {
     private readonly hooks: PrinterHooks,
   ) {
     this.queue = orderedQueue(segment, order)
+    // Only an order whose outermost sweep is the height builds in layers at all. Under any other
+    // one the cursor's height changes every few blocks, and "the course it is leaving" means
+    // nothing — see {@link Printer.closeOut}.
+    this.layered = order.sweeps[0].axis === 'y'
     this.status = new Uint8Array(blockCount(segment))
     this.attempts = new Uint8Array(blockCount(segment))
+    this.retried = new Uint8Array(blockCount(segment))
   }
 
   /** How many blocks this agent has put down since it was handed the piece. */
@@ -296,6 +365,16 @@ export class Printer {
         continue
       }
 
+      // **Nothing is left behind under a finished course.** Moving up is the one move a piece
+      // cannot take back: a square that was merely refused becomes a square with a layer on top
+      // of it, and the full-piece sweep that would have come back for it arrives to find it
+      // walled in. So the rise waits while whatever is still down there is tried again.
+      const course = this.positionOf(this.queue[this.cursor]!).y
+      if (this.layered && this.course !== undefined && course !== this.course) {
+        if (this.closeOut(this.course)) continue
+      }
+      this.course = course
+
       const settings = this.hooks.settings()
       const index = this.queue[this.cursor]!
 
@@ -304,9 +383,10 @@ export class Printer {
       // answer cannot change while the cursor has not.
       if (index !== this.aimingFor) {
         this.aimingFor = index
-        this.sending = this.standingSpot(this.positionOf(index))
+        this.laying = this.positionOf(index)
+        this.sending = this.standingSpot(this.laying)
       }
-      if (this.sending) this.steer(this.sending)
+      if (this.sending && this.laying) this.steer(this.sending, this.laying)
 
       const batch = this.inReach(settings)
       if (batch.length === 0) {
@@ -322,7 +402,7 @@ export class Printer {
         const moved = this.stirred()
         const away = this.sending ? this.apart(this.sending) : 0
         if (this.idle > PATIENCE || (!moved && away > A_TRIP && this.idle > STUCK)) {
-          this.park(index)
+          this.park(index, moved ? 'never came within reach of it' : 'could not get to it')
           this.idle = 0
         }
         await pause(TICK_MS)
@@ -339,11 +419,62 @@ export class Printer {
     const missing = this.remaining()
     if (missing === 0) return 'done'
 
+    this.explain()
     this.hooks.tell(`${missing} blocks of this piece could not be placed`, true)
     return 'failed'
   }
 
   // ------------------------------------------------------------------ the sweep
+
+  /**
+   * Goes back for whatever is still unplaced on the course just finished, before rising off it.
+   *
+   * **A course is the last moment a block on it is cheap.** Everything refused down there was
+   * refused for a reason that has since changed — the support landed, the agent moved out of the
+   * square, the server caught up — and right now the agent is still down there with the square in
+   * the open. One layer later the same square has a block over it, the plan for it may no longer
+   * have a face to click, and the sweep that eventually comes back finds it walled in. Measured
+   * on the torture piece, that is where the leftovers that were never recovered came from.
+   *
+   * The cursor is simply wound back to the first of them: they are behind it in the order, so the
+   * loop above walks the course again on its own, and comes back here when it reaches the rise a
+   * second time. Answers whether it did, which is how the caller knows to carry on rather than
+   * let the cursor climb.
+   *
+   * **Bounded by the count alone**, because a square nothing can ever be placed in is on the layer
+   * too. It was bounded by progress as well — a round that placed nothing earned no second one,
+   * the reasoning a fruitless sweep uses — and that is exactly backwards here: the blocks a round
+   * goes back for are the only ones left on the course, so a round that fails to place them places
+   * nothing by definition and cuts itself off after one go. Measured on the torture piece, two
+   * slabs got one round instead of three and were still there at the end.
+   */
+  private closeOut(course: number): boolean {
+    const last = this.closed?.course === course ? this.closed : undefined
+    if (last && last.rounds >= LAYER_ROUNDS) return false
+
+    let first: number | undefined
+    let left = 0
+
+    for (let step = 0; step < this.cursor; step += 1) {
+      const index = this.queue[step]!
+      if (this.status[index] !== PARKED) continue
+      // This course only. A lower one has had its own go round, and reviving it again here is
+      // how a course that cannot be finished would be retried at every boundary above it.
+      if (this.positionOf(index).y !== course) continue
+
+      this.status[index] = TODO
+      this.stale.delete(index)
+      left += 1
+      if (first === undefined) first = step
+    }
+
+    if (first === undefined) return false
+
+    log.info(`Agent ${this.id} is going back for ${left} blocks on course ${course} before it rises`)
+    this.closed = { course, rounds: (last?.rounds ?? 0) + 1 }
+    this.cursor = first
+    return true
+  }
 
   /** Moves the cursor to the next block that still wants placing. */
   private skipSettled(): void {
@@ -383,9 +514,17 @@ export class Printer {
       if (this.status[index] === PARKED) this.status[index] = TODO
     }
 
+    // Everything worth another go is ahead of the cursor again, so there is nothing behind it to
+    // come back for.
+    this.stale.clear()
     this.sweeps += 1
     this.laidThisSweep = 0
     this.cursor = 0
+
+    // A sweep starts at the bottom again, so every course it climbs through is a course it has
+    // not closed out this time round.
+    this.course = undefined
+    this.closed = undefined
     return true
   }
 
@@ -406,7 +545,7 @@ export class Printer {
     const eye = { x: at.x, y: at.y + eyeHeight(this.bot), z: at.z }
     const course = this.positionOf(this.queue[this.cursor]!).y
 
-    const batch: number[] = []
+    const batch: number[] = this.retries(eye, course, settings)
     const end = Math.min(this.queue.length, this.cursor + settings.window)
 
     for (let step = this.cursor; step < end; step += 1) {
@@ -425,6 +564,41 @@ export class Printer {
   }
 
   /**
+   * Blocks already refused once that the agent has come back within reach of.
+   *
+   * **The whole point of the second chance is that it is free.** These are squares the agent is
+   * passing anyway, and the reasons a placement is refused are mostly reasons that expire — the
+   * support had not landed, the agent was in the square, the server had not caught up. Waiting
+   * for the next sweep to find that out costs minutes on a big piece; trying again here costs a
+   * click, and only while the block has attempts left. See {@link RETRIES}.
+   *
+   * At or below the course being laid, never above it. A block left behind is catching up, which
+   * is a different thing from starting the next layer early — the rule {@link inReach} holds to.
+   */
+  private retries(eye: { x: number; y: number; z: number }, course: number, settings: BuildSettings): number[] {
+    const batch: number[] = []
+
+    for (const index of this.stale) {
+      // Placed since, or out of retries. Either way it has no further claim on the agent in
+      // passing — the sweep still comes back to it.
+      if (this.status[index] !== PARKED || (this.retried[index] ?? 0) >= RETRIES) {
+        this.stale.delete(index)
+        continue
+      }
+
+      if (batch.length >= BATCH) continue
+
+      const block = this.positionOf(index)
+      if (block.y > course) continue
+      if (!reaches(eye, block, settings.reach)) continue
+
+      batch.push(index)
+    }
+
+    return batch
+  }
+
+  /**
    * Heads for a square, and forgets where the agent was pointing when it does.
    *
    * Being sent somewhere is also being turned: a server that moves a player sends a rotation
@@ -433,14 +607,14 @@ export class Printer {
    * has to say it again rather than assume it — which is one block in a few hundred coming out
    * facing whichever way the last one did.
    */
-  private steer(to: BlockPos): void {
+  private steer(to: BlockPos, clear: BlockPos): void {
     const key = `${to.x},${to.y},${to.z}`
     if (key !== this.bound) {
       this.bound = key
       this.aimed = undefined
     }
 
-    this.hooks.steer(to)
+    this.hooks.steer(to, clear)
   }
 
   /** Whether there is something under a square to stop what goes in it falling out again. */
@@ -499,14 +673,16 @@ export class Printer {
     try {
       for (const index of batch) {
         if (signal.aborted || this.stopped) return
-        if (this.status[index] !== TODO) continue
+        // Parked as well as waiting: a batch carries the blocks the agent has come back within
+        // reach of, which are by definition ones it could not place the first time.
+        if (this.status[index] !== TODO && this.status[index] !== PARKED) continue
 
         // The agent is still moving while this runs, so a square that was in reach when the
         // batch was gathered may not be by the time its turn comes. Skipped rather than parked:
         // it is still wanted, and the next pass either has it in reach or does not.
         if (!this.canReach(this.positionOf(index), settings)) continue
 
-        if (await this.lay(index)) this.pending.push(index)
+        if (await this.lay(index, settings)) this.pending.push(index)
         await pause(gap)
       }
     } finally {
@@ -547,7 +723,7 @@ export class Printer {
    * has been tried from the one position chosen for it, and is worth another sweep rather than
    * another pass.
    */
-  private async lay(index: number): Promise<boolean> {
+  private async lay(index: number, settings: BuildSettings): Promise<boolean> {
     const at = this.positionOf(index)
     const wanted = this.specOf(index)
     const plan = planFor(wanted)
@@ -555,8 +731,13 @@ export class Printer {
 
     // Whether this is the block the order says is next, rather than one picked up in passing.
     const leading = index === this.queue[this.cursor]
-    const refuse = (): false => {
-      if (leading) this.park(index)
+    const refuse = (why: string): false => {
+      if (leading) this.park(index, why)
+      // A try in passing at a block already put to the back is counted, or it is not a budget: a
+      // square nothing can go in is in reach every pass, and the agent would click at it for the
+      // rest of the build. One picked up in passing for the first time still costs nothing — the
+      // cursor is coming to it, and that is the attempt that counts.
+      else if (this.status[index] === PARKED) this.spend(index, why)
       return false
     }
 
@@ -578,26 +759,30 @@ export class Printer {
     }
 
     if (already === 0 && standing && !replaceable(standing)) {
-      return refuse()
+      return refuse('something else is in the square')
     }
 
     // Nothing to hold it up yet. Placing it anyway does not fail - the block goes in, reads
     // right, and is a block lower a tick later - so the check has to come first.
     if (plan.falls && !this.held(at)) {
-      return refuse()
+      return refuse('nothing under it to hold it up')
     }
 
     if (!(await this.hold(itemFor(wanted)))) {
-      return refuse()
+      return refuse('no item for it in hand')
     }
 
     if (already === 0) {
-      const option = this.choose(plan, at)
+      const standing = this.choose(plan, at)
+
+      // Nothing standing to click — but a block that reads nothing off the face it was put on can
+      // be placed by clicking the empty square itself. See `airPlace` in `settings.ts`.
+      const option = standing ?? (settings.airPlace && plan.anyFace ? plan.options[0] : undefined)
       if (!option) {
-        return refuse()
+        return refuse('nothing standing to place it against')
       }
-      if (!(await this.place(at, name, option))) {
-        return refuse()
+      if (!(await this.place(at, name, option, standing === undefined))) {
+        return refuse(standing ? 'the server refused the placement' : 'the server would not take it placed in air')
       }
     }
 
@@ -609,13 +794,13 @@ export class Printer {
 
     const here = this.bot.blockAt(vector(at))
     if (!here || bare(here.name) !== name) {
-      return refuse()
+      return refuse('nothing came of the placement')
     }
 
     // Part of a stack is not a finished square. Put it back rather than calling it done: the next
     // sweep counts what is there and adds the rest, which is what the count above is for.
     if (stacked(here) < plan.copies) {
-      return refuse()
+      return refuse('only part of the stack went in')
     }
 
     this.settle(index, at, wanted, true)
@@ -677,9 +862,15 @@ export class Printer {
    * by where the agent was looking when the packet arrived, so a library that helpfully looks at
    * the destination would place every stair facing the same way.
    */
-  private async place(at: BlockPos, name: string, option: Option): Promise<boolean> {
+  private async place(at: BlockPos, name: string, option: Option, inAir = false): Promise<boolean> {
     const against = STEP[option.against]
-    const reference = this.bot.blockAt(new Vec3(at.x + against.x, at.y + against.y, at.z + against.z))
+    // **In air, the square clicked is the square itself.** A placement names a position, a face and
+    // a point on it; the block lands in the clicked square when that square is replaceable, and air
+    // is. So the same click that would have gone against a neighbour goes against the hole instead,
+    // with the same face and the same cursor, and lands in the same place.
+    const reference = inAir
+      ? this.bot.blockAt(vector(at))
+      : this.bot.blockAt(new Vec3(at.x + against.x, at.y + against.y, at.z + against.z))
     if (!reference) return false
 
     // The normal of the face we click, which points from the reference block at the target.
@@ -1003,9 +1194,53 @@ export class Printer {
     }
   }
 
-  private park(index: number): void {
-    this.attempts[index] = (this.attempts[index] ?? 0) + 1
+  /**
+   * Puts a block to the back, and lines it up to be tried again in passing.
+   *
+   * The list is what makes a second chance possible at all: the sweep only ever looks forward
+   * from the cursor, and a block that was put to the back is behind it. See {@link RETRIES}.
+   */
+  private park(index: number, why: string): void {
     this.status[index] = PARKED
+    this.attempts[index] = (this.attempts[index] ?? 0) + 1
+    this.stuck.set(index, why)
+
+    if ((this.retried[index] ?? 0) < RETRIES) this.stale.add(index)
+  }
+
+  /** Counts one try in passing, and drops the block from the list when it has had its five. */
+  private spend(index: number, why: string): void {
+    const spent = (this.retried[index] ?? 0) + 1
+    this.retried[index] = spent
+    this.stuck.set(index, why)
+
+    if (spent >= RETRIES) this.stale.delete(index)
+  }
+
+  /**
+   * Says what the blocks that did not go in were, and why.
+   *
+   * By reason and by block, with the first square of each named: a run of "nothing standing to
+   * place it against" on one block is a support the order puts too late, and the same count
+   * against "the server refused the placement" is something else entirely. Without this the only
+   * report was a number, and the only way to find out was to go and look at the build.
+   */
+  private explain(): void {
+    const reasons = new Map<string, { count: number; first: BlockPos }>()
+
+    for (let index = 0; index < this.status.length; index += 1) {
+      if (this.status[index] === DONE || this.status[index] === FREE) continue
+
+      const why = this.stuck.get(index) ?? 'never reached'
+      const key = `${bare(parseSpec(this.specOf(index)).name)}: ${why}`
+      const seen = reasons.get(key)
+      if (seen) seen.count += 1
+      else reasons.set(key, { count: 1, first: this.positionOf(index) })
+    }
+
+    for (const [what, { count, first }] of [...reasons].sort((a, b) => b[1].count - a[1].count)) {
+      log.warn(`Agent ${this.id}: ${count} x ${what}, first at ${first.x} ${first.y} ${first.z}`)
+    }
   }
 
   private remaining(): number {

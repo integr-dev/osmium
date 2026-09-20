@@ -165,6 +165,18 @@ export interface Plan {
    * something only the world can answer.
    */
   falls: boolean
+  /**
+   * Whether the block comes out the same whichever face it was placed against.
+   *
+   * A plain cube does: clicking the floor under it, the wall beside it or the ceiling above all
+   * leave the same block in the square. A stair, a torch, a hopper, a slab do not — each reads the
+   * face it was put on and where on it, and choosing that face is most of what this file is.
+   *
+   * What reads it is air placement: a square with nothing standing around it can still be filled,
+   * by clicking the empty square itself, and that is only honest where there is no face to get
+   * wrong. See `airPlace` in `settings.ts`.
+   */
+  anyFace: boolean
 }
 
 /** Faces to try when nothing about the state depends on which one is used. */
@@ -401,13 +413,13 @@ export function planFor(spec: string): Plan {
   // Half a two-block block. Placing the lower one puts this here, and aiming at it directly is a
   // click into thin air that fails.
   if (props['half'] === 'upper' || props['part'] === 'head') {
-    return { options: [], tune: [], drift: [], free: true, copies: 1, falls: false }
+    return { options: [], tune: [], drift: [], free: true, copies: 1, falls: false, anyFace: false }
   }
 
   const copies = copiesFor(name, props)
   const family = familyOf(name, props)
   const falls = FALLS.has(name) || name.endsWith('_concrete_powder')
-  const made = (options: Option[]): Plan => ({ options, tune, drift, free: false, copies, falls })
+  const made = (options: Option[]): Plan => ({ options, tune, drift, free: false, copies, falls, anyFace: false })
 
   switch (family) {
     case 'pillar': {
@@ -510,6 +522,7 @@ export function planFor(spec: string): Plan {
         free: false,
         copies,
         falls,
+        anyFace: false,
       }
     }
 
@@ -565,7 +578,7 @@ export function planFor(spec: string): Plan {
     (key) => !DERIVED.has(key) && !SET_BY_HAND.has(key) && !tuned.has(key) && !drift.includes(key),
   )
 
-  return { options: ANY, tune, drift: [...drift, ...unresolved], free: false, copies, falls }
+  return { options: ANY, tune, drift: [...drift, ...unresolved], free: false, copies, falls, anyFace: true }
 }
 
 /**

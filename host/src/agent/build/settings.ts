@@ -33,6 +33,23 @@ export interface BuildSettings {
    * a redstone build that looks right and one that works.
    */
   tune: boolean
+  /**
+   * Whether to place a block with nothing beside it to place it against.
+   *
+   * **A click, not a rule.** A placement is a packet naming a square, a face of it and where on
+   * that face — and a server checks that the block may *be* where it would land, not that anything
+   * was really clicked. So a square with nothing standing around it can still be filled, by
+   * clicking the empty square itself: air is replaceable, so the block goes in where the click was.
+   *
+   * Offered only for blocks whose state owes nothing to the face they were placed against — see
+   * `anyFace` in `plan.ts`. A torch, a ladder, a stair take their facing from what they were put
+   * on, and one placed against nothing would be a different block from the one the piece asked for.
+   *
+   * On, because the alternative is losing a block every time a piece wants one whose neighbours
+   * come later in the order. A server that does check the click refuses it, which costs the one
+   * click the refusal was going to cost anyway.
+   */
+  airPlace: boolean
 }
 
 /** Vanilla's own reach for a block, which is what the server will actually accept. */
@@ -67,6 +84,9 @@ export function buildSettingsFrom(values: Record<string, string>): BuildSettings
     // Unset is on, so the key means "turn this off" rather than "turn this on" - which is the
     // right way round for a thing that is part of building correctly.
     tune: values['build.tune'] !== 'false',
+    // Unset is on, for the same reason: it is part of getting the piece built rather than a trick
+    // somebody opts into.
+    airPlace: values['build.airPlace'] !== 'false',
   }
 }
 
