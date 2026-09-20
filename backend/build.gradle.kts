@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "net.integr"
-version = "0.27.0"
+version = "0.28.0"
 description = "backend"
 
 // Emits META-INF/build-info.properties, which is what lets the OpenAPI document report the real
