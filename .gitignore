@@ -23,4 +23,9 @@ dist/
 build/
 *.log
 
+# The one directory called `build` that is source rather than output: the host's printer. The rule
+# above is a safety net for a module nobody has written a .gitignore for yet, and it quietly
+# swallowed a directory named after what the code in it does.
+!host/src/agent/build/
+
 frontend/meow.sh

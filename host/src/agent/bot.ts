@@ -12,6 +12,10 @@ import { Schedule } from './schedule.ts'
 import { speedUpTools, timeDigsProperly } from './tool.ts'
 import { type Box, CLEARANCE, freed, hullAt, HULL_HEIGHT, HULL_WIDTH, overlaps } from './unembed.ts'
 import { AgentNavigator, type Waypoint } from './path/navigator.ts'
+import { Printer } from './build/printer.ts'
+import { buildSettingsFrom, type BuildSettings } from './build/settings.ts'
+import { SegmentGone, type Segment } from './build/segment.ts'
+import { DEFAULT_ORDER, formatOrder } from './order.ts'
 import { FLY_SPEED, type Permit } from './path/fly.ts'
 import { type PathSettings, pathSettingsFrom } from './path/settings.ts'
 import { type Component, componentsOf } from './chat.ts'
@@ -71,11 +75,30 @@ import { log, reason } from '../log.ts'
 import { familyFrom, pinned, type Family } from './family.ts'
 import { routed, type Proxies, type ProxyEntry } from './proxy.ts'
 import type { CommandBody, Event, SetupResult, Vitals } from '../protocol/message.ts'
-import { ActivityScope, ChatScope, LoginState, type Player, Severity, type Vec3 } from '../protocol/wire.ts'
+import {
+  ActivityScope,
+  type BlockPos,
+  BuildState,
+  ChatScope,
+  LoginState,
+  type Player,
+  Severity,
+  type Vec3,
+} from '../protocol/wire.ts'
 import { identify, type Identity, type LinkCode, NotSignedIn, signIn } from '../token/auth.ts'
 import { LoginKind } from '../token/login.ts'
 import type { AccountStore, Entry } from '../token/store.ts'
 import { VERSION } from '../version.ts'
+
+
+/**
+ * How far above the work a flying agent is asked to hold.
+ *
+ * High enough that the square under it is empty — which is what stops the flight from landing —
+ * and low enough that the whole course around it is still in reach. Every extra block up is a
+ * block of reach spent going down rather than out.
+ */
+const HOVER = 1
 
 /** How often the vitals are sampled while an agent is in game.
  *
@@ -150,6 +173,14 @@ export interface AgentHooks {
   result(setup: SetupResult): void
   /** This agent will do nothing further and can be forgotten. */
   finished(): void
+  /**
+   * The blocks of a piece this agent has been handed, fetched over HTTP.
+   *
+   * Not done here, because where Osmium is reachable is something this process was started
+   * with and an agent is not. The ticket is a capability for exactly this segment and is
+   * never persisted — see `build/segment.ts`.
+   */
+  blocks(jobId: number, segmentId: number, ticket: string): Promise<Segment>
 }
 
 /** What an agent has been given to log in with.
@@ -276,6 +307,12 @@ export class Agent {
   private sky: Permit = { mayFly: false, speed: FLY_SPEED }
 
   private navigator: AgentNavigator | undefined
+  /** The piece being placed, while one is. */
+  private printer: Printer | undefined
+  /** How this agent builds, as the operator set it. Read per pass by the printer. */
+  private building: BuildSettings = buildSettingsFrom({})
+  /** Where the printer last asked to be, so the same request twice does not re-plan a route. */
+  private heading: string | undefined
 
   /**
    * The one queue for this agent's hands.
@@ -445,16 +482,26 @@ export class Agent {
         if (this.busy('inventory_hold')) return
         return this.hold(command.slot)
 
-      // Placing is not built yet, and ignoring that half is the honest answer - reporting progress
-      // on a box nobody is filling would be worse than silence. The segment is still *held*, which
-      // is what makes the agent refuse anything that would disturb it.
+      // Fire and forget: what comes of it is reported as `build_progress`, never as a result.
+      // Held from the moment it arrives rather than from the moment placing starts, because the
+      // fetch takes time and the agent must not wander off during it — see `busy`.
+      //
+      // **Started, not awaited.** Every command for an agent queues behind the one before it, and
+      // a piece is minutes to hours of work — so returning this promise is an agent that cannot be
+      // spoken to, watched, reconfigured or told to stop until it has finished building. That is
+      // also what the protocol means by fire and forget: there is no result to wait for, and what
+      // came of it goes out as `build_progress`.
       case 'build_segment':
         this.segments.add(command.segmentId)
-        log.warn(`Agent ${this.id} cannot build yet, holding segment ${command.segmentId} idle`)
+        void this.build(command).catch((err) => {
+          log.warn(`Agent ${this.id} fell over building segment ${command.segmentId}: ${reason(err)}`)
+        })
         return
 
-      // Satisfied by never having started, and it stops being held either way.
+      // Not an error for a piece already finished or never started: it asks us to stop, which
+      // having stopped satisfies.
       case 'cancel_segment':
+        if (this.segments.has(command.segmentId)) this.printer?.stop()
         this.segments.delete(command.segmentId)
         return
 
@@ -859,6 +906,9 @@ export class Agent {
     this.unpath()
     // Whatever it was holding is the backend's again: leaving the game releases every segment, and
     // a set that outlived the session would refuse commands on behalf of work nobody is doing.
+    this.printer?.stop()
+    this.printer = undefined
+    this.heading = undefined
     this.segments.clear()
 
     // Torn down here, because we may have settled this before the protocol did - an attempt that
@@ -977,6 +1027,10 @@ export class Agent {
       'path.forceFly',
       'path.flyCommand',
       'path.flySpeed',
+      'build.reach',
+      'build.window',
+      'build.rate',
+      'build.tune',
     ])
     const unknown = Object.keys(values).filter((key) => !known.has(key))
 
@@ -1031,6 +1085,11 @@ export class Agent {
         ? `Agent ${this.id} runs ${running.join(', ')}`
         : `Agent ${this.id} runs no utility modules`,
     )
+
+    // Read per pass by the printer, so a number changed while a piece is being built applies to
+    // the next batch rather than to the next piece — which is the point of being able to change
+    // it while watching an agent build.
+    this.building = buildSettingsFrom(values)
 
     // Read per plan by the navigator, so a toggle applies to the next search rather than the next
     // session. What is already being walked is left alone: re-planning under an agent because a box
@@ -1680,6 +1739,149 @@ export class Agent {
     this.navigator.goto(waypoints)
   }
 
+  /**
+   * Builds a piece: fetches its blocks, places them, and says how it went.
+   *
+   * **Reported, never answered.** A `build_segment` carries no result channel, so everything
+   * this says goes out as `build_progress` — including the failures, which is what stops a piece
+   * an agent cannot build from sitting at nothing for hours with nobody told.
+   *
+   * **A dropped connection is not a failure.** An agent that leaves the game has its piece
+   * returned to the pool and handed back when it comes home, so there is nothing to retry and
+   * nothing to report; saying `failed` there would turn a blip into something an operator has to
+   * come and look at.
+   */
+  private async build(command: Extract<CommandBody, { type: 'build_segment' }>): Promise<void> {
+    const bot = this.bot
+    if (!bot?.entity) {
+      log.warn(`Agent ${this.id} was given segment ${command.segmentId} while not in a world`)
+      this.segments.delete(command.segmentId)
+      this.progress(command.segmentId, { state: BuildState.Failed, reason: 'not in a world' })
+      return
+    }
+
+    let segment
+    try {
+      segment = await this.hooks.blocks(command.jobId, command.segmentId, command.ticket)
+    } catch (err) {
+      this.segments.delete(command.segmentId)
+
+      // Taken back while the blocks were on their way. Nothing to retry and nothing to say:
+      // the backend already knows, because it is the one that took it.
+      if (err instanceof SegmentGone) {
+        log.info(`Agent ${this.id} was not given segment ${command.segmentId} after all: ${reason(err)}`)
+        return
+      }
+
+      log.warn(`Agent ${this.id} could not fetch segment ${command.segmentId}: ${reason(err)}`)
+      this.progress(command.segmentId, { state: BuildState.Failed, reason: reason(err) })
+      return
+    }
+
+    // Cancelled, or the session ended, while the blocks were on their way.
+    if (!this.segments.has(command.segmentId) || this.bot !== bot) return
+
+    const order = command.order ?? DEFAULT_ORDER
+    this.activity(
+      ActivityScope.System,
+      Severity.Info,
+      `Building ${command.blocks} blocks, ${formatOrder(order)}`,
+    )
+    this.progress(command.segmentId, { state: BuildState.Building, blocksPlaced: 0 })
+
+    const printer = new Printer(this.id, bot, segment, order, this.hands, {
+      progress: (placed) => this.progress(command.segmentId, { blocksPlaced: placed }),
+      steer: (to) => this.headFor(to),
+      settings: () => this.building,
+      tell: (text, bad) => this.activity(ActivityScope.System, bad ? Severity.Error : Severity.Info, text),
+    })
+    this.printer = printer
+
+    let outcome
+    try {
+      outcome = await printer.run()
+    } catch (err) {
+      log.warn(`Agent ${this.id} fell over building segment ${command.segmentId}: ${reason(err)}`)
+      outcome = 'failed' as const
+    } finally {
+      if (this.printer === printer) this.printer = undefined
+    }
+
+    // What came out different from the schematic. Written for whoever reads host logs: the
+    // operator sees the piece finish, and a state the game will not reproduce from a placement is
+    // not something they can act on.
+    for (const [what, count] of printer.differences) {
+      log.info(`Agent ${this.id}: ${count} x ${what} came out different from the schematic`)
+    }
+
+    this.segments.delete(command.segmentId)
+    if (outcome === 'stopped') return
+
+    if (outcome === 'done') {
+      this.progress(command.segmentId, { state: BuildState.Done, blocksPlaced: printer.count })
+      this.activity(ActivityScope.System, Severity.Info, `Finished a piece of ${command.blocks} blocks`)
+      return
+    }
+
+    // Said as a count rather than as "some": the difference between four blocks short and four
+    // thousand is the difference between going to look at it and starting again.
+    const missing = command.blocks - printer.count
+    this.progress(command.segmentId, {
+      state: BuildState.Failed,
+      blocksPlaced: printer.count,
+      reason: `${missing} of ${command.blocks} blocks could not be placed`,
+    })
+  }
+
+  /**
+   * Points the agent at where the work is, without waiting for it to get there.
+   *
+   * **Re-planned only when the answer changes.** This is called on every pass of the printer,
+   * which is many times a second, and the navigator draws a whole route each time it is asked;
+   * asking again for somewhere it is already going would be a search a tick instead of a search
+   * a block.
+   *
+   * Nothing is answered, and nothing waits: the printer places whatever is in reach as the agent
+   * travels, which is the difference between building along a wall and stopping at every block.
+   */
+  private headFor(to: BlockPos): void {
+    const navigator = this.navigator
+    if (!navigator) return
+
+    const aim = this.aimFor(to)
+    const key = `${aim.x},${aim.y ?? ""},${aim.z}`
+    if (key === this.heading) return
+
+    this.heading = key
+    navigator.goto([aim])
+  }
+
+  /**
+   * Where to send the agent so that it can reach a block.
+   *
+   * **A flier is asked for a point in the air, not a square to stand on.** Landing is what puts
+   * an agent in the square the next block belongs in: it comes down onto the layer it is halfway
+   * through laying, stands in the hole, and then cannot fill it. One above the work there is
+   * nothing underneath, which is exactly the case the flight driver holds position for rather
+   * than descending — see `arrive` in `path/fly.ts` — and from there the whole course around it
+   * is in reach.
+   *
+   * A walking agent has no such choice and is sent to the square itself, which the printer has
+   * already picked to be beside the work rather than in it.
+   */
+  private aimFor(to: BlockPos): Waypoint {
+    if (this.pathing.mode !== 'fly') return { x: to.x, y: to.y, z: to.z }
+    return { x: to.x, y: to.y + HOVER, z: to.z }
+  }
+
+
+  private progress(
+    segmentId: number,
+    what: { blocksPlaced?: number; state?: BuildState; reason?: string },
+  ): void {
+    this.hooks.event({ type: 'build_progress', agentId: this.id, segmentId, ...what })
+  }
+
   /** Starts this session's navigator, replacing any left over from the last one. */
   private begin_pathing(): void {
     const bot = this.bot
@@ -1693,6 +1895,10 @@ export class Agent {
       (update) => {
         const dimension = worldOf(bot, this.level) || undefined
 
+        // A journey that ended is one the printer may ask for again: it is still working on the
+        // same square, and the route it was given is finished or abandoned.
+        if (update.state !== 'moving' && update.state !== 'planning') this.heading = undefined
+
         this.hooks.event({
           type: 'path',
           agentId: this.id,
@@ -1704,6 +1910,9 @@ export class Agent {
           ...(update.progress !== undefined ? { progress: update.progress } : {}),
           ...(update.reason ? { reason: update.reason } : {}),
           ...(update.closest ? { closest: update.closest } : {}),
+          // Every journey taken while a piece is being placed is the builder going to the next
+          // block, which is the agent's own business rather than an answer to an operator.
+          ...(this.printer ? { errand: true as const } : {}),
         })
       },
       this.hands,

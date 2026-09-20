@@ -755,6 +755,7 @@ export const de: Copy = {
       mc: 'Minecraft',
       util: 'Hilfsmodule',
       path: 'Bewegung',
+      build: 'Bauen',
       connect: 'Verbindung',
       players: 'Spieler',
     },
@@ -926,6 +927,30 @@ export const de: Copy = {
         direct: 'Direkt, vom Host aus',
         onHost: '{name} — {host}',
         none: 'Kein Host in dieser Auswahl hält Proxys bereit.',
+      },
+      build_reach: {
+        label: 'Reichweite',
+        hint: 'Wie weit ein Block vom Agenten entfernt sein darf, um noch gesetzt zu werden, in Blöcken. Der Server hat sein eigenes Limit — fünf im Kreativmodus, viereinhalb im Überlebensmodus — und weist alles darüber ab. Ein größerer Wert setzt also nicht weiter, sondern gar nichts und schreibt für jeden Versuch einen Fehler ins Log.',
+        low: 'Nah',
+        high: 'Weit',
+      },
+      build_window: {
+        label: 'Gleichzeitig betrachtete Blöcke',
+        hint: 'Der Agent hat immer einen nächsten Block, bestimmt durch die Reihenfolge des Abschnitts — würde er nur diesen setzen, verbrächte er den Bau mit Laufen. So viele Blöcke danach werden daraufhin geprüft, ob sie von der aktuellen Position aus erreichbar sind. Größer füllt mehr pro Standort und kostet etwas mehr pro Durchgang. Standard 2048.',
+      },
+      build_rate: {
+        label: 'Setzgeschwindigkeit',
+        hint: 'Blöcke pro Sekunde, höchstens. Minecraft selbst kennt keine Grenze; die Paketgrenze eines Servers schon, und wer sie überschreitet, wird wegen Flutens geworfen statt gebremst. Standard 12.',
+        low: 'Ruhig',
+        high: 'Schnell',
+      },
+      build_tune: {
+        label: 'Zustände nachstellen',
+        hint: 'Ein Verstärker kommt mit einem Tick aus der Hand und ein Komparator im Vergleichsmodus, egal was das Schema wollte — das wird per Rechtsklick nach dem Setzen eingestellt, ebenso Türen, Falltüren, Hebel und Notenblöcke. Es kostet einen Klick je betroffenem Block und ist der Unterschied zwischen einer Redstone-Anlage, die richtig aussieht, und einer, die funktioniert.',
+        options: {
+          auto: 'In den geforderten Zustand klicken',
+          false: 'So lassen, wie gesetzt',
+        },
       },
       connect_family: {
         label: 'Adressfamilie',

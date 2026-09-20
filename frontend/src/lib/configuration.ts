@@ -229,6 +229,55 @@ export const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
+    /*
+     * How an agent puts a piece down.
+     *
+     * Its own group rather than part of movement, because building is a different job with a
+     * different failure: a badly set reach does not send an agent the long way round, it has the
+     * server refuse every placement it tries. The order the blocks go down in is not here — that
+     * belongs to the job, not to the agent, and is chosen when the build is started.
+     */
+    key: 'build',
+    fields: [
+      {
+        // The only number here the server also has an opinion about: past its own limit it
+        // refuses the interaction, so a larger number places nothing rather than placing further.
+        key: 'build.reach',
+        type: 'range',
+        min: 2,
+        max: 5.5,
+        step: 0.5,
+        default: '4.5',
+        readout: true,
+      },
+      {
+        key: 'build.window',
+        type: 'text',
+        placeholder: '2048',
+      },
+      {
+        key: 'build.rate',
+        type: 'range',
+        min: 1,
+        max: 40,
+        step: 1,
+        default: '12',
+        readout: true,
+      },
+      {
+        /*
+         * A choice rather than a switch, because unset has to mean *on* here and a switch cannot
+         * say that: it writes the empty string for off, which is the same thing an untouched
+         * setting holds. Finishing a state is part of building it correctly, so the default is to
+         * do it and the operator turns it off.
+         */
+        key: 'build.tune',
+        type: 'choice',
+        options: ['', 'false'],
+      },
+    ],
+  },
+  {
     key: 'connect',
     fields: [
       {

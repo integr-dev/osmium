@@ -941,6 +941,7 @@ export const en = {
       mc: 'Minecraft',
       util: 'Utility modules',
       path: 'Movement',
+      build: 'Building',
       connect: 'Connection',
       players: 'Players',
     },
@@ -1127,6 +1128,30 @@ export const en = {
         onHost: '{name} — {host}',
         /** Said in place of the picker when nothing can be picked. */
         none: 'No host in this selection is holding any proxies.',
+      },
+      build_reach: {
+        label: 'Reach',
+        hint: 'How far from the agent a block may be and still be placed, in blocks. The server has its own limit — five in creative, four and a half in survival — and refuses anything past it, so a larger number here does not place further, it places nothing and logs a failure for every block it tried.',
+        low: 'Close',
+        high: 'Far',
+      },
+      build_window: {
+        label: 'Blocks considered at once',
+        hint: 'The agent always has a next block, chosen by the order the piece is built in — but standing over it and placing only that one would spend the build walking. This is how many blocks past it are considered for placing from where the agent already stands. Larger fills more from each position and costs a little more per pass. Default 2048.',
+      },
+      build_rate: {
+        label: 'Placing speed',
+        hint: 'Blocks a second, at most. Minecraft has no limit of its own; a server\u2019s packet ceiling does, and an agent that crosses it is kicked for flooding rather than slowed down. Default 12.',
+        low: 'Gentle',
+        high: 'Quick',
+      },
+      build_tune: {
+        label: 'Finishing states',
+        hint: 'A repeater comes out of the hand on one tick and a comparator in compare mode, whatever the schematic asked for — those are set by right-clicking the block after it is down, along with doors, trapdoors, levers and note blocks. It costs a click per block that needs one, and it is the difference between a redstone build that looks right and one that works.',
+        options: {
+          auto: 'Click them into the state asked for',
+          false: 'Leave them as placed',
+        },
       },
       connect_family: {
         label: 'Address family',

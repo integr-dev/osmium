@@ -5,6 +5,7 @@ import { HostSocket } from './socket/client.ts'
 import { Proxies, proxiesPath } from './agent/proxy.ts'
 import { accountsPath, cachePath } from './token/paths.ts'
 import { AccountStore } from './token/store.ts'
+import { httpBase } from './agent/build/segment.ts'
 import { VERSION } from './version.ts'
 
 async function main(): Promise<void> {
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
     store,
     cache,
     proxies,
+    httpBase(url),
     (message) => socket.send(message),
     (frame) => socket.stream(frame),
   )

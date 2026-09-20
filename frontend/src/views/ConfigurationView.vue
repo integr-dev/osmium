@@ -1,7 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, type Component, type WritableComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Blocks, Check, Footprints, MessageSquare, Plug, RotateCcw, SlidersHorizontal, Users, Wrench } from 'lucide-vue-next'
+import {
+  Blocks,
+  Check,
+  Footprints,
+  Hammer,
+  MessageSquare,
+  Plug,
+  RotateCcw,
+  SlidersHorizontal,
+  Users,
+  Wrench,
+} from 'lucide-vue-next'
 import {
   groupLabel,
   optionLabel,
@@ -56,6 +67,9 @@ const ICONS: Record<string, Component> = {
   // The same glyph the Go button and the audit trail use, so the three places that mean
   // "movement" are recognisable as one another.
   path: Footprints,
+  // A hammer rather than another cube: `mc` already has the blocks, and this tab is about the
+  // work rather than about what is being built out of.
+  build: Hammer,
   connect: Plug,
   players: Users,
 }

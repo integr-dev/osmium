@@ -1,4 +1,5 @@
 import { Agent, type Credential } from '../agent/bot.ts'
+import { fetchSegment } from '../agent/build/segment.ts'
 import { log } from '../log.ts'
 import type { AgentSnapshot, Command, Event, Outbound, SetupResult } from '../protocol/message.ts'
 import { ActivityScope, LoginState, Severity } from '../protocol/wire.ts'
@@ -31,6 +32,12 @@ export class Dispatcher {
     private readonly cacheDirectory: string,
     /** What this host can route a session through. Named in a setting, resolved here. */
     private readonly proxies: Proxies,
+    /**
+     * Where Osmium is, for the one thing a host fetches rather than being sent: a piece's
+     * blocks. Derived from the socket address this process was started with, so the two can
+     * never be pointed at different Osmiums by accident.
+     */
+    private readonly base: string,
     private readonly send: (message: Outbound) => void,
     /** World updates. They ride the same socket as a binary frame, and are relayed rather than
      * read - nothing between here and the browser has any use for what is in them. */
@@ -163,6 +170,7 @@ export class Dispatcher {
     const agent = new Agent(agentId, credential, this.store, this.cacheDirectory, this.proxies, {
       event: (event) => this.forward(agentId, event),
       viewer: (frame) => this.stream(frame),
+      blocks: (jobId, segmentId, ticket) => fetchSegment(this.base, jobId, segmentId, ticket),
       result: (setup) => {
         const id = running.pending.shift()
         if (id === undefined) {

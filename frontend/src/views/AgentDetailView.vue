@@ -803,7 +803,13 @@ async function confirmRemove() {
                   {{ t('agents.walkStop') }}
                 </button>
               </div>
-              <p v-if="journeyLine" class="text-xs opacity-70">{{ journeyLine }}</p>
+              <!--
+                Always here, empty or not. A journey starts and ends several times a second while
+                an agent is building - each block it goes to is a journey - and a line that comes
+                and goes moves every button under it by its own height. Reserving the row costs one
+                line of nothing and stops the panel jumping under the pointer.
+              -->
+              <p class="min-h-4 text-xs opacity-70">{{ journeyLine }}</p>
             </div>
 
             <!-- Where it plays. Its own group because it is the one thing here that is not a session. -->

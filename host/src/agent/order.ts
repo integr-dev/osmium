@@ -128,3 +128,37 @@ export function* positions(min: BlockPos, max: BlockPos, order: PlacementOrder):
     }
   }
 }
+
+/**
+ * Where one position falls in that order, counted from zero.
+ *
+ * The inverse of {@link positions}, and what lets a builder sort the blocks it was given into the
+ * order it was told rather than walking the whole box to find the few thousand it cares about — a
+ * segment is a box of positions and only some of them are blocks.
+ *
+ * Positions outside the box have no rank and get `undefined`; nothing in a piece is outside its own
+ * box, so that is a bug being reported rather than a case to handle.
+ */
+export function rankOf(
+  min: BlockPos,
+  max: BlockPos,
+  order: PlacementOrder,
+  at: BlockPos,
+): number | undefined {
+  const low = { x: Math.min(min.x, max.x), y: Math.min(min.y, max.y), z: Math.min(min.z, max.z) }
+  const high = { x: Math.max(min.x, max.x), y: Math.max(min.y, max.y), z: Math.max(min.z, max.z) }
+  const span = { x: high.x - low.x + 1, y: high.y - low.y + 1, z: high.z - low.z + 1 }
+
+  if (at.x < low.x || at.y < low.y || at.z < low.z) return undefined
+  if (at.x > high.x || at.y > high.y || at.z > high.z) return undefined
+
+  const step = (sweep: Sweep): number =>
+    sweep.towards === 1 ? at[sweep.axis] - low[sweep.axis] : high[sweep.axis] - at[sweep.axis]
+
+  const [outer, middle, inner] = order.sweeps
+  const pass = step(outer) * span[middle.axis] + step(middle)
+  const backwards = order.serpentine && pass % 2 === 1
+  const along = backwards ? span[inner.axis] - 1 - step(inner) : step(inner)
+
+  return pass * span[inner.axis] + along
+}
