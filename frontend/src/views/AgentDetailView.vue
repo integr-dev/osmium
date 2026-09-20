@@ -756,6 +756,10 @@ async function confirmRemove() {
                     v-model="goTo.x"
                     class="input input-sm join-item w-20 text-center"
                     inputmode="numeric"
+                    name="waypoint-x"
+                    autocomplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
                     :placeholder="t('agents.walkX')"
                     :aria-label="t('agents.walkX')"
                   />
@@ -763,6 +767,10 @@ async function confirmRemove() {
                     v-model="goTo.y"
                     class="input input-sm join-item w-20 text-center"
                     inputmode="numeric"
+                    name="waypoint-y"
+                    autocomplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
                     :placeholder="t('agents.walkYAny')"
                     :aria-label="t('agents.walkY')"
                     :title="t('agents.walkYHint')"
@@ -771,6 +779,10 @@ async function confirmRemove() {
                     v-model="goTo.z"
                     class="input input-sm join-item w-20 text-center"
                     inputmode="numeric"
+                    name="waypoint-z"
+                    autocomplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
                     :placeholder="t('agents.walkZ')"
                     :aria-label="t('agents.walkZ')"
                   />

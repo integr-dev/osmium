@@ -359,9 +359,21 @@ async function removePlan() {
           <div class="mt-3 grid grid-cols-3 gap-2">
             <label v-for="axis in (['x', 'y', 'z'] as const)" :key="axis" class="form-control">
               <span class="label-text text-xs uppercase opacity-50">{{ axis }}</span>
+              <!--
+                `autocomplete` and a name of its own, because a bare numeric box one character
+                wide is exactly what a browser decides must be a phone number. Chrome guesses from
+                the name, the label and the surrounding fields, and three unnamed number inputs in
+                a row look enough like an address block that it offers to fill them from the
+                profile. An unrecognised token turns the guessing off where a plain `off` is
+                ignored.
+              -->
               <input
                 v-model.number="place[axis]"
                 type="number"
+                :name="`placement-${axis}`"
+                autocomplete="off"
+                data-1p-ignore
+                data-lpignore="true"
                 class="input input-sm w-full tabular-nums"
                 :disabled="!auth.can('schematic.write')"
               />
