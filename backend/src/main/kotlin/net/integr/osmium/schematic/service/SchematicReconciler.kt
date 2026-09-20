@@ -97,6 +97,23 @@ class SchematicReconciler(
      */
     private fun sweepOrphans(known: Set<Long>) {
         val orphans = storage.storedIds() - known
+
+        // **A store full of files and a table with nothing in it is not a store full of orphans.**
+        // It is far more likely to be a database that is not the one these files belong to — an
+        // empty test container, a restore that has not run yet, a connection pointed somewhere new.
+        // This is the most destructive thing here, and that is exactly the case where the evidence
+        // for it is weakest, so it does nothing and says so. A genuinely empty Osmium has no files
+        // to sweep either, and loses nothing by the caution.
+        if (known.isEmpty() && orphans.isNotEmpty()) {
+            log.warn(
+                "Not removing {} schematic file(s): this database has no schematics at all, which " +
+                    "is more likely to be the wrong database than {} abandoned uploads",
+                orphans.size,
+                orphans.size,
+            )
+            return
+        }
+
         orphans.forEach { id ->
             log.info("Removing schematic file {}, which no row owns", id)
             storage.delete(id)

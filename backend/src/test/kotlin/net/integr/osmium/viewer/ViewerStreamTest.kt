@@ -44,7 +44,17 @@ import java.util.concurrent.TimeUnit
  * a unit test - a frame larger than the container's default buffer, a relay that drops the session
  * it could not write to, and a `set_viewer` that never goes out because nobody is watching yet.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = [
+        // **Never the real storage directory**, for the reason spelled out in AbstractRestTest: this
+        // context boots SchematicReconciler too, and it sweeps every file whose row it cannot find
+        // against a Testcontainers database that has none. This test does not extend that base and
+        // therefore did not inherit the guard, which is how running the suite came to delete a
+        // developer's uploaded schematics while leaving their rows behind to fail on the next boot.
+        "osmium.schematic.directory=\${java.io.tmpdir}/osmium-schematic-test",
+    ],
+)
 @Import(TestcontainersConfiguration::class)
 class ViewerStreamTest {
 
