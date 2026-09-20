@@ -12,7 +12,19 @@ import type { BlockPos } from '../../protocol/wire.ts'
 import { blockCount, positionOf, stateAt, type Segment } from './segment.ts'
 import { compare, describe, type Mismatch, type Standing } from './compare.ts'
 import { itemFor } from './materials.ts'
-import { bare, opposite, parseSpec, planFor, STEP, type Face, type Option, type Plan } from './plan.ts'
+import { HOTBAR_FIRST } from '../inventory.ts'
+import {
+  bare,
+  derived,
+  opposite,
+  parseSpec,
+  planFor,
+  STEP,
+  tuneFor,
+  type Face,
+  type Option,
+  type Plan,
+} from './plan.ts'
 import type { BuildSettings } from './settings.ts'
 
 /**
@@ -75,6 +87,14 @@ const POLL_MS = 10
  */
 const CLICK_MS = 60
 
+/**
+ * How many hotbar squares hold materials.
+ *
+ * Eight of the nine. The ninth is kept empty for the tuning pass, which has to right-click a
+ * block with nothing in hand or it places one on it instead.
+ */
+const MATERIALS = 8
+
 /** How many times the tuning pass re-reads a block and clicks again before leaving it. */
 const TUNE_ROUNDS = 3
 
@@ -89,6 +109,22 @@ const TICK_MS = 50
  * quite the one asked for. Anything past this is somebody else having turned the agent.
  */
 const A_NUDGE = 0.01
+
+/**
+ * How long to let crouching reach the server before placing against anything.
+ *
+ * Two ticks and a little. Sneaking is what stops a right-click on a door, a chest, a furnace or a
+ * lectern *using* the thing instead of putting a block against it, and it is a control state rather
+ * than a packet this printer sends — so it lands a tick or two after it is asked for. Paid once per
+ * batch, against eight blocks.
+ */
+const CROUCH_MS = 120
+
+/** Movement below this in one pass is the agent standing still rather than travelling. */
+const A_STEP = 0.02
+
+/** Further than this from where it was sent, an agent is meant to still be travelling. */
+const A_TRIP = 3
 
 /**
  * How many blocks are gathered before going back for more.
@@ -107,6 +143,16 @@ const BATCH = 8
  * to; the piece then finishes with holes in it and nothing said about why.
  */
 const PATIENCE = 1_200
+
+/**
+ * How many passes of standing perfectly still count as stuck rather than slow.
+ *
+ * Four seconds. An agent on its way somewhere moves every tick; one that has not shifted in that
+ * long has been given somewhere it cannot get to - the far side of a wall it can reach through but
+ * not walk through. That block goes to the back and the sweep carries on, rather than the build
+ * stopping at a window for a minute.
+ */
+const STUCK = 80
 
 /**
  * How long to let a turn land before placing against it.
@@ -158,12 +204,48 @@ export class Printer {
   private laidThisSweep = 0
   /** Passes in a row with nothing to place, which is how a cursor nobody can reach is noticed. */
   private idle = 0
+  /** Where the agent was last stood, for telling travel from being stuck. */
+  private was: { x: number; y: number; z: number } | undefined
+  /** The block the standing spot was worked out for, so it is worked out once per block. */
+  private aimingFor: number | undefined
+  /** Where the agent was sent for that block. */
+  private sending: BlockPos | undefined
+
   /** Where the agent was last sent, so a move can be told from staying put. */
   private bound: string | undefined
   /** Sweeps in a row that placed nothing, which is the only honest sign of a piece that is stuck. */
   private fruitless = 0
+
+  /**
+   * What the agent is carrying in each of its first eight hotbar squares.
+   *
+   * **Conjuring a stack is expensive and changing squares is not.** A creative slot is set with
+   * a packet the server never answers, so the library waits out a fifth of a second to see
+   * whether it was refused — and a build that alternates between materials was paying that on
+   * nearly every block, into the same square every time. A player solves this by filling a
+   * hotbar once and pressing a number key, which costs one packet and no waiting at all.
+   *
+   * Eight squares, not nine: the last is kept empty, because a right-click with a block in hand
+   * places a block rather than setting a repeater — see {@link Printer.freeHand}.
+   */
+  private readonly hotbar: (string | undefined)[] = new Array(MATERIALS).fill(undefined)
+  /** When each square was last wanted, so the one evicted is the one nothing is using. */
+  private readonly used: number[] = new Array(MATERIALS).fill(0)
+  private clock = 0
+
+  /**
+   * Blocks that are down but not yet finished off with a right-click.
+   *
+   * Kept across batches rather than inside one. A block placed at the edge of the reach is often
+   * out of it again by the time the clicking pass comes round — the agent has moved on — and
+   * dropping it there leaves a repeater on the wrong tick for ever, with nothing to say so. It
+   * waits here instead, until the agent is near it again.
+   */
+  private pending: number[] = []
   /** The rotation this printer last put on the wire, to notice when something else moves it. */
   private turned: number | undefined
+  /** Where the current placement needs the agent pointing, so it can be said again on the way in. */
+  private facing: { yaw: number; pitch: number } | undefined
   private stopped = false
 
   /**
@@ -217,17 +299,29 @@ export class Printer {
       const settings = this.hooks.settings()
       const index = this.queue[this.cursor]!
 
-      // Re-aimed every pass and never waited on. The agent is usually already on its way, and
-      // this is what keeps it pointed at the work as the work moves along the course.
-      this.steer(this.standingSpot(this.positionOf(index)))
+      // Re-aimed as the cursor moves and never waited on. Worked out once per block rather than
+      // once per pass: choosing where to stand reads a box of the world around the work, and the
+      // answer cannot change while the cursor has not.
+      if (index !== this.aimingFor) {
+        this.aimingFor = index
+        this.sending = this.standingSpot(this.positionOf(index))
+      }
+      if (this.sending) this.steer(this.sending)
 
       const batch = this.inReach(settings)
       if (batch.length === 0) {
-        // Still travelling, most of the time. A cursor that stays out of reach for this long is
-        // one nothing can get to - a block walled in by the build around it - so it goes to the
-        // back and the next sweep tries again once its neighbours have changed.
+        // Still travelling, most of the time — so the patience here has to be longer than a flight
+        // across a piece. But an agent that is not travelling is a different thing entirely: it is
+        // hanging at a window it cannot get through, and waiting a minute to find that out is a
+        // minute of a build spent watching. Standing still with nothing in reach is the signal.
         this.idle += 1
-        if (this.idle > PATIENCE) {
+
+        // Standing still is only stuck if it is standing still somewhere other than where it was
+        // sent. An agent holding position over its work with nothing left in reach is waiting for
+        // a support, not wedged against a wall, and that one is what PATIENCE is for.
+        const moved = this.stirred()
+        const away = this.sending ? this.apart(this.sending) : 0
+        if (this.idle > PATIENCE || (!moved && away > A_TRIP && this.idle > STUCK)) {
           this.park(index)
           this.idle = 0
         }
@@ -355,6 +449,26 @@ export class Printer {
     return under !== null && under.boundingBox === 'block'
   }
 
+  /** How far the agent is from a square, flat out. */
+  private apart(spot: BlockPos): number {
+    const at = this.bot.entity?.position
+    if (!at) return 0
+
+    return Math.hypot(spot.x + 0.5 - at.x, spot.y - at.y, spot.z + 0.5 - at.z)
+  }
+
+  /** Whether the agent has moved at all since the last time this was asked. */
+  private stirred(): boolean {
+    const at = this.bot.entity?.position
+    if (!at) return false
+
+    const was = this.was
+    this.was = { x: at.x, y: at.y, z: at.z }
+    if (!was) return true
+
+    return Math.abs(at.x - was.x) + Math.abs(at.y - was.y) + Math.abs(at.z - was.z) > A_STEP
+  }
+
   /** Whether the agent can reach a square from wherever it is now. */
   private canReach(block: BlockPos, settings: BuildSettings): boolean {
     const at = this.bot.entity?.position
@@ -373,10 +487,15 @@ export class Printer {
    * on nothing.
    */
   private async work(batch: readonly number[], settings: BuildSettings, signal: AbortSignal): Promise<void> {
-    const tuning: number[] = []
     const gap = 1000 / settings.rate
 
-    this.bot.setControlState('sneak', true)
+    // **Waited for, not just asked for.** Crouching is a control state, so it reaches the server on
+    // the next physics tick — and a placement sent before it arrives is judged as a standing click.
+    // Against a door that opens it, against a chest it opens the chest, and no block goes down. It
+    // is the first blocks of every batch that pay, which is why it reads as an intermittent fault.
+    this.crouch(true)
+    await pause(CROUCH_MS)
+
     try {
       for (const index of batch) {
         if (signal.aborted || this.stopped) return
@@ -387,22 +506,29 @@ export class Printer {
         // it is still wanted, and the next pass either has it in reach or does not.
         if (!this.canReach(this.positionOf(index), settings)) continue
 
-        if (await this.lay(index)) tuning.push(index)
+        if (await this.lay(index)) this.pending.push(index)
         await pause(gap)
       }
     } finally {
-      this.bot.setControlState('sneak', false)
+      this.crouch(false)
     }
 
-    if (!settings.tune || tuning.length === 0) return
+    if (!settings.tune || this.pending.length === 0) return
 
     // One tick for the server to see the agent stand up, or the first click opens nothing.
     await pause(100)
-    for (const index of tuning) {
-      if (signal.aborted || this.stopped) return
-      if (!this.canReach(this.positionOf(index), settings)) continue
+
+    // Whatever is still out of reach waits rather than being dropped: the agent comes back past
+    // most of it, and a repeater silently left on the wrong tick is worse than a slow one.
+    const later: number[] = []
+    for (const index of this.pending) {
+      if (signal.aborted || this.stopped || !this.canReach(this.positionOf(index), settings)) {
+        later.push(index)
+        continue
+      }
       await this.tune(index)
     }
+    this.pending = later
 
     this.report()
   }
@@ -526,6 +652,10 @@ export class Printer {
         if (clicks === undefined || clicks === 0) break
 
         for (let click = 0; click < clicks; click += 1) {
+          // Standing, said again: crouching suppresses the very interaction this is for, and the
+          // drivers set it themselves while walking a ledge.
+          this.crouch(false)
+
           try {
             await this.bot.activateBlock(block)
           } catch (err) {
@@ -562,6 +692,13 @@ export class Printer {
 
     await this.aim(option)
 
+    // The last two things the server hears before the click, in the same breath as it. Both are
+    // state it reads at the moment it handles the placement, and both belong to something else the
+    // rest of the time: a flight turns the agent to face its travel every tick, and it clears the
+    // control states while it does — see `clearControlStates` in `path/fly.ts`.
+    this.reaim()
+    this.crouch(true)
+
     try {
       await placeRaw(this.bot, reference, new Vec3(normal.x, normal.y, normal.z), cursor)
     } catch (err) {
@@ -581,6 +718,10 @@ export class Printer {
     if (!here) return false
 
     const before = stacked(here)
+
+    this.reaim()
+    this.crouch(true)
+
     try {
       await placeRaw(this.bot, here, UP, new Vec3(0.5, 1, 0.5))
     } catch (err) {
@@ -606,6 +747,7 @@ export class Printer {
    */
   private async aim(option: Option): Promise<void> {
     const turn = rotationFor(this.bot, option)
+    this.facing = turn
     if (!turn) return
 
     // **The printer is not the only thing that turns the agent.** A flight or a walk faces the
@@ -626,45 +768,81 @@ export class Printer {
   }
 
   /**
-   * Where to stand to place a block.
+   * Where to send the agent to place a block: the square directly above it.
    *
-   * **Not the block's own square.** A builder standing in the hole cannot fill it, and sending
-   * the agent to the square the next block belongs in is sending it exactly where the work is —
-   * which then blocks the placement, blocks the route out, and leaves the piece going round
-   * sweep after sweep for blocks nobody can reach. That is not hypothetical: it is the
-   * difference between the rig, which hovers over the build, and an agent that walks to a
-   * coordinate and stands on it.
+   * **Over the course it is laying, and nothing cleverer than that.** A builder works from above:
+   * the layer below is finished and solid, the layer above is still empty, so the square over the
+   * work is both open and within easy reach of everything around it. It is also the one place that
+   * is reliably reachable — the agent flies down onto its own finished course rather than looking
+   * for a way into the middle of the build.
    *
-   * A neighbour at the same height is where a player stands — feet on the layer just finished,
-   * the next block at arm's length — and the ones the piece wants nothing in are the only ones
-   * that stay clear for the rest of the build.
+   * Earlier versions of this hunted for a neighbour at the same height, and then for any open
+   * pocket within a few blocks. Both were worse. Reach passes through a wall and travel does not,
+   * so a search for somewhere *in reach* happily picks the room on the other side of a window and
+   * leaves the agent pressed against the glass. Above the work needs no search and cannot pick the
+   * wrong side of anything.
+   *
+   * A flier is lifted one further by `aimFor` in `bot.ts`, so it holds over the square
+   * rather than landing in it.
    */
   private standingSpot(target: BlockPos): BlockPos {
-    for (const face of SIDEWAYS) {
-      const step = STEP[face]
-      const spot = { x: target.x + step.x, y: target.y, z: target.z + step.z }
+    return { x: target.x, y: target.y, z: target.z }
+  }
 
-      // Somewhere the piece will want a block is somewhere the agent will be in the way of.
-      if (stateAt(this.segment, spot) !== undefined) continue
-      if (stateAt(this.segment, { ...spot, y: spot.y + 1 }) !== undefined) continue
+  /**
+   * Says the rotation again, without waiting.
+   *
+   * {@link Printer.aim} lets a tick pass so the server applies the turn — and a tick is exactly
+   * long enough for the flight driver to face the agent back along its travel, which is then the
+   * last rotation the server has when the click arrives. So it is said once more, immediately
+   * before, with nothing in between.
+   */
+  private reaim(): void {
+    if (this.facing) snap(this.bot, this.facing.yaw, this.facing.pitch)
+  }
 
-      const floor = this.bot.blockAt(new Vec3(spot.x, spot.y - 1, spot.z))
-      if (!floor || floor.boundingBox !== 'block') continue
-
-      const feet = this.bot.blockAt(new Vec3(spot.x, spot.y, spot.z))
-      const head = this.bot.blockAt(new Vec3(spot.x, spot.y + 1, spot.z))
-      if (feet && !replaceable(feet)) continue
-      if (head && !replaceable(head)) continue
-
-      return spot
+  /**
+   * Tells the server whether the agent is crouching, as a packet rather than a control state.
+   *
+   * **Because the control state is not the printer's to hold.** Crouching is what stops a click on
+   * a door, a chest or a lectern using the thing instead of building against it, and
+   * `bot.setControlState` is a client-side flag that the walking and flying drivers overwrite —
+   * `fly.ts` calls `clearControlStates` outright. Sent here, in the same breath as the placement,
+   * it is true at the moment the server reads it and nothing else can have taken it away.
+   */
+  private crouch(on: boolean): void {
+    const bot = this.bot as unknown as {
+      supportFeature(name: string): boolean
+      entity: { id: number }
+      _client: { write(name: string, data: unknown): void }
     }
 
-    // Nothing clear beside it — every neighbour is a block, which is the ordinary case for a
-    // square down inside a build. One above the work, then, rather than the work itself: a fence,
-    // a gate and a wall all stand a block and a half tall, so an agent hovering in the square
-    // directly over one is standing in the space the block needs and the server refuses it. From
-    // a square higher the whole course is still in reach and nothing is in its way.
-    return { x: target.x, y: target.y + 1, z: target.z }
+    // **Both, because which one the server listens to is not what the library thinks.** Sneaking
+    // moved into `player_input` in 1.21.2, and mineflayer only starts sending that at 1.21.6 — so
+    // on everything between, it announces a crouch the server does not read, and every placement
+    // against a door, a chest or a lectern opens the thing instead. Sending both costs a few bytes
+    // and stops this depending on a version guess.
+    try {
+      bot._client.write('player_input', {
+        inputs: {
+          forward: false,
+          backward: false,
+          left: false,
+          right: false,
+          jump: false,
+          shift: on,
+          sprint: false,
+        },
+      })
+    } catch {
+      // Older than the packet. The action below is what those servers read.
+    }
+
+    try {
+      bot._client.write('entity_action', { entityId: bot.entity.id, actionId: on ? 0 : 1, jumpBoost: 0 })
+    } catch (err) {
+      log.debug(`Agent ${this.id} could not say it was crouching: ${(err as Error).message}`)
+    }
   }
 
   /** The first way of placing it whose reference block is already standing. */
@@ -683,12 +861,29 @@ export class Printer {
   /** Puts the named item in the agent's hand, making one if the server allows it. */
   private async hold(item: string | undefined): Promise<boolean> {
     if (!item) return false
-    if (this.bot.heldItem?.name === item) return true
 
-    const carried = this.bot.inventory.items().find((held) => held.name === item)
-    if (carried) {
+    if (this.bot.heldItem?.name === item) {
+      this.used[this.bot.quickBarSlot] = (this.clock += 1)
+      return true
+    }
+
+    // Already on the hotbar. One packet, nothing awaited: this is the whole point of keeping
+    // one, and it is the difference between a build that alternates materials freely and one
+    // that pays for a fresh stack every other block.
+    const carried = this.hotbar.indexOf(item)
+    if (carried >= 0 && this.bot.inventory.slots[HOTBAR_FIRST + carried]?.name === item) {
+      this.bot.setQuickBarSlot(carried)
+      this.used[carried] = (this.clock += 1)
+      return true
+    }
+
+    // In the backpack but not to hand. Survival takes this road for everything; in creative it
+    // is what picks up whatever an operator left lying in there.
+    const stored = this.bot.inventory.items().find((held) => held.name === item)
+    if (stored) {
       try {
-        await this.bot.equip(carried, 'hand')
+        await this.bot.equip(stored, 'hand')
+        this.remember(this.bot.quickBarSlot, item)
         return true
       } catch (err) {
         log.debug(`Agent ${this.id} could not hold ${item}: ${(err as Error).message}`)
@@ -704,14 +899,41 @@ export class Printer {
       return false
     }
 
+    // A fresh stack, into whichever square has gone longest without being wanted.
+    const square = this.spare()
     try {
-      this.bot.setQuickBarSlot(0)
-      await this.bot.creative.setInventorySlot(36, makeItem(this.bot, made.id, made.stackSize ?? 1))
-      return this.bot.heldItem?.name === item
+      this.bot.setQuickBarSlot(square)
+      // The count matters: a stack past what the item allows is discarded by the server without
+      // a word, and the agent then builds on with whatever was in its hand before.
+      await this.bot.creative.setInventorySlot(
+        HOTBAR_FIRST + square,
+        makeItem(this.bot, made.id, made.stackSize ?? 1),
+      )
+
+      if (this.bot.heldItem?.name !== item) return false
+      this.remember(square, item)
+      return true
     } catch (err) {
       log.debug(`Agent ${this.id} could not conjure ${item}: ${(err as Error).message}`)
+      this.hotbar[square] = undefined
       return false
     }
+  }
+
+  private remember(square: number, item: string): void {
+    if (square < 0 || square >= MATERIALS) return
+    this.hotbar[square] = item
+    this.used[square] = (this.clock += 1)
+  }
+
+  /** The hotbar square that has gone longest without being asked for. */
+  private spare(): number {
+    let oldest = 0
+    for (let square = 0; square < MATERIALS; square += 1) {
+      if (this.hotbar[square] === undefined) return square
+      if ((this.used[square] ?? 0) < (this.used[oldest] ?? 0)) oldest = square
+    }
+    return oldest
   }
 
   /**
@@ -744,7 +966,9 @@ export class Printer {
       this.laidThisSweep += 1
     }
 
-    this.review(at, wanted)
+    // Not yet: what a right-click is going to fix is not a difference until the clicking has
+    // happened, and the clicking happens once the whole batch is down.
+    this.review(at, wanted, true)
     this.report()
   }
 
@@ -755,13 +979,23 @@ export class Printer {
    * same thing next time. It is counted instead, by block and property, which is the reading that
    * says whether a rule in `plan.ts` is the wrong way round.
    */
-  private review(at: BlockPos, wanted: string): void {
+  private review(at: BlockPos, wanted: string, beforeTuning = false): void {
     const block = this.bot.blockAt(vector(at))
     const misses = compare(wanted, block ? standingOf(block) : undefined)
     if (misses.length === 0) return
 
+    // What a right-click is still going to set is not a difference yet.
+    const coming = beforeTuning ? new Set(tuneFor(wanted).map((knob) => knob.property)) : new Set<string>()
+
     const name = bare(parseSpec(wanted).name)
     for (const miss of misses) {
+      // A pane that has not met its neighbour yet, a fence with nothing to connect to: the world
+      // settles these itself as the blocks around them land, and a reading taken the instant a
+      // block goes down is always too early to judge them. Counting them buries the real misses
+      // under hundreds of lines about connections that came good on their own.
+      if (derived(miss.property)) continue
+      if (coming.has(miss.property)) continue
+
       const key = `${name}.${miss.property}`
       const seen = this.drift.get(key) ?? 0
       this.drift.set(key, seen + 1)
@@ -910,9 +1144,6 @@ function vector(at: BlockPos): Vec3 {
 }
 
 const UP = new Vec3(0, 1, 0)
-
-/** The four squares beside a block, which is where an agent stands to place it. */
-const SIDEWAYS: Face[] = ['north', 'south', 'east', 'west']
 
 /** Minecraft's own yaw: zero is south, and it turns clockwise from there. */
 const NOTCH_YAW: Record<'north' | 'south' | 'east' | 'west', number> = {

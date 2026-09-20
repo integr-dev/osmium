@@ -597,7 +597,11 @@ export function tuneFor(spec: string): Tune[] {
 
   // Doors, trapdoors and gates all toggle `open`, and a lever toggles `powered`. Clicking a door
   // moves both of its halves, which is why only the lower one is ever placed or clicked.
-  if (props['open'] !== undefined && OPENABLE.some((suffix) => name.endsWith(suffix))) {
+  // Iron is the exception, and it is not a small one: an iron door or trapdoor opens for
+  // redstone and for nothing else, so a hand on it does nothing at all. Clicking anyway spends
+  // three rounds of clicks and re-reads per block on a state that was never going to move, and
+  // reports it as drift afterwards either way.
+  if (props['open'] !== undefined && !name.startsWith('iron_') && OPENABLE.some((suffix) => name.endsWith(suffix))) {
     return [steps('open', ['false', 'true'])]
   }
   if (name === 'lever' && props['powered'] !== undefined) return [steps('powered', ['false', 'true'])]
@@ -613,6 +617,11 @@ export function tuneFor(spec: string): Tune[] {
   }
 
   return []
+}
+
+/** What the world settles for itself once the neighbours land — see {@link DERIVED}. */
+export function derived(property: string): boolean {
+  return DERIVED.has(property)
 }
 
 const OPENABLE = ['_door', '_trapdoor', '_fence_gate']
