@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { type Goal, type Neighbours, Search, type Step } from '../src/agent/path/search.ts'
+import { avoiding, type Goal, type Neighbours, Search, type Step } from '../src/agent/path/search.ts'
 
 /**
  * A square on a flat open plane, priced the way upstream prices one.
@@ -252,5 +252,49 @@ describe('the accounts a search keeps', () => {
 
     expect(found.outcome).toBe('found')
     expect(search.spent.asked).toBe(found.looked)
+  })
+})
+
+/**
+ * Squares a caller says to stay out of, which the world has nothing to say about.
+ *
+ * The case they exist for: the block a printer is about to lay is air until it is laid, so every
+ * route is free to end in it and the agent that takes one is then standing in the hole it came to
+ * fill.
+ */
+describe('squares to keep out of', () => {
+  const stepAt = (x: number, y: number, z: number): Step => ({ x, y, z, hash: `${x},${y},${z}`, cost: 1 })
+
+  /** Every square around one, including up and down, so head and feet can both be tested. */
+  const around: Neighbours = (from) =>
+    [-1, 0, 1].flatMap((dx) =>
+      [-1, 0, 1].flatMap((dy) =>
+        [-1, 0, 1].flatMap((dz) =>
+          dx === 0 && dy === 0 && dz === 0 ? [] : [stepAt(from.x + dx, from.y + dy, from.z + dz)],
+        ),
+      ),
+    )
+
+  it('offers everything when there are none', () => {
+    expect(avoiding(around, undefined)(stepAt(0, 64, 0))).toHaveLength(26)
+  })
+
+  it('does not offer the square itself', () => {
+    const offered = avoiding(around, (x, y, z) => x === 1 && y === 64 && z === 0)(stepAt(0, 64, 0))
+
+    expect(offered.map((step) => step.hash)).not.toContain('1,64,0')
+  })
+
+  it('does not offer the square under it, where the agent’s head would be in it', () => {
+    const offered = avoiding(around, (x, y, z) => x === 1 && y === 64 && z === 0)(stepAt(0, 64, 0))
+
+    expect(offered.map((step) => step.hash)).not.toContain('1,63,0')
+  })
+
+  it('leaves every other square alone', () => {
+    const offered = avoiding(around, (x, y, z) => x === 1 && y === 64 && z === 0)(stepAt(0, 64, 0))
+
+    expect(offered).toHaveLength(24)
+    expect(offered.map((step) => step.hash)).toContain('1,65,0')
   })
 })

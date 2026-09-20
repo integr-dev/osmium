@@ -64,6 +64,30 @@ describe('the air a player fits in', () => {
     expect(standable(world(), 0, 70, 0)).toBe(false)
     expect(standable(world({ '0,63,0': { name: 'magma_block', boundingBox: 'block' } }), 0, 64, 0)).toBe(false)
   })
+
+  /**
+   * A square a block is about to go in: open air by every reading of the world, and the one place
+   * the agent must not be.
+   */
+  it('stays out of a square it was told to keep out of, and the one under it', () => {
+    const keepOut = (x: number, y: number, z: number): boolean => x === 1 && y === 70 && z === 0
+    const hashes = flyingFrom(world(), keepOut)(cell(0, 70, 0)).map((step) => step.hash)
+
+    expect(hashes).not.toContain('1,70,0')
+    expect(hashes).not.toContain('1,69,0')
+    // Over it and away from it are both still offered: only the square and its body are refused.
+    expect(hashes).toContain('0,71,0')
+    expect(hashes).toContain('-1,70,0')
+  })
+
+  it('does not sweep a diagonal through one either', () => {
+    const keepOut = (x: number, y: number, z: number): boolean => x === 1 && y === 70 && z === 0
+    const hashes = flyingFrom(world(), keepOut)(cell(0, 70, 0)).map((step) => step.hash)
+
+    // The move one across and one along passes through the keep-out square on its way.
+    expect(hashes).not.toContain('1,70,1')
+    expect(hashes).toContain('0,70,1')
+  })
 })
 
 describe('corners', () => {
@@ -226,6 +250,24 @@ describe('flying', () => {
       { name: 'abilities', flags: 2 },
       { name: 'abilities', flags: 0 },
     ])
+  })
+
+  /**
+   * The printer's case, end to end through the engine: the square the next block goes in is open
+   * air with finished ground under it, which is exactly what a flight picks to land in.
+   */
+  it('does not come to rest in a square it was told to keep out of', () => {
+    const agent = flyer(world(), false, {
+      keepOut: (x: number, y: number, z: number) => x === 12 && y === 64 && z === 0,
+    })
+    agent.driver.go({ x: 12, y: 64, z: 0 }, 1)
+
+    for (let at = 0; at < 400 && agent.said.arrived === 0; at++) agent.tick()
+
+    const at = agent.entity.position
+    expect(agent.said.arrived).toBe(1)
+    expect([Math.floor(at.x), Math.floor(at.y), Math.floor(at.z)]).not.toEqual([12, 64, 0])
+    expect(Math.hypot(at.x - 12.5, at.z - 0.5)).toBeLessThan(2)
   })
 
   it('flies to a spot in open air along a straight line, and holds there', () => {

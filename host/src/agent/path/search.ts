@@ -50,6 +50,33 @@ export interface Goal {
 export type Neighbours = (from: Step) => readonly Step[]
 
 /**
+ * Squares the agent must not be in, whatever the world says about them.
+ *
+ * **Air the route may not use.** Everything else a search knows about a square comes from the
+ * world, and the world is behind: the block a printer is about to lay is air right up until it is
+ * laid, so every route is free to fly through it and the agent that does is then standing in the
+ * hole it came to fill. The placement is refused, and the square it was refused for is the one
+ * square the agent cannot move out of the way of, because it is being sent there.
+ *
+ * Asked per square rather than given as a list, so a caller with thousands of them - a whole
+ * segment, say - is not copying them into the search.
+ */
+export type KeepOut = (x: number, y: number, z: number) => boolean
+
+/**
+ * The same neighbours, minus the ones that would put the agent somewhere it must keep out of.
+ *
+ * **Both squares of it.** An agent is two blocks tall, so standing in the square under a keep-out
+ * puts its head in one - which is just as much in the way of a block going in there as its feet
+ * would be.
+ */
+export function avoiding(neighbours: Neighbours, keepOut: KeepOut | undefined): Neighbours {
+  if (!keepOut) return neighbours
+
+  return (from) => neighbours(from).filter((step) => !keepOut(step.x, step.y, step.z) && !keepOut(step.x, step.y + 1, step.z))
+}
+
+/**
  * How a search ended.
  *
  * `partial` is the one that matters, and the reason this is reported rather than inferred: it means

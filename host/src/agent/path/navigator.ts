@@ -20,6 +20,7 @@ import type { Schedule } from '../schedule.ts'
 import { Driver, type Rules } from './drive.ts'
 import { FlightDriver, type FlightRules, type Permit, takeoff } from './fly.ts'
 import { over, standsAt, swimmingHeight, type Walk, within } from './ground.ts'
+import type { KeepOut } from './search.ts'
 import type { PathSettings } from './settings.ts'
 import { advanced, nodesOf, type PathNode, type PathWork } from './track.ts'
 import { movementsFor, type Refused } from './walk.ts'
@@ -58,6 +59,16 @@ export interface Waypoint {
   x: number
   y?: number
   z: number
+  /**
+   * How close counts as having been here, when the usual tolerance is too loose.
+   *
+   * **A waypoint on the way is ordinarily a hint**, satisfied from three blocks off, because it
+   * came from a coarse pass over map tiles that knows the shape of the ground and nothing about
+   * what is standing on it. A caller that means a particular square — a printer sending an agent
+   * *straight up* before it crosses a build, where three blocks of slack is the whole of the climb
+   * — says so here and gets the square it asked for.
+   */
+  within?: number
 }
 
 /** What the navigator needs to know about flying from the session it runs in. */
@@ -175,6 +186,11 @@ const REFUSED_FOR_MS = 60_000
  */
 const REFUSALS_MOST = 5
 
+/** The keep-out as a property or as nothing at all, which is the difference the types insist on. */
+function spread(keepOut: KeepOut | undefined): { keepOut?: KeepOut } {
+  return keepOut ? { keepOut } : {}
+}
+
 /** Every control an agent can be holding, for saying which it was. mineflayer's own names. */
 const CONTROLS = ['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'] as const
 
@@ -252,6 +268,15 @@ export class AgentNavigator {
    * a clean map. They still expire, because a door that was shut may not be.
    */
   private refused: Refused[] = []
+
+  /**
+   * Squares this journey may not put the agent in, by `x,y,z`.
+   *
+   * Told to it by whoever sent it — see {@link AgentNavigator.goto} — and not a thing the world
+   * knows anything about: these are squares that are air right now and are about to stop being,
+   * which no amount of looking at the world reveals.
+   */
+  private barred = new Set<string>()
 
   /**
    * How many times the server has moved this agent itself since the last time anybody asked.
@@ -359,18 +384,25 @@ export class AgentNavigator {
   }
 
   /**
-   * Go to the last of these, by way of the rest.
+   * Go to the last of these, by way of the rest, and stay out of those.
    *
    * A list rather than a point because a route may be handed down whole. The interface sends one
    * entry today; a coarse pass over the map tiles the fleet has already charted will send the shape
    * of a journey nobody's loaded chunks can see all of at once.
+   *
+   * **`keepOut` belongs to the journey, not to the agent.** Squares to stay out of are a fact
+   * about what the caller is in the middle of doing — the printer's next block is air until it is
+   * laid, and an agent that flew into it is standing where the block goes — and the honest scope
+   * for that is the journey it was said with. So it is stated per `goto` and cleared by the next
+   * one, rather than being a setting somebody has to remember to take back off.
    */
-  goto(waypoints: readonly Waypoint[]): void {
+  goto(waypoints: readonly Waypoint[], keepOut: readonly { x: number; y: number; z: number }[] = []): void {
     if (waypoints.length === 0) {
       log.warn(`Agent ${this.id} was told to go nowhere`)
       return
     }
 
+    this.barred = new Set(keepOut.map((square) => `${square.x},${square.y},${square.z}`))
     this.waypoints = [...waypoints]
     this.at = 0
     this.refused = []
@@ -587,7 +619,21 @@ export class AgentNavigator {
       lean: wanted.lean,
       slice: SLICE,
       budget: THINK_MS,
+      ...spread(this.keepOut()),
     }
+  }
+
+  /**
+   * The squares to stay out of, as the engines ask about them.
+   *
+   * Nothing at all when there are none, so a search that has no exclusions to honour does not pay
+   * a call per square looked at for the privilege of being told so.
+   */
+  private keepOut(): KeepOut | undefined {
+    if (this.barred.size === 0) return undefined
+
+    const barred = this.barred
+    return (x, y, z) => barred.has(`${x},${y},${z}`)
   }
 
   /** Sets the engine at the waypoint it is on. */
@@ -597,7 +643,7 @@ export class AgentNavigator {
 
     const wanted = this.wanted()
     const last = this.at === this.waypoints.length - 1
-    const near = last ? GOAL_NEAR : WAYPOINT_NEAR
+    const near = target.within ?? (last ? GOAL_NEAR : WAYPOINT_NEAR)
 
     this.nodes = []
     this.work = []
@@ -896,6 +942,7 @@ export class AgentNavigator {
       forced: !permit.mayFly,
       speed: permit.speed,
       boost: wanted.flySpeed,
+      ...spread(this.keepOut()),
     }
   }
 

@@ -536,3 +536,51 @@ describe('advanced', () => {
     expect(advanced(line, { x: 0, y: 64, z: 0 }, -5)).toBe(0)
   })
 })
+
+/**
+ * Squares the caller says to stay out of, which is a different thing from a refusal.
+ *
+ * A refusal is priced, because a route with no alternative should still be walked. A keep-out is
+ * absolute, because the square is one the agent is about to put a block in and standing in it is
+ * the one thing that stops the block going down. See `KeepOut` in `search.ts`.
+ */
+describe('walking around a square to keep out of', () => {
+  const registry = registryFor('1.20.4')
+  const Block = blockLoader(registry)
+
+  /** Flat stone to y 63, air above, everywhere. */
+  function ground(): Bot {
+    const blockAt = (at: { x: number; y: number; z: number }) => {
+      const block = Block.fromStateId(registry.blocksByName[at.y <= 63 ? 'stone' : 'air']!.defaultState!, 0)
+      block.position = at as never
+      return block
+    }
+    return { registry, blockAt, game: { minY: -64 }, entity: { effects: {} } } as unknown as Bot
+  }
+
+  const here = { x: 0, y: 64, z: 0, hash: '0,64,0', cost: 0, toPlace: [], toBreak: [], remainingBlocks: 0 }
+
+  const stepsFrom = (keepOut?: (x: number, y: number, z: number) => boolean) =>
+    walkingFrom(movementsFor(ground(), pathSettingsFrom({})), keepOut)(here).map((step) => step.hash)
+
+  it('walks east when nothing is in the way', () => {
+    expect(stepsFrom()).toContain('1,64,0')
+  })
+
+  it('will not step into one', () => {
+    expect(stepsFrom((x, y, z) => x === 1 && y === 64 && z === 0)).not.toContain('1,64,0')
+  })
+
+  it('will not stand under one either, which would put its head in it', () => {
+    // The square its head would be in, standing one east: a block going in there is as blocked by
+    // an agent's head as by its feet.
+    expect(stepsFrom((x, y, z) => x === 1 && y === 65 && z === 0)).not.toContain('1,64,0')
+  })
+
+  it('leaves every other way alone', () => {
+    const steps = stepsFrom((x, y, z) => x === 1 && y === 64 && z === 0)
+
+    expect(steps).toContain('-1,64,0')
+    expect(steps).toContain('0,64,1')
+  })
+})

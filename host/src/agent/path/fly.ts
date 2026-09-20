@@ -4,7 +4,7 @@ import { Vec3 as WorldVec } from 'vec3'
 import { log } from '../../log.ts'
 import type { Driven } from './drive.ts'
 import { standsAt, type Walk } from './ground.ts'
-import { type Goal, type Neighbours, Search } from './search.ts'
+import { type Goal, type KeepOut, type Neighbours, Search } from './search.ts'
 import type { PathSettings } from './settings.ts'
 
 /**
@@ -79,6 +79,8 @@ export interface FlightRules {
   speed: number
   /** What the operator multiplies the flying speed by. See `path.flySpeed`. */
   boost: number
+  /** Squares the agent must stay out of, whatever the world says is in them. See {@link KeepOut}. */
+  keepOut?: KeepOut
 }
 
 /** What a flying agent tells the journey layer, beyond what walking does. */
@@ -216,10 +218,18 @@ const OFFSETS: ReadonlyArray<readonly [number, number, number]> = [-1, 0, 1].fla
  * so every one of those has to have room too - otherwise the route threads a gap the physics will
  * not let the agent through, and it hangs against the edge of a block.
  */
-export function flyingFrom(blockAt: BlockAt): Neighbours {
+export function flyingFrom(blockAt: BlockAt, keepOut?: KeepOut): Neighbours {
   // Each block read once per search. The margin kept from burning blocks reads a few dozen around
   // every square, and neighbouring squares share nearly all of them.
   const cached = remembered(blockAt)
+
+  // A square to keep out of is treated as though it had no room in it, which puts it out of the
+  // sweep as well as out of the destinations — a diagonal that passes through the square a block
+  // is about to go in is as much in the way as hovering in it.
+  const fits = keepOut
+    ? (x: number, y: number, z: number) =>
+        room(cached, x, y, z) && !keepOut(x, y, z) && !keepOut(x, y + 1, z)
+    : (x: number, y: number, z: number) => room(cached, x, y, z)
 
   return (from) => {
     const steps: Walk[] = []
@@ -228,8 +238,8 @@ export function flyingFrom(blockAt: BlockAt): Neighbours {
       const x = from.x + dx
       const y = from.y + dy
       const z = from.z + dz
-      if (!room(cached, x, y, z)) continue
-      if (!swept(cached, from, dx, dy, dz)) continue
+      if (!fits(x, y, z)) continue
+      if (!swept(fits, from, dx, dy, dz)) continue
       // Dear rather than closed, so a search that starts beside lava can still find its way off.
       const hot = !clearOfHeat(cached, x + 0.5, y + CLEARANCE, z + 0.5)
       const wet = WET.has(cached(x, y, z)?.name ?? '') || WET.has(cached(x, y + 1, z)?.name ?? '')
@@ -241,7 +251,13 @@ export function flyingFrom(blockAt: BlockAt): Neighbours {
 }
 
 /** Whether every square a one-square move passes through on the way has room. */
-function swept(blockAt: BlockAt, from: Point, dx: number, dy: number, dz: number): boolean {
+function swept(
+  fits: (x: number, y: number, z: number) => boolean,
+  from: Point,
+  dx: number,
+  dy: number,
+  dz: number,
+): boolean {
   // Each partial offset of the move: along one of its axes, or two, short of all of them.
   for (let mask = 1; mask < 7; mask++) {
     const ox = mask & 1 ? dx : 0
@@ -253,7 +269,7 @@ function swept(blockAt: BlockAt, from: Point, dx: number, dy: number, dz: number
     // And one naming every axis it does use is the destination, which is already checked.
     if (ox === dx && oy === dy && oz === dz) continue
 
-    if (!room(blockAt, from.x + ox, from.y + oy, from.z + oz)) return false
+    if (!fits(from.x + ox, from.y + oy, from.z + oz)) return false
   }
 
   return true
@@ -267,12 +283,19 @@ function swept(blockAt: BlockAt, from: Point, dx: number, dy: number, dz: number
  * agent standing still. The estimate is the straight-line distance, which is exactly what flying
  * there costs in open air, leaned on by `path.haste` the way walking's is.
  */
-export function aloftNear(target: Point, range: number, lean: number, blockAt: BlockAt): Goal {
+export function aloftNear(target: Point, range: number, lean: number, blockAt: BlockAt, keepOut?: KeepOut): Goal {
   return {
     reached: (at) =>
-      Math.hypot(target.x - at.x, target.y - at.y, target.z - at.z) <= range && room(blockAt, at.x, at.y, at.z),
+      Math.hypot(target.x - at.x, target.y - at.y, target.z - at.z) <= range &&
+      room(blockAt, at.x, at.y, at.z) &&
+      !barred(keepOut, at.x, at.y, at.z),
     estimate: (at) => Math.hypot(target.x - at.x, target.y - at.y, target.z - at.z) * lean,
   }
+}
+
+/** Whether an agent standing in a square would have any part of itself in one it must keep out of. */
+function barred(keepOut: KeepOut | undefined, x: number, y: number, z: number): boolean {
+  return keepOut !== undefined && (keepOut(x, y, z) || keepOut(x, y + 1, z))
 }
 
 /**
@@ -281,9 +304,19 @@ export function aloftNear(target: Point, range: number, lean: number, blockAt: B
  * Landed on rather than hovered over, because a column has no height to hover at: its ground is the
  * only height the operator can have meant.
  */
-export function landingOver(x: number, z: number, range: number, lean: number, blockAt: BlockAt): Goal {
+export function landingOver(
+  x: number,
+  z: number,
+  range: number,
+  lean: number,
+  blockAt: BlockAt,
+  keepOut?: KeepOut,
+): Goal {
   return {
-    reached: (at) => Math.hypot(x - at.x, z - at.z) <= range && standable(blockAt, at.x, at.y, at.z),
+    reached: (at) =>
+      Math.hypot(x - at.x, z - at.z) <= range &&
+      standable(blockAt, at.x, at.y, at.z) &&
+      !barred(keepOut, at.x, at.y, at.z),
     estimate: (at) => Math.hypot(x - at.x, z - at.z) * lean,
   }
 }
@@ -813,10 +846,10 @@ export class FlightDriver {
     // when it is not - which is somewhere in the loaded world, so the search has an answer to find.
     const hop = far ? this.alongTheWay(here, target, STRETCHES[0]!) : undefined
     const goal = hop
-      ? aloftNear(hop, 3, rules.lean, this.blocks)
+      ? aloftNear(hop, 3, rules.lean, this.blocks, rules.keepOut)
       : target.y === undefined
-        ? landingOver(target.x, target.z, this.range, rules.lean, this.blocks)
-        : aloftNear({ x: target.x, y: target.y, z: target.z }, this.range, rules.lean, this.blocks)
+        ? landingOver(target.x, target.z, this.range, rules.lean, this.blocks, rules.keepOut)
+        : aloftNear({ x: target.x, y: target.y, z: target.z }, this.range, rules.lean, this.blocks, rules.keepOut)
 
     log.debug(
       `Agent ${this.id} ${spot ? `has no straight line to ${spot.x} ${spot.y} ${spot.z}` : `knows nowhere to stop near ${place(target)}`}` +
@@ -825,7 +858,7 @@ export class FlightDriver {
 
     this.short = hop !== undefined
     this.searchedAt = Date.now()
-    this.plotting = new Search(this.startCell(here, raised), flyingFrom(this.blocks), goal, {
+    this.plotting = new Search(this.startCell(here, raised), flyingFrom(this.blocks, rules.keepOut), goal, {
       budget: rules.budget,
       slice: rules.slice,
       reach: rules.reach,
@@ -1612,7 +1645,9 @@ export class FlightDriver {
       const x = Math.floor(target.x)
       const z = Math.floor(target.z)
       for (let y = WORLD_TOP; y > WORLD_BOTTOM; y--) {
-        if (this.blocks(x, y - 1, z)?.boundingBox === 'block') return standable(this.blocks, x, y, z) ? cell(x, y, z) : undefined
+        if (this.blocks(x, y - 1, z)?.boundingBox !== 'block') continue
+        const free = standable(this.blocks, x, y, z) && !barred(this.rules?.keepOut, x, y, z)
+        return free ? cell(x, y, z) : undefined
       }
       return undefined
     }
@@ -1628,6 +1663,10 @@ export class FlightDriver {
           const z = Math.floor(target.z) + dz
           const off = Math.hypot(target.x - x, target.y - y, target.z - z)
           if (off > this.range || !room(this.blocks, x, y, z)) continue
+          // **Where a flight stops is where it gets in the way.** The straight line to a spot is
+          // flown without a search, so a square a block is about to go in has to be refused here
+          // as well, or the agent lands in the hole and the search never gets a say.
+          if (barred(this.rules?.keepOut, x, y, z)) continue
 
           const lands = standable(this.blocks, x, y, z)
           const distance = Math.hypot(from.x - x, from.y - y, from.z - z)

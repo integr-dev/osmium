@@ -10,7 +10,7 @@ import { log } from '../../log.ts'
 import { RANK, type Schedule } from '../schedule.ts'
 import { reachFor } from '../tool.ts'
 import { type Placement, standingAt, standsAt, type Walk, walkingFrom, within } from './ground.ts'
-import { type Goal, type Route, Search } from './search.ts'
+import { type Goal, type KeepOut, type Route, Search } from './search.ts'
 
 /**
  * The executor, which is ours.
@@ -285,6 +285,13 @@ export interface Rules {
    * route quality gets the lean agents always had.
    */
   lean?: number
+  /**
+   * Squares the agent must stay out of, whatever the world says is in them.
+   *
+   * Not an obstacle and not a refusal: nothing is there yet, which is the point — see
+   * {@link KeepOut}. A route is simply never drawn through one.
+   */
+  keepOut?: KeepOut
 }
 
 /**
@@ -832,7 +839,7 @@ export class Driver {
     const goal = this.goal
     if (!goal || !this.bot.entity) return
 
-    const { movements, reach, slice, budget } = this.rules()
+    const { movements, reach, slice, budget, keepOut } = this.rules()
 
     this.sections = []
     this.mending = undefined
@@ -855,7 +862,7 @@ export class Driver {
       `Agent ${this.id} is planning from ${from.x} ${from.y} ${from.z} with ${this.carrying} blocks to build with`,
     )
 
-    this.plotting = new Search(from, walkingFrom(movements), goal, { budget, slice, reach, measured: MEASURED })
+    this.plotting = new Search(from, walkingFrom(movements, keepOut), goal, { budget, slice, reach, measured: MEASURED })
   }
 
   /**
@@ -1204,7 +1211,7 @@ export class Driver {
     for (const section of this.sections) left += section.steps.length
     if (left > LOOKAHEAD) return
 
-    const { movements, reach, slice, budget } = this.rules()
+    const { movements, reach, slice, budget, keepOut } = this.rules()
     this.slice = slice
 
     // From the square the route ends in, carrying the blocks the route expects to have left by
@@ -1214,7 +1221,7 @@ export class Driver {
         `${left} steps ahead of it`,
     )
 
-    this.extending = new Search(last.end, walkingFrom(movements), goal, { budget, slice, reach, measured: MEASURED })
+    this.extending = new Search(last.end, walkingFrom(movements, keepOut), goal, { budget, slice, reach, measured: MEASURED })
   }
 
   /**
@@ -2864,7 +2871,7 @@ export class Driver {
 
     if (this.mending) return
 
-    const { movements, reach, slice, budget, lean } = this.rules()
+    const { movements, reach, slice, budget, lean, keepOut } = this.rules()
 
     // From where the agent stands for the stretch under its feet, and from the end of the one before
     // for any other - so what comes back joins onto what is already being walked.
@@ -2880,7 +2887,7 @@ export class Driver {
 
     this.mending = {
       index,
-      search: new Search(from, walkingFrom(movements), within(section.end.x, section.end.y, section.end.z, 0.5, lean), {
+      search: new Search(from, walkingFrom(movements, keepOut), within(section.end.x, section.end.y, section.end.z, 0.5, lean), {
         budget,
         slice,
         reach,

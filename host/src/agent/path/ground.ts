@@ -2,7 +2,7 @@ import type { Bot } from 'mineflayer'
 import type { Movements } from 'mineflayer-pathfinder'
 import { Vec3 as WorldVec } from 'vec3'
 
-import type { Goal, Neighbours, Step } from './search.ts'
+import { avoiding, type Goal, type KeepOut, type Neighbours, type Step } from './search.ts'
 
 /**
  * Walking, as something the search can ask questions of.
@@ -60,16 +60,18 @@ export interface Placement {
   useOne?: boolean
 }
 
-/** What can be reached from a square, by walking, under these rules. */
-export function walkingFrom(movements: Movements): Neighbours {
+/** What can be reached from a square, by walking, under these rules and out of these squares. */
+export function walkingFrom(movements: Movements, keepOut?: KeepOut): Neighbours {
   // The objects go straight through: upstream builds `Move`s, and a `Move` is a `Walk`.
-  return (from) => {
+  const offered: Neighbours = (from) => {
     const walks = movements.getNeighbors(from as never) as unknown as readonly Walk[]
     const swims = SWIMS.map(([dx, dy, dz]) => swimming(movements, from as Walk, dx, dy, dz)).filter(
       (step): step is Walk => step !== undefined,
     )
     return swims.length > 0 ? [...walks, ...swims] : walks
   }
+
+  return avoiding(offered, keepOut)
 }
 
 /**
