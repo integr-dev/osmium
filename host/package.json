@@ -1,6 +1,6 @@
 {
   "name": "osmium-host",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "description": "Runs Minecraft agents for an Osmium backend.",
@@ -15,6 +15,7 @@
     "start": "node dist/index.js",
     "dev": "npm run build && node dist/index.js",
     "link": "npm run build && node dist/bin/link.js",
+    "rig": "npm run build && node dist/bin/rig.js",
     "test": "vitest run",
     "test:ci": "vitest run --reporter=github-actions --reporter=junit --outputFile.junit=test-results/junit.xml",
     "test:watch": "vitest",

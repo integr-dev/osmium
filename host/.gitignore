@@ -8,3 +8,7 @@ test-results
 # the volume. These hold Minecraft credentials and must never reach a commit.
 accounts.json
 msa/
+
+# What the build rig writes: the torture schematic and its index, regenerated on demand. Anchored,
+# because `src/rig` is the rig itself and is very much committed.
+/rig/

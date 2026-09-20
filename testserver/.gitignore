@@ -1,0 +1,27 @@
+# Everything the server makes or downloads. The scripts are the repository's
+# share of this directory; the 50 MB jar and the world are not.
+*.jar
+cache/
+config/
+libraries/
+logs/
+plugins/
+versions/
+world/
+world_nether/
+world_the_end/
+banned-ips.json
+banned-players.json
+eula.txt
+ops.json
+permissions.yml
+server.properties
+usercache.json
+whitelist.json
+bukkit.yml
+spigot.yml
+commands.yml
+help.yml
+.console_history
+jar.txt
+version_history.json
