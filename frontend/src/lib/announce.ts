@@ -69,6 +69,12 @@ function goalOf(goal: AgentPathResponse['goal']): string {
  *
  * `IDLE` says nothing: it is what a stop reports, and the operator who pressed stop knows.
  *
+ * **Nor does an errand.** An agent building a piece walks to the next block a few hundred times,
+ * and every one of those arrivals went exactly as asked — by nobody. Announcing them buries the
+ * journeys an operator did ask for under a column of successes about a build that has its own
+ * progress. A failure still speaks: an agent that cannot reach its own work is worth knowing
+ * about however it came to be going there.
+ *
  * **All of them are the latest word on one agent's journey**, so each replaces the last: an arrival
  * is out of date once the same agent reports a failure, and "only getting as close as it can" once
  * the journey has ended either way. An arrival also fades by itself - it is the one outcome that
@@ -81,6 +87,7 @@ export function pathNotice(path: AgentPathResponse, name: string): Notice | null
 
   switch (path.state) {
     case 'ARRIVED':
+      if (path.errand) return null
       return { kind: 'success', key: 'toast.path.arrived', params, to, topic, fade: true }
     case 'FAILED': {
       if (!path.reason) return { kind: 'error', key: 'toast.path.failed', params, to, topic }
@@ -91,7 +98,8 @@ export function pathNotice(path: AgentPathResponse, name: string): Notice | null
     }
     case 'PLANNING':
     case 'MOVING':
-      return path.closest ? { kind: 'warning', key: 'toast.path.closest', params, to, topic } : null
+      if (path.errand || !path.closest) return null
+      return { kind: 'warning', key: 'toast.path.closest', params, to, topic }
     default:
       return null
   }

@@ -143,6 +143,8 @@ function event(body: Event): Json {
       put(payload, 'work', body.work)
       put(payload, 'progress', body.progress)
       put(payload, 'reason', body.reason)
+      put(payload, 'closest', body.closest)
+      put(payload, 'errand', body.errand)
 
       return { kind: 'event', type: 'path', agentId: body.agentId, payload }
     }

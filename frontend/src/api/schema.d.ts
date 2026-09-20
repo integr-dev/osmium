@@ -2313,6 +2313,8 @@ export interface components {
             reason?: string | null;
             /** @description True on the one update that says the route only gets as close as the search could, because nothing the agent can walk, climb or build reaches the goal. The agent is still walking it. False on every other update. */
             closest?: boolean;
+            /** @description True while the agent is going somewhere for itself rather than because anybody asked — walking to the next block of a piece it is building. The journey is real and is drawn like any other; it is simply not worth announcing. */
+            errand?: boolean;
         };
         /** @description Where a journey ends. Unlike a point on the path, this may name a column: an operator picking somewhere off an uncharted part of the map has no height to give. */
         PathGoalResponse: {

@@ -711,6 +711,7 @@ class HostReportService(
             progress = payload.get("progress")?.takeIf { it.isNumber }?.asInt(),
             reason = payload.get("reason")?.asString()?.takeIf { it.isNotBlank() },
             closest = payload.get("closest")?.asBoolean() == true,
+            errand = payload.get("errand")?.asBoolean() == true,
         )
 
         pathStore.record(update)

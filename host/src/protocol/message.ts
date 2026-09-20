@@ -224,6 +224,15 @@ export type Event =
       reason?: string
       /** The route only gets as close as the search could. Once per journey - see `PathUpdate`. */
       closest?: true
+      /**
+       * This journey is the agent's own business rather than an answer to anybody.
+       *
+       * A builder walks to the next block a few hundred times a piece. Those arrivals are real
+       * and belong on the map, and announcing every one of them in the corner buries the
+       * journeys an operator actually asked for. The interface still draws the line; it just
+       * says nothing about it.
+       */
+      errand?: true
     }
   /** How far through a segment we are. A total placed by *us* since being handed it, never a delta:
    * the backend reports the higher of this and what was standing when we took the piece. */

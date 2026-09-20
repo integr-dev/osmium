@@ -81,6 +81,13 @@ data class AgentPathResponse(
             "is still walking it. False on every other update.",
     )
     val closest: Boolean = false,
+
+    @field:Schema(
+        description = "True while the agent is going somewhere for itself rather than because " +
+            "anybody asked — walking to the next block of a piece it is building. The journey " +
+            "is real and is drawn like any other; it is simply not worth announcing.",
+    )
+    val errand: Boolean = false,
 )
 
 @Schema(description = "What the route means to do to one block.")

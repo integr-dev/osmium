@@ -54,6 +54,19 @@ describe('what a journey says', () => {
   })
 
   /**
+   * A builder walks to the next block a few hundred times a piece, and each of those arrivals
+   * went exactly as asked, by nobody. Said out loud they bury the journeys an operator did ask
+   * for. A failure still speaks: an agent that cannot reach its own work is worth knowing about.
+   */
+  it('says nothing about an errand that went well, and speaks when one does not', () => {
+    expect(pathNotice(path({ state: 'ARRIVED', errand: true }), 'Mason_6')).toBeNull()
+    expect(pathNotice(path({ state: 'MOVING', errand: true, closest: true }), 'Mason_6')).toBeNull()
+
+    const failed = pathNotice(path({ state: 'FAILED', errand: true, reason: 'there is no route there' }), 'Mason_6')
+    expect(failed?.key).toBe('toast.path.none')
+  })
+
+  /**
    * Every one is the latest word on that agent's journey, so the next replaces it - and only an
    * arrival, which says nothing needs doing, closes by itself.
    */
