@@ -32,16 +32,20 @@ happened.
 > given**: it fetches its piece of the schematic, walks the order the operator chose, and works one
 > course at a time, placing everything it can reach as it travels rather than stopping over every
 > block — stairs the right way round, slabs on the right half of the square, doors hinged the side
-> they were drawn on, repeaters clicked to the delay the design asked for. What it could not
-> reproduce it reports rather than quietly accepting.
+> they were drawn on, repeaters clicked to the delay the design asked for. It keeps out of the
+> square it is about to fill, goes back for what it could not place while that course is still open
+> and while it is passing anyway, climbs before it crosses to the next layer, and — where the order
+> asks for it — snakes those layers so each one starts where the last ended. What it could not
+> reproduce it reports rather than quietly accepting, and a piece that ends short says which blocks
+> and why.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
-| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 648 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 635 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, streams what it sees, and builds the pieces it is given, 681 tests |
+| [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 649 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 639 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, streams what it sees, and builds the pieces it is given, 696 tests |
 | [`testserver/`](testserver/) | A Paper server and the rig that builds on it: a schematic made of nothing but the block states that are hard to place, built for real and read back. | Two scripts; see its README |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
@@ -133,9 +137,9 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 648 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 635 tests
-cd host && npm test              # 681 tests
+cd backend && ./gradlew test     # 649 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 639 tests
+cd host && npm test              # 696 tests
 ```
 
 Placing blocks is the one thing none of those can settle, because what a placement turns into is

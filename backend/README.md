@@ -1394,8 +1394,9 @@ the substitutions, and the schematic it was divided from — and reads nothing b
 that does not leave half a building under one rule set and half under another.
 
 **The order a piece is placed in rides on the piece.** `placement_order` is three signed axes with
-an optional trailing `s` — `y+z+x+s` — and the job carries one per segment rather than one for the
-build, because the pieces are not alike: a floor is swept differently from the wall above it. What
+up to two trailing `s` — `y+z+x+s` snakes the rows, `y+z+x+ss` the layers with them — and the job
+carries one per segment rather than one for the build, because the pieces are not alike: a floor is
+swept differently from the wall above it. What
 starts a job sends the order for every piece and an override for the ones that differ.
 
 **Carried, not interpreted.** Which block comes next is the host's arithmetic; this backend checks

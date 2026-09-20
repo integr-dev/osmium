@@ -78,7 +78,7 @@ pointing an agent at it and reading the activity feed to find out it was wrong.
 ### Tests, CI and the image
 
 ```
-npm test          # 563 tests
+npm test          # 696 tests
 npm run build     # tsc, which type-checks as it emits
 ```
 
@@ -357,6 +357,7 @@ one would otherwise run on defaults with nothing saying so.
 | `build.window` | How many blocks past the next one are considered for placing from where the agent already stands. A count rather than a distance, because the order is a sequence and the blocks near in it are the ones whose supports are already there. Unset means 2048. Read per pass. |
 | `build.rate` | Blocks a second, at most. Minecraft has no limit of its own; a server’s packet ceiling does, and an agent that crosses it is kicked for flooding rather than slowed. Unset means 12. Read per pass. |
 | `build.tune` | `false` to leave a block in whatever state placing produced. Unset finishes the state off with right-clicks — a repeater’s delay, a comparator’s mode, a door left open, a note block’s pitch. **Unset means on**, which is the other way round from every other switch here, because finishing the state is part of placing the block correctly. Read per pass. |
+| `build.airPlace` | `false` to place a block only against one that is already standing. Unset fills an empty square by clicking the empty square itself: a placement names a position, a face and a point on it, and a server checks that the block may *be* where it lands rather than that anything was really clicked — air is replaceable, so the block goes in where the click was. Offered only for blocks that read nothing off the face they were placed against; a stair, a torch or a slab takes its state from what it was put on and is never placed this way. **Unset means on**, for the same reason `build.tune` is: a piece regularly asks for a block whose neighbours come later in its own order, and refusing those loses them. A server that does check the click refuses the placement, which costs the one click the refusal was going to cost anyway. Read per pass. |
 | `path.haste` | `0` to `100`: how far the search may trade a shorter route for finding one sooner. `0` is the most direct route the rules allow, however long it takes to work out; `100` commits soonest and the route can wander. Matters most on long bridges and towers, where the search is slowest. Unset, or anything that is not a number, means `50`, which is how agents always planned. Read when a waypoint is sought. |
 | `connect.proxy` | The name of one of this host's proxies — see **Proxies** below. Blank connects from this machine's own address. A name this host does not hold is **not** a fallback to a direct connection: the attempt is refused, an activity entry says why, and the agent reports `failed_connection`. |
 | `connect.family` | `ipv4` or `ipv6` to dial only that kind of address; blank leaves the choice to this machine, which is what a name with both an A and an AAAA record otherwise gets. The socket is opened here with the family set rather than the name resolved first, so the hostname is still what the handshake carries and a proxy in front of the server keeps routing on it. The version ping takes the same family as the session it precedes. **Ignored while `connect.proxy` names a proxy**: the proxy opens the connection, and what it dials with is its own. Read when a session opens. |
@@ -696,11 +697,17 @@ Events carry no `id` and are never answered.
 
 ### 4.0 The order a piece is built in
 
-`build_segment` carries an `order`: three signed axes, outermost first, with an optional trailing
+`build_segment` carries an `order`: three signed axes, outermost first, with up to two trailing
 `s`. `y+z+x+` is bottom to top, north to south, west to east — `+y` is up, `+z` is south and `+x`
 is east, as everywhere else on this wire — and `y+z+x+s` is the same with the innermost sweep running
 back the way it came instead of returning to the start of every row, so the agent turns around where
 it is standing.
+
+`y+z+x+ss` snakes the middle sweep as well. Without it every layer starts at the corner the last one
+started at, so finishing a layer means crossing the whole build to get back there — on a wide piece
+the longest journey the agent makes, and it makes one per layer. With it a layer begins where the one
+below it ended: the agent rises a block and carries straight on. The outermost sweep is untouched, so
+a piece built bottom to top still is.
 
 `agent/order.ts` turns it into positions, lazily: a piece of a real build is millions of blocks, and
 the only one a builder needs is the next.
@@ -1798,6 +1805,40 @@ Stopping at the first pass that placed nothing leaves exactly those blocks out, 
 a printer that skips things and never comes back for them. Two in a row means nothing is going
 to change.
 
+**Try a parked block again whenever the agent comes past it.** The reasons a placement is refused
+mostly expire, and a block already put to the back is cheapest to retry at the moment its square
+is in reach anyway — one click, against the minutes a sweep of a large piece costs. Five tries,
+and they are **their own budget, not the sweep's**: a try in passing is made from wherever the
+agent happens to be, which is the worst position it will ever have, while the sweep's attempt is
+made from the position chosen for that block. Counted together, the cheap attempts spend the good
+one's chance — measured on a piece of 1889 blocks, that ended the build with no sweeps at all and
+nine blocks that earlier builds had recovered on the second pass. Parked blocks are also behind
+the cursor, and a sweep only looks forward, so they need a list of their own to be found again.
+
+**Finish a course before rising off it.** Moving up is the one move a piece cannot take back: a
+square that was merely refused becomes a square with a layer on top of it, and the sweep that
+would have come back for it finds it walled in. So when the cursor would rise, wind it back to
+whatever is still unplaced on the course it is leaving and walk that course again. Bound it by a
+count — three goes — and *not* by whether the last go placed anything: the blocks a round goes
+back for are the only ones left on that course, so a round that fails to place them places
+nothing by definition and would cut itself off after one.
+
+**Name the reason a block was refused.** "Nine blocks could not be placed" is a number, not a
+fault report. Which of the seven reasons it was — nothing standing to place it against, nothing
+under it to hold it up, no item in hand, the server refused it, it could not be got to — is the
+difference between a rule in `plan.ts` being wrong, an order that puts a support too late, and a
+square nothing can ever go in. Keep the last reason per block and report the tally when the piece
+ends short.
+
+**A square with nothing around it can still be filled, for some blocks.** A placement names a
+position, a face and a point on that face; a server checks that the block may *be* where it would
+land, not that anything was really clicked. Air is replaceable, so clicking the empty square
+itself puts the block in it — which is the answer for the blocks a piece asks for before their
+neighbours come up in its own order. **Only where there is no face to get wrong**: a stair, a
+slab, a torch or a hopper reads the face it was put on, and one placed against nothing is a
+different block from the one asked for. A server that does check the click refuses it, costing
+the click the refusal was going to cost anyway.
+
 **Never fall back to a face that makes the wrong state.** For a hopper, a ladder, a wall torch or a
 pillar, the face clicked *is* the state. Reaching for a different face because the right one has no
 block behind it yet does not place the block late, it places the wrong block for ever — and the
@@ -1822,12 +1863,21 @@ against what was last sent before trusting that memory. This is worth about elev
 a hundred and eighty-three, and it only shows up in production, because a rig that teleports
 never turns the agent between placements.
 
-**Do not stand where the block goes, and mind how tall it is.** An agent that lands in the
-square it is about to fill cannot fill it, and the flight will land unless the destination has
-nothing under it — so aim a block *above* the work rather than at a square to stand on. A fence,
-a gate and a wall stand a block and a half tall, so hovering directly over one is standing in
-the space it needs and the server refuses every attempt; where there is nowhere clear beside the
-work, take another block of height.
+**Do not stand where the block goes — and say so to whatever does the travelling.** An agent that
+comes down in the square it is about to fill cannot fill it, and a flight lands wherever the
+ground makes landing nicest, which over a half-built course is exactly there. Aiming a block
+*above* the work is most of the answer; the rest is that the route has to be told, because the
+square is air and nothing the navigator can see rules it out. A journey here names the squares
+it must keep its agent out of — feet *and* head, since standing under one puts a head in it —
+and the next block is always one of them. Without it the placement is refused, and a refusal on
+the block the printer is actually up to is the one it counts against that block.
+
+**Climb before you cross, rather than on the way.** Asked for a point one course higher, a
+flight draws the one straight line to it — which over the width of a build rises a block in
+fifty, so it crosses at very nearly the height it started at, grazing everything standing on the
+course being left and passing through the squares the next one is about to be laid in. Rise
+where you stand, then cross. It costs the one block of climb, and the crossing is then a clear
+line over a finished layer.
 
 **Place what falls only once its floor is there.** Sand, gravel, concrete powder and anvils go
 in, read back correct, and are a block lower a tick later. Nothing about the placement fails, so

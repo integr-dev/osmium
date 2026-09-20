@@ -311,6 +311,13 @@ The last step is what an agent does *inside* a piece: three nested sweeps — an
 one, an inner one, each run one way or the other — and whether the innermost snakes back the way it
 came instead of returning to the start of every row.
 
+**And whether the layers snake too**, which is the same saving one axis out. With only the rows
+snaking, every layer still begins at the corner the last one began at, so finishing a layer sends
+the agent across the whole build to get back there — on a wide piece the longest journey it makes,
+once per layer. Snaking the layers has one begin where the one below it ended. It is offered under
+the rows toggle and only while that is on: a layer that reverses while its rows restart at the same
+end saves nothing and reads as a mistake in the preview.
+
 **Three sweeps rather than a list of named orders.** "Bottom-up, north to south" is a name, and the
 names multiply: eight directions, six axis orders, snaking or not, and the operator still cannot say
 the one the fourth name would have been. Six controls say all forty-eight.
@@ -327,7 +334,8 @@ decision unless somebody wants more — and the pieces really are not alike: a f
 differently from the wall above it. The list marks which pieces carry their own, and "same
 everywhere" puts them back.
 
-`y+z+x+` is the wire form, three signed axes with an optional trailing `s`: it travels as one token
+`y+z+x+` is the wire form, three signed axes with up to two trailing `s` — one for the rows, two for
+the layers as well: it travels as one token
 to a column on the segment, to the host on the command that dispatches it, and back through a log
 where it is readable. `lib/placementOrder.ts` holds the arithmetic, including the sequence the
 animation walks, and has its own spec.
