@@ -598,6 +598,13 @@ already read as "no", so writing the word would give "turned off" and "never tou
 of one answer. A setting where off and unset genuinely differ is a `choice` with three options
 instead, which is what `mc.knockback` is — unset means "decide from the version".
 
+**And a switch is therefore the wrong control when unset has to mean *on*.** `build.tune` is the
+one of those: finishing a placed block off with the right-clicks that set a repeater’s delay or a
+comparator’s mode is part of placing it correctly, so the default is to do it and the operator
+turns it off. A switch cannot say that — its off is the empty string, which is what an untouched
+setting already holds — so it is a `choice` between "click them into the state asked for" and
+"leave them as placed".
+
 **A trade between two things is a slider, not a number.** `path.haste` runs from the shortest route
 to the fastest search, and both ends are named rather than numbered, because 0 and 100 do not say
 which way is which. Unset draws the thumb in the middle, which is also what a host takes unset to

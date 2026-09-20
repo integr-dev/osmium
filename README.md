@@ -28,15 +28,21 @@ happened.
 > coordinate, or asked for in game — and it walks there, or flies where the server allows it: high
 > over whatever is in the way, climbing and gliding down along the way. The route is drawn in both
 > views as it goes, and what came of it is announced in the corner, linked back to the agent. An
-> administrator can see what all of that costs on disk, and free it.
+> administrator can see what all of that costs on disk, and free it. **An agent builds what it is
+> given**: it fetches its piece of the schematic, walks the order the operator chose, and works one
+> course at a time, placing everything it can reach as it travels rather than stopping over every
+> block — stairs the right way round, slabs on the right half of the square, doors hinged the side
+> they were drawn on, repeaters clicked to the delay the design asked for. What it could not
+> reproduce it reports rather than quietly accepting.
 
 ## Modules
 
 | Module | What it is | State |
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 648 tests |
-| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 634 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, and streams what it sees; does not build yet, 640 tests |
+| [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 635 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, streams what it sees, and builds the pieces it is given, 681 tests |
+| [`testserver/`](testserver/) | A Paper server and the rig that builds on it: a schematic made of nothing but the block states that are hard to place, built for real and read back. | Two scripts; see its README |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
 ## The one idea worth knowing
@@ -127,10 +133,17 @@ So the split is "runs the agents" versus "runs the people". Details in
 ## Tests
 
 ```bash
-cd backend && ./gradlew test     # 632 tests; needs Docker for Testcontainers
-cd frontend && npm test          # 545 tests
-cd host && npm test              # 563 tests
+cd backend && ./gradlew test     # 648 tests; needs Docker for Testcontainers
+cd frontend && npm test          # 635 tests
+cd host && npm test              # 681 tests
 ```
+
+Placing blocks is the one thing none of those can settle, because what a placement turns into is
+the *server's* arithmetic. So it has a rig of its own: `testserver/` puts up a real Paper server
+and `cd host && npm run rig -- run` builds 183 specimens on it — every family of block whose state
+depends on where the agent stood, what it clicked and which way it looked — then reads the world
+back and reports every square that came out as something else. See
+[`testserver/README.md`](testserver/README.md).
 
 The backend covers every route — happy paths, 401s, per-role 403s, 409s, 429s, 503s — plus real
 clients over real host sockets, and unit tests on an injected clock for anything about the passage of

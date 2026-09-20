@@ -353,6 +353,10 @@ one would otherwise run on defaults with nothing saying so.
 | `path.flyCommand` | A command that asks the server for flight, such as `/fly`, run as chat. Only in `fly` mode, only when flight is not already granted - most such commands toggle, and running one on an agent that may fly would take the leave away - and once per journey. The agent waits up to three seconds for an `abilities` packet granting flight; if none comes, `path.forceFly` decides whether it flies anyway or walks. |
 | `path.flySpeed` | What flying and climbing speed is multiplied by, from `0.1` to `10`. Unset, or anything that is not a positive number, is `1`: the server's own fly speed from its `abilities` packet. Read when a waypoint is sought. |
 | `path.forceFly` | `true` to fly where the server has not granted flight, after `path.flyCommand` has been tried. The agent comes down 0.04 blocks every forty ticks, which is what stops vanilla kicking a player for floating, and claims to be on the ground on every movement packet, through the same rewrite as `util.noFall`. Anti-cheat plugins see through both. Only read in `fly` mode. |
+| `build.reach` | How far from the agent a block may be and still be placed, in blocks. The one number here the *server* also has an opinion about: vanilla refuses an interaction past its own limit — five in creative, four and a half in survival — so a larger number does not place further, it places nothing and logs a failure per block. Unset means 4.5. Read per pass. |
+| `build.window` | How many blocks past the next one are considered for placing from where the agent already stands. A count rather than a distance, because the order is a sequence and the blocks near in it are the ones whose supports are already there. Unset means 2048. Read per pass. |
+| `build.rate` | Blocks a second, at most. Minecraft has no limit of its own; a server’s packet ceiling does, and an agent that crosses it is kicked for flooding rather than slowed. Unset means 12. Read per pass. |
+| `build.tune` | `false` to leave a block in whatever state placing produced. Unset finishes the state off with right-clicks — a repeater’s delay, a comparator’s mode, a door left open, a note block’s pitch. **Unset means on**, which is the other way round from every other switch here, because finishing the state is part of placing the block correctly. Read per pass. |
 | `path.haste` | `0` to `100`: how far the search may trade a shorter route for finding one sooner. `0` is the most direct route the rules allow, however long it takes to work out; `100` commits soonest and the route can wander. Matters most on long bridges and towers, where the search is slowest. Unset, or anything that is not a number, means `50`, which is how agents always planned. Read when a waypoint is sought. |
 | `connect.proxy` | The name of one of this host's proxies — see **Proxies** below. Blank connects from this machine's own address. A name this host does not hold is **not** a fallback to a direct connection: the attempt is refused, an activity entry says why, and the agent reports `failed_connection`. |
 | `connect.family` | `ipv4` or `ipv6` to dial only that kind of address; blank leaves the choice to this machine, which is what a name with both an A and an AAAA record otherwise gets. The socket is opened here with the family set rather than the name resolved first, so the hostname is still what the handshake carries and a proxy in front of the server keeps routing on it. The version ping takes the same family as the session it precedes. **Ignored while `connect.proxy` names a proxy**: the proxy opens the connection, and what it dials with is its own. Read when a session opens. |
@@ -1255,6 +1259,8 @@ with work queued, which is the thing §5.1 spends its length avoiding.
 | `progress` | no | how far along `nodes` the agent is |
 | `reason` | no | why it gave up, for `failed` |
 | `closest` | no | `true` once per journey: the route being walked only gets as close as the search could, because nothing the agent can walk, climb or build reaches the goal. Absent otherwise |
+| `errand` | no | `true` while the agent is going somewhere for itself rather than because anybody asked — walking to the next block of a piece it is building. The journey is real and is drawn like any other; it is simply not announced. A builder makes a few hundred of these per piece, and every one of them arriving in the corner buries the journeys an operator did ask for |
+| `errand` | no | `true` while the agent is going somewhere for itself rather than because anybody asked — walking to the next block of a piece it is building. The journey is real and is drawn like any other; it is simply not announced. A builder makes a few hundred of these per piece, and every one of them arriving in the corner buries the journeys an operator did ask for |
 
 **`reason` is read by the interface, word for word.** It is written for a log, and the interface
 matches these whole to give each a sentence of its own in the operator's language: `there is no
@@ -1741,6 +1747,126 @@ size; say `done` and the backend fills it in.
 drops out has its segment returned to the pool automatically and handed back when it returns, so
 there is nothing to report and nothing to retry. Reporting `failed` on a disconnect turns a blip
 into something an operator has to come and look at.
+
+### 7.6 Placing the blocks
+
+The segment says *what* goes where. Turning that into an agent that puts it there is the rest of
+the work, and almost all of it is one problem: **a client cannot ask for a block state.** It can
+stand somewhere, look somewhere, and right-click one face of one block that is already there. What
+comes out of that is the server deriving a state from those three things — differently for stairs,
+for slabs, for doors, for hoppers, for observers — and a printer is that derivation written
+backwards.
+
+This host does it in `src/agent/build/`. What is written here is what a host implementing it from
+scratch would otherwise learn the slow way.
+
+**One next block, and everything else in reach of it on the same course.** The order on the
+command decides which block is next; that one is the cursor. Everything else the piece wants
+within reach goes down with it, in the same order, so the agent is not making a journey per
+block.
+
+**Hold the batch to the cursor’s own height.** Reach is a ball and a build is not. Take
+everything inside it and the agent works two or three courses at once, laying part of the next
+one before this one is finished — which looks wrong to anybody watching and puts blocks up
+before the things meant to hold them. One course at a time is what a person does, and the
+cursor already says which one it is.
+
+**Never wait to arrive.** Re-aim at the cursor every pass and place whatever is in reach while
+travelling, the way somebody flying along a wall does. Waiting for each arrival is what makes a
+printer pause every few blocks, and the pauses are most of the build: the same piece went from
+about five blocks a second to about nine when the wait came out. Only re-plan the route when
+the answer actually changes — a navigator asked again every tick spends the build searching.
+
+**Measure reach to the nearest corner of the block, not its middle.** That is what the server
+measures. Taking the centre refuses placements along the edge of the reach that the server
+would have accepted, which reads as a printer that misses blocks it was standing next to.
+
+**Park what you cannot place; sweep again.** A block whose support has not arrived, a square
+something is standing in, a placement the server refused — none of those are failures, they are
+"not yet". Put them at the back and go round again when the sweep ends.
+
+**But only the block the cursor is on may be parked.** Everything else in a batch is there
+because it happened to be in reach on the way past, and most of the reasons one of those is
+refused stop being true a moment later. Putting such a block to the back on that evidence
+spends a chance it never really had; the cursor is coming to it anyway, and *that* attempt —
+made from the one position chosen for it — is the one worth judging. It is also what keeps the
+loop finite: the cursor always advances, so every block eventually becomes the cursor.
+
+**One fruitless sweep is not the end.** The commonest reason a placement is refused is the
+agent standing in the square it wants, and the agent is somewhere else by the next sweep.
+Stopping at the first pass that placed nothing leaves exactly those blocks out, which reads as
+a printer that skips things and never comes back for them. Two in a row means nothing is going
+to change.
+
+**Never fall back to a face that makes the wrong state.** For a hopper, a ladder, a wall torch or a
+pillar, the face clicked *is* the state. Reaching for a different face because the right one has no
+block behind it yet does not place the block late, it places the wrong block for ever — and the
+square is then occupied, so no later sweep fixes it. Waiting is correct.
+
+**Send the rotation yourself, and give it a tick.** What the server derives is decided by where
+the agent was looking *when the placement arrived*. A client library that turns the agent a few
+degrees per tick will have it pointing several blocks behind by the time anything lands, and the
+whole build comes out one state late — which looks exactly like the rules being wrong.
+mineflayer in particular has a `force` flag on `look` that records the rotation as sent and
+never sends it, which is worse. Write the rotation packet yourself, then wait out a tick before
+clicking, and only pay that tick when the agent actually had to turn.
+
+The tick is not the client being slow, and it is tempting to remove because the two packets are
+written in one breath and arrive in order. Measured both ways on the rig: with the tick, all 183
+specimens come out right; without it, fourteen face whichever way the block before them did.
+
+**And remember the rotation is not yours alone.** A flight or a walk turns the agent to face
+the way it is going, on every tick. A printer that remembers "already pointing the right way"
+from the last block is right only while nothing else has moved the head — so check the yaw
+against what was last sent before trusting that memory. This is worth about eleven specimens in
+a hundred and eighty-three, and it only shows up in production, because a rig that teleports
+never turns the agent between placements.
+
+**Do not stand where the block goes, and mind how tall it is.** An agent that lands in the
+square it is about to fill cannot fill it, and the flight will land unless the destination has
+nothing under it — so aim a block *above* the work rather than at a square to stand on. A fence,
+a gate and a wall stand a block and a half tall, so hovering directly over one is standing in
+the space it needs and the server refuses every attempt; where there is nowhere clear beside the
+work, take another block of height.
+
+**Place what falls only once its floor is there.** Sand, gravel, concrete powder and anvils go
+in, read back correct, and are a block lower a tick later. Nothing about the placement fails, so
+the check has to come first.
+
+**Hold a stack the item allows.** A creative-mode slot set with more items than the item stacks to
+is thrown away by the server *without a word* — 64 beds, 64 signs. The agent then builds the rest
+of the piece out of whatever was in its hand before, and the squares it wanted are occupied by the
+wrong block. Read the stack size from the registry.
+
+**Crouch while placing, stand up to click.** A right-click on a chest, a furnace or a door opens it
+unless the agent is sneaking; the same right-click is how a repeater’s delay is set, and that only
+works standing. Two passes over a batch, not a toggle per block: crouching is a control state that
+takes a tick to reach the server.
+
+**Placing is not the end of it.** A repeater leaves the hand on one tick and a comparator in
+compare mode, whatever the schematic asked for. Doors, trapdoors and gates come closed; note blocks
+come tuned to nothing. Those are right-clicks after the block is down, counted from one honest
+reading rather than clicked until the block looks right — a block read a tick after it was clicked
+reads as it was before, so "click until it agrees" never stops.
+
+**Report what you could not reproduce.** Waterlogging with no water to hand, a campfire the
+schematic wants put out: place the block and say what is still wrong with it. Retrying does not
+help — the same plan produces the same state — and refusing to place it at all leaves a hole.
+
+**Read what a refusal says.** A `409` on the fetch is not a failure to report: it means the
+piece is not yours any more, and the body says which of the reasons it is. Throwing that text
+away costs hours — a job that would not start looked like a race between the command and the
+ticket for most of a day, and the backend had been saying `The file for … is missing from
+storage` the whole time.
+
+#### Checking it
+
+None of the above is verifiable by reading. `testserver/` puts up a real Paper server and
+`npm run rig` builds a schematic made of nothing but the awkward cases — 183 specimens, each on its
+own pedestal with the scaffolding its state needs — then reads the world back and reports every
+square that came out as something else, grouped by family. `npm run rig -- probe <item>` asks the
+server what one placement turns into from each of the six directions an agent can look, which is
+how every contested entry in the table was settled. See `testserver/README.md`.
 
 ## 8. A minimally compliant host
 
