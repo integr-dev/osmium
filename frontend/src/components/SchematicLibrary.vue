@@ -615,7 +615,13 @@ function turnAround(axis: Axis): void {
 }
 
 function snake(on: boolean): void {
-  setOrder({ ...edited.value, serpentine: on })
+  // Snaking the layers only means anything while the rows snake, so turning the rows off takes it
+  // with them rather than leaving a token nobody chose to be stored.
+  setOrder({ ...edited.value, serpentine: on, snakeLayers: on && edited.value.snakeLayers })
+}
+
+function snakeLayers(on: boolean): void {
+  setOrder({ ...edited.value, snakeLayers: on })
 }
 
 // A division is what the orders are about: pieces that no longer exist cannot keep their own.
@@ -1283,6 +1289,29 @@ function progressOf(schematic: SchematicResponse): string | null {
             <span class="flex flex-col gap-0.5">
               <span class="text-sm">{{ t('order.snake') }}</span>
               <span class="text-xs opacity-60">{{ t('order.snakeHint') }}</span>
+            </span>
+          </label>
+
+          <!--
+            Snaking the layers is the same idea one axis out, and it is only a choice once the rows
+            snake: a layer that reverses while its rows restart at the same end saves nothing and
+            reads as a mistake in the preview. So it follows the toggle above rather than standing
+            beside it.
+          -->
+          <label
+            class="flex items-start gap-3 pl-6"
+            :class="edited.serpentine ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
+          >
+            <input
+              type="checkbox"
+              class="toggle toggle-sm"
+              :checked="edited.snakeLayers"
+              :disabled="!edited.serpentine"
+              @change="snakeLayers(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="flex flex-col gap-0.5">
+              <span class="text-sm">{{ t('order.snakeLayers') }}</span>
+              <span class="text-xs opacity-60">{{ t('order.snakeLayersHint') }}</span>
             </span>
           </label>
 

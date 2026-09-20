@@ -309,7 +309,7 @@ describe('the order a piece is placed in', () => {
   const max = at(2, 2, 2)
 
   it('ranks a position exactly where the walk puts it', () => {
-    for (const token of ['y+z+x+', 'y+z+x+s', 'x-z+y-', 'z-y+x-s']) {
+    for (const token of ['y+z+x+', 'y+z+x+s', 'y+z+x+ss', 'x-z+y-', 'z-y+x-s', 'z-y+x-ss']) {
       const order = parseOrder(token)!
       const walk = [...positions(min, max, order)]
       walk.forEach((spot, step) => {

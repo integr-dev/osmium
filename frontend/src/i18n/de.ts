@@ -251,6 +251,8 @@ export const de: Copy = {
     },
     snake: 'Reihen im Zickzack',
     snakeHint: 'Der innerste Durchlauf geht zurück, statt wieder am Anfang der Reihe zu beginnen — der Agent dreht dort um, wo er steht.',
+    snakeLayers: 'Auch die Schichten im Zickzack',
+    snakeLayersHint: 'Jede Schicht beginnt dort, wo die darunter aufgehört hat, statt quer über den Bau zurück zur Ecke zu fliegen, an der sie begonnen hat.',
     appliesTo: 'Gilt für',
     everyPiece: 'Jedes Teil',
     sameEverywhere: 'Überall gleich',

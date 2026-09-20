@@ -39,8 +39,8 @@ data class StartJobRequest(
 
     @field:Schema(
         description = "The order every piece is placed in: three signed axes, outermost first, " +
-            "optionally ending in 's' for a snaking innermost sweep. Defaults to bottom to top, " +
-            "north to south, west to east.",
+            "optionally ending in 's' for a snaking innermost sweep, or 'ss' for a snaking middle " +
+            "sweep as well. Defaults to bottom to top, north to south, west to east.",
         example = "y+z+x+",
     )
     val order: String? = null,

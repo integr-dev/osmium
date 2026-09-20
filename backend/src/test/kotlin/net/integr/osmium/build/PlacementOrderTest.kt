@@ -19,6 +19,13 @@ class PlacementOrderTest {
         assertTrue(PlacementOrder.valid("z+x-y+s"))
     }
 
+    /** One `s` snakes the rows; a second snakes the layers with them. */
+    @Test
+    fun `a second s is a snaking middle sweep`() {
+        assertTrue(PlacementOrder.valid("y+z+x+ss"))
+        assertEquals("y+z+x+ss", PlacementOrder.of(" Y+Z+X+SS "))
+    }
+
     @Test
     fun `an axis named twice describes no sweep`() {
         assertFalse(PlacementOrder.valid("y+y-x+"))
@@ -27,7 +34,7 @@ class PlacementOrderTest {
 
     @Test
     fun `anything else is not an order`() {
-        for (nonsense in listOf("", "y+z+", "y+z+x+y+", "w+z+x+", "y*z+x+", "y+z+x+ss", "yzx")) {
+        for (nonsense in listOf("", "y+z+", "y+z+x+y+", "w+z+x+", "y*z+x+", "y+z+x+sss", "yzx")) {
             assertFalse(PlacementOrder.valid(nonsense), nonsense)
         }
     }

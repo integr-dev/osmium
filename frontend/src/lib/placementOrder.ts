@@ -33,6 +33,15 @@ export interface PlacementOrder {
   /** Outermost first. Every axis appears exactly once. */
   sweeps: [Sweep, Sweep, Sweep]
   serpentine: boolean
+  /**
+   * Whether the middle sweep snakes as well, one layer to the next.
+   *
+   * **The same saving, one dimension up.** A snaking innermost sweep walks each row once; without
+   * this, every layer still begins at the corner the last one began at, so finishing a layer means
+   * crossing the whole build to get back there. On a wide piece that is the longest journey the
+   * agent makes, and it makes one per layer. With it, the agent rises a block and carries on.
+   */
+  snakeLayers: boolean
 }
 
 /**
@@ -49,6 +58,7 @@ export const DEFAULT_ORDER: PlacementOrder = {
     { axis: 'x', towards: 1 },
   ],
   serpentine: false,
+  snakeLayers: false,
 }
 
 /**
@@ -60,6 +70,7 @@ export const DEFAULT_ORDER: PlacementOrder = {
  */
 export function formatOrder(order: PlacementOrder): string {
   const axes = order.sweeps.map((sweep) => `${sweep.axis}${sweep.towards === 1 ? '+' : '-'}`).join('')
+  if (order.serpentine && order.snakeLayers) return `${axes}ss`
   return order.serpentine ? `${axes}s` : axes
 }
 
@@ -74,8 +85,10 @@ export function parseOrder(value: string | null | undefined): PlacementOrder | n
   const text = value?.trim().toLowerCase()
   if (!text) return null
 
+  // One `s` snakes the rows, two snakes the layers as well.
+  const snakeLayers = text.endsWith('ss')
   const serpentine = text.endsWith('s')
-  const body = serpentine ? text.slice(0, -1) : text
+  const body = text.slice(0, text.length - (snakeLayers ? 2 : serpentine ? 1 : 0))
   if (body.length !== 6) return null
 
   const sweeps: Sweep[] = []
@@ -87,7 +100,7 @@ export function parseOrder(value: string | null | undefined): PlacementOrder | n
     sweeps.push({ axis, towards: sign === '+' ? 1 : -1 })
   }
 
-  return { sweeps: sweeps as [Sweep, Sweep, Sweep], serpentine }
+  return { sweeps: sweeps as [Sweep, Sweep, Sweep], serpentine, snakeLayers }
 }
 
 /** The same order with one axis moved to a new place in the sweep, the others closing up around it. */
@@ -136,13 +149,18 @@ export function sequence(size: Cell, order: PlacementOrder): Cell[] {
   let pass = 0
 
   for (let a = 0; a < lengths[outer.axis]; a += 1) {
+    // Every other layer walked back the way the last one came, so it starts where that one
+    // finished. See {@link PlacementOrder.snakeLayers}.
+    const returning = order.snakeLayers && a % 2 === 1
+
     for (let b = 0; b < lengths[middle.axis]; b += 1) {
+      const row = returning ? lengths[middle.axis] - 1 - b : b
       const backwards = order.serpentine && pass % 2 === 1
       for (let c = 0; c < lengths[inner.axis]; c += 1) {
         const step = backwards ? lengths[inner.axis] - 1 - c : c
         const cell = { x: 0, y: 0, z: 0 }
         cell[outer.axis] = along(outer, a)
-        cell[middle.axis] = along(middle, b)
+        cell[middle.axis] = along(middle, row)
         cell[inner.axis] = along(inner, step)
         cells.push(cell)
       }

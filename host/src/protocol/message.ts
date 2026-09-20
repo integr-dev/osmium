@@ -62,8 +62,9 @@ export type CommandBody =
       blocks: number
       /**
        * The order to place them in: three signed axes, outermost first, with an optional trailing
-       * `s` for a snaking innermost sweep — see `agent/order.ts`. Absent from a backend older than
-       * the setting, which is why it is optional here and defaulted there rather than refused.
+       * `s` for a snaking innermost sweep, or `ss` for a snaking middle one as well — see
+       * `agent/order.ts`. Absent from a backend older than the setting, which is why it is optional
+       * here and defaulted there rather than refused.
        */
       order?: PlacementOrder
     }

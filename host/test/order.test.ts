@@ -86,3 +86,40 @@ describe('walking a box', () => {
     expect(walking.next().value).toEqual({ x: 0, y: 0, z: 0 })
   })
 })
+
+/**
+ * Snaking the layers: the middle sweep runs back the way it came from one layer to the next, so a
+ * layer starts where the one below it finished instead of at the corner every layer began at.
+ */
+describe('snaking the layers', () => {
+  it('reads and writes the second s', () => {
+    expect(order('y+z+x+ss').snakeLayers).toBe(true)
+    expect(order('y+z+x+ss').serpentine).toBe(true)
+    expect(order('y+z+x+s').snakeLayers).toBe(false)
+    expect(formatOrder(order('y+z+x+ss'))).toBe('y+z+x+ss')
+  })
+
+  it('rises straight into the next layer instead of crossing back', () => {
+    const snaking = walk({ x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 }, 'y+z+x+ss')
+    const rows = walk({ x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 }, 'y+z+x+s')
+
+    // The last block of the lower layer, and the first of the upper one.
+    expect([snaking[3], snaking[4]]).toEqual(['0,0,1', '0,1,1'])
+    expect([rows[3], rows[4]]).toEqual(['0,0,1', '0,1,0'])
+  })
+
+  it('still visits every block of a box exactly once', () => {
+    for (const text of ['y+z+x+ss', 'x-y+z-ss', 'z+x+y-ss']) {
+      const cells = walk({ x: -2, y: 60, z: 7 }, { x: 0, y: 62, z: 10 }, text)
+
+      expect(cells, text).toHaveLength(3 * 3 * 4)
+      expect(new Set(cells).size, text).toBe(3 * 3 * 4)
+    }
+  })
+
+  it('builds bottom to top all the same', () => {
+    const heights = walk({ x: 0, y: 0, z: 0 }, { x: 1, y: 2, z: 1 }, 'y+z+x+ss').map((at) => Number(at.split(',')[1]))
+
+    expect(heights).toEqual([...heights].sort((one, two) => one - two))
+  })
+})

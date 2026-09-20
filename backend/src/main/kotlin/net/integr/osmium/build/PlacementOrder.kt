@@ -10,17 +10,18 @@ package net.integr.osmium.build
  * guess at: a piece is hours of an agent's work, and an order nobody asked for is worse than a
  * refused job.
  *
- * The form is three signed axes, outermost first, with an optional trailing `s`: `y+z+x+` is bottom
- * to top, north to south, west to east, and `y+z+x+s` is the same with the innermost sweep running
- * back the way it came. `+y` is up, `+z` is south and `+x` is east, which is Minecraft's own
- * convention and the one every coordinate here is already in.
+ * The form is three signed axes, outermost first, with up to two trailing `s`: `y+z+x+` is bottom
+ * to top, north to south, west to east; `y+z+x+s` is the same with the innermost sweep running back
+ * the way it came; and `y+z+x+ss` snakes the middle sweep as well, so each layer begins where the
+ * one below it ended rather than back at the corner it started from. `+y` is up, `+z` is south and
+ * `+x` is east, which is Minecraft's own convention and the one every coordinate here is already in.
  */
 object PlacementOrder {
 
     /** What a job built before the order was a choice, and what a piece without one still gets. */
     const val DEFAULT = "y+z+x+"
 
-    private val SHAPE = Regex("^([xyz][+-]){3}s?$")
+    private val SHAPE = Regex("^([xyz][+-]){3}s{0,2}$")
 
     /** Whether this is an order: three axes, each named once, each with a direction. */
     fun valid(value: String): Boolean {

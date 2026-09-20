@@ -24,6 +24,19 @@ export interface PlacementOrder {
   /** Outermost first. Every axis appears exactly once. */
   sweeps: [Sweep, Sweep, Sweep]
   serpentine: boolean
+  /**
+   * Whether the middle sweep also runs back the way it came, one layer to the next.
+   *
+   * **The snake, one dimension up.** With only the innermost sweep snaking, every row is walked
+   * once — but each layer still starts at the same corner as the last, so finishing one means
+   * flying the whole width of the build back to that corner. On a big piece that is the longest
+   * journey the agent makes, and it makes one per layer.
+   *
+   * Turned on, a layer starts where the one below it finished: the agent rises a block and carries
+   * straight on. Only the order within a layer changes — the outermost sweep still runs the way it
+   * was asked to, so a piece built bottom to top is still built bottom to top.
+   */
+  snakeLayers: boolean
 }
 
 /**
@@ -40,6 +53,7 @@ export const DEFAULT_ORDER: PlacementOrder = {
     { axis: 'x', towards: 1 },
   ],
   serpentine: false,
+  snakeLayers: false,
 }
 
 const AXES: readonly string[] = ['x', 'y', 'z']
@@ -70,8 +84,11 @@ export function orderFrom(value: unknown): PlacementOrder {
 /** The token, or nothing when it is not one: three axes, each named once, each with a direction. */
 export function parseOrder(value: string): PlacementOrder | undefined {
   const text = value.trim().toLowerCase()
+  // One `s` snakes the rows, two snakes the layers as well. A second letter rather than a second
+  // token, so an order stays one short word in a log and in a column.
+  const snakeLayers = text.endsWith('ss')
   const serpentine = text.endsWith('s')
-  const body = serpentine ? text.slice(0, -1) : text
+  const body = text.slice(0, text.length - (snakeLayers ? 2 : serpentine ? 1 : 0))
   if (body.length !== 6) return undefined
 
   const sweeps: Sweep[] = []
@@ -83,11 +100,12 @@ export function parseOrder(value: string): PlacementOrder | undefined {
     sweeps.push({ axis, towards: sign === '+' ? 1 : -1 })
   }
 
-  return { sweeps: sweeps as [Sweep, Sweep, Sweep], serpentine }
+  return { sweeps: sweeps as [Sweep, Sweep, Sweep], serpentine, snakeLayers }
 }
 
 export function formatOrder(order: PlacementOrder): string {
   const axes = order.sweeps.map((sweep) => `${sweep.axis}${sweep.towards === 1 ? '+' : '-'}`).join('')
+  if (order.serpentine && order.snakeLayers) return `${axes}ss`
   return order.serpentine ? `${axes}s` : axes
 }
 
@@ -112,7 +130,13 @@ export function* positions(min: BlockPos, max: BlockPos, order: PlacementOrder):
 
   let pass = 0
   for (let a = 0; a < span[outer.axis]; a += 1) {
+    // Every other layer walked back the way the last one came, so it begins where that one ended
+    // rather than at the corner it started from. See {@link PlacementOrder.snakeLayers}.
+    const returning = order.snakeLayers && a % 2 === 1
+
     for (let b = 0; b < span[middle.axis]; b += 1) {
+      const row = returning ? span[middle.axis] - 1 - b : b
+
       // Counted across the whole sweep rather than within one plane, so the snake carries from the
       // end of a row into the start of the next: the agent turns around where it is standing.
       const backwards = order.serpentine && pass % 2 === 1
@@ -120,7 +144,7 @@ export function* positions(min: BlockPos, max: BlockPos, order: PlacementOrder):
         const step = backwards ? span[inner.axis] - 1 - c : c
         const position = { x: 0, y: 0, z: 0 }
         position[outer.axis] = at(outer, a)
-        position[middle.axis] = at(middle, b)
+        position[middle.axis] = at(middle, row)
         position[inner.axis] = at(inner, step)
         yield position
       }
@@ -156,7 +180,15 @@ export function rankOf(
     sweep.towards === 1 ? at[sweep.axis] - low[sweep.axis] : high[sweep.axis] - at[sweep.axis]
 
   const [outer, middle, inner] = order.sweeps
-  const pass = step(outer) * span[middle.axis] + step(middle)
+
+  // Which row this is *in the order it is walked*, which is the other way round on a layer the
+  // snake returns along. Everything below counts passes, so it has to be the walked one.
+  const layer = step(outer)
+  const rows = span[middle.axis]
+  const returning = order.snakeLayers && layer % 2 === 1
+  const row = returning ? rows - 1 - step(middle) : step(middle)
+
+  const pass = layer * rows + row
   const backwards = order.serpentine && pass % 2 === 1
   const along = backwards ? span[inner.axis] - 1 - step(inner) : step(inner)
 

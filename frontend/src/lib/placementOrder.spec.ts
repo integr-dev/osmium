@@ -102,3 +102,44 @@ describe('the sequence', () => {
     expect(sequence({ x: 0, y: 4, z: 4 }, DEFAULT_ORDER)).toEqual([])
   })
 })
+
+/**
+ * Snaking the layers, which is the same idea as snaking the rows one axis out: each layer starts
+ * where the one below it finished, instead of the agent crossing the whole build to get back to
+ * the corner every layer begins at.
+ */
+describe('snaking the layers', () => {
+  it('writes and reads the second s', () => {
+    expect(formatOrder(order('y+z+x+ss'))).toBe('y+z+x+ss')
+    expect(order('y+z+x+ss').snakeLayers).toBe(true)
+    expect(order('y+z+x+s').snakeLayers).toBe(false)
+    expect(order('y+z+x+').snakeLayers).toBe(false)
+  })
+
+  it('starts each layer where the last one ended', () => {
+    const cells = sequence({ x: 2, y: 2, z: 2 }, order('y+z+x+ss'))
+    const at = (step: number) => `${cells[step]!.x},${cells[step]!.y},${cells[step]!.z}`
+
+    // The last cell of the lower layer and the first of the upper one are the same column.
+    expect(at(3)).toBe('0,0,1')
+    expect(at(4)).toBe('0,1,1')
+  })
+
+  it('leaves a layer alone without it', () => {
+    const cells = sequence({ x: 2, y: 2, z: 2 }, order('y+z+x+s'))
+    const at = (step: number) => `${cells[step]!.x},${cells[step]!.y},${cells[step]!.z}`
+
+    expect(at(3)).toBe('0,0,1')
+    expect(at(4)).toBe('0,1,0')
+  })
+
+  it('visits every cell exactly once, whatever the order', () => {
+    for (const text of ['y+z+x+ss', 'x-y+z-ss', 'z+x+y-ss']) {
+      const cells = sequence({ x: 3, y: 2, z: 4 }, order(text))
+      const seen = new Set(cells.map((cell) => `${cell.x},${cell.y},${cell.z}`))
+
+      expect(cells, text).toHaveLength(24)
+      expect(seen.size, text).toBe(24)
+    }
+  })
+})

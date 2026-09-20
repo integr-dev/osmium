@@ -294,6 +294,8 @@ export const en = {
     },
     snake: 'Snake the rows',
     snakeHint: 'The innermost sweep runs back the way it came instead of returning to the start of the row — the agent turns around where it is standing.',
+    snakeLayers: 'Snake the layers too',
+    snakeLayersHint: 'Each layer starts where the one below it finished, instead of flying back across the build to the corner it began at.',
     appliesTo: 'Applies to',
     everyPiece: 'Every piece',
     sameEverywhere: 'Same everywhere',
