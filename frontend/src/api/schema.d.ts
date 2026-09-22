@@ -1600,6 +1600,15 @@ export interface components {
             requestedParts?: number;
             /** @description The anchor as it stood when the job started. */
             placement?: components["schemas"]["PlacementRequest"];
+            /**
+             * Format: int32
+             * @description The plan's turn when the job started: quarter turns clockwise, in degrees.
+             */
+            rotation?: number;
+            /** @description The world the plan named, if it named one. */
+            dimension?: string | null;
+            /** @description The schematic's box before the turn, for drawing where the job stands. */
+            size?: components["schemas"]["SizeResponse"] | null;
             /** Format: int64 */
             totalBlocks?: number;
             /**
@@ -1698,6 +1707,15 @@ export interface components {
             /** Format: int32 */
             z?: number;
         };
+        /** @description A box's three sides, in blocks. */
+        SizeResponse: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+        };
         /** @description Puts one agent on a job. Which piece it gets is the scheduler's business. */
         AddJobAgentRequest: {
             /** Format: int64 */
@@ -1767,6 +1785,21 @@ export interface components {
             schematicId?: number;
             placement?: components["schemas"]["PlacementRequest"] | null;
             substitutions?: components["schemas"]["SubstitutionRequest"][];
+            /**
+             * @description The server this plan is for, as agents report theirs.
+             * @example play.example.net
+             */
+            serverAddress?: string | null;
+            /**
+             * @description Which world on that server.
+             * @example overworld
+             */
+            dimension?: string | null;
+            /**
+             * Format: int32
+             * @description Quarter turns clockwise seen from above, in degrees: 0, 90, 180 or 270.
+             */
+            rotation?: number;
         };
         /** @description One block swapped for another. A null or blank replacement means place nothing at all, which is the honest answer to not having the material. */
         SubstitutionRequest: {
@@ -1788,6 +1821,17 @@ export interface components {
             substitutions?: components["schemas"]["SubstitutionResponse"][];
             /** @description False while it has nowhere to stand, whatever else is settled. */
             placed?: boolean;
+            /** @description The server it is for. Null until somebody says. */
+            serverAddress?: string | null;
+            /** @description Which world on that server. Null until somebody says. */
+            dimension?: string | null;
+            /**
+             * Format: int32
+             * @description Quarter turns clockwise seen from above, in degrees.
+             */
+            rotation?: number;
+            /** @description The schematic's box, before the turn: what a footprint is drawn from. */
+            size?: components["schemas"]["SizeResponse"] | null;
             createdBy?: string;
             /** Format: date-time */
             createdAt?: string;
@@ -1932,6 +1976,15 @@ export interface components {
             placement?: components["schemas"]["PlacementRequest"] | null;
             unplace?: boolean;
             substitutions?: components["schemas"]["SubstitutionRequest"][] | null;
+            /** @description The server it is for. Blank clears it; omitted leaves it alone. */
+            serverAddress?: string | null;
+            /** @description Which world on that server. Blank clears it; omitted leaves it alone. */
+            dimension?: string | null;
+            /**
+             * Format: int32
+             * @description Quarter turns clockwise seen from above, in degrees: 0, 90, 180 or 270.
+             */
+            rotation?: number | null;
         };
         /** @description Renames an agent. Where it plays is set through `PUT /api/agents/{id}/server`, which is a different kind of change and has its own preconditions. */
         UpdateAgentRequest: {

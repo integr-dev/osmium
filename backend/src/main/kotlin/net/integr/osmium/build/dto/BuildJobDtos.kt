@@ -149,6 +149,15 @@ data class BuildJobResponse(
     @field:Schema(description = "The anchor as it stood when the job started.")
     val placement: PlacementRequest,
 
+    @field:Schema(description = "The plan's turn when the job started: quarter turns clockwise, in degrees.")
+    val rotation: Int,
+
+    @field:Schema(description = "The world the plan named, if it named one.")
+    val dimension: String?,
+
+    @field:Schema(description = "The schematic's box before the turn, for drawing where the job stands.")
+    val size: SizeResponse?,
+
     val totalBlocks: Long,
 
     @field:Schema(description = "The sum of the segments' last reported counts.")
@@ -200,6 +209,9 @@ fun BuildJob.toResponse(): BuildJobResponse = BuildJobResponse(
     splitMode = splitMode,
     requestedParts = requestedParts,
     placement = PlacementRequest(placeX, placeY, placeZ),
+    rotation = rotation,
+    dimension = dimension,
+    size = schematic.sizeOrNull(),
     totalBlocks = totalBlocks,
     blocksPlaced = blocksPlaced,
     // Sorted so the list read back is the list that will be read back next time; the database has

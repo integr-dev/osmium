@@ -311,6 +311,12 @@ const boxes = computed<Box3d[]>(() => {
 const builders = ref<number[]>([])
 
 const buildServer = computed(() => {
+  // **A plan that names its server decides it.** The coordinates on it were read off that world, so
+  // an agent anywhere else is building somewhere nobody looked — the backend refuses the job, and
+  // offering the agent here would only be a way to be refused. A plan that names none leaves it to
+  // the first pick, as before.
+  if (plan.value?.serverAddress) return plan.value.serverAddress
+
   const first = agentStore.agents.find((agent) => agent.id === builders.value[0])
   return first?.serverAddress ?? null
 })

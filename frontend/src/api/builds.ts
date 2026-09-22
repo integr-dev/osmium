@@ -16,12 +16,28 @@ export type Substitution = Omit<Required<components['schemas']['SubstitutionRequ
   to: string | null
 }
 
+/** A box's three sides, in blocks. */
+export type Size = Required<components['schemas']['SizeResponse']>
+
 export type BuildResponse = Omit<
   Required<components['schemas']['BuildResponse']>,
-  'placement' | 'substitutions'
+  'placement' | 'substitutions' | 'serverAddress' | 'dimension' | 'size'
 > & {
   placement: Placement | null
   substitutions: Substitution[]
+  /** Null until somebody says which server it is for. */
+  serverAddress: string | null
+  /** Null until somebody says which world on it. */
+  dimension: string | null
+  /** The schematic's box before the turn. Null until the schematic has been read. */
+  size: Size | null
+}
+
+/** Where a plan is for and which way round it goes. Blank server or world takes it back off. */
+export interface PlanWorld {
+  serverAddress?: string
+  dimension?: string
+  rotation?: number
 }
 
 export async function listBuilds(): Promise<BuildResponse[]> {
@@ -30,12 +46,14 @@ export async function listBuilds(): Promise<BuildResponse[]> {
   return (data ?? []) as BuildResponse[]
 }
 
-export async function createBuild(body: {
-  name: string
-  schematicId: number
-  placement?: Placement | null
-  substitutions?: Substitution[]
-}): Promise<BuildResponse> {
+export async function createBuild(
+  body: {
+    name: string
+    schematicId: number
+    placement?: Placement | null
+    substitutions?: Substitution[]
+  } & PlanWorld,
+): Promise<BuildResponse> {
   const { data, error } = await api.POST('/api/builds', { body })
   if (error) throw new Error(errorMessage(error))
   return data as BuildResponse
@@ -53,7 +71,7 @@ export async function updateBuild(
     placement?: Placement
     unplace?: boolean
     substitutions?: Substitution[]
-  },
+  } & PlanWorld,
 ): Promise<BuildResponse> {
   const { data, error } = await api.PATCH('/api/builds/{id}', {
     params: { path: { id } },

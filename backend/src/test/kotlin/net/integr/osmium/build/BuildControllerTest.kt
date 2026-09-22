@@ -115,6 +115,48 @@ class BuildControllerTest : AbstractRestTest() {
         }
     }
 
+    /** A coordinate is a place once it says which world it is in, and which way round the build goes. */
+    @Test
+    fun `a plan says which server and world it is for, and which way it faces`() {
+        val id = schematic().id
+        val created = create(
+            """{"name":"north tower","schematicId":$id,"serverAddress":"mc.example.com",""" +
+                """"dimension":"the_nether","rotation":180}""",
+        ).andExpect {
+            status { isCreated() }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
+            jsonPath("$.dimension") { value("the_nether") }
+            jsonPath("$.rotation") { value(180) }
+        }.andReturn().response.contentAsString
+        val build: Int = JsonPath.read(created, "$.id")
+
+        fun patch(body: String) = mockMvc.patch("/api/builds/$build") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = body
+        }
+
+        // Omitted leaves them; blank takes the server off; a turn is set on its own.
+        patch("""{"name":"south tower"}""").andExpect {
+            jsonPath("$.serverAddress") { value("mc.example.com") }
+            jsonPath("$.rotation") { value(180) }
+        }
+        patch("""{"serverAddress":"","rotation":270}""").andExpect {
+            status { isOk() }
+            jsonPath("$.serverAddress") { doesNotExist() }
+            jsonPath("$.dimension") { value("the_nether") }
+            jsonPath("$.rotation") { value(270) }
+        }
+    }
+
+    /** Forty-five degrees is not a turn a block grid can take; snapping it would build the wrong thing. */
+    @Test
+    fun `a turn that is not a quarter is refused`() {
+        val id = schematic().id
+
+        create("""{"name":"north tower","schematicId":$id,"rotation":45}""").andExpect { status { isBadRequest() } }
+    }
+
     @Test
     fun `substitutions are replaced wholesale and read back in a stable order`() {
         val id = schematic().id

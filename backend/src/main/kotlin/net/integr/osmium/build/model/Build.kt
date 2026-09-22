@@ -86,6 +86,26 @@ class Build(
     @Column(name = "place_z") var placeZ: Int? = null,
 
     /**
+     * The server this plan is meant for, as agents report theirs.
+     *
+     * A coordinate is not a place until it says which world it is in. Optional, like the placement:
+     * a plan can be written before anybody knows where it is going. Once set, only agents on this
+     * server may be given a job of it.
+     */
+    @Column(name = "server_address", length = 255) var serverAddress: String? = null,
+
+    /** Which world on that server — `overworld`, as agents report it and the map names it. */
+    @Column(name = "dimension", length = 128) var dimension: String? = null,
+
+    /**
+     * Quarter turns clockwise, seen from above, in degrees.
+     *
+     * The build turns inside its own box, so [placeX] and the rest still name the minimum corner —
+     * of the turned box. See `Rotation`.
+     */
+    @Column(name = "rotation", nullable = false) var rotation: Int = 0,
+
+    /**
      * Loaded with the build and replaced wholesale when edited.
      *
      * `orphanRemoval` because a rule taken out of the list is not a rule that belongs to somebody

@@ -1,6 +1,6 @@
 import { api, errorMessage } from './client'
 import type { components } from './schema'
-import type { Placement } from './builds'
+import type { Placement, Size } from './builds'
 import type { SplitMode } from './schematics'
 
 /** Re-exported: a job is started with one, so callers of this module need not know where it lives. */
@@ -46,10 +46,14 @@ export type JobAgent = Omit<Required<components['schemas']['JobAgentResponse']>,
 
 export type BuildJob = Omit<
   Required<components['schemas']['BuildJobResponse']>,
-  'state' | 'placement' | 'segments' | 'pool' | 'finishedAt'
+  'state' | 'placement' | 'segments' | 'pool' | 'finishedAt' | 'dimension' | 'size'
 > & {
   state: JobState
   placement: Placement
+  /** The world the plan named when the job started. Null for a plan that named none. */
+  dimension: string | null
+  /** The schematic's box before the turn, for drawing where the job stands. */
+  size: Size | null
   segments: JobSegment[]
   /**
    * Who is working it. Empty once it is finished — this is live membership, and who built which

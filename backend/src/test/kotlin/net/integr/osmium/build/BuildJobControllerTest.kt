@@ -300,6 +300,50 @@ class BuildJobControllerTest : AbstractRestTest() {
         start(build.id!!, listOf(here.id!!, elsewhere.id!!)).andExpect { status { isConflict() } }
     }
 
+    /** The coordinates on a plan were read off one world; the same numbers elsewhere are nowhere. */
+    @Test
+    fun `a plan for one server is built only by agents on it`() {
+        val host = reachableHost()
+        val build = placedBuild().apply { serverAddress = "mc.example.com" }.let(builds::saveAndFlush)
+        val elsewhere = onlineAgent("Mason_01", host, server = "other.example.com")
+        val here = onlineAgent("Mason_02", host, server = "mc.example.com")
+
+        start(build.id!!, listOf(elsewhere.id!!)).andExpect {
+            status { isConflict() }
+            jsonPath("$.message") { value("'north tower' is planned for mc.example.com, and these agents are on other.example.com") }
+        }
+        start(build.id!!, listOf(here.id!!)).andExpect {
+            status { isCreated() }
+            jsonPath("$.serverAddress") { value("mc.example.com") }
+        }
+    }
+
+    /**
+     * Four blocks in a row along x, turned a quarter: the row now runs along z, and its first block
+     * is still on the anchor. Each piece turns with it, which is what the host is told to build.
+     */
+    @Test
+    fun `a turned plan turns its pieces and keeps its corner on the anchor`() {
+        val host = reachableHost()
+        val build = placedBuild().apply { rotation = 90; dimension = "overworld" }.let(builds::saveAndFlush)
+        val one = onlineAgent("Mason_01", host)
+        val two = onlineAgent("Mason_02", host)
+
+        start(build.id!!, listOf(one.id!!, two.id!!)).andExpect {
+            status { isCreated() }
+            jsonPath("$.rotation") { value(90) }
+            jsonPath("$.dimension") { value("overworld") }
+            jsonPath("$.size.x") { value(4) }
+
+            jsonPath("$.segments[0].minX") { value(100) }
+            jsonPath("$.segments[0].maxX") { value(101) }
+            jsonPath("$.segments[0].minZ") { value(-30) }
+            jsonPath("$.segments[0].maxZ") { value(-28) }
+            jsonPath("$.segments[1].minZ") { value(-28) }
+            jsonPath("$.segments[1].maxZ") { value(-26) }
+        }
+    }
+
     @Test
     fun `an agent that is not in game cannot be given work`() {
         val host = reachableHost()

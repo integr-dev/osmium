@@ -9,6 +9,7 @@ import net.integr.osmium.agent.repository.AgentRepository
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.service.AuditService
 import net.integr.osmium.build.PlacementOrder
+import net.integr.osmium.build.Rotation
 import net.integr.osmium.build.dto.AssignSegmentRequest
 import net.integr.osmium.build.dto.BuildJobResponse
 import net.integr.osmium.build.dto.StartJobRequest
@@ -104,6 +105,15 @@ class BuildJobService(
         val crew = resolveCrew(request.agentIds)
         val server = checkNotNull(crew.first().serverAddress)
 
+        // **A plan that names its server is built there and nowhere else.** The coordinates on it
+        // were read off one world; the same numbers on another server are somewhere nobody looked.
+        // A plan that names none keeps the old rule: the job goes where its crew is.
+        build.serverAddress?.let { meant ->
+            check(server == meant) {
+                "'${build.name}' is planned for $meant, and these agents are on $server"
+            }
+        }
+
         // **Per server, not per plan.** The same tower on two servers is the case a job exists to
         // allow — it is why `builds` is its own table — and asking only about the plan refused it.
         //
@@ -142,9 +152,16 @@ class BuildJobService(
         // A placement is an anchor for the minimum corner and the schematic carries its own origin,
         // so the offset between them is what actually moves anything. Applied once, here, because
         // the host is told a box and does no transform of its own.
-        val offsetX = build.placeX!! - (schematic.originX ?: 0)
-        val offsetY = build.placeY!! - (schematic.originY ?: 0)
-        val offsetZ = build.placeZ!! - (schematic.originZ ?: 0)
+        //
+        // The turn happens in between: a piece is taken out of the schematic's own space, turned
+        // within the schematic's footprint, and then anchored — so the turned build's minimum corner
+        // is the placement, whichever way round it faces. See `Rotation`.
+        val originX = schematic.originX ?: 0
+        val originY = schematic.originY ?: 0
+        val originZ = schematic.originZ ?: 0
+        val sizeX = checkNotNull(schematic.sizeX) { "'${schematic.name}' has no size yet" }
+        val sizeZ = checkNotNull(schematic.sizeZ) { "'${schematic.name}' has no size yet" }
+        val turns = Rotation.turnsOf(build.rotation)
 
         val job = BuildJob(
             build = build,
@@ -156,6 +173,8 @@ class BuildJobService(
             placeX = build.placeX!!,
             placeY = build.placeY!!,
             placeZ = build.placeZ!!,
+            rotation = build.rotation,
+            dimension = build.dimension,
             totalBlocks = split.blocks,
             createdBy = currentUsername(),
             startedAt = Instant.now(),
@@ -177,15 +196,24 @@ class BuildJobService(
         // Made, not handed out. Every piece starts PENDING and the scheduler below does the giving,
         // so the first assignment goes through exactly the same door as the fiftieth.
         split.segments.forEach { segment ->
+            val turned = Rotation.box(
+                segment.minX - originX,
+                segment.maxX - originX,
+                segment.minZ - originZ,
+                segment.maxZ - originZ,
+                sizeX,
+                sizeZ,
+                turns,
+            )
             val piece = BuildSegment(
                 job = job,
                 ordinal = segment.ordinal,
-                minX = segment.minX + offsetX,
-                minY = segment.minY + offsetY,
-                minZ = segment.minZ + offsetZ,
-                maxX = segment.maxX + offsetX,
-                maxY = segment.maxY + offsetY,
-                maxZ = segment.maxZ + offsetZ,
+                minX = build.placeX!! + turned[0],
+                minY = build.placeY!! + segment.minY - originY,
+                minZ = build.placeZ!! + turned[2],
+                maxX = build.placeX!! + turned[1],
+                maxY = build.placeY!! + segment.maxY - originY,
+                maxZ = build.placeZ!! + turned[3],
                 blocks = segment.blocks,
                 placementOrder = perPiece[segment.ordinal] ?: order,
             )

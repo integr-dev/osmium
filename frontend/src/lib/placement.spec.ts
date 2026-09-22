@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { blockId } from './blockNames'
 import {
   blocksToPlace,
+  footprintOf,
   offsetOf,
   plannedMaterials,
   sameSubstitutions,
+  quarterOf,
   toWorld,
   type Substitution,
 } from './placement'
@@ -239,5 +241,35 @@ describe('sameSubstitutions', () => {
     ]
     sameSubstitutions(rules, [])
     expect(rules[0].from).toBe('gold_block')
+  })
+})
+
+/**
+ * The box both views draw. A turn swaps width and depth and moves nothing else: the build turns
+ * inside its own box, and the placement stays on that box's minimum corner.
+ */
+describe('footprintOf', () => {
+  const size = { x: 10, y: 4, z: 3 }
+  const at = { x: 100, y: 64, z: -30 }
+
+  it('covers the schematic from the anchor, inclusive at both ends', () => {
+    expect(footprintOf(at, size, 0)).toEqual({ west: 100, east: 109, north: -30, south: -28, low: 64, high: 67 })
+  })
+
+  it('swaps width and depth on a quarter turn, with the corner where it was', () => {
+    expect(footprintOf(at, size, 90)).toEqual({ west: 100, east: 102, north: -30, south: -21, low: 64, high: 67 })
+    expect(footprintOf(at, size, 270)).toEqual(footprintOf(at, size, 90))
+  })
+
+  it('is the same box turned right round', () => {
+    expect(footprintOf(at, size, 180)).toEqual(footprintOf(at, size, 0))
+  })
+})
+
+describe('quarterOf', () => {
+  it('keeps a quarter turn and refuses anything else', () => {
+    expect(quarterOf(270)).toBe(270)
+    expect(quarterOf(45)).toBe(0)
+    expect(quarterOf(null)).toBe(0)
   })
 })

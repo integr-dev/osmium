@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, MapPin, Plus, Replace, SquarePen, Trash2 } from 'lucide-vue-next'
+import { Check, MapPin, Plus, Replace, RotateCw, SquarePen, Trash2 } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
 import AlertNote from './AlertNote.vue'
 import {
@@ -17,12 +17,19 @@ import { blockColour } from '../lib/blockColours'
 import { blockId, blockName } from '../lib/blockNames'
 import {
   blocksToPlace,
+  DIMENSIONS,
   offsetOf,
   plannedMaterials,
+  QUARTERS,
+  quarterOf,
   sameSubstitutions,
+  worldId,
+  type Quarter,
   type Substitution,
 } from '../lib/placement'
 import type { Vec3 } from '../lib/box3d'
+import { dimensionLabel } from '../lib/vitals'
+import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
 /**
@@ -48,6 +55,7 @@ const emit = defineEmits<{ planned: [BuildResponse | null] }>()
 
 const { t, n } = useI18n()
 const auth = useAuthStore()
+const agentStore = useAgentStore()
 
 const plans = ref<BuildResponse[]>([])
 const selectedId = ref<number | null>(null)
@@ -58,6 +66,31 @@ const saved = ref<string | null>(null)
 
 /** The draft, which is what the fields edit. Committed to the plan only when saved. */
 const place = ref<{ x: number | null; y: number | null; z: number | null }>({ x: null, y: null, z: null })
+
+/**
+ * Which world the coordinates are in, and which way round the build goes.
+ *
+ * A coordinate is not a place until it names a world — the same numbers are somewhere different on
+ * every server and in every dimension — and once a plan names its server, only agents there can be
+ * given a job of it. Empty is "not said yet", which the API takes as clearing it.
+ */
+const server = ref('')
+const dimension = ref('')
+const rotation = ref<Quarter>(0)
+
+/** Servers worth offering: every one an agent is on, and whatever the plan already names. */
+const servers = computed(() => {
+  const known = new Set(agentStore.agents.map((agent) => agent.serverAddress).filter((address): address is string => !!address))
+  if (server.value) known.add(server.value)
+  return [...known].sort()
+})
+
+/** The three worlds every server has, and the plan's own if it names another. */
+const dimensions = computed(() => {
+  const known = new Set<string>(DIMENSIONS)
+  if (dimension.value) known.add(dimension.value)
+  return [...known]
+})
 
 /**
  * A rule as the fields hold it, where an empty replacement means "place nothing".
@@ -116,7 +149,15 @@ const placement = computed(() => {
  */
 const dirty = computed(() => {
   const stored = selected.value
-  if (!stored) return placement.value !== null || asSubstitutions.value.length > 0
+  if (!stored) {
+    return (
+      placement.value !== null ||
+      asSubstitutions.value.length > 0 ||
+      server.value !== '' ||
+      dimension.value !== '' ||
+      rotation.value !== 0
+    )
+  }
 
   const wasPlaced = stored.placement
     ? { x: stored.placement.x, y: stored.placement.y, z: stored.placement.z }
@@ -124,7 +165,10 @@ const dirty = computed(() => {
 
   return (
     JSON.stringify(placement.value) !== JSON.stringify(wasPlaced) ||
-    !sameSubstitutions(asSubstitutions.value, stored.substitutions)
+    !sameSubstitutions(asSubstitutions.value, stored.substitutions) ||
+    server.value !== (stored.serverAddress ?? '') ||
+    dimension.value !== (stored.dimension ? worldId(stored.dimension) : '') ||
+    rotation.value !== quarterOf(stored.rotation)
   )
 })
 
@@ -174,6 +218,9 @@ function choose(id: number | null) {
     ? { x: plan.placement.x, y: plan.placement.y, z: plan.placement.z }
     : { x: null, y: null, z: null }
   rules.value = (plan?.substitutions ?? []).map((rule) => ({ from: rule.from, to: rule.to ?? '' }))
+  server.value = plan?.serverAddress ?? ''
+  dimension.value = plan?.dimension ? worldId(plan.dimension) : ''
+  rotation.value = quarterOf(plan?.rotation)
 
   emit('planned', plan)
 }
@@ -191,9 +238,14 @@ async function save() {
   const substitutions = asSubstitutions.value
 
   try {
+    // Empty strings rather than omitted: blank is how the API is told to take a server or a world
+    // back off a plan, and omitting them would leave whatever was there.
+    const world = { serverAddress: server.value, dimension: dimension.value, rotation: rotation.value }
+
     const plan = selected.value
       ? await updateBuild(selected.value.id, {
           substitutions,
+          ...world,
           ...(placement.value ? { placement: placement.value } : { unplace: true }),
         })
       : await createBuild({
@@ -201,6 +253,7 @@ async function save() {
           schematicId: props.schematicId,
           placement: placement.value,
           substitutions,
+          ...world,
         })
 
     plans.value = [plan, ...plans.value.filter((entry) => entry.id !== plan.id)]
@@ -384,6 +437,52 @@ async function removePlan() {
             {{ t('builds.offsetBy', { x: offset.x, y: offset.y, z: offset.z }) }}
           </p>
           <p v-else class="mt-2 text-xs opacity-50">{{ t('builds.unplaced') }}</p>
+
+          <!--
+            The world the coordinates are in. A select rather than free text for the server: the
+            address has to match what agents report, character for character, or no agent is ever
+            eligible — and the ones agents report are the ones on offer.
+          -->
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <label class="form-control min-w-0">
+              <span class="label-text text-xs opacity-50">{{ t('builds.server') }}</span>
+              <select v-model="server" class="select select-sm w-full" :disabled="!auth.can('schematic.write')">
+                <option value="">{{ t('builds.anyServer') }}</option>
+                <option v-for="address in servers" :key="address" :value="address">{{ address }}</option>
+              </select>
+            </label>
+            <label class="form-control min-w-0">
+              <span class="label-text text-xs opacity-50">{{ t('builds.dimension') }}</span>
+              <select v-model="dimension" class="select select-sm w-full" :disabled="!auth.can('schematic.write')">
+                <option value="">{{ t('builds.anyDimension') }}</option>
+                <option v-for="world in dimensions" :key="world" :value="world">{{ dimensionLabel(world) }}</option>
+              </select>
+            </label>
+          </div>
+          <p class="mt-1 text-xs opacity-50">{{ t('builds.serverHint') }}</p>
+
+          <div class="mt-3">
+            <span class="label-text flex items-center gap-1 text-xs opacity-50">
+              <RotateCw class="size-3" />
+              {{ t('builds.rotation') }}
+            </span>
+            <div class="join mt-1" role="radiogroup" :aria-label="t('builds.rotation')">
+              <button
+                v-for="turn in QUARTERS"
+                :key="turn"
+                type="button"
+                role="radio"
+                :aria-checked="rotation === turn"
+                class="btn btn-sm join-item tabular-nums"
+                :class="rotation === turn ? 'btn-primary' : 'btn-ghost border-base-300'"
+                :disabled="!auth.can('schematic.write')"
+                @click="rotation = turn"
+              >
+                {{ turn }}°
+              </button>
+            </div>
+            <p class="mt-1 text-xs opacity-50">{{ t('builds.rotationHint') }}</p>
+          </div>
         </div>
 
         <div class="border-base-300 border-t pt-4">

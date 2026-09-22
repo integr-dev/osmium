@@ -1,5 +1,6 @@
 package net.integr.osmium.build.service
 
+import net.integr.osmium.build.Rotation
 import net.integr.osmium.build.model.BuildJob
 import net.integr.osmium.build.model.BuildSegment
 import net.integr.osmium.schematic.SchematicFiles
@@ -66,9 +67,15 @@ class SegmentBlockService(
         // so the difference is what moves a block into the world. The job pinned both, which is what
         // makes a segment fetched now describe the same blocks as when it was handed out.
         val origin = info.bounds.first
-        val offsetX = job.placeX - origin.x
         val offsetY = job.placeY - origin.y
-        val offsetZ = job.placeZ - origin.z
+
+        // The turn, applied between the two: a block is taken into the schematic's own footprint,
+        // turned within it, and then anchored, so the turned build's minimum corner is the
+        // placement. Its state turns with it — see `Rotation.state` for why turning the positions
+        // alone builds the right shape pointing the wrong way.
+        val turns = Rotation.turnsOf(job.rotation)
+        val sizeX = info.bounds.second.x - origin.x
+        val sizeZ = info.bounds.second.z - origin.z
 
         val rules = job.substitutions.associate { blockId(it.from) to it.to?.let(::blockId) }
 
@@ -82,7 +89,8 @@ class SegmentBlockService(
                 // rule for `oak_stairs` catches every facing of them. What goes back is whatever
                 // the operator wrote, properties and all if they wrote any.
                 val id = blockId(state.name)
-                if (id in rules) rules[id] else state.spec
+                val material = if (id in rules) rules[id] else state.spec
+                material?.let { Rotation.state(it, turns) }
             }
         }
 
@@ -99,7 +107,12 @@ class SegmentBlockService(
         files.readBlocks({ storage.open(id) }, info) { region, x, y, z, state ->
             val material = resolved[region][state] ?: return@readBlocks
 
-            val linear = SegmentBlocks.linearOf(x + offsetX, y + offsetY, z + offsetZ, min, size)
+            val localX = x - origin.x
+            val localZ = z - origin.z
+            val worldX = job.placeX + Rotation.x(localX, localZ, sizeX, sizeZ, turns)
+            val worldZ = job.placeZ + Rotation.z(localX, localZ, sizeX, sizeZ, turns)
+
+            val linear = SegmentBlocks.linearOf(worldX, y + offsetY, worldZ, min, size)
                 ?: return@readBlocks
 
             var index = interned[region][state]

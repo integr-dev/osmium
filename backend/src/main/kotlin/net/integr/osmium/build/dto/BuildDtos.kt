@@ -5,10 +5,30 @@ import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import net.integr.osmium.build.model.Build
+import net.integr.osmium.schematic.model.Schematic
 import java.time.Instant
 
 const val BUILD_NAME_MAX_LENGTH = 128
 const val BLOCK_NAME_MAX_LENGTH = 128
+const val SERVER_ADDRESS_MAX_LENGTH = 255
+const val DIMENSION_MAX_LENGTH = 128
+
+/**
+ * A box's three sides, in blocks.
+ *
+ * Carried on a plan and a job so the map and the 3D view can draw where the build stands without
+ * a second request per box — the footprint is the placement, this, and the turn.
+ */
+@Schema(description = "A box's three sides, in blocks.")
+data class SizeResponse(val x: Int, val y: Int, val z: Int)
+
+/** The schematic's box, once it has been read. Null before that: nothing is known about it yet. */
+fun Schematic.sizeOrNull(): SizeResponse? {
+    val x = sizeX ?: return null
+    val y = sizeY ?: return null
+    val z = sizeZ ?: return null
+    return SizeResponse(x, y, z)
+}
 
 @Schema(
     description = "One block swapped for another. A null or blank replacement means place nothing " +
@@ -49,6 +69,17 @@ data class CreateBuildRequest(
 
     @field:Valid
     val substitutions: List<SubstitutionRequest> = emptyList(),
+
+    @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
+    @field:Schema(description = "The server this plan is for, as agents report theirs.", example = "play.example.net")
+    val serverAddress: String? = null,
+
+    @field:Size(max = DIMENSION_MAX_LENGTH)
+    @field:Schema(description = "Which world on that server.", example = "overworld")
+    val dimension: String? = null,
+
+    @field:Schema(description = "Quarter turns clockwise seen from above, in degrees: 0, 90, 180 or 270.")
+    val rotation: Int = 0,
 )
 
 /**
@@ -77,6 +108,19 @@ data class UpdateBuildRequest(
      */
     @field:Valid
     val substitutions: List<SubstitutionRequest>? = null,
+
+    /** The server it is for. Blank takes it off again; absent leaves it as it is. */
+    @field:Size(max = SERVER_ADDRESS_MAX_LENGTH)
+    @field:Schema(description = "The server it is for. Blank clears it; omitted leaves it alone.")
+    val serverAddress: String? = null,
+
+    /** Which world on that server. Blank takes it off again; absent leaves it as it is. */
+    @field:Size(max = DIMENSION_MAX_LENGTH)
+    @field:Schema(description = "Which world on that server. Blank clears it; omitted leaves it alone.")
+    val dimension: String? = null,
+
+    @field:Schema(description = "Quarter turns clockwise seen from above, in degrees: 0, 90, 180 or 270.")
+    val rotation: Int? = null,
 )
 
 @Schema(description = "A build: a schematic, where it goes, and what it is built out of.")
@@ -90,6 +134,14 @@ data class BuildResponse(
     val substitutions: List<SubstitutionResponse>,
     @field:Schema(description = "False while it has nowhere to stand, whatever else is settled.")
     val placed: Boolean,
+    @field:Schema(description = "The server it is for. Null until somebody says.")
+    val serverAddress: String?,
+    @field:Schema(description = "Which world on that server. Null until somebody says.")
+    val dimension: String?,
+    @field:Schema(description = "Quarter turns clockwise seen from above, in degrees.")
+    val rotation: Int,
+    @field:Schema(description = "The schematic's box, before the turn: what a footprint is drawn from.")
+    val size: SizeResponse?,
     val createdBy: String,
     val createdAt: Instant,
     val updatedAt: Instant,
@@ -107,6 +159,10 @@ fun Build.toResponse(): BuildResponse = BuildResponse(
         .sortedBy { it.from }
         .map { SubstitutionResponse(it.from, it.to) },
     placed = placed,
+    serverAddress = serverAddress,
+    dimension = dimension,
+    rotation = rotation,
+    size = schematic.sizeOrNull(),
     createdBy = createdBy,
     createdAt = createdAt,
     updatedAt = updatedAt,

@@ -39,6 +39,62 @@ export function toWorld(point: Vec3, offset: Vec3): Vec3 {
   return { x: point.x + offset.x, y: point.y + offset.y, z: point.z + offset.z }
 }
 
+/** The turns a plan may have: quarter turns clockwise seen from above, in degrees. */
+export const QUARTERS = [0, 90, 180, 270] as const
+export type Quarter = (typeof QUARTERS)[number]
+
+/** A turn as the API sent it, or none when it sent something that is not one. */
+export function quarterOf(degrees: number | null | undefined): Quarter {
+  return QUARTERS.find((turn) => turn === degrees) ?? 0
+}
+
+/**
+ * The three worlds every server has, in the order a player meets them.
+ *
+ * **Spelled the way agents report them**, which is without the namespace: the map's worlds and an
+ * agent's telemetry both say `overworld`. A plan that said `minecraft:overworld` matched neither,
+ * and its box was drawn on no map at all.
+ */
+export const DIMENSIONS = ['overworld', 'the_nether', 'the_end'] as const
+
+/**
+ * A world's name as the map and the agents spell it: no `minecraft:` in front.
+ *
+ * Compared through this rather than as written, because both spellings reach here — plans written
+ * before the vocabulary was settled carry the namespace — and two names for one world is exactly
+ * how a box goes missing without an error.
+ */
+export function worldId(name: string): string {
+  return name.trim().replace(/^minecraft:/, '')
+}
+
+/**
+ * The blocks a placed build covers, as the map and the 3D view draw it: inclusive at both ends.
+ *
+ * **A turn swaps the two sides and moves nothing else.** The build turns inside its own box and the
+ * placement stays on that box's minimum corner — the backend's arithmetic, in `Rotation.kt` — so the
+ * footprint is the anchor plus the schematic's size with width and depth traded on an odd turn.
+ * Drawing the unturned box for a turned plan would outline somewhere the build is not.
+ */
+export function footprintOf(
+  placement: Placement,
+  size: Vec3,
+  rotation: number,
+): { west: number; east: number; north: number; south: number; low: number; high: number } {
+  const odd = quarterOf(rotation) % 180 === 90
+  const wide = odd ? size.z : size.x
+  const deep = odd ? size.x : size.z
+
+  return {
+    west: placement.x,
+    east: placement.x + wide - 1,
+    north: placement.z,
+    south: placement.z + deep - 1,
+    low: placement.y,
+    high: placement.y + size.y - 1,
+  }
+}
+
 export interface Substitution {
   from: string
   /** Null means place nothing at all, which is a rule rather than a missing value. */

@@ -128,6 +128,12 @@ class BuildJob(
     @Column(name = "place_y", nullable = false) var placeY: Int = 0,
     @Column(name = "place_z", nullable = false) var placeZ: Int = 0,
 
+    /** The plan's turn when the job started, pinned for the same reason the anchor is. */
+    @Column(name = "rotation", nullable = false) var rotation: Int = 0,
+
+    /** The world the plan named, if it named one. The server is [serverAddress], from the crew. */
+    @Column(name = "dimension", length = 128) var dimension: String? = null,
+
     /**
      * The sum of the segments, written once.
      *

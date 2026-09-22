@@ -2,6 +2,7 @@ package net.integr.osmium.build.service
 
 import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.service.AuditService
+import net.integr.osmium.build.Rotation
 import net.integr.osmium.build.dto.BuildResponse
 import net.integr.osmium.build.dto.CreateBuildRequest
 import net.integr.osmium.build.dto.SubstitutionRequest
@@ -61,6 +62,9 @@ class BuildService(
         )
         request.placement?.let { build.placeX = it.x; build.placeY = it.y; build.placeZ = it.z }
         apply(build, request.substitutions)
+        build.serverAddress = request.serverAddress?.trim()?.takeIf { it.isNotEmpty() }
+        build.dimension = request.dimension?.trim()?.takeIf { it.isNotEmpty() }
+        build.rotation = quarter(request.rotation)
 
         val saved = repository.save(build)
 
@@ -104,6 +108,30 @@ class BuildService(
         request.substitutions?.let { rules ->
             apply(build, rules)
             changes += "${rules.size} substitution(s)"
+        }
+
+        // Absent leaves it, blank clears it: JSON cannot tell a missing field from a null one, and
+        // an empty string is the one value that is never a server anybody meant.
+        request.serverAddress?.let { asked ->
+            val server = asked.trim().takeIf { it.isNotEmpty() }
+            if (server != build.serverAddress) {
+                changes += server?.let { "for $it" } ?: "for no server in particular"
+                build.serverAddress = server
+            }
+        }
+        request.dimension?.let { asked ->
+            val dimension = asked.trim().takeIf { it.isNotEmpty() }
+            if (dimension != build.dimension) {
+                changes += dimension?.let { "in $it" } ?: "in no world in particular"
+                build.dimension = dimension
+            }
+        }
+        request.rotation?.let { asked ->
+            val degrees = quarter(asked)
+            if (degrees != build.rotation) {
+                changes += "turned to $degrees°"
+                build.rotation = degrees
+            }
         }
 
         if (changes.isEmpty()) return build.toResponse()
@@ -197,6 +225,17 @@ class BuildService(
     private fun blockId(name: String): String = name.trim().removePrefix("minecraft:")
 
     private fun where(build: Build) = "${build.placeX}, ${build.placeY}, ${build.placeZ}"
+
+    /**
+     * A turn this backend is willing to store.
+     *
+     * Refused rather than rounded: forty-five degrees is not a turn a block grid can take, and
+     * quietly snapping it to ninety would build something nobody asked for.
+     */
+    private fun quarter(degrees: Int): Int {
+        require(Rotation.valid(degrees)) { "$degrees° is not a quarter turn; use 0, 90, 180 or 270" }
+        return degrees
+    }
 
     private fun load(id: Long): Build =
         repository.findById(id).orElseThrow { NoSuchElementException("No build $id") }
