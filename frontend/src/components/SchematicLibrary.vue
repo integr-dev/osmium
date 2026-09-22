@@ -51,7 +51,7 @@ import { useAuthStore } from '../stores/auth'
 import type { Box as Box3d, Vec3 } from '../lib/box3d'
 import { blockColour } from '../lib/blockColours'
 import { blockName } from '../lib/blockNames'
-import { blocksToPlace, offsetOf, plannedMaterials, toWorld } from '../lib/placement'
+import { blocksToPlace, offsetOf, placeBox, plannedMaterials, toWorld } from '../lib/placement'
 import { bytes } from '../lib/bytes'
 
 /**
@@ -407,27 +407,41 @@ const worldOffset = computed<Vec3>(() => {
  * the question is the opposite one, so the same box is offered shifted — and switching between the
  * outline and its segments must not switch coordinate space underneath.
  */
-const placedBoxes = computed<Box3d[]>(() =>
-  boxes.value.map((box) => ({
-    ...box,
-    min: toWorld(box.min, worldOffset.value),
-    max: toWorld(box.max, worldOffset.value),
-  })),
-)
+const placedBoxes = computed<Box3d[]>(() => boxes.value.map((box) => ({ ...box, ...inWorld(box.min, box.max) })))
 
 const splitBoxes = computed<Box3d[] | null>(() => {
   const segments = split.value?.segments
   if (!segments?.length) return null
 
-  const offset = worldOffset.value
   return segments.map((segment) => ({
     id: `segment-${segment.ordinal}`,
     label: String(segment.ordinal),
     blocks: segment.blocks,
-    min: toWorld({ x: segment.minX, y: segment.minY, z: segment.minZ }, offset),
-    max: toWorld({ x: segment.maxX, y: segment.maxY, z: segment.maxZ }, offset),
+    ...inWorld(
+      { x: segment.minX, y: segment.minY, z: segment.minZ },
+      { x: segment.maxX, y: segment.maxY, z: segment.maxZ },
+    ),
   }))
 })
+
+/**
+ * A box of the schematic where the job will put it: turned with the plan, then anchored.
+ *
+ * Shifting alone was right until plans could turn, and then it put a turned plan's pieces somewhere
+ * the agents would not be — the one set of numbers on this screen that somebody flies to. Unplaced,
+ * a box stays where the file has it, as the offset of nothing always did.
+ */
+function inWorld(min: Vec3, max: Vec3): { min: Vec3; max: Vec3 } {
+  const placement = plan.value?.placement
+  const content = selected.value?.content
+  if (!placement || !content?.sizeX || !content.sizeY || !content.sizeZ) {
+    return { min: toWorld(min, worldOffset.value), max: toWorld(max, worldOffset.value) }
+  }
+
+  const origin = { x: content.originX ?? 0, y: content.originY ?? 0, z: content.originZ ?? 0 }
+  const size = { x: content.sizeX, y: content.sizeY, z: content.sizeZ }
+  return placeBox(min, max, placement, origin, size, plan.value?.rotation ?? 0)
+}
 
 /** What has to be true before the next step means anything. */
 /**

@@ -4,6 +4,7 @@ import {
   blocksToPlace,
   footprintOf,
   offsetOf,
+  placeBox,
   plannedMaterials,
   sameSubstitutions,
   quarterOf,
@@ -271,5 +272,45 @@ describe('quarterOf', () => {
     expect(quarterOf(270)).toBe(270)
     expect(quarterOf(45)).toBe(0)
     expect(quarterOf(null)).toBe(0)
+  })
+})
+
+/**
+ * A box moved into the world the way a job moves it. Checked against the backend's own figures in
+ * `RotationTest` and `BuildJobControllerTest`: a four-long row, anchored at 100, -30, turned a quarter.
+ */
+describe('placeBox', () => {
+  const origin = { x: 0, y: 0, z: 0 }
+  const size = { x: 4, y: 1, z: 1 }
+  const at = { x: 100, y: 64, z: -30 }
+
+  it('only shifts a box that is not turned', () => {
+    expect(placeBox({ x: 0, y: 0, z: 0 }, { x: 2, y: 1, z: 1 }, at, origin, size, 0)).toEqual({
+      min: { x: 100, y: 64, z: -30 },
+      max: { x: 102, y: 65, z: -29 },
+    })
+  })
+
+  it('turns a piece with its plan, keeping the corner on the anchor', () => {
+    // The same numbers the job endpoint returns for this plan turned a quarter.
+    expect(placeBox({ x: 0, y: 0, z: 0 }, { x: 2, y: 1, z: 1 }, at, origin, size, 90)).toEqual({
+      min: { x: 100, y: 64, z: -30 },
+      max: { x: 101, y: 65, z: -28 },
+    })
+    expect(placeBox({ x: 2, y: 0, z: 0 }, { x: 4, y: 1, z: 1 }, at, origin, size, 90)).toEqual({
+      min: { x: 100, y: 64, z: -28 },
+      max: { x: 101, y: 65, z: -26 },
+    })
+  })
+
+  it('fills the turned footprint exactly with the whole schematic', () => {
+    for (const turn of [0, 90, 180, 270]) {
+      const whole = placeBox({ x: 0, y: 0, z: 0 }, { x: 4, y: 1, z: 1 }, at, origin, size, turn)
+      const odd = turn % 180 === 90
+
+      expect(whole.min, `turn ${turn}`).toEqual(at)
+      expect(whole.max.x - whole.min.x, `turn ${turn}`).toBe(odd ? 1 : 4)
+      expect(whole.max.z - whole.min.z, `turn ${turn}`).toBe(odd ? 4 : 1)
+    }
   })
 })

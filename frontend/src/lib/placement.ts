@@ -69,6 +69,43 @@ export function worldId(name: string): string {
 }
 
 /**
+ * A box of the schematic, moved into the world the way a job moves it: turned inside the
+ * schematic's footprint, then anchored on the placement.
+ *
+ * **The backend's arithmetic, repeated because the numbers are read off the screen.** A job's pieces
+ * are cut in the schematic's own space and turned when the job starts (`Rotation.box`); the split
+ * step shows them before that, and a preview that shifted them without turning them would show a
+ * turned plan's pieces somewhere the agents will not be. Half-open, as segments and regions both are:
+ * the maximum is one past the last block.
+ */
+export function placeBox(
+  min: Vec3,
+  max: Vec3,
+  placement: Placement,
+  origin: Vec3,
+  size: Vec3,
+  rotation: number,
+): { min: Vec3; max: Vec3 } {
+  const ax = min.x - origin.x
+  const bx = max.x - origin.x
+  const az = min.z - origin.z
+  const bz = max.z - origin.z
+
+  const turned: Record<Quarter, [number, number, number, number]> = {
+    0: [ax, bx, az, bz],
+    90: [size.z - bz, size.z - az, ax, bx],
+    180: [size.x - bx, size.x - ax, size.z - bz, size.z - az],
+    270: [az, bz, size.x - bx, size.x - ax],
+  }
+
+  const [west, east, north, south] = turned[quarterOf(rotation)]
+  return {
+    min: { x: placement.x + west, y: placement.y + min.y - origin.y, z: placement.z + north },
+    max: { x: placement.x + east, y: placement.y + max.y - origin.y, z: placement.z + south },
+  }
+}
+
+/**
  * The blocks a placed build covers, as the map and the 3D view draw it: inclusive at both ends.
  *
  * **A turn swaps the two sides and moves nothing else.** The build turns inside its own box and the
