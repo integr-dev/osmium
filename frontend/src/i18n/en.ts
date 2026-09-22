@@ -547,9 +547,6 @@ export const en = {
     /** The controls, over the bottom left of the view. Keep each one short: they sit on one line. */
     legendOrbit: 'drag to turn',
     legendPan: 'right-drag to pan',
-    legendSelect: 'shift-drag or shift-click two blocks to select',
-    /** Over the panel an area dragged out in the view opens, above its corners and size. */
-    area: 'Area',
     legendZoom: 'wheel to zoom',
     legendFast: 'shift for faster',
     legendFly: 'ctrl to move the pivot',

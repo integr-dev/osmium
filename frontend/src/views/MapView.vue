@@ -6,7 +6,8 @@ import { useI18n } from 'vue-i18n'
 import { Crosshair, Footprints, Map as MapIcon, Navigation } from 'lucide-vue-next'
 
 import PlayerHead from '../components/PlayerHead.vue'
-import WorldMap, { type Mark, type PathLine, type Picked } from '../components/WorldMap.vue'
+import WorldMap, { type BuildBox, type Mark, type PathLine, type Picked } from '../components/WorldMap.vue'
+import { buildBoxes } from '../lib/buildBoxes'
 import { areaNote, type AreaPicked } from '../lib/area'
 import ActionMenu from '../components/ActionMenu.vue'
 import AgentTargets from '../components/AgentTargets.vue'
@@ -56,6 +57,11 @@ const asked = computed(() => {
 const extents = ref<MapExtentResponse[]>([])
 const server = ref<string | null>(null)
 const world = ref<string | null>(null)
+
+/** Where builds stand and will stand in the world on screen: jobs solid, plans dashed. */
+const builds = computed<BuildBox[]>(() =>
+  server.value && world.value ? buildBoxes(agentStore.plans, agentStore.jobs, server.value, world.value) : [],
+)
 const map = ref<InstanceType<typeof WorldMap> | null>(null)
 
 const typed = ref('')
@@ -805,6 +811,7 @@ const worldName = dimensionLabel
       :dimension="world"
       :marks="marks"
       :paths="paths"
+      :builds="builds"
       :area="area?.area ?? null"
       @pick="onPick($event)"
       @select="onSelect($event)"

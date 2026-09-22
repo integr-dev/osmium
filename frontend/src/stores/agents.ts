@@ -24,6 +24,7 @@ import {
   type BuildJob,
   type SplitMode,
 } from '../api/jobs'
+import { listBuilds, type BuildResponse } from '../api/builds'
 import { useAuthStore } from './auth'
 import { useToastStore } from './toasts'
 import { t } from '../i18n'
@@ -126,6 +127,14 @@ export const useAgentStore = defineStore('agents', () => {
   const hosts = ref<HostResponse[]>([])
   const agents = ref<FleetAgent[]>([])
   const jobs = ref<BuildJob[]>([])
+  /**
+   * Every build plan, for drawing where builds will stand.
+   *
+   * Held here for the same reason jobs are: the map and the 3D view both draw them, neither owns
+   * them, and a plan moves with nobody on its page — somebody else placing one should appear on a
+   * map that is already open.
+   */
+  const plans = ref<BuildResponse[]>([])
   const loading = ref(false)
   const loaded = ref(false)
   const error = ref<string | null>(null)
@@ -144,7 +153,7 @@ export const useAgentStore = defineStore('agents', () => {
     loading.value = true
     error.value = null
     try {
-      await Promise.all([loadHosts(), loadAgents(), loadJobs(), loadPaths()])
+      await Promise.all([loadHosts(), loadAgents(), loadJobs(), loadPaths(), loadPlans()])
     } finally {
       loading.value = false
       loaded.value = true
@@ -182,6 +191,19 @@ export const useAgentStore = defineStore('agents', () => {
       jobs.value = await listJobs()
     } catch (failure) {
       error.value = failure instanceof Error ? failure.message : t('errors.generic')
+    }
+  }
+
+  /**
+   * The plans, for their boxes. Quietly empty for somebody who may not read them: the boxes are
+   * a layer on a map, and a map with one layer fewer is not an error worth a banner.
+   */
+  async function loadPlans(): Promise<void> {
+    if (!useAuthStore().can('schematic.read')) return
+    try {
+      plans.value = await listBuilds()
+    } catch {
+      plans.value = []
     }
   }
 
@@ -408,6 +430,17 @@ export const useAgentStore = defineStore('agents', () => {
       }
       case 'build-job-removed':
         jobs.value = jobs.value.filter((job) => job.id !== (data as { id: number }).id)
+        break
+      // A plan moved, turned or was written. Kept so the boxes on an open map follow it.
+      case 'build': {
+        const plan = data as BuildResponse
+        const index = plans.value.findIndex((existing) => existing.id === plan.id)
+        if (index === -1) plans.value = [plan, ...plans.value]
+        else plans.value[index] = plan
+        break
+      }
+      case 'build-removed':
+        plans.value = plans.value.filter((plan) => plan.id !== (data as { id: number }).id)
         break
       // 'ready' and anything this build does not know about are ignored, so a newer backend
       // sending a new event type never breaks an older tab.
@@ -1023,6 +1056,7 @@ export const useAgentStore = defineStore('agents', () => {
     hosts,
     agents,
     jobs,
+    plans,
     unfinished,
     jobsOn,
     assignments,

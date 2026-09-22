@@ -458,8 +458,6 @@ export const de: Copy = {
     unstaged: 'Für Minecraft {version} liegen keine Blockdaten bereit. Mit OSMIUM_VIEWER_VERSIONS bereitstellen und neu bauen.',
     legendOrbit: 'Ziehen zum Drehen',
     legendPan: 'Rechts-Ziehen zum Schieben',
-    legendSelect: 'Umschalt-Ziehen oder zwei Blöcke mit Umschalt anklicken zum Auswählen',
-    area: 'Bereich',
     legendZoom: 'Mausrad zum Zoomen',
     legendFast: 'Umschalt für schneller',
     legendFly: 'Strg bewegt den Drehpunkt',

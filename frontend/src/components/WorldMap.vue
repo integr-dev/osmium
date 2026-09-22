@@ -34,7 +34,35 @@ const props = defineProps<{
    * it go. Held by the caller, because the panel is the caller's.
    */
   area?: Area | null
+  /** Where builds stand and will stand in this world. Drawn over the terrain, under everything else. */
+  builds?: BuildBox[]
 }>()
+
+/**
+ * A build's footprint, as this map draws it.
+ *
+ * **Planned or under way, and the line says which.** A plan's box is dashed — it is where somebody
+ * has said a build will go, and nothing is there yet — and a job's is solid, in the colour building
+ * has everywhere else in the interface. Both are the same footprint arithmetic, `footprintOf` in
+ * `lib/placement.ts`, so a plan that becomes a job does not move.
+ */
+export interface BuildBox {
+  id: string
+  label: string
+  /** Inclusive at both ends, like every block range on this map. */
+  box: Footprint
+  planned: boolean
+  /** The pieces a job was cut into, drawn inside its box; a finished one is washed in. */
+  sections: Array<{ box: Footprint; done: boolean }>
+}
+
+/** A range of whole blocks seen from above, inclusive at both ends. */
+interface Footprint {
+  west: number
+  east: number
+  north: number
+  south: number
+}
 
 /**
  * One agent's journey, as this screen draws it.
@@ -403,6 +431,7 @@ function draw(): void {
     }
   }
 
+  drawBuilds(context)
   drawPaths(context)
   drawMarks(context)
   drawArea(context)
@@ -532,6 +561,8 @@ interface Ink {
   ground: string
   /** An area being dragged out: the one mark about the operator's hand rather than the world. */
   accent: string
+  /** What building is drawn in everywhere else — an agent's badge, a job's progress. */
+  building: string
 }
 
 let inks: Ink | null = null
@@ -550,8 +581,91 @@ function themeInks(): Ink {
     // belongs to the theme in both of them.
     ground: read('--color-base-100', '#ffffff'),
     accent: read('--color-accent', '#38bdf8'),
+    building: read('--osmium-building', '#a78bfa'),
   }
   return inks
+}
+
+/** How much of the build colour a job's box is washed with. A plan's is not washed at all. */
+const BUILD_FILL = 0.1
+
+/** A plan's dashes, in screen pixels, so they read the same at every zoom. */
+const PLAN_DASH = [6, 4]
+
+/** How strongly a piece's edge is drawn: enough to count them, not enough to compete with the box. */
+const SECTION_LINE = 0.55
+
+/** How much more a finished piece is washed in than the rest of its job. */
+const SECTION_DONE_FILL = 0.18
+
+/**
+ * Where builds stand, and where they are going to.
+ *
+ * Under the paths and the marks: a build is ground an agent works on, and a box drawn over a face
+ * would hide the one thing a map is opened to find. Haloed in the page's ground like everything
+ * else here, so the edge holds on terrain of any colour.
+ */
+function drawBuilds(context: CanvasRenderingContext2D): void {
+  const builds = props.builds ?? []
+  if (!builds.length) return
+
+  const { building, ground } = themeInks()
+
+  // Inclusive at both ends: a block is k pixels wide, and the last one is in the box too.
+  const onScreen = (box: Footprint) => ({
+    left: view.value.x + box.west * view.value.k,
+    top: view.value.y + box.north * view.value.k,
+    width: (box.east - box.west + 1) * view.value.k,
+    height: (box.south - box.north + 1) * view.value.k,
+  })
+
+  for (const build of builds) {
+    const { left, top, width, height } = onScreen(build.box)
+
+    if (!build.planned) {
+      context.globalAlpha = BUILD_FILL
+      context.fillStyle = building
+      context.fillRect(left, top, width, height)
+      context.globalAlpha = 1
+    }
+
+    // The pieces, thin and under the outline, so the division reads as the inside of one build
+    // rather than as several builds side by side. A finished one is washed in: the part of the
+    // footprint that is done is the first thing anybody looking at a job wants to see.
+    for (const section of build.sections) {
+      const piece = onScreen(section.box)
+      if (section.done) {
+        context.globalAlpha = SECTION_DONE_FILL
+        context.fillStyle = building
+        context.fillRect(piece.left, piece.top, piece.width, piece.height)
+      }
+      context.globalAlpha = SECTION_LINE
+      context.lineWidth = 1
+      context.strokeStyle = building
+      context.strokeRect(piece.left, piece.top, piece.width, piece.height)
+      context.globalAlpha = 1
+    }
+
+    context.setLineDash(build.planned ? PLAN_DASH : [])
+    context.lineJoin = 'miter'
+    context.lineWidth = LABEL_HALO
+    context.strokeStyle = ground
+    context.strokeRect(left, top, width, height)
+    context.lineWidth = 1.5
+    context.strokeStyle = building
+    context.strokeRect(left, top, width, height)
+    context.setLineDash([])
+
+    // Its name over the north-west corner, which is the corner a placement names.
+    context.textAlign = 'left'
+    context.lineJoin = 'round'
+    context.lineWidth = LABEL_HALO
+    context.font = '600 11px ui-sans-serif, system-ui, sans-serif'
+    context.strokeStyle = ground
+    context.strokeText(build.label, left, top - 4)
+    context.fillStyle = building
+    context.fillText(build.label, left, top - 4)
+  }
 }
 
 /** How much of the accent an area is washed with, so the terrain under it still reads. */
@@ -1129,6 +1243,7 @@ watch(
 
 watch(() => props.marks, schedule, { deep: true })
 watch(() => props.paths, schedule, { deep: true })
+watch(() => props.builds, schedule, { deep: true })
 
 const scale = computed(() => {
   const k = view.value.k

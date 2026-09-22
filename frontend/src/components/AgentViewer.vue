@@ -15,16 +15,8 @@ import { useToastStore } from '../stores/toasts'
 import { atTime } from '../lib/time'
 import { dollyToward, easeZoom, panRate, wheelTurn, zoomFactor, type Point } from '../lib/orbit'
 import { axisCross, cornerArms } from '../lib/reticle'
-import {
-  afterShiftPress,
-  areaNote,
-  areaUnderway,
-  cubeEdges,
-  type Area,
-  type AreaPicked,
-  type Corner,
-  type ShiftPress,
-} from '../lib/area'
+import { cubeEdges } from '../lib/area'
+import { buildBoxes, type PlacedBox } from '../lib/buildBoxes'
 import { onThemeChange, themeColour as tokenColour } from '../lib/theme'
 
 /**
@@ -250,9 +242,16 @@ interface Scene {
    */
   hover?: Mesh
   buildHover?: () => Mesh | undefined
-  /** The cage around an area being dragged out, or the one a panel is open about. Scaled, not rebuilt. */
-  areaBox?: Mesh
-  buildArea?: () => Mesh | undefined
+  /**
+   * A cage per build standing in this world, by {@link PlacedBox.id}, and what each was built for.
+   *
+   * Rebuilt rather than scaled when a box changes, unlike the hover cursor: a plan's cage is
+   * dashed, and a dash is measured along the line — scaling a unit cage would stretch every dash
+   * with it, into a line on the long edges and a dot on the short ones. Boxes move when somebody
+   * edits a plan, which is rare enough to afford the geometry.
+   */
+  builds?: Map<string, { mesh: Mesh; key: string }>
+  buildCage?: (box: PlacedBox['box'], kind: CageKind) => Mesh
   /** The cross on the point the camera turns around - see {@link showGimbal}. */
   gimbal?: Mesh
   buildGimbal?: () => Mesh | undefined
@@ -278,13 +277,6 @@ interface Scene {
    * of its own - the renderer and its `THREE` are loaded once, inside the init closure.
    */
   pick?: (nx: number, ny: number) => { x: number; y: number; z: number } | undefined
-  /**
-   * The block a point on the canvas is on, rather than the one in front of it.
-   *
-   * {@link pick} steps out of the face the ray hit, because a destination is somewhere to stand. The
-   * corner of an area is the block being pointed at.
-   */
-  pickSolid?: (nx: number, ny: number) => { x: number; y: number; z: number } | undefined
   /** How far away the world is at a point on the screen, for {@link keepControlsUseful}. */
   depthAt?: (nx: number, ny: number) => number | undefined
   /** The wheel handler and what it is on, kept so teardown can take it off again. */
@@ -398,7 +390,7 @@ interface ViewerLike {
     aspect: number
     updateProjectionMatrix(): void
   }
-  scene: { add(object: unknown): void }
+  scene: { add(object: unknown): void; remove(object: unknown): void }
   world: WorldLike
   entities?: { entities?: Record<string, Mesh | undefined> }
   setVersion(version: string): boolean
@@ -1395,6 +1387,16 @@ function redrawNametag(
 const NAMETAG_ORDER = 1000
 
 /**
+ * The cages a build is drawn with: a job's box, a plan's, and a job's pieces still going or done.
+ * In the order the materials are built, which is how a cage finds its own.
+ */
+const CAGES = ['job', 'plan', 'section', 'done'] as const
+type CageKind = (typeof CAGES)[number]
+
+/** How strongly each is drawn. The pieces fainter than the box they divide. */
+const CAGE_OPACITY: Record<CageKind, number> = { job: 0.95, plan: 0.75, section: 0.35, done: 0.6 }
+
+/**
  * The box takes the interface's own accent, so a viewer looks like the rest of Osmium and follows a
  * change of theme without a second place to edit - see {@link Scene.retint}.
  *
@@ -2044,12 +2046,9 @@ function showHover(current: Scene): void {
    * which block the menu is about, was the one moment it was not drawn. What is under the cursor
    * only matters while nothing has been chosen.
    */
-  // With shift held the box is on the block pointed at rather than the air in front of it, because
-  // that is the block a shift click or drag would take for a corner.
-  const at = picked.value ?? (over && (shifted ? current.pickSolid : current.pick)?.(over.nx, over.ny))
+  const at = picked.value ?? (over && current.pick?.(over.nx, over.ny))
 
-  // An area has its own cage, and one block's box inside it would say the menu was about that block.
-  if (!at || firstPerson.value || liveArea.value || viewArea.value) {
+  if (!at || firstPerson.value) {
     box.visible = false
     return
   }
@@ -2059,33 +2058,61 @@ function showHover(current: Scene): void {
   box.visible = true
 }
 
-/** The cage around an area being dragged out, or the one a panel is open about. See {@link Scene.areaBox}. */
-function showArea(current: Scene): void {
-  const area: Area | null = liveArea.value ?? viewArea.value?.area ?? null
+/**
+ * Where builds stand in the world this agent is in: jobs solid, plans dashed, in building's colour.
+ *
+ * The same list the map draws, from the same arithmetic — `lib/buildBoxes.ts` — so a box here and
+ * a box there are the same box. Only the agent's own server and world: the same coordinates in
+ * another one are somewhere else entirely.
+ */
+const placedBoxes = computed<PlacedBox[]>(() => {
+  const server = agent.value?.serverAddress
+  const world = agent.value?.telemetry?.dimension
+  if (!server || !world) return []
 
-  if (!current.areaBox) {
-    if (!area) return
-    const built = current.buildArea?.()
-    if (!built) return
-    current.areaBox = built
-    current.viewer.scene.add(built)
+  return buildBoxes(agentStore.plans, agentStore.jobs, server, world)
+})
+
+/**
+ * Brings the scene's cages in line with {@link placedBoxes}.
+ *
+ * Every frame, and cheap for it: a handful of boxes compared by a key, and geometry only built for
+ * one that is new or has moved. See {@link Scene.builds} for why moving one is a rebuild.
+ */
+function showBuilds(current: Scene): void {
+  const held = (current.builds ??= new Map())
+  const wanted = new Set<string>()
+
+  // A job's pieces are cages of their own inside its box, keyed under it so they go when it does.
+  const cages = placedBoxes.value.flatMap((placed) => [
+    { id: placed.id, box: placed.box, kind: (placed.planned ? 'plan' : 'job') as CageKind },
+    ...placed.sections.map((section, at) => ({
+      id: `${placed.id}/${at}`,
+      box: section.box,
+      kind: (section.done ? 'done' : 'section') as CageKind,
+    })),
+  ])
+
+  for (const cage of cages) {
+    wanted.add(cage.id)
+    const { west, east, north, south, low, high } = cage.box
+    const key = `${west},${east},${north},${south},${low},${high},${cage.kind}`
+
+    const existing = held.get(cage.id)
+    if (existing?.key === key) continue
+    if (existing) current.viewer.scene.remove(existing.mesh)
+
+    const mesh = current.buildCage?.(cage.box, cage.kind)
+    if (!mesh) continue
+    current.viewer.scene.add(mesh)
+    held.set(cage.id, { mesh, key })
   }
 
-  const box = current.areaBox
-  if (!area || area.low === undefined || area.high === undefined || firstPerson.value) {
-    box.visible = false
-    return
+  for (const [id, { mesh }] of held) {
+    if (wanted.has(id)) continue
+    current.viewer.scene.remove(mesh)
+    held.delete(id)
   }
-
-  // From the corner, because the cage is drawn from its corner: inclusive at both ends, so one more
-  // than the difference in every direction.
-  box.position.set(area.west, area.low, area.north)
-  ;(box as unknown as { scale: { set(x: number, y: number, z: number): void } }).scale.set(
-    area.east - area.west + 1,
-    area.high - area.low + 1,
-    area.south - area.north + 1,
-  )
-  box.visible = true
 }
 
 /**
@@ -2599,6 +2626,34 @@ async function mount(world: { version: string; minY?: number; height?: number },
   })
   workMaterial.resolution.set(element.clientWidth, element.clientHeight)
 
+  /*
+   * **Where builds stand: solid for a job, dashed for a plan**, in the colour building has
+   * everywhere else — an agent's badge, a job's bar — so a cage reads as "a build" before anybody
+   * works out which.
+   *
+   * Depth tested. A build's box is a thing in the world with a hill in front of it, and drawn through
+   * everything it would be a frame floating over the whole view rather than ground an agent works on.
+   */
+  //
+  // A job's pieces are cages inside its box: thinner and fainter, so the division reads as the inside
+  // of one build rather than as several, and a finished piece a little stronger than one still going.
+  const buildMaterials = CAGES.map(
+    (kind) =>
+      new LineMaterial({
+        color: themeColour('--osmium-building', 0xa78bfa),
+        linewidth: kind === 'job' ? 2 : kind === 'plan' ? 1.5 : 1,
+        // A block is the unit here, so a dash of one and a gap of a half reads as a dashed edge on a
+        // build of any size — the cage is built at its real size for exactly this.
+        dashed: kind === 'plan',
+        dashSize: 1,
+        gapSize: 0.5,
+        depthTest: true,
+        transparent: true,
+        opacity: CAGE_OPACITY[kind],
+      }),
+  )
+  for (const material of buildMaterials) material.resolution.set(element.clientWidth, element.clientHeight)
+
   const models = await import('prismarine-viewer/viewer/lib/entity/entities.json')
   const built: Scene = {
     viewer,
@@ -2715,24 +2770,6 @@ async function mount(world: { version: string; minY?: number; height?: number },
         z: Math.floor(hit.point.z + away.z * 0.5),
       }
     },
-    pickSolid: (nx: number, ny: number) => {
-      raycaster.setFromCamera({ x: nx, y: ny } as never, viewer.camera as never)
-
-      const world = Object.values(viewer.world.sectionMeshs ?? {}).filter((mesh) => mesh !== undefined)
-      const hit = raycaster.intersectObjects(world as never[], false)[0] as
-        | { point: { x: number; y: number; z: number }; face?: { normal: { x: number; y: number; z: number } } }
-        | undefined
-
-      if (!hit) return undefined
-
-      // Into the face rather than out of it: the block the ray met, not the air in front of it.
-      const into = hit.face?.normal ?? { x: 0, y: 0, z: 0 }
-      return {
-        x: Math.floor(hit.point.x - into.x * 0.5),
-        y: Math.floor(hit.point.y - into.y * 0.5),
-        z: Math.floor(hit.point.z - into.z * 0.5),
-      }
-    },
     /**
      * Corners rather than a cage - see `reticle.ts`.
      *
@@ -2750,16 +2787,30 @@ async function mount(world: { version: string; minY?: number; height?: number },
       line.visible = false
       return line
     },
-    // The hover box's material, so it takes the page's text colour and follows the canvas size the
-    // way that one does; a whole cage rather than corners, because an area's edges are the point.
-    buildArea: () => {
+    /**
+     * A whole cage at the build's real size, rather than a unit one scaled: a plan's is dashed, and
+     * a dash is measured along the line, so scaling would stretch the dashes with the box.
+     *
+     * Inclusive at both ends, so the far corner is one past the last block in every direction.
+     */
+    buildCage: (box: PlacedBox['box'], kind: CageKind) => {
+      const wide = box.east - box.west + 1
+      const tall = box.high - box.low + 1
+      const deep = box.south - box.north + 1
+      const unit = cubeEdges()
+      const sized = unit.map((value, at) => value * [wide, tall, deep][at % 3]!)
+
       const line = new LineSegments2(
-        new LineSegmentsGeometry().setPositions(cubeEdges()),
-        hoverMaterial,
+        new LineSegmentsGeometry().setPositions(sized),
+        buildMaterials[CAGES.indexOf(kind)]!,
       ) as unknown as Mesh
 
+      // A dashed line is drawn from how far along itself each vertex is, which nothing works out on
+      // its own - see the ghost cross below.
+      if (kind === 'plan') (line as unknown as { computeLineDistances(): void }).computeLineDistances()
+
+      line.position.set(box.west, box.low, box.north)
       line.frustumCulled = false
-      line.visible = false
       return line
     },
     buildGimbal: () => {
@@ -2857,7 +2908,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
     bounds,
     received: 0,
     outlineMaterials,
-    markerMaterials: [hoverMaterial, gimbalMaterial, ghostMaterial, workMaterial],
+    markerMaterials: [hoverMaterial, gimbalMaterial, ghostMaterial, workMaterial, ...buildMaterials],
     pathMaterials: [...pathMaterials, hoverMaterial],
     seen: new Map(),
     names: new Map(),
@@ -2877,6 +2928,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       tint(gimbalMaterial, themeColour('--color-accent', 0x38bdf8))
       tint(ghostMaterial, themeColour('--color-accent', 0x38bdf8))
       tint(workMaterial, themeColour('--color-success', 0x22c55e))
+      for (const material of buildMaterials) tint(material, themeColour('--osmium-building', 0xa78bfa))
 
       // The labels key their redraw on this colour, so the next pass repaints every ring.
       built.tones = cssTones(next)
@@ -2900,7 +2952,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
       built.controls?.update()
     }
     showHover(built)
-    showArea(built)
+    showBuilds(built)
     showGimbal(built)
     viewer.update()
     renderer.render(viewer.scene, viewer.camera)
@@ -2973,103 +3025,6 @@ let carrying = false
 /** When the camera was last moved, so the gimbal can be shown while it is being used. */
 let stirred = 0
 
-/**
- * An area being dragged out: the block the drag started on and the one under the pointer now.
- *
- * **Shift and the left button**, the same gesture the map uses. It used to pan here too, which the
- * right button and ctrl still do - see {@link pans}. A shift click is one corner instead, and the next
- * is the other - see `afterShiftPress`.
- */
-let selecting: (ShiftPress & { x: number; y: number }) | null = null
-
-/** A first corner a shift click left, waiting for the second. Any press without shift lets it go. */
-let firstCorner: Corner | null = null
-
-/**
- * Whether shift is down, so the cursor box can show the block a shift press would take.
- *
- * Read off the keys as well as the pointer: pressing shift over a block without moving has to move
- * the box too, and a pointer event only says so once the mouse moves. Plain rather than reactive,
- * because the box is drawn every frame anyway.
- */
-let shifted = false
-
-function shift(event: KeyboardEvent): void {
-  if (event.key === 'Shift') shifted = event.type === 'keydown'
-}
-
-/** A window that loses focus never hears the key come back up. */
-function unshift(): void {
-  shifted = false
-}
-
-/** The box of that drag, for drawing while it is being made. */
-const liveArea = ref<Area | null>(null)
-
-/** An area that was dragged out, until its panel is dismissed. Nothing to do to one yet. */
-const viewArea = ref<AreaPicked | null>(null)
-
-/** The block under the pointer, for one end of an area. */
-function cornerUnder(event: PointerEvent): Corner | undefined {
-  const current = scene.value
-  const box = canvas.value?.getBoundingClientRect()
-  if (!current || !box) return undefined
-
-  // The block being pointed at, not the air in front of it: see `pickSolid`.
-  const at = current.pickSolid?.(((event.clientX - box.left) / box.width) * 2 - 1, -((event.clientY - box.top) / box.height) * 2 + 1)
-  return at ? { x: at.x, y: at.y, z: at.z } : undefined
-}
-
-/**
- * Starts an area, if the press is on the world.
- *
- * **The camera's own drag handler listens on this canvas too**, and pans on shift - so it is switched
- * off for the length of the drag. It was added after this component's handler, so it already sees
- * itself switched off by the time the same press reaches it.
- */
-function startArea(event: PointerEvent): boolean {
-  const current = scene.value
-  const corner = cornerUnder(event)
-  if (!current || !corner) return false
-
-  if (current.controls) current.controls.enabled = false
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-
-  selecting = { start: corner, end: corner, moved: false, x: event.clientX, y: event.clientY }
-  liveArea.value = areaUnderway(firstCorner, selecting, corner)
-  return true
-}
-
-function finishArea(event: PointerEvent): void {
-  const press = selecting
-  selecting = null
-
-  const current = scene.value
-  if (current?.controls) current.controls.enabled = !firstPerson.value
-  ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
-
-  const box = canvas.value?.getBoundingClientRect()
-  if (!press || !box) {
-    firstCorner = null
-    liveArea.value = null
-    return
-  }
-
-  const after = afterShiftPress(firstCorner, press)
-  firstCorner = after.waiting
-  liveArea.value = after.chosen ? null : areaUnderway(firstCorner, null, press.end)
-  if (!after.chosen) return
-
-  // This press already did its job on the way down, by the same rule a click follows.
-  if (dismissing) {
-    dismissing = false
-    return
-  }
-
-  picked.value = null
-  viewArea.value = { area: after.chosen, px: event.clientX - box.left, py: event.clientY - box.top }
-}
-
 /** Pixels of travel before a press stops being a click. */
 const SLOP = 4
 
@@ -3124,23 +3079,13 @@ const sendingBusy = ref(false)
  * back on the agent. The harder the agent was moving, the more there was to fight.
  */
 function pans(event: PointerEvent): boolean {
-  // Shift on the left button is not here: it drags out an area, with the camera switched off for
-  // it - see {@link startArea}.
-  if (event.button === TURNING) return event.ctrlKey || event.metaKey
+  if (event.button === TURNING) return event.ctrlKey || event.metaKey || event.shiftKey
   if (event.button === PANNING) return !(event.ctrlKey || event.metaKey || event.shiftKey)
 
   return false
 }
 
 function onPointerDown(event: PointerEvent): void {
-  if (event.shiftKey && event.button === TURNING && !firstPerson.value && startArea(event)) return
-
-  // Any other press lets go of a first corner still waiting for its second.
-  if (firstCorner) {
-    firstCorner = null
-    liveArea.value = null
-  }
-
   pressed = { x: event.clientX, y: event.clientY, moved: false }
   carrying = pans(event)
 
@@ -3161,7 +3106,6 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  shifted = event.shiftKey
   const current = scene.value
   const box = canvas.value?.getBoundingClientRect()
 
@@ -3171,23 +3115,6 @@ function onPointerMove(event: PointerEvent): void {
       nx: ((event.clientX - box.left) / box.width) * 2 - 1,
       ny: -((event.clientY - box.top) / box.height) * 2 + 1,
     }
-  }
-
-  if (selecting) {
-    if (Math.abs(event.clientX - selecting.x) + Math.abs(event.clientY - selecting.y) > SLOP) selecting.moved = true
-    const corner = cornerUnder(event)
-    if (corner) {
-      selecting.end = corner
-      liveArea.value = areaUnderway(firstCorner, selecting, corner)
-    }
-    return
-  }
-
-  // A first corner waiting for its second: the area it would make, following the pointer. Not while
-  // the camera is being dragged, when the block under the pointer is sweeping across the world.
-  if (firstCorner && !pressed) {
-    const corner = cornerUnder(event)
-    if (corner) liveArea.value = areaUnderway(firstCorner, null, corner)
   }
 
   // A pan is the drag that moves the pivot. An orbit turns about it without touching it, so it
@@ -3205,11 +3132,6 @@ function onPointerLeave(): void {
 }
 
 function onPointerUp(event: PointerEvent): void {
-  if (selecting) {
-    finishArea(event)
-    return
-  }
-
   const press = pressed
   pressed = null
 
@@ -3270,7 +3192,6 @@ const menu = ref<InstanceType<typeof ActionMenu> | null>(null)
 
 function close(): void {
   picked.value = null
-  viewArea.value = null
   sending.value = []
 }
 
@@ -3302,7 +3223,7 @@ function elsewhere(event: PointerEvent): void {
   const inside = menu.value?.root
   if (inside && event.composedPath().includes(inside as EventTarget)) return
 
-  dismissing = picked.value !== null || viewArea.value !== null
+  dismissing = picked.value !== null
   close()
 }
 
@@ -3313,24 +3234,16 @@ function dismiss(event: KeyboardEvent): void {
 onMounted(() => {
   document.addEventListener('pointerdown', elsewhere, true)
   document.addEventListener('keydown', dismiss)
-  document.addEventListener('keydown', shift)
-  document.addEventListener('keyup', shift)
-  window.addEventListener('blur', unshift)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', elsewhere, true)
   document.removeEventListener('keydown', dismiss)
-  document.removeEventListener('keydown', shift)
-  document.removeEventListener('keyup', shift)
-  window.removeEventListener('blur', unshift)
 })
 
 // There is nothing to point at through the agent's own eyes, and nothing to point at in a world
 // that has gone.
 watch([firstPerson, () => status.value], () => {
-  firstCorner = null
-  liveArea.value = null
   close()
 })
 
@@ -3467,7 +3380,6 @@ const ASSETS = '/viewer'
     >
       <span class="opacity-60">
         {{ t('viewer.legendOrbit') }} · {{ t('viewer.legendPan') }} · {{ t('viewer.legendZoom') }} ·
-        {{ t('viewer.legendSelect') }} ·
         {{ t('viewer.legendFast') }} · {{ t('viewer.legendFly') }}
       </span>
     </div>
@@ -3505,21 +3417,6 @@ const ASSETS = '/viewer'
         {{ t('map.sendCount', { count: sending.length }) }}
       </button>
     </ActionMenu>
-
-    <!--
-      An area dragged out with shift held, anchored where the drag ended like the panel above is
-      anchored where the click landed. Empty for now: what can be done to a stretch of the world goes
-      here.
-    -->
-    <ActionMenu
-      v-if="viewArea"
-      ref="menu"
-      placement="at"
-      :x="viewArea.px"
-      :y="viewArea.py"
-      :title="t('viewer.area')"
-      :note="areaNote(viewArea.area)"
-    />
 
     <!--
       The world stays on screen when the agent leaves it, because it is the only picture of where it
