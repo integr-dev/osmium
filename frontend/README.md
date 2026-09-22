@@ -376,6 +376,18 @@ Placement and substitutions belong to a **build**, not to the schematic — the 
 legitimately built twice, in two places, under different rules. So the step offers the plans for a
 schematic rather than editing one set of fields hanging off the file.
 
+**A plan names its world, and which way round it goes.** A coordinate is not a place until it says
+which server and which dimension it is in — the same numbers are somewhere else on every one. Both
+are optional, and "not said yet" is a real choice; once a server is set, **only agents on it are
+offered** when a job is started from the plan, and the backend refuses any other. The server is a
+select of the ones agents report, because it has to match theirs character for character.
+
+**The turn is quarter turns clockwise, seen from above**, and the placement stays on the minimum
+corner of the turned box — the backend turns each piece and every block state with it. Every screen
+that draws a turned plan uses the same arithmetic: `footprintOf` for the whole box and `placeBox` for
+a piece, both in `lib/placement.ts`. The split step shifted its pieces by the offset alone until
+plans could turn, and then showed a turned plan's pieces somewhere the agents would not be.
+
 **Placement does not gate the rest of the pipeline.** A plan usually exists before anybody has stood
 in the world and read a coordinate off the screen, and requiring it would stop an operator dividing a
 build they have not sited yet. Starting a job is where it becomes mandatory — a job has to know
@@ -1551,32 +1563,55 @@ whatever height the ground turns out to be — which is a real instruction, not 
 What came of it is announced in the corner — arrived, gave up and why, or walking only as close as
 the search could get — and the notice links back to the agent. See **Saying what happened**.
 
-### Choosing an area
+### Choosing an area, on the map
 
-**Shift and a drag, in both views**, opens the same `ActionMenu` where the drag ended, naming both
-corners and the size. It has nothing in it yet: it is where what can be done to a stretch of the
-world will go, and it opens and closes by the same rules as the panel a click opens, so those
-actions arrive into something that already works.
+**Shift and a drag** opens an `ActionMenu` where the drag ended, naming both corners and the size.
+It has nothing in it yet: it is where what can be done to a stretch of the world will go, and it
+opens and closes by the same rules as the panel a click opens, so those actions arrive into
+something that already works.
 
-**A plain drag keeps the job it had.** It moves the map and turns the 3D view, far more often than
-anybody chooses an area, so the rarer gesture is the one that asks for a key. In the 3D view shift
-on the left button used to pan as well; it no longer does, and the right button and ctrl still pan.
-The camera's own drag handler listens on the same canvas and would pan on shift, so it is switched
-off for the length of the drag.
+**A plain drag keeps the job it had**, which is moving the map — done far more often than anybody
+chooses an area, so the rarer gesture is the one that asks for a key.
 
 **Or a corner at a time.** A shift click with nothing waiting is the first corner, drawn following the
 pointer, and the next shift click is the second - which is how an area too big to drag across the
 screen at one zoom is chosen at all. A drag while a first corner waits starts again from where the
 drag did, and any press without shift lets the waiting corner go.
 
-**In the 3D view a corner is the block pointed at**, not the air in front of the face the ray hit,
-which is what a destination picks (`pickSolid` against `pick`). The cursor box follows suit while
-shift is held, so it always shows the block a press would take - read off the keys as well as the
-pointer, so pressing shift over a block moves the box without the mouse moving.
-
 **Whole blocks, inclusive at both ends, whichever way the drag went** - see `src/lib/area.ts`. The
-map's area is columns, since it has no height to give; the 3D view's has the heights of the two
-blocks the drag started and ended on, and is drawn as a cage around every block in it.
+map's area is columns, since it has no height to give.
+
+**The 3D view had one too, and it was taken out.** It opened the same empty panel, and what an
+operator actually wanted from a box in the 3D view was to see where a build stands — which is now
+drawn there without asking (see *Where builds stand*). Shift on the left button pans again, as the
+renderer does by default.
+
+### Where builds stand
+
+**Both views draw every build in the world on screen**, from one list — `src/lib/buildBoxes.ts` — so
+a box on the map and the cage in the 3D view are the same box.
+
+- **A plan's box is dashed**: somebody has said a build will go there, and nothing is there yet.
+- **A job's box is solid**, washed in `--osmium-building` — the colour building has everywhere else,
+  an agent's badge and a job's bar — with the **pieces it was cut into** drawn thin inside it, and
+  the finished ones washed in more strongly. The part of a footprint that is done is the first thing
+  anybody looking at a job wants to see.
+- **A plan being built is drawn once, as its job.** Both would be the same box twice.
+
+**Only the server and world on screen.** A plan names both (see *The plan*), and one that names
+neither has not said which map it belongs on — so it is on none of them rather than guessed onto all.
+A job built before plans named a world is drawn in the overworld, where every one of them was.
+
+**Worlds are compared without the namespace.** The map and agents say `overworld`; plans first saved
+said `minecraft:overworld`, matched nothing, and their boxes were drawn nowhere without an error.
+`worldId` in `lib/placement.ts` is the one place both spellings meet.
+
+**The 3D cages are built at their real size, not scaled.** A plan's is dashed, and a dash is measured
+along the line — scaling a unit cage would stretch the dashes with it. They are depth tested: a
+build is ground an agent works on, and one drawn through the hill in front of it floats over the view.
+
+Plans are held in the fleet store beside jobs and kept current from the stream (`build`,
+`build-removed`), so a box moves on a map that is already open.
 
 ### Paths are drawn in both views
 

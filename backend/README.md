@@ -1367,6 +1367,19 @@ Placement is an **anchor for the minimum corner**, all three coordinates or none
 check constraint. Two of three does not describe a position, and a column default would put a
 half-placed build at the world origin without anybody having said so.
 
+**A plan names its world, optionally.** `server_address` and `dimension` say which server and
+which world the coordinates were read off — the same numbers are somewhere else on every one. Both
+nullable, like the placement: a plan is often written before anybody knows where it is going. Once
+a server is set, **only agents on it may be given a job of the plan**, refused at start with the plan
+and the crew's server named; a plan with none keeps the old rule, and the job goes where its crew is.
+Worlds are spelled as agents report them — `overworld`, not `minecraft:overworld` — because the map
+and the telemetry are what a plan's world is compared against.
+
+**And which way round it goes.** `rotation` is quarter turns clockwise seen from above, `0`, `90`,
+`180` or `270` by check constraint, and anything else is refused rather than rounded — forty-five
+degrees is not a turn a block grid can take. The build turns *inside its own box*, so the placement
+still names the minimum corner, of the turned box.
+
 A substitution's replacement is nullable, and null means **place nothing**. That is the ordinary
 case rather than an edge one: not having the material is why somebody reaches for this, and a hole
 is a more honest answer than a wrong block quietly standing in. One rule per source block, enforced
@@ -1389,7 +1402,7 @@ identity to hang progress off.
 
 `build_jobs` is one execution of one build, on one server, against a **frozen** division of it. The
 plan stays editable while agents are working from it, so a job copies what it needs — the anchor,
-the substitutions, and the schematic it was divided from — and reads nothing back through
+the turn, the world, the substitutions, and the schematic it was divided from — and reads nothing back through
 `build_id`. An operator editing a plan mid-job is editing the *next* job, which is the only reading
 that does not leave half a building under one rule set and half under another.
 
@@ -1411,6 +1424,17 @@ reading too many. Job is the word for a unit of dispatched work and collides wit
 The segments are rows for the same reason the job is. A recomputed segment has no identity, and
 progress has to attach to something; they are stored in **world coordinates** with the anchor
 already applied, and half-open, so a host is told a box and does no transform of its own.
+
+**A turn is applied twice, and both halves live in `build/Rotation.kt`.** Where a block goes: a
+piece is taken out of the schematic's own space, turned within its footprint, and then anchored, and
+a half-open box turns onto a half-open box exactly — a box turned a quarter is still a box, which is
+what makes turning a division cheap rather than a re-division. And **what a block is**: turning the
+positions alone builds the right shape pointing the wrong way at every step, so each palette entry
+is rewritten once as the segment is encoded — `facing` turns, `axis` trades `x` for `z`, a sign's
+sixteenths go round by four, a fence's or a wall's sides move between the keys, a rail's ends turn
+and are spelled back the one way vanilla spells them, a crafter's two facings turn each. Handedness
+survives a turn, so a hinge or a chest half is left alone. `RotationTest` checks four quarter turns
+come back to where they started.
 
 **One unfinished job per build per server**, enforced by a partial unique index — two would claim the
 same blocks in the same place for two sets of agents, and only the database sees both requests. The
