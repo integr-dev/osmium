@@ -194,9 +194,14 @@ const axisLabel: Record<string, string> = { x: 'X', y: 'Y', z: 'Z' }
       column that is six hundred pixels of picture with everything else on the step below the fold.
       The viewBox letterboxes inside whatever it is given, so the shape is unharmed by the clamp.
     -->
+    <!--
+      Focusable, because the arrow keys turn it — but the ring is `focus-visible` rather than
+      `focus`, so it appears for the keyboard and not for a click. Dragging a picture around gave a
+      white box a moment ago, which reads as something having gone wrong rather than as focus.
+    -->
     <svg
       :viewBox="`0 0 ${WIDTH} ${HEIGHT}`"
-      class="max-h-[26rem] w-full touch-none select-none"
+      class="focus-visible:outline-primary max-h-[26rem] w-full touch-none select-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
       :class="boxes.length ? 'cursor-grab active:cursor-grabbing' : ''"
       role="img"
       tabindex="0"

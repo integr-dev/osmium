@@ -520,9 +520,11 @@ const described = computed(() =>
       </button>
     </div>
 
+    <!-- The ring is `focus-visible`, not `focus`: the arrow keys turn this, but a drag should not
+         leave a white box behind. See `BoxViewer.vue`. -->
     <canvas
       ref="canvas"
-      class="text-primary h-[26rem] w-full touch-none select-none"
+      class="text-primary focus-visible:outline-primary h-[26rem] w-full touch-none select-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
       :class="shape?.count ? 'cursor-grab active:cursor-grabbing' : ''"
       role="img"
       tabindex="0"
