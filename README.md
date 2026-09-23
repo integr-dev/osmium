@@ -37,7 +37,8 @@ happened.
 > and while it is passing anyway, climbs before it crosses to the next layer, and — where the order
 > asks for it — snakes those layers so each one starts where the last ended. What it could not
 > reproduce it reports rather than quietly accepting, and a piece that ends short says which blocks
-> and why. **A plan says where it is for and which way it faces**: a server and a world, so only
+> and why. A square with nothing standing around it is filled by clicking the square itself, so a
+> floating column goes in rather than failing the piece. **A plan says where it is for and which way it faces**: a server and a world, so only
 > agents there can be given it, and a quarter turn that turns every block state with it. Where each
 > build stands is drawn on the map and in the 3D view — a plan dashed, a job solid in building's
 > colour with the pieces it was cut into inside it.
@@ -48,7 +49,7 @@ happened.
 |---|---|---|
 | [`backend/`](backend/) | Spring Boot 4.1 / Kotlin. Auth, accounts, hosts, agents, schematics, build plans and jobs, and the WebSocket hosts dial into. | Built, 666 tests |
 | [`frontend/`](frontend/) | Vue 3 / Vite SPA. Operator dashboard, the build pipeline, the live world viewer, the charted map and the storage breakdown. | Built, 655 tests |
-| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, streams what it sees, and builds the pieces it is given, 696 tests |
+| [`host/`](host/) | Runs on a machine you control, holds the Minecraft credentials and the proxies, drives the agents. TypeScript, on mineflayer. | Connects, plays, walks or flies where it is sent, reports its world, inventory and neighbours, streams what it sees, and builds the pieces it is given, 702 tests |
 | [`testserver/`](testserver/) | A Paper server and the rig that builds on it: a schematic made of nothing but the block states that are hard to place, built for real and read back. | Two scripts; see its README |
 | [`host/` → `osmium-link`](host/README.md) | The host's own command line: the accounts it can log in with, and the proxies it can route through. | Built — see below |
 
@@ -142,7 +143,7 @@ So the split is "runs the agents" versus "runs the people". Details in
 ```bash
 cd backend && ./gradlew test     # 666 tests; needs Docker for Testcontainers
 cd frontend && npm test          # 655 tests
-cd host && npm test              # 696 tests
+cd host && npm test              # 702 tests
 ```
 
 Placing blocks is the one thing none of those can settle, because what a placement turns into is

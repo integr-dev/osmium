@@ -78,7 +78,7 @@ pointing an agent at it and reading the activity feed to find out it was wrong.
 ### Tests, CI and the image
 
 ```
-npm test          # 696 tests
+npm test          # 702 tests
 npm run build     # tsc, which type-checks as it emits
 ```
 

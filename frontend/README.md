@@ -382,6 +382,10 @@ are optional, and "not said yet" is a real choice; once a server is set, **only 
 offered** when a job is started from the plan, and the backend refuses any other. The server is a
 select of the ones agents report, because it has to match theirs character for character.
 
+The turn is picked with the same `TabBar` the dashboard picks a timeframe with, inside a `fieldset`
+that takes it away from somebody who may not edit plans — the tabs are plain buttons, and a disabled
+fieldset disables them without the strip needing to know.
+
 **The turn is quarter turns clockwise, seen from above**, and the placement stays on the minimum
 corner of the turned box — the backend turns each piece and every block state with it. Every screen
 that draws a turned plan uses the same arithmetic: `footprintOf` for the whole box and `placeBox` for
@@ -1674,6 +1678,23 @@ The worlds share a coordinate system and are otherwise unrelated, so the dimensi
 address rather than a filter. Switching one throws away every painted tile: the coordinates carry
 over, so what is held is not stale, it is somewhere else. Agents in another dimension are dropped
 from the overlay — drawing a Nether agent on the Overworld map puts it on ground it has never seen.
+
+### Where it opens, and who gets to say
+
+`?agent=` opens the map on that agent: the id rather than a coordinate, because a link carrying a
+position is out of date the moment the agent walks. What the link means is "show me where this is",
+which is only answerable when it is opened.
+
+**The placing waits for the map to exist**, which the map's own `ref` is a source of the watch for —
+the map is behind the list of charted worlds, so the first attempt has nothing to place, and one that
+counted itself done there left the view wherever it was until the next telemetry tick moved it. That
+was a second of watching the wrong place, while clicking the same agent in the list was instant.
+
+**And the map's own default defers to a caller that got there first.** `WorldMap` ends its mounted
+hook on the origin as somewhere to start; a caller that centres in the update that mounts the map
+runs *before* that hook, so the default landed last and put the view back. It is skipped once
+`centreOn` has been called from outside — and `centreOn` waits a frame for a canvas that has not been
+laid out, rather than centring against a size of zero, which puts the block in the corner.
 
 ### Who is standing on it
 
