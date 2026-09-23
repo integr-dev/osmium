@@ -79,6 +79,13 @@ class SegmentFetchTest : AbstractRestTest() {
                 blockCount = 3,
             ),
         )
+        // **Deleted first, because `append` is what it says.** The store is a directory keyed by
+        // schematic id and it outlives the database between test classes, so an id that comes
+        // round again finds the previous class's file still there and this writes *after* it —
+        // the reader then decodes that one, and the test reads somebody else's blocks. It only
+        // bites when the id sequence happens to line up, which is a coin the next added test
+        // flips again.
+        storage.delete(checkNotNull(schematic.id))
         storage.append(checkNotNull(schematic.id)) { out -> out.write(bytes) }
 
         // What a pass would have left behind. The split reads this and never the file, so a fixture
@@ -98,10 +105,14 @@ class SegmentFetchTest : AbstractRestTest() {
         substitutions: List<Pair<String, String?>> = emptyList(),
         schematic: Schematic = readySchematic(),
     ): Pair<Int, String> {
+        // Sited as well as placed: a job takes its server from the plan rather than from whoever
+        // is ticked, so a plan that names none cannot be started at all.
         val build = Build(
             schematic = schematic,
             name = "row plan",
             placeX = 100, placeY = 64, placeZ = -30,
+            serverAddress = "mc.example.com",
+            dimension = "overworld",
             createdBy = "root",
         )
         substitutions.forEach { (from, to) ->

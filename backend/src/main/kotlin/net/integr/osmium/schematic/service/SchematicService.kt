@@ -218,6 +218,15 @@ class SchematicService(
                 )
             }
 
+            // **The first chunk replaces whatever is there.** The store is a directory keyed by
+            // schematic id, and an id is only unique among the rows that exist: if a file ever
+            // outlives its row — a delete that half failed, a database restored under a store that
+            // was not — the identity column can hand that number out again, and this would append
+            // the new upload onto the end of the old file. The decoder then reads the old one.
+            // Starting from zero is the one moment that can be put right, and it costs nothing at
+            // any other offset.
+            if (schematic.receivedBytes == 0L) storage.delete(id)
+
             var written = 0L
             storage.append(id) { out ->
                 val buffer = ByteArray(CHUNK)
