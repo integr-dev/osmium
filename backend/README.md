@@ -1131,6 +1131,26 @@ src/main/resources/db/migration/
   V14__build_jobs.sql              jobs and their segments: a plan frozen and being carried out
   V15__build_job_paused_holds_its_place.sql  a paused job keeps its claim on its server
   V16__build_segment_ticket.sql    the capability a host presents to fetch a segment
+  V17__build_job_pool.sql          a crew is membership, not the division it came from
+  V18__build_segment_released_from.sql  who a piece was taken from, so it is not handed back
+  V19__build_segment_placed_base.sql    what was standing when the current holder took it
+  V20__server_address_default_port.sql  one spelling for a server, port and all
+  V21__chat_components.sql         a chat line as the server sent it, not as a string
+  V22__agent_settings.sql          what an operator sets, replayed to the host on reconnect
+  V23__drop_local_chat_scope.sql   a scope the host could never tell apart
+  V24__agent_rejoin.sql            coming back on its own after a disconnect
+  V25__map_tiles.sql               the ground the fleet has charted
+  V26__map_tile_dimension.sql      which world each of those tiles is in
+  V27__agent_inventory_audit.sql   AGENT_INVENTORY added to the audit action constraint
+  V28__storage_purge_audit.sql     STORAGE_PURGE added to it
+  V29__last_seen_positions.sql     where somebody was, kept past the moment they went
+  V30__agent_path_audit.sql        AGENT_PATH added to it
+  V31__segment_placement_order.sql the order a piece is worked in, per piece
+  V32__build_world_and_rotation.sql  which world a plan is for, and its quarter turn
+  V33__job_types.sql               a job is a build, an excavation or a survey
+  V34__region_plans.sql            a box of world, saved the way a build plan is
+  V35__region_audit.sql            the three REGION actions added to the constraint
+  V36__region_plans_placed_later.sql  a region can be written before it is measured
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -1367,11 +1387,18 @@ Placement is an **anchor for the minimum corner**, all three coordinates or none
 check constraint. Two of three does not describe a position, and a column default would put a
 half-placed build at the world origin without anybody having said so.
 
-**A plan names its world, optionally.** `server_address` and `dimension` say which server and
-which world the coordinates were read off — the same numbers are somewhere else on every one. Both
-nullable, like the placement: a plan is often written before anybody knows where it is going. Once
-a server is set, **only agents on it may be given a job of the plan**, refused at start with the plan
-and the crew's server named; a plan with none keeps the old rule, and the job goes where its crew is.
+**A plan names its world.** `server_address` and `dimension` say which server and which world the
+coordinates were read off — the same numbers are somewhere else on every one. Both nullable, like
+the placement: a plan is often written before anybody knows where it is going.
+
+**A job of it is refused without them**, and the server is never *derived* from the crew. It was,
+once, with the plan's own server checked against it only if it had one — which let a build placed
+against one world's landscape go up on another because somebody ticked a different agent, with
+nothing anywhere saying so. Now the plan decides and the crew is checked: `start` refuses a plan
+that names no server, one that names no world, and a crew that is somewhere else, each by name. One
+consequence worth stating: the same schematic on two servers is **two plans**, which is the honest
+shape, since each one's coordinates were read off one world.
+
 Worlds are spelled as agents report them — `overworld`, not `minecraft:overworld` — because the map
 and the telemetry are what a plan's world is compared against.
 
@@ -1398,7 +1425,70 @@ arguments, recomputed on every `GET`. What changes that is a **run** — see bel
 place a division is written down, because the moment it becomes work somebody is doing it needs an
 identity to hang progress off.
 
+## A region is a plan with no file behind it
+
+`region_plans` is the other half of `builds`: a box of world somebody means to **dig out** or **fly
+over and chart**. Same idea with the schematic taken out, because there is no schematic — two
+corners read off the world are the whole description of the work.
+
+Its own table rather than nullable columns on `builds`. A build without a schematic is not a thing,
+and half the fields either side mean nothing to the other: a region has no substitutions and no
+rotation, a build has no second corner.
+
+**Why it is a plan at all**, when two corners could have gone straight into the request that starts
+the work: the same quarry is dug twice, the same valley is charted again next month, a box nobody
+has started is still worth drawing on the map so two people do not plan the same hole — and
+retyping six coordinates is the kind of thing that is right five times and wrong the sixth.
+
+The box is **half-open**, like every box here, and all six columns or none: a region can be written
+before anybody has been out to measure it, which is what a build plan calls unplaced. A survey is
+stored as a slab **one block thick at the height its agents fly**, so a piece, a blocker and a drawn
+box mean the same thing whichever kind made them, and nothing that reads a box needs to know it is
+flat. `RegionService` sorts the two inclusive corners an operator typed into that shape; the size
+limit is checked when the plan is written rather than only when a job of it starts, so a slipped
+digit is refused by the form that took it.
+
+Gated on the **agent** nodes, not the schematic ones — which is where it parts company with
+`BuildController`. A build plan is a design: it says where a *file* goes. A region has no file. It
+is a piece of the world the fleet is going to work, so it belongs with the things that say what the
+fleet is doing, and writing one is `agent.run`: it is written down in order to be worked, and the
+same person decides both.
+
 ## A job is a plan being carried out
+
+### Three kinds, one table
+
+A job is a build, an **excavation** or a **survey**, and `build_jobs.type` says which. One table,
+not three: a job is already the record of "this crew, on this server, working through these pieces,
+this far along", and none of that is about schematics. What changes between the three is where the
+pieces come from and what an agent does with one; everything the pool, the scheduler, the progress
+reports and the interface do with them is the same act. Three tables would have been the same
+columns three times, and three of every query that asks what the fleet is doing.
+
+A check constraint pairs the type with its plan: a build has `build_id` and `schematic_id`, a region
+job has `region_plan_id` and its own copy of the box, and neither has both. `name` is pinned on the
+row rather than reached through the plan — renaming a plan mid-job used to rename the job, the audit
+lines it had already written, and the activity on every agent working it.
+
+**Where the pieces come from.** A schematic is divided by its occupancy index, because a building is
+mostly air unevenly distributed and a cut has to fall where the *blocks* balance. A region has no
+such problem — two corners describe solid work all the way through, every block weighs the same, and
+an even cut is a fair one. So `build/RegionSplit.kt` is the same recursive halving with the index
+taken out and the arithmetic done on extents, returning the same shape so a job is dispatched, drawn
+and reported on identically however its pieces were arrived at.
+
+**Which way the dependency points.** A bot builds standing on what it has laid, so a piece waits for
+the one beneath it; it digs from the top down, so a piece waits for the one *above* it — otherwise
+it hollows out the floor somebody else is standing on. Same rule, read the other way round, and
+`BuildJob.blockers` switches on the type. A survey is one layer, so nothing blocks anything. For the
+same reason an excavation's default order is `y-z+x+`: a bot that starts at the floor of a hole is
+standing under everything it has left to take out.
+
+**Nothing is dispatched for a region job yet.** A host knows how to be handed a box of blocks to
+place and nothing else, so an excavation's pieces are cut, crewed, scheduled and assigned — and no
+command goes out. `BuildJobService.dispatched` is the one predicate saying so, rather than a
+condition at each of the three call sites, because it is one fact about the host protocol and it
+will stop being true in one commit.
 
 `build_jobs` is one execution of one build, on one server, against a **frozen** division of it. The
 plan stays editable while agents are working from it, so a job copies what it needs — the anchor,
@@ -1781,7 +1871,7 @@ works — that is the host's business, and the backend never observes it.
 ./gradlew test
 ```
 
-632 tests across 51 classes. Most run against a real Postgres 18 through Testcontainers with
+695 tests across 57 classes. Most run against a real Postgres 18 through Testcontainers with
 `@ServiceConnection`, so **Docker must be running**.
 
 - **REST tests** cover every route: happy paths, 401s, per-role 403s, 404s, 409 conflicts, 429s,

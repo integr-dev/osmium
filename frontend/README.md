@@ -222,16 +222,81 @@ which is markup worth having exactly once.
 
 ## Operations
 
-Four tabs, because they are the same act with a different verb — pick a group, then do one thing to
+Tabs, because they are the same act with a different verb — pick a group, then do one thing to
 all of it — and because an operator moves between them in one sitting: choose what to build, point
 the agents at the server, bring them in.
 
 | Tab | What it does |
 |---|---|
-| Schematics | upload, read, divide between agents, start building |
-| Jobs | what the fleet is building: segments, who is on each, how far along |
+| Schematics | upload, read, plan where it stands, divide between agents, start building |
+| Excavate | a box of world, saved as a plan, divided and emptied |
+| Map | a footprint, saved as a plan, divided into strips and charted |
+| Jobs | what the fleet is working: segments, who is on each, how far along |
 | Servers | point a group of agents at one Minecraft server |
 | Connections | bring a group in or out of game |
+
+### Three ways to start work, one wizard
+
+The three that put the fleet to work are the **same wizard**, and deliberately look it:
+
+```
+Schematic  ->  Plan     ->  Agents  ->  Split  ->  Order
+               Region   ->  Agents  ->  Split  ->  Order     (Excavate)
+               Region   ->  Agents  ->  Split               (Map)
+```
+
+The steps after the first ask exactly the same question and carry the same label, the same panel
+layout and the same footer. What differs is where the work comes from: a schematic is a file
+somebody designed, and a region is two corners read off the world.
+
+- **The plan card is the same card.** `MapPin`, the heading, the axis-labelled coordinate boxes with
+  their autocomplete guards, the server and world selects, the hint under them — a build places one
+  corner and a region places two, and everything around that one difference is identical. A region's
+  corners are one table rather than two stacked forms: axes named once along the top, `From` and
+  `To` once down the side, each box where its row meets its column.
+- **The picker, the split and the order are the same components.** `AgentPicker.vue`, the
+  **Divide between N** button with its piece list, and `OrderPicker.vue` — the six controls that
+  say what order a piece is worked in, extracted so a build's order and an excavation's are one
+  control rather than two copies that drift.
+- **Charting has no order step.** What an order picks is the way a piece is swept, and a flight over
+  a rectangle has one sensible sweep. A step offering a choice that changes nothing is worse than no
+  step.
+- **Every kind of plan is saved, renamed and deleted the same way**: a picker row with *new*,
+  *rename* and *delete*, an auto-name (`Excavation`, `Excavation 2`) so nothing asks for one before
+  the coordinates are worth keeping, an inline *Unsaved changes* / *Saved* line beside the button
+  rather than a banner over the page, and the same two dialogs down to the busy wording.
+
+### Digging is not building upside down, quite
+
+Two things change when the work is a hole rather than a tower, and both are the backend's rules
+drawn here:
+
+- **The pieces depend upwards.** A bot builds standing on what it has laid, so a piece waits for the
+  one beneath it; it digs from the top down, so a piece waits for the one *above* it. Same rule,
+  read the other way. The order defaults to `y-z+x+` for the same reason — a bot that starts at the
+  floor of a hole is standing under everything it has left to take out.
+- **A survey is flat.** Its box is one block thick at the height its agents fly, so the corners ask
+  for X and Z and the height is a field of its own. That keeps one shape for every box: a piece, a
+  blocker and a drawn box mean the same thing whichever tab made them.
+
+**Nothing is dispatched for either yet.** A host knows how to be handed a box of blocks to place and
+nothing else, so an excavation's pieces are cut, crewed, assigned — and then sit there. The split
+step and the job card both say so, before the button and after it, rather than leaving somebody
+watching a bar that will not move.
+
+### What kind of work it is, in colour
+
+A job is a build, an excavation or a survey, and `lib/jobKinds.ts` is the one table that says what
+each looks like: violet for raising something, amber for taking one away, cyan for flying over and
+writing it down. One table rather than a `switch` in each place that draws a job — the sidebar dot,
+the badge beside an agent, the progress bar, the job card, the box on the 2D map and the cage in the
+3D view are six places that would otherwise each have their own opinion about which violet meant
+building, and the first time one disagreed the colour would stop meaning anything.
+
+**An icon beside every colour**, because colour alone is the one distinction some operators cannot
+make: a hammer raises, a pickaxe takes away, a map is drawn. And the count is worded per kind —
+blocks placed, blocks cleared, columns charted — since a number whose unit is wrong is worse than no
+number.
 
 Each tab is **node-gated**. A viewer reaches the page for the library and is not shown two tabs that
 would answer 403 — an interface offering what it will refuse reads as broken rather than as
@@ -297,10 +362,22 @@ screen.
 Forward is gated and **says what is missing** rather than only grimacing at a disabled button;
 backwards is always free.
 
-**One server per build.** Agents on two servers cannot share one — they would be placing blocks into
-different worlds that happen to have the same coordinates. The first pick decides which, and the
-rest of the fleet greys out with the reason attached. The server is then *stated*, not chosen: a
-second control for it would be a way to disagree with the agents.
+**One server per build, and the plan says which.** Agents on two servers cannot share one — they
+would be placing blocks into different worlds that happen to have the same coordinates.
+
+It used to be the *first pick* that decided, with the plan's own server checked against it only if
+it had one. That let a build placed against one world's landscape go up on another because somebody
+ticked a different agent, and nothing anywhere said so. The plan decides now: the picker narrows to
+its server from the moment a plan is chosen, the backend refuses a crew from anywhere else, and a
+plan that names no server or world cannot leave the Plan step — the same rule a region follows, in
+the same words.
+
+A plan can still be *written* without either. Deciding to build comes before deciding where, and a
+plan that refuses to be saved until every field is settled is a plan nobody writes; it is only the
+road to a job that asks for the rest.
+
+One consequence worth knowing: the same schematic on two servers is **two plans**, not one plan
+started twice. That is the honest shape — the coordinates were read off one world.
 
 **The count is the selection.** Asking for a number of agents *and* which agents is asking the same
 question twice, and lets the two disagree.
@@ -1595,16 +1672,22 @@ renderer does by default.
 **Both views draw every build in the world on screen**, from one list — `src/lib/buildBoxes.ts` — so
 a box on the map and the cage in the 3D view are the same box.
 
-- **A plan's box is dashed**: somebody has said a build will go there, and nothing is there yet.
-- **A job's box is solid**, washed in `--osmium-building` — the colour building has everywhere else,
-  an agent's badge and a job's bar — with the **pieces it was cut into** drawn thin inside it, and
-  the finished ones washed in more strongly. The part of a footprint that is done is the first thing
-  anybody looking at a job wants to see.
-- **A plan being built is drawn once, as its job.** Both would be the same box twice.
+- **A plan's box is dashed**: somebody has said work will happen there, and nothing has yet. Build
+  plans and region plans both.
+- **A job's box is solid**, washed in the colour of its kind — `--osmium-building`,
+  `--osmium-excavating` or `--osmium-mapping`, the same colours its badge and its bar carry — with
+  the **pieces it was cut into** drawn thin inside it, and the finished ones washed in more
+  strongly. The part of a footprint that is done is the first thing anybody looking at a job wants
+  to see.
+- **A plan being worked is drawn once, as its job.** Both would be the same box twice.
 
-**Only the server and world on screen.** A plan names both (see *The plan*), and one that names
-neither has not said which map it belongs on — so it is on none of them rather than guessed onto all.
-A job built before plans named a world is drawn in the overworld, where every one of them was.
+**A build's box is arithmetic; a region's is the box.** One is the footprint of a file turned inside
+its own bounds (`footprintOf`); the other is the two corners somebody typed, half-open, needing
+nothing worked out. Deriving either from the other would mean one of them lying about what it is.
+
+**Only the server and world on screen.** A plan names both, and one that names neither has not said
+which map it belongs on — so it is on none of them rather than guessed onto all. A job built before
+plans named a world is drawn in the overworld, where every one of them was.
 
 **Worlds are compared without the namespace.** The map and agents say `overworld`; plans first saved
 said `minecraft:overworld`, matched nothing, and their boxes were drawn nowhere without an error.
@@ -1614,8 +1697,9 @@ said `minecraft:overworld`, matched nothing, and their boxes were drawn nowhere 
 along the line — scaling a unit cage would stretch the dashes with it. They are depth tested: a
 build is ground an agent works on, and one drawn through the hill in front of it floats over the view.
 
-Plans are held in the fleet store beside jobs and kept current from the stream (`build`,
-`build-removed`), so a box moves on a map that is already open.
+Plans are held in the fleet store beside jobs and kept current from the stream — `build` and
+`build-removed` for a schematic's, `region` and `region-removed` for a box of world — so a box moves
+on a map that is already open.
 
 ### Paths are drawn in both views
 
@@ -2206,7 +2290,8 @@ the moment it does. The choice is remembered per browser, like the language, and
 sidebar above the language or from the palette.
 
 **One stylesheet block per theme, and every colour comes out of one.** Besides daisyUI's tokens each
-block defines Osmium's own: `--osmium-building` and `--osmium-pending`, the two agent states with no
+block defines Osmium's own: `--osmium-building`, `--osmium-excavating` and `--osmium-mapping` — the
+three kinds of work, violet, amber and cyan — and `--osmium-pending`, the agent state with no
 daisyUI colour, and the scrim and shadows a dialog and a notice lie on, which a light page wants far
 fainter than a dark one. `--color-primary` is the fleet's colour wherever something is drawn and
 `--color-error` is everybody else's.
