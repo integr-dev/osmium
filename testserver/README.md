@@ -61,6 +61,7 @@ the server refuses to start without.
 | `npm run rig -- run` | Builds 183 specimens and reports every square that came out as something other than what the schematic asked for, grouped by family. |
 | `npm run rig -- plan <state>` | What this host *would* do to place that state — which face it would click, where it would stand, what it would click afterwards. No server needed. |
 | `npm run rig -- probe <item>` | What the server actually makes of one placement, from each of the six directions an agent can look. |
+| `npm run rig -- probe <item> --air --at x,y,z` | The same click on the empty square itself, with nothing put up around it — what the printer does when nothing is standing. Compare the two tables. Use an `--at` in open air: at ground level the grass underneath is still there, and anything that needs a floor stands on it. |
 | `npm run rig -- verify --anchor x,y,z` | Reads a build back without building it, for a piece an agent placed through the real pipeline. The same report, pointed at a box rather than at a run. |
 
 What the rig cannot answer is what happens when something *else* is turning the agent. It teleports,

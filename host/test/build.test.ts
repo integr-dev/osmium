@@ -10,7 +10,7 @@ import {
   stateAt,
   type Segment,
 } from '../src/agent/build/segment.ts'
-import { bare, formatSpec, opposite, parseSpec, planFor, tuneFor } from '../src/agent/build/plan.ts'
+import { airCursor, airOption, bare, formatSpec, opposite, parseSpec, planFor, tuneFor } from '../src/agent/build/plan.ts'
 import { itemFor } from '../src/agent/build/materials.ts'
 import { buildSettingsFrom, DEFAULT_REACH, MOST_REACH } from '../src/agent/build/settings.ts'
 import { compare } from '../src/agent/build/compare.ts'
@@ -389,5 +389,61 @@ describe('directions', () => {
     expect(opposite('north')).toBe('south')
     expect(opposite('up')).toBe('down')
     expect(opposite(opposite('east'))).toBe('east')
+  })
+})
+
+/**
+ * Placing in air: the empty target square is clicked the way the option would have clicked its
+ * neighbour, so the server derives the same state. The point clicked has to be the same point in the
+ * world, which is a different number on a different block.
+ */
+describe('clicking the square itself', () => {
+  it('moves the point from the block below onto the bottom of the square', () => {
+    // The top face of the block below is y = 1 on that block, and y = 0 on the square above it.
+    expect(airCursor({ against: 'down' })).toEqual({ x: 0.5, y: 0, z: 0.5 })
+  })
+
+  it('moves the point from a side neighbour onto the matching side', () => {
+    // Clicking the west face of the block to the east is x = 0 there, and x = 1 on the square.
+    expect(airCursor({ against: 'east' })).toEqual({ x: 1, y: 0.5, z: 0.5 })
+    expect(airCursor({ against: 'north' })).toEqual({ x: 0.5, y: 0.5, z: 0 })
+  })
+
+  /** The half a slab or a stair lands on is read off the height of the hit, so it has to survive. */
+  it('keeps a slab on the half its option chose', () => {
+    for (const spec of ['minecraft:oak_slab[type=top]', 'minecraft:oak_slab[type=bottom]', 'minecraft:oak_stairs[facing=north,half=top]']) {
+      const plan = planFor(spec)
+      const top = spec.includes('top')
+
+      for (const option of plan.options) {
+        const hit = airCursor(option)
+        // On the target square itself, above the middle is the top half.
+        expect(hit.y > 0.5, `${spec} against ${option.against}`).toBe(top)
+      }
+    }
+  })
+
+  it('stays on the square', () => {
+    for (const spec of ['minecraft:oak_log[axis=x]', 'minecraft:oak_slab[type=top]', 'minecraft:oak_trapdoor[facing=east,half=top,open=false]']) {
+      for (const option of planFor(spec).options) {
+        const hit = airCursor(option)
+        for (const value of [hit.x, hit.y, hit.z]) expect(value >= 0 && value <= 1, spec).toBe(true)
+      }
+    }
+  })
+})
+
+describe('what is placed in air', () => {
+  /** A trapdoor clicked on its side takes its facing from the look when the square is being replaced. */
+  it('never offers a trapdoor its side click', () => {
+    for (const spec of ['minecraft:oak_trapdoor[facing=east,half=top,open=false]', 'minecraft:oak_trapdoor[facing=north,half=bottom,open=false]']) {
+      const option = airOption(planFor(spec), 'oak_trapdoor')
+      expect(option?.against === 'up' || option?.against === 'down', spec).toBe(true)
+    }
+  })
+
+  it('offers everything else its preferred click', () => {
+    const plan = planFor('minecraft:spruce_wood[axis=x]')
+    expect(airOption(plan, 'spruce_wood')).toEqual(plan.options[0])
   })
 })

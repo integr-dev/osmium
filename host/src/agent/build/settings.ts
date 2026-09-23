@@ -41,9 +41,13 @@ export interface BuildSettings {
    * was really clicked. So a square with nothing standing around it can still be filled, by
    * clicking the empty square itself: air is replaceable, so the block goes in where the click was.
    *
-   * Offered only for blocks whose state owes nothing to the face they were placed against — see
-   * `anyFace` in `plan.ts`. A torch, a ladder, a stair take their facing from what they were put
-   * on, and one placed against nothing would be a different block from the one the piece asked for.
+   * **Any block, placed exactly the way it would have been against a neighbour.** The server
+   * derives a state from the face clicked, the point on it and the look — not from what was
+   * clicked — so the same face, the same point in the world (see `airCursor` in `plan.ts`) and the
+   * same look make the same block: a log lying the same way, a slab on the same half. It was first
+   * offered to plain cubes only, and a floating column of logs then failed a whole piece. A block
+   * that needs something to hang on or stand on — a torch, a ladder, a door, a carpet — fails the
+   * server's own survival check and is refused, and waits for its neighbour as before.
    *
    * On, because the alternative is losing a block every time a piece wants one whose neighbours
    * come later in the order. A server that does check the click refuses it, which costs the one

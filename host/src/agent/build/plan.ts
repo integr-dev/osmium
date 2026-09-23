@@ -165,18 +165,51 @@ export interface Plan {
    * something only the world can answer.
    */
   falls: boolean
-  /**
-   * Whether the block comes out the same whichever face it was placed against.
-   *
-   * A plain cube does: clicking the floor under it, the wall beside it or the ceiling above all
-   * leave the same block in the square. A stair, a torch, a hopper, a slab do not — each reads the
-   * face it was put on and where on it, and choosing that face is most of what this file is.
-   *
-   * What reads it is air placement: a square with nothing standing around it can still be filled,
-   * by clicking the empty square itself, and that is only honest where there is no face to get
-   * wrong. See `airPlace` in `settings.ts`.
-   */
-  anyFace: boolean
+}
+
+/**
+ * How to place a block into the empty square itself, when nothing is standing around it.
+ *
+ * **The click a neighbour would have taken, taken on air.** A placement names a square, a face of it
+ * and a point on that face, and the server derives the state from the face, the point and the look —
+ * not from what was clicked. Air is replaceable, so the block lands in the clicked square, and a click
+ * there with the same face, the same point in the world (see {@link airCursor}) and the same look
+ * makes the same block: a log lying the same way, a slab on the same half, a stair the same way up.
+ * Measured with `rig probe --air` in open air, against the same probe on a neighbour: logs, slabs,
+ * stairs and observers from every face and every look, identical.
+ *
+ * **Except a trapdoor clicked on its side.** Vanilla reads a trapdoor's facing off a side face only
+ * when the clicked block is *not* being replaced, and in air it always is — so that click comes out
+ * facing the way the agent looks, on the other half. Its click from above or below reads the look
+ * either way and is the same in air; that is the one offered.
+ *
+ * A block that needs something to stand on or hang from — a torch, a door, a carpet, a ladder, a
+ * lantern — is refused by the server's own survival check, which the probe found for every one of
+ * them. Nothing here has to know which blocks those are.
+ */
+export function airOption(plan: Plan, name: string): Option | undefined {
+  return plan.options.find((option) => !(name.endsWith('_trapdoor') && isHorizontal(option.against)))
+}
+
+/**
+ * Where on the target square to click, to hit the point an option clicks on its neighbour.
+ *
+ * **The same point in the world, not the same numbers.** An option's cursor is measured on the block
+ * it clicks, one step away from the target: the top face of the block below is `y = 1` on that
+ * block, and the same point is `y = 0` on the target. Passing the numbers through unchanged moves the
+ * hit a whole block, and every slab and stair placed that way comes out on the wrong half.
+ */
+export function airCursor(
+  option: Option,
+): { x: number; y: number; z: number } {
+  const step = STEP[option.against]
+  const normal = STEP[opposite(option.against)]
+
+  return {
+    x: (option.cursor?.x ?? 0.5 + normal.x * 0.5) + step.x,
+    y: (option.cursor?.y ?? 0.5 + normal.y * 0.5) + step.y,
+    z: (option.cursor?.z ?? 0.5 + normal.z * 0.5) + step.z,
+  }
 }
 
 /** Faces to try when nothing about the state depends on which one is used. */
@@ -413,13 +446,13 @@ export function planFor(spec: string): Plan {
   // Half a two-block block. Placing the lower one puts this here, and aiming at it directly is a
   // click into thin air that fails.
   if (props['half'] === 'upper' || props['part'] === 'head') {
-    return { options: [], tune: [], drift: [], free: true, copies: 1, falls: false, anyFace: false }
+    return { options: [], tune: [], drift: [], free: true, copies: 1, falls: false }
   }
 
   const copies = copiesFor(name, props)
   const family = familyOf(name, props)
   const falls = FALLS.has(name) || name.endsWith('_concrete_powder')
-  const made = (options: Option[]): Plan => ({ options, tune, drift, free: false, copies, falls, anyFace: false })
+  const made = (options: Option[]): Plan => ({ options, tune, drift, free: false, copies, falls })
 
   switch (family) {
     case 'pillar': {
@@ -522,7 +555,6 @@ export function planFor(spec: string): Plan {
         free: false,
         copies,
         falls,
-        anyFace: false,
       }
     }
 
@@ -578,7 +610,7 @@ export function planFor(spec: string): Plan {
     (key) => !DERIVED.has(key) && !SET_BY_HAND.has(key) && !tuned.has(key) && !drift.includes(key),
   )
 
-  return { options: ANY, tune, drift: [...drift, ...unresolved], free: false, copies, falls, anyFace: true }
+  return { options: ANY, tune, drift: [...drift, ...unresolved], free: false, copies, falls }
 }
 
 /**

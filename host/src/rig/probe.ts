@@ -33,6 +33,12 @@ export interface ProbeOptions {
   items: string[]
   /** Which neighbour to click. */
   from: Support
+  /**
+   * Click the empty square itself rather than the neighbour, with the same face and the same point
+   * in the world, and put up nothing around it - what the printer does when nothing is standing.
+   * Run with and without it and the two tables should agree, or refuse.
+   */
+  air?: boolean
 }
 
 export interface Trial {
@@ -87,7 +93,7 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult[]> {
 
     const out: ProbeResult[] = []
     for (const item of options.items) {
-      out.push({ item, from: options.from, trials: await trial(bot, target, item, options.from) })
+      out.push({ item, from: options.from, trials: await trial(bot, target, item, options.from, options.air ?? false) })
     }
 
     return out
@@ -96,7 +102,7 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult[]> {
   }
 }
 
-async function trial(bot: Bot, target: Vec3, item: string, from: Support): Promise<Trial[]> {
+async function trial(bot: Bot, target: Vec3, item: string, from: Support, air: boolean): Promise<Trial[]> {
   const made = bot.registry.itemsByName[item]
   if (!made) return [{ look: '-', state: `no item called ${item} in this version` }]
 
@@ -106,9 +112,12 @@ async function trial(bot: Bot, target: Vec3, item: string, from: Support): Promi
     // Waited for rather than slept through: a stale reading is a wrong answer that looks exactly
     // like a real one, and this whole tool exists to be believed.
     bot.chat(`/fill ${target.x - 1} ${target.y} ${target.z - 1} ${target.x + 1} ${target.y + 2} ${target.z + 1} air`)
-    bot.chat(`/setblock ${target.x} ${target.y - 1} ${target.z} stone`)
-    bot.chat(`/setblock ${target.x - 1} ${target.y} ${target.z} stone`)
-    bot.chat(`/setblock ${target.x} ${target.y + 1} ${target.z} stone`)
+    // Nothing to stand on or hang from when it is placed in air: that is the case being measured.
+    if (!air) {
+      bot.chat(`/setblock ${target.x} ${target.y - 1} ${target.z} stone`)
+      bot.chat(`/setblock ${target.x - 1} ${target.y} ${target.z} stone`)
+      bot.chat(`/setblock ${target.x} ${target.y + 1} ${target.z} stone`)
+    }
 
     if (!(await until(() => bot.blockAt(target)?.name === 'air', 2_000))) {
       trials.push({ look, state: 'the square could not be cleared' })
@@ -124,7 +133,12 @@ async function trial(bot: Bot, target: Vec3, item: string, from: Support): Promi
     snap(bot, yaw, pitch)
     await pause(60)
 
-    const { reference, normal, cursor } = aim(target, from)
+    const aimed = aim(target, from)
+    const { normal } = aimed
+    // In air the square itself is clicked, and the point moves with it: the same point in the
+    // world is one block over from where the neighbour measured it. See `airCursor` in plan.ts.
+    const reference = air ? target : aimed.reference
+    const cursor = air ? aimed.cursor.plus(aimed.reference.minus(target)) : aimed.cursor
     const block = bot.blockAt(reference)
     if (!block) {
       trials.push({ look, state: 'nothing to click' })

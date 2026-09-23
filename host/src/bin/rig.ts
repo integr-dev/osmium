@@ -37,7 +37,7 @@ const USAGE = `osmium build rig
           [--reach <n>] [--rate <n>] [--window <n>] [--no-tune]
   rig verify [--anchor x,y,z] [--host <h>] [--port <n>] [--name <n>] [--version <v>]
   rig plan <state> [<state>...]
-  rig probe <item> [<item>...] [--from floor|wall|ceiling] [--at x,y,z]
+  rig probe <item> [<item>...] [--from floor|wall|ceiling] [--at x,y,z] [--air]
                    [--host <h>] [--port <n>] [--name <n>] [--version <v>]
 `
 
@@ -235,11 +235,12 @@ async function measure(args: string[]): Promise<void> {
     at: anchorOf(flag(args, "--at") ?? "200,-59,200"),
     items: wanted,
     from: (flag(args, "--from") as Support | undefined) ?? "floor",
+    air: args.includes("--air"),
   })
 
   const out = process.stdout
   for (const result of results) {
-    out.write(`\n${result.item}, clicked from the ${result.from}\n`)
+    out.write(`\n${result.item}, clicked from the ${result.from}${args.includes("--air") ? ", in air" : ""}\n`)
     for (const found of result.trials) {
       out.write(`  looking ${found.look.padEnd(6)} -> ${found.state}\n`)
     }

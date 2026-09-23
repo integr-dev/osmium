@@ -1154,7 +1154,7 @@ export const en = {
       },
       build_airPlace: {
         label: 'Placing with nothing to place against',
-        hint: 'A block is normally put down by clicking one already standing beside it, and a piece regularly asks for one whose neighbours come later in its own order — a floor laid from a corner, a wall whose first block has nothing under it yet. Clicking the empty square itself fills it anyway, for blocks that read nothing off what they were placed against; stairs, torches, slabs and the like are never placed this way, because the face they were put on is what decides how they come out. A server that checks the click refuses it and the block waits for its neighbour as before.',
+        hint: 'A block is normally put down by clicking one already standing beside it, and a piece regularly asks for one whose neighbours come later in its own order — a floor laid from a corner, a wall whose first block has nothing under it yet. Clicking the empty square itself fills it anyway, the way it would have been clicked against a neighbour — so a log lies the same way and a slab sits on the same half. A block that needs something to stand on or hang from, like a torch or a door, is refused by the server and waits for its neighbour. A server that checks the click refuses it and the block waits for its neighbour as before.',
         options: {
           auto: 'Fill an empty square where the block allows it',
           false: 'Only place against a block already standing',

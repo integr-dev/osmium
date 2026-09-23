@@ -954,7 +954,7 @@ export const de: Copy = {
       },
       build_airPlace: {
         label: 'Setzen ohne Block daneben',
-        hint: 'Ein Block wird normalerweise gesetzt, indem man einen danebenstehenden anklickt — und ein Teil verlangt regelmäßig einen, dessen Nachbarn in seiner eigenen Reihenfolge erst später kommen: ein Boden, der in einer Ecke beginnt, eine Wand, unter deren erstem Block noch nichts steht. Klickt man das leere Feld selbst an, wird es trotzdem gefüllt — für Blöcke, die nichts von dem ablesen, woran sie gesetzt wurden. Treppen, Fackeln, Stufen und dergleichen werden nie so gesetzt, weil genau die angeklickte Fläche entscheidet, wie sie herauskommen. Ein Server, der den Klick prüft, lehnt ihn ab, und der Block wartet wie bisher auf seinen Nachbarn.',
+        hint: 'Ein Block wird normalerweise gesetzt, indem man einen danebenstehenden anklickt — und ein Teil verlangt regelmäßig einen, dessen Nachbarn in seiner eigenen Reihenfolge erst später kommen: ein Boden, der in einer Ecke beginnt, eine Wand, unter deren erstem Block noch nichts steht. Klickt man das leere Feld selbst an, wird es trotzdem gefüllt — so, wie es an einem Nachbarn angeklickt worden wäre, also liegt ein Stamm gleich und eine Stufe sitzt auf derselben Hälfte. Ein Block, der etwas zum Stehen oder Hängen braucht, etwa eine Fackel oder eine Tür, wird vom Server abgelehnt und wartet auf seinen Nachbarn. Ein Server, der den Klick prüft, lehnt ihn ab, und der Block wartet wie bisher auf seinen Nachbarn.',
         options: {
           auto: 'Leeres Feld füllen, wo der Block es zulässt',
           false: 'Nur an einen stehenden Block setzen',

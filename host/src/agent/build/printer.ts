@@ -14,6 +14,8 @@ import { compare, describe, type Mismatch, type Standing } from './compare.ts'
 import { itemFor } from './materials.ts'
 import { HOTBAR_FIRST } from '../inventory.ts'
 import {
+  airCursor,
+  airOption,
   bare,
   derived,
   opposite,
@@ -775,9 +777,11 @@ export class Printer {
     if (already === 0) {
       const standing = this.choose(plan, at)
 
-      // Nothing standing to click — but a block that reads nothing off the face it was put on can
-      // be placed by clicking the empty square itself. See `airPlace` in `settings.ts`.
-      const option = standing ?? (settings.airPlace && plan.anyFace ? plan.options[0] : undefined)
+      // Nothing standing to click — so the empty square itself is clicked, the way the preferred
+      // option would have clicked its neighbour. A block that needs something to hang on or stand
+      // on is refused by the server's own survival check, which is the refusal this would have
+      // been anyway. See `airPlace` in `settings.ts`.
+      const option = standing ?? (settings.airPlace ? airOption(plan, name) : undefined)
       if (!option) {
         return refuse('nothing standing to place it against')
       }
@@ -866,8 +870,9 @@ export class Printer {
     const against = STEP[option.against]
     // **In air, the square clicked is the square itself.** A placement names a position, a face and
     // a point on it; the block lands in the clicked square when that square is replaceable, and air
-    // is. So the same click that would have gone against a neighbour goes against the hole instead,
-    // with the same face and the same cursor, and lands in the same place.
+    // is. So the same click that would have gone against a neighbour goes against the hole instead —
+    // the same face, the same point in the world (see `airCursor`), the same look — and the server
+    // derives the same state from it.
     const reference = inAir
       ? this.bot.blockAt(vector(at))
       : this.bot.blockAt(new Vec3(at.x + against.x, at.y + against.y, at.z + against.z))
@@ -875,11 +880,14 @@ export class Printer {
 
     // The normal of the face we click, which points from the reference block at the target.
     const normal = STEP[opposite(option.against)]
-    const cursor = new Vec3(
-      option.cursor?.x ?? 0.5 + normal.x * 0.5,
-      option.cursor?.y ?? 0.5 + normal.y * 0.5,
-      option.cursor?.z ?? 0.5 + normal.z * 0.5,
-    )
+    const point = inAir
+      ? airCursor(option)
+      : {
+          x: option.cursor?.x ?? 0.5 + normal.x * 0.5,
+          y: option.cursor?.y ?? 0.5 + normal.y * 0.5,
+          z: option.cursor?.z ?? 0.5 + normal.z * 0.5,
+        }
+    const cursor = new Vec3(point.x, point.y, point.z)
 
     await this.aim(option)
 

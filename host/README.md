@@ -357,7 +357,7 @@ one would otherwise run on defaults with nothing saying so.
 | `build.window` | How many blocks past the next one are considered for placing from where the agent already stands. A count rather than a distance, because the order is a sequence and the blocks near in it are the ones whose supports are already there. Unset means 2048. Read per pass. |
 | `build.rate` | Blocks a second, at most. Minecraft has no limit of its own; a server’s packet ceiling does, and an agent that crosses it is kicked for flooding rather than slowed. Unset means 12. Read per pass. |
 | `build.tune` | `false` to leave a block in whatever state placing produced. Unset finishes the state off with right-clicks — a repeater’s delay, a comparator’s mode, a door left open, a note block’s pitch. **Unset means on**, which is the other way round from every other switch here, because finishing the state is part of placing the block correctly. Read per pass. |
-| `build.airPlace` | `false` to place a block only against one that is already standing. Unset fills an empty square by clicking the empty square itself: a placement names a position, a face and a point on it, and a server checks that the block may *be* where it lands rather than that anything was really clicked — air is replaceable, so the block goes in where the click was. Offered only for blocks that read nothing off the face they were placed against; a stair, a torch or a slab takes its state from what it was put on and is never placed this way. **Unset means on**, for the same reason `build.tune` is: a piece regularly asks for a block whose neighbours come later in its own order, and refusing those loses them. A server that does check the click refuses the placement, which costs the one click the refusal was going to cost anyway. Read per pass. |
+| `build.airPlace` | `false` to place a block only against one that is already standing. Unset fills an empty square by clicking the empty square itself: a placement names a position, a face and a point on it, and a server checks that the block may *be* where it lands rather than that anything was really clicked — air is replaceable, so the block goes in where the click was. The empty square is clicked the way the preferred placement would have clicked its neighbour — the same face, the same point in the world, the same look — so the server derives the same state: a log lies the same way, a slab sits on the same half, a stair faces the same way. A block that needs something to stand on or hang from — a torch, a door, a carpet — fails the server’s survival check and waits for its neighbour. A trapdoor is only ever placed in air by its click from above or below; its side click reads differently when the square is being replaced. **Unset means on**, for the same reason `build.tune` is: a piece regularly asks for a block whose neighbours come later in its own order, and refusing those loses them. A server that does check the click refuses the placement, which costs the one click the refusal was going to cost anyway. Read per pass. |
 | `path.haste` | `0` to `100`: how far the search may trade a shorter route for finding one sooner. `0` is the most direct route the rules allow, however long it takes to work out; `100` commits soonest and the route can wander. Matters most on long bridges and towers, where the search is slowest. Unset, or anything that is not a number, means `50`, which is how agents always planned. Read when a waypoint is sought. |
 | `connect.proxy` | The name of one of this host's proxies — see **Proxies** below. Blank connects from this machine's own address. A name this host does not hold is **not** a fallback to a direct connection: the attempt is refused, an activity entry says why, and the agent reports `failed_connection`. |
 | `connect.family` | `ipv4` or `ipv6` to dial only that kind of address; blank leaves the choice to this machine, which is what a name with both an A and an AAAA record otherwise gets. The socket is opened here with the family set rather than the name resolved first, so the hostname is still what the handshake carries and a proxy in front of the server keeps routing on it. The version ping takes the same family as the session it precedes. **Ignored while `connect.proxy` names a proxy**: the proxy opens the connection, and what it dials with is its own. Read when a session opens. |
@@ -1830,14 +1830,30 @@ difference between a rule in `plan.ts` being wrong, an order that puts a support
 square nothing can ever go in. Keep the last reason per block and report the tally when the piece
 ends short.
 
-**A square with nothing around it can still be filled, for some blocks.** A placement names a
-position, a face and a point on that face; a server checks that the block may *be* where it would
-land, not that anything was really clicked. Air is replaceable, so clicking the empty square
-itself puts the block in it — which is the answer for the blocks a piece asks for before their
-neighbours come up in its own order. **Only where there is no face to get wrong**: a stair, a
-slab, a torch or a hopper reads the face it was put on, and one placed against nothing is a
-different block from the one asked for. A server that does check the click refuses it, costing
-the click the refusal was going to cost anyway.
+**A square with nothing around it can still be filled.** A placement names a position, a face and a
+point on that face; a server derives the state from those and the look, and checks that the block
+may *be* where it would land — not that anything was really clicked. Air is replaceable, so clicking
+the empty square itself puts the block in it: the answer for the blocks a piece asks for before
+their neighbours come up in its own order.
+
+**Click it the way the neighbour would have been clicked.** The same face, the same look, and the
+same point *in the world* — which is a different number on a different block: the top of the block
+below is `y = 1` there and `y = 0` on the square above. Keep the numbers instead and every slab and
+stair lands on the wrong half. Done right, the state is the same one: measured with
+`rig probe --air` in open air against the same probe on a neighbour, logs, slabs, stairs and
+observers came out identical from every face and every look. It was first allowed for plain cubes
+only, and a floating column of logs failed a whole piece.
+
+**What the server settles for you, and the one thing it does not.** A block that needs something to
+stand on or hang from — a torch, a door, a carpet, a ladder, a lantern, a rail — fails the survival
+check and is refused; the probe found that for every one. The exception is a **trapdoor clicked on
+its side**: vanilla reads its facing off a side face only when the clicked block is *not* being
+replaced, and in air it always is, so that click comes out facing the look, on the other half. Only
+its click from above or below is used in air.
+
+**Probe in open air.** A probe at the ground's own level clears the square but not the grass under
+it, and everything that needs a floor then "places in air" on the floor — which reads as the server
+accepting a torch in mid-air, and is wrong.
 
 **Never fall back to a face that makes the wrong state.** For a hopper, a ladder, a wall torch or a
 pillar, the face clicked *is* the state. Reaching for a different face because the right one has no
