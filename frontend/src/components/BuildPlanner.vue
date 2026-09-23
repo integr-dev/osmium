@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Check, MapPin, Plus, Replace, RotateCw, SquarePen, Trash2 } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
 import AlertNote from './AlertNote.vue'
+import TabBar, { type Tab } from './TabBar.vue'
 import {
   createBuild,
   deleteBuild,
@@ -77,6 +78,22 @@ const place = ref<{ x: number | null; y: number | null; z: number | null }>({ x:
 const server = ref('')
 const dimension = ref('')
 const rotation = ref<Quarter>(0)
+
+/**
+ * The turn as the tab strip holds it. `TabBar` keys its tabs by string, and a turn is a number, so
+ * the two meet here rather than the strip learning about numbers for one caller.
+ */
+type TurnId = `${Quarter}`
+
+const turnTabs = computed<Tab<TurnId>[]>(() =>
+  QUARTERS.map((turn) => ({ id: String(turn) as TurnId, label: `${turn}°` })),
+)
+const turnTab = computed<TurnId>({
+  get: () => String(rotation.value) as TurnId,
+  set: (id: TurnId) => {
+    rotation.value = quarterOf(Number(id))
+  },
+})
 
 /** Servers worth offering: every one an agent is on, and whatever the plan already names. */
 const servers = computed(() => {
@@ -466,21 +483,14 @@ async function removePlan() {
               <RotateCw class="size-3" />
               {{ t('builds.rotation') }}
             </span>
-            <div class="join mt-1" role="radiogroup" :aria-label="t('builds.rotation')">
-              <button
-                v-for="turn in QUARTERS"
-                :key="turn"
-                type="button"
-                role="radio"
-                :aria-checked="rotation === turn"
-                class="btn btn-sm join-item tabular-nums"
-                :class="rotation === turn ? 'btn-primary' : 'btn-ghost border-base-300'"
-                :disabled="!auth.can('schematic.write')"
-                @click="rotation = turn"
-              >
-                {{ turn }}°
-              </button>
-            </div>
+            <!--
+              The dashboard's timeframe strip, not a control of its own. A fieldset is what takes it
+              away from somebody who may not edit plans: TabBar's tabs are plain buttons, and a
+              disabled fieldset disables every button inside it natively.
+            -->
+            <fieldset class="mt-1" :disabled="!auth.can('schematic.write')">
+              <TabBar v-model="turnTab" :tabs="turnTabs" variant="box" size="sm" />
+            </fieldset>
             <p class="mt-1 text-xs opacity-50">{{ t('builds.rotationHint') }}</p>
           </div>
         </div>
