@@ -757,14 +757,20 @@ function goToTyped(): void {
  */
 const placed = ref(false)
 watch(
-  [shown, asked],
-  ([agents, wanted]) => {
-    if (placed.value) return
+  [shown, asked, map],
+  ([agents, wanted, view]) => {
+    // **Not placed until there is a map to place.** The map waits on the list of charted worlds,
+    // so it is not there yet the first time this runs — and this used to call `centreOn` on the
+    // missing map, count that as done, and then wait for the next telemetry tick to change
+    // `shown` before trying again. Following a link to an agent took a second or more to land
+    // on it; clicking the same agent in the list was instant, because by then the map existed.
+    // The map is a source now, so the moment it mounts is a moment to place it.
+    if (placed.value || !view) return
 
     const at = wanted?.telemetry?.position
     if (at) {
       placed.value = true
-      map.value?.centreOn(at.x, at.z)
+      view.centreOn(at.x, at.z)
       return
     }
 
@@ -772,7 +778,9 @@ watch(
     placed.value = true
     recentre()
   },
-  { immediate: true },
+  // After the render, not before: a world arriving mounts the map in the same update, and the
+  // canvas has to be laid out for `centreOn` to know where its middle is.
+  { immediate: true, flush: 'post' },
 )
 
 // A different world is somewhere else entirely, so the view earns the right to jump again.

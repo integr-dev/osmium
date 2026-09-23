@@ -592,6 +592,14 @@ const BUILD_FILL = 0.1
 /** A plan's dashes, in screen pixels, so they read the same at every zoom. */
 const PLAN_DASH = [6, 4]
 
+/**
+ * How many frames {@link centreOn} waits for a canvas to be laid out before giving up.
+ *
+ * Half a second at sixty frames. A canvas that has no size by then is one nothing is going to draw
+ * on, and a retry that never stops would outlive the page it was asked on.
+ */
+const CENTRE_TRIES = 30
+
 /** How strongly a piece's edge is drawn: enough to count them, not enough to compete with the box. */
 const SECTION_LINE = 0.55
 
@@ -1143,15 +1151,46 @@ function onWheel(event: WheelEvent): void {
   load()
 }
 
-/** Puts the middle of the canvas on a block coordinate. */
-function centreOn(x: number, z: number, k = view.value.k): void {
+/**
+ * Puts the middle of the canvas on a block coordinate.
+ *
+ * **A canvas with no size yet has no middle.** This is called the moment the map appears — a link
+ * to an agent asks for it in the same update that mounts the map — and a canvas the browser has not
+ * laid out reads back as zero by zero. Centring against that puts the block at the top left corner
+ * instead of the middle, which looks exactly like the map ignoring where it was told to go. So it
+ * waits a frame and asks again, for as long as the canvas is still there and still has no size.
+ */
+function centreOn(x: number, z: number, k = view.value.k, tries = CENTRE_TRIES): void {
   const { width, height } = size()
+
+  if (width === 0 || height === 0) {
+    if (!canvas.value || tries <= 0) return
+    requestAnimationFrame(() => centreOn(x, z, k, tries - 1))
+    return
+  }
+
   view.value = { k, x: width / 2 - x * k, y: height / 2 - z * k }
   schedule()
   load()
 }
 
-defineExpose({ centreOn })
+/**
+ * Whether whoever owns this map has already said where to look.
+ *
+ * **The caller can get there first, and the default must not undo it.** A link to an agent centres
+ * the map in the same update that mounts it, which is *before* this component's own `mounted` hook
+ * runs — so the "somewhere to start" below landed last and put the view back on the origin. It only
+ * looked like it worked while the caller was a second late, which it was until the placing was
+ * fixed to happen as soon as the map exists.
+ */
+let sited = false
+
+defineExpose({
+  centreOn: (x: number, z: number, k?: number) => {
+    sited = true
+    centreOn(x, z, k)
+  },
+})
 
 // Drawn over the terrain, so a panel opening or closing about an area redraws it.
 watch(
@@ -1213,8 +1252,8 @@ onMounted(() => {
     if (name === 'map-tile') charted(data as Parameters<typeof charted>[0])
   })
 
-  // Somewhere to start, replaced the moment the fleet reports a position.
-  centreOn(0, 0)
+  // Somewhere to start, for a map nobody has pointed anywhere yet — see {@link sited}.
+  if (!sited) centreOn(0, 0)
 })
 
 onBeforeUnmount(() => {
