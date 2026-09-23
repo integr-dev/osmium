@@ -168,11 +168,11 @@ watch(
             class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-center gap-3 px-2 py-1.5 transition-colors"
           >
             <input v-model="selected" type="checkbox" :value="agent.id" class="checkbox checkbox-sm" />
-            <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))">
+            <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.workOf(agent.id))">
               <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
               <span
                 class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+                :class="agentDot(agent.state, agentStore.workOf(agent.id))"
               ></span>
             </span>
             <span class="min-w-0 flex-1">
@@ -207,7 +207,7 @@ watch(
             v-for="agent in visibleUnavailable"
             :key="agent.id"
             class="flex items-center gap-3 px-2 py-1.5"
-            :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))"
+            :title="agentStateLabel(agent.state, agentStore.workOf(agent.id))"
           >
             <!--
               Disabled rather than absent. Without it these rows start a whole checkbox to the left
@@ -218,7 +218,7 @@ watch(
               <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
               <span
                 class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+                :class="agentDot(agent.state, agentStore.workOf(agent.id))"
               ></span>
             </span>
             <span class="min-w-0 flex-1">

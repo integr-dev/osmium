@@ -44,7 +44,9 @@ class SegmentBlockService(
      * are one thing to collect and two things to place.
      */
     fun encode(job: BuildJob, segment: BuildSegment): ByteArray {
-        val schematic = job.schematic
+        // A region job has nothing behind its pieces to serve, and no host is ever sent one of them
+        // — see `BuildJobService.dispatched` — so this is a ticket for a job that never minted one.
+        val schematic = checkNotNull(job.schematic) { "'${job.name}' has no schematic to serve" }
         val id = checkNotNull(schematic.id) { "Job has no schematic" }
 
         check(storage.exists(id)) { "The file for '${schematic.name}' is missing from storage" }

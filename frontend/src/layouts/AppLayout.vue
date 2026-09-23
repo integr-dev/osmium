@@ -711,11 +711,11 @@ async function logout() {
                       :to="{ name: 'agent', params: { id: agent.id } }"
                       class="gap-2.5"
                     >
-                      <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))">
+                      <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.workOf(agent.id))">
                         <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
                         <span
                           class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                          :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+                          :class="agentDot(agent.state, agentStore.workOf(agent.id))"
                         ></span>
                       </span>
                       <!--

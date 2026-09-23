@@ -17,6 +17,8 @@ import { dollyToward, easeZoom, panRate, wheelTurn, zoomFactor, type Point } fro
 import { axisCross, cornerArms } from '../lib/reticle'
 import { cubeEdges } from '../lib/area'
 import { buildBoxes, type PlacedBox } from '../lib/buildBoxes'
+import { JOB_FALLBACK, JOB_TYPES, jobInk } from '../lib/jobKinds'
+import type { JobType } from '../api/jobs'
 import { onThemeChange, themeColour as tokenColour } from '../lib/theme'
 
 /**
@@ -251,7 +253,7 @@ interface Scene {
    * edits a plan, which is rare enough to afford the geometry.
    */
   builds?: Map<string, { mesh: Mesh; key: string }>
-  buildCage?: (box: PlacedBox['box'], kind: CageKind) => Mesh
+  buildCage?: (box: PlacedBox['box'], kind: CageKind, type: JobType) => Mesh
   /** The cross on the point the camera turns around - see {@link showGimbal}. */
   gimbal?: Mesh
   buildGimbal?: () => Mesh | undefined
@@ -1387,11 +1389,19 @@ function redrawNametag(
 const NAMETAG_ORDER = 1000
 
 /**
- * The cages a build is drawn with: a job's box, a plan's, and a job's pieces still going or done.
- * In the order the materials are built, which is how a cage finds its own.
+ * The cages a job is drawn with: its box, a plan's, and its pieces still going or done.
+ *
+ * Crossed with the kind of work — see {@link cageOf} — because a cage says two things at once: what
+ * part of a job it is, which the line weight and the dashes carry, and which kind of work it is,
+ * which the colour carries.
  */
 const CAGES = ['job', 'plan', 'section', 'done'] as const
 type CageKind = (typeof CAGES)[number]
+
+/** The key a cage's material is held under: what kind of work, and what part of it. */
+function cageOf(type: JobType, kind: CageKind): string {
+  return `${type}/${kind}`
+}
 
 /** How strongly each is drawn. The pieces fainter than the box they divide. */
 const CAGE_OPACITY: Record<CageKind, number> = { job: 0.95, plan: 0.75, section: 0.35, done: 0.6 }
@@ -1405,6 +1415,11 @@ const CAGE_OPACITY: Record<CageKind, number> = { job: 0.95, plan: 0.75, section:
  */
 function themeColour(name: string, fallback: number): number {
   return parseInt(tokenColour(name, '#' + fallback.toString(16).padStart(6, '0')).slice(1), 16)
+}
+
+/** The same stand-ins `lib/jobKinds.ts` gives the map, as the number three wants. */
+function themeFallback(type: JobType): number {
+  return parseInt(JOB_FALLBACK[type].slice(1), 16)
 }
 
 /**
@@ -2059,7 +2074,8 @@ function showHover(current: Scene): void {
 }
 
 /**
- * Where builds stand in the world this agent is in: jobs solid, plans dashed, in building's colour.
+ * Where the fleet's work stands in the world this agent is in: jobs solid, plans dashed, each in
+ * the colour of its kind.
  *
  * The same list the map draws, from the same arithmetic — `lib/buildBoxes.ts` — so a box here and
  * a box there are the same box. Only the agent's own server and world: the same coordinates in
@@ -2070,7 +2086,7 @@ const placedBoxes = computed<PlacedBox[]>(() => {
   const world = agent.value?.telemetry?.dimension
   if (!server || !world) return []
 
-  return buildBoxes(agentStore.plans, agentStore.jobs, server, world)
+  return buildBoxes(agentStore.plans, agentStore.jobs, server, world, agentStore.regions)
 })
 
 /**
@@ -2085,24 +2101,30 @@ function showBuilds(current: Scene): void {
 
   // A job's pieces are cages of their own inside its box, keyed under it so they go when it does.
   const cages = placedBoxes.value.flatMap((placed) => [
-    { id: placed.id, box: placed.box, kind: (placed.planned ? 'plan' : 'job') as CageKind },
+    {
+      id: placed.id,
+      box: placed.box,
+      kind: (placed.planned ? 'plan' : 'job') as CageKind,
+      type: placed.type,
+    },
     ...placed.sections.map((section, at) => ({
       id: `${placed.id}/${at}`,
       box: section.box,
       kind: (section.done ? 'done' : 'section') as CageKind,
+      type: placed.type,
     })),
   ])
 
   for (const cage of cages) {
     wanted.add(cage.id)
     const { west, east, north, south, low, high } = cage.box
-    const key = `${west},${east},${north},${south},${low},${high},${cage.kind}`
+    const key = `${west},${east},${north},${south},${low},${high},${cage.type},${cage.kind}`
 
     const existing = held.get(cage.id)
     if (existing?.key === key) continue
     if (existing) current.viewer.scene.remove(existing.mesh)
 
-    const mesh = current.buildCage?.(cage.box, cage.kind)
+    const mesh = current.buildCage?.(cage.box, cage.kind, cage.type)
     if (!mesh) continue
     current.viewer.scene.add(mesh)
     held.set(cage.id, { mesh, key })
@@ -2637,22 +2659,28 @@ async function mount(world: { version: string; minY?: number; height?: number },
   //
   // A job's pieces are cages inside its box: thinner and fainter, so the division reads as the inside
   // of one build rather than as several, and a finished piece a little stronger than one still going.
-  const buildMaterials = CAGES.map(
-    (kind) =>
-      new LineMaterial({
-        color: themeColour('--osmium-building', 0xa78bfa),
-        linewidth: kind === 'job' ? 2 : kind === 'plan' ? 1.5 : 1,
-        // A block is the unit here, so a dash of one and a gap of a half reads as a dashed edge on a
-        // build of any size — the cage is built at its real size for exactly this.
-        dashed: kind === 'plan',
-        dashSize: 1,
-        gapSize: 0.5,
-        depthTest: true,
-        transparent: true,
-        opacity: CAGE_OPACITY[kind],
-      }),
+  const buildMaterials = new Map<string, InstanceType<typeof LineMaterial>>(
+    JOB_TYPES.flatMap((type) =>
+      CAGES.map((kind): [string, InstanceType<typeof LineMaterial>] => [
+        cageOf(type, kind),
+        new LineMaterial({
+          color: themeColour(jobInk(type), themeFallback(type)),
+          linewidth: kind === 'job' ? 2 : kind === 'plan' ? 1.5 : 1,
+          // A block is the unit here, so a dash of one and a gap of a half reads as a dashed edge on
+          // a build of any size — the cage is built at its real size for exactly this.
+          dashed: kind === 'plan',
+          dashSize: 1,
+          gapSize: 0.5,
+          depthTest: true,
+          transparent: true,
+          opacity: CAGE_OPACITY[kind],
+        }),
+      ]),
+    ),
   )
-  for (const material of buildMaterials) material.resolution.set(element.clientWidth, element.clientHeight)
+  for (const material of buildMaterials.values()) {
+    material.resolution.set(element.clientWidth, element.clientHeight)
+  }
 
   const models = await import('prismarine-viewer/viewer/lib/entity/entities.json')
   const built: Scene = {
@@ -2793,7 +2821,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
      *
      * Inclusive at both ends, so the far corner is one past the last block in every direction.
      */
-    buildCage: (box: PlacedBox['box'], kind: CageKind) => {
+    buildCage: (box: PlacedBox['box'], kind: CageKind, type: JobType) => {
       const wide = box.east - box.west + 1
       const tall = box.high - box.low + 1
       const deep = box.south - box.north + 1
@@ -2802,7 +2830,7 @@ async function mount(world: { version: string; minY?: number; height?: number },
 
       const line = new LineSegments2(
         new LineSegmentsGeometry().setPositions(sized),
-        buildMaterials[CAGES.indexOf(kind)]!,
+        buildMaterials.get(cageOf(type, kind))!,
       ) as unknown as Mesh
 
       // A dashed line is drawn from how far along itself each vertex is, which nothing works out on
@@ -2908,7 +2936,13 @@ async function mount(world: { version: string; minY?: number; height?: number },
     bounds,
     received: 0,
     outlineMaterials,
-    markerMaterials: [hoverMaterial, gimbalMaterial, ghostMaterial, workMaterial, ...buildMaterials],
+    markerMaterials: [
+      hoverMaterial,
+      gimbalMaterial,
+      ghostMaterial,
+      workMaterial,
+      ...buildMaterials.values(),
+    ],
     pathMaterials: [...pathMaterials, hoverMaterial],
     seen: new Map(),
     names: new Map(),
@@ -2928,7 +2962,10 @@ async function mount(world: { version: string; minY?: number; height?: number },
       tint(gimbalMaterial, themeColour('--color-accent', 0x38bdf8))
       tint(ghostMaterial, themeColour('--color-accent', 0x38bdf8))
       tint(workMaterial, themeColour('--color-success', 0x22c55e))
-      for (const material of buildMaterials) tint(material, themeColour('--osmium-building', 0xa78bfa))
+      for (const type of JOB_TYPES) {
+        const colour = themeColour(jobInk(type), themeFallback(type))
+        for (const kind of CAGES) tint(buildMaterials.get(cageOf(type, kind))!, colour)
+      }
 
       // The labels key their redraw on this colour, so the next pass repaints every ring.
       built.tones = cssTones(next)

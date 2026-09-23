@@ -273,7 +273,7 @@ const walkBlocked = computed<string | null>(() => {
   if (!agent.value) return null
   if (!isOnline(agent.value)) return t('agents.blockedNotOnlineWalk')
   if (!hostReachable.value) return t('agents.blockedHost', { host: agent.value.hostName })
-  if (agentStore.isBuilding(agent.value.id)) return t('agents.blockedBuildingWalk')
+  if (agentStore.workOf(agent.value.id)) return t('agents.blockedBuildingWalk')
   if (!destination.value) return t('agents.blockedNoDestination')
   return null
 })
@@ -608,9 +608,9 @@ async function confirmRemove() {
             <span
               v-flash="agent.state"
               class="badge badge-sm"
-              :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
+              :class="agentBadge(agent.state, agentStore.workOf(agent.id))"
             >
-              {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
+              {{ agentStateLabel(agent.state, agentStore.workOf(agent.id)) }}
             </span>
             <!-- Which piece of which build, spelled out: this page has the room the fleet table did not. -->
             <RouterLink
@@ -620,7 +620,7 @@ async function confirmRemove() {
             >
               {{
                 t('agents.buildingOn', {
-                  build: assignment?.buildName,
+                  build: assignment?.name,
                   ordinal: assignment?.ordinal,
                 })
               }}

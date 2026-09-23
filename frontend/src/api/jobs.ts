@@ -18,6 +18,16 @@ export type JobState = 'ACTIVE' | 'PAUSED' | 'DONE'
 export type SegmentState = 'PENDING' | 'ASSIGNED' | 'BUILDING' | 'DONE' | 'FAILED'
 
 /**
+ * What kind of work a job is.
+ *
+ * A build comes from a plan and places blocks; the other two come from two corners an operator read
+ * off the world, and there is nothing else to them. Which is why a region job carries `regionMax`
+ * where a build carries `size` and `rotation`: one occupies the footprint of a file that was
+ * turned, and the other *is* the box.
+ */
+export type JobType = 'BUILD' | 'EXCAVATE' | 'MAP'
+
+/**
  * The two states are narrowed here rather than left as the `string` the generator produces.
  *
  * They are closed sets on the backend — database check constraints, not free text — and naming them
@@ -46,14 +56,32 @@ export type JobAgent = Omit<Required<components['schemas']['JobAgentResponse']>,
 
 export type BuildJob = Omit<
   Required<components['schemas']['BuildJobResponse']>,
-  'state' | 'placement' | 'segments' | 'pool' | 'finishedAt' | 'dimension' | 'size'
+  | 'state'
+  | 'type'
+  | 'placement'
+  | 'segments'
+  | 'pool'
+  | 'finishedAt'
+  | 'dimension'
+  | 'size'
+  | 'regionMax'
+  | 'buildId'
+  | 'schematicId'
+  | 'schematicName'
 > & {
   state: JobState
+  type: JobType
+  /** Null for a job that divides a region rather than a plan. */
+  buildId: number | null
+  schematicId: number | null
+  schematicName: string | null
   placement: Placement
-  /** The world the plan named when the job started. Null for a plan that named none. */
+  /** The world the plan named when the job started. Always set for a region job. */
   dimension: string | null
-  /** The schematic's box before the turn, for drawing where the job stands. */
+  /** The schematic's box before the turn, for drawing where the job stands. Null for a region. */
   size: Size | null
+  /** The far corner of a region job's box, exclusive. Null for a build. */
+  regionMax: Placement | null
   segments: JobSegment[]
   /**
    * Who is working it. Empty once it is finished — this is live membership, and who built which

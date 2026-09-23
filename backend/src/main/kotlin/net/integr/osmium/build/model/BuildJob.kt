@@ -19,6 +19,36 @@ import net.integr.osmium.build.PlacementOrder
 import net.integr.osmium.schematic.model.Schematic
 import java.time.Instant
 
+/**
+ * What kind of work a job is: what its pieces came from, and what an agent does with one.
+ *
+ * Everything else about a job is the same for all three - a crew, a division, a scheduler handing
+ * pieces out, hosts reporting counts back - which is why this is a column rather than three tables.
+ */
+enum class BuildJobType {
+    /** A plan, frozen: pieces cut out of a schematic's occupied cells, placed block by block. */
+    BUILD,
+
+    /**
+     * A box of world, emptied. Pieces are cut out of the box itself, there being no file to count.
+     *
+     * **Its pieces depend upwards, where a build's depend downwards.** A bot builds standing on
+     * what it has laid, so a piece waits for the one beneath it; a bot digs from the top down, so a
+     * piece waits for the one *above* it - otherwise it hollows out the floor somebody else is
+     * standing on. Same rule, read the other way round. See [BuildJob.blockers].
+     */
+    EXCAVATE,
+
+    /**
+     * A footprint, charted. The agents fly it and report the ground they see.
+     *
+     * A slab one block thick at the height they fly, so its box has the same shape as any other
+     * and nothing that draws one needs to know it is flat. Nothing stands on anything, so every
+     * piece is ready from the moment the job starts.
+     */
+    MAP,
+}
+
 /** Where a job is in its life. There is no failed state - see [BuildJob]. */
 enum class BuildJobState {
     /** Segments are being handed out, built, and reported on. */
@@ -86,18 +116,49 @@ class BuildJob(
     @Column(name = "id", nullable = false)
     var id: Long? = null,
 
-    @ManyToOne(fetch = FetchType.EAGER, optional = false)
-    @JoinColumn(name = "build_id", nullable = false)
-    var build: Build = Build(),
+    /**
+     * What kind of work this is. [BUILD][BuildJobType.BUILD] is the only kind with a plan behind
+     * it, which is why [build] and [schematic] are nullable and [regionMaxX] is not always null.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type", nullable = false, length = 16)
+    var type: BuildJobType = BuildJobType.BUILD,
+
+    /**
+     * What to call this job, pinned like everything else on it.
+     *
+     * It used to be read through [build], which a region job has none of - and it was the worse
+     * answer for a build too: renaming a plan halfway through renamed the job, the audit lines it
+     * had already written, and the activity on every agent working it.
+     */
+    @Column(name = "name", nullable = false, length = 128)
+    var name: String = "",
+
+    /** The plan behind a [BuildJobType.BUILD]. Null for a region job, which has [regionPlan]. */
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "build_id")
+    var build: Build? = null,
+
+    /**
+     * The plan behind an excavation or a survey. Null for a build.
+     *
+     * Exactly one of the two is set - the database says so - because a job is one execution of one
+     * plan, and which table that plan lives in is what [type] says.
+     */
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "region_plan_id")
+    var regionPlan: RegionPlan? = null,
 
     /**
      * Pinned rather than reached through [build], so deleting or re-reading a schematic can be
      * refused while this job is live. A frozen split describes cells that stop existing the moment
      * the file behind them is analysed again.
+     *
+     * Null for a region job, which divides a box rather than a file.
      */
-    @ManyToOne(fetch = FetchType.EAGER, optional = false)
-    @JoinColumn(name = "schematic_id", nullable = false)
-    var schematic: Schematic = Schematic(),
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "schematic_id")
+    var schematic: Schematic? = null,
 
     /**
      * Pinned, not joined through the agents.
@@ -127,6 +188,17 @@ class BuildJob(
     @Column(name = "place_x", nullable = false) var placeX: Int = 0,
     @Column(name = "place_y", nullable = false) var placeY: Int = 0,
     @Column(name = "place_z", nullable = false) var placeZ: Int = 0,
+
+    /**
+     * The far corner of a region job's box, exclusive. Null for a build, whose box is its
+     * schematic's size from the anchor.
+     *
+     * The near corner is [placeX] and the rest, which already mean "where the minimum corner is"
+     * and mean exactly that here. Exclusive to match the segments cut out of it.
+     */
+    @Column(name = "region_max_x") var regionMaxX: Int? = null,
+    @Column(name = "region_max_y") var regionMaxY: Int? = null,
+    @Column(name = "region_max_z") var regionMaxZ: Int? = null,
 
     /** The plan's turn when the job started, pinned for the same reason the anchor is. */
     @Column(name = "rotation", nullable = false) var rotation: Int = 0,
@@ -196,7 +268,7 @@ class BuildJob(
     val blocksPlaced: Long get() = segments.sumOf(BuildSegment::blocksPlaced)
 
     /**
-     * The pieces under [segment] that are not finished. Empty means it can be handed out.
+     * The unfinished pieces [segment] is waiting for. Empty means it can be handed out.
      *
      * **A bot is two blocks tall and builds bottom-up**, standing on the layer below to place the
      * one it is on - so its body fills its own cell at the height it is working and the height above
@@ -210,9 +282,22 @@ class BuildJob(
      *
      * Costs nothing where it is not needed. A full-height split has nothing beneath anything, so
      * every piece is ready from the start and this returns empty for all of them.
+     *
+     * Which way the dependency points is the job's [type] - see [BuildJobType.EXCAVATE].
      */
-    fun blockers(segment: BuildSegment): List<BuildSegment> =
-        segments.filter { it.state != BuildSegmentState.DONE && it.isUnder(segment) }
+    fun blockers(segment: BuildSegment): List<BuildSegment> = segments.filter { other ->
+        other.state != BuildSegmentState.DONE &&
+            when (type) {
+                // Building rises: a piece waits for the ground it will be laid from.
+                BuildJobType.BUILD -> other.isUnder(segment)
+                // Digging falls: a piece waits for the roof over it to come off, or it would be
+                // hollowing out the floor the agent above is standing on.
+                BuildJobType.EXCAVATE -> segment.isUnder(other)
+                // One layer, so nothing is over or under anything. Said rather than left to the
+                // geometry, because a mapping job is flat by construction and not by luck.
+                BuildJobType.MAP -> false
+            }
+    }
 
     fun ready(segment: BuildSegment): Boolean = blockers(segment).isEmpty()
 

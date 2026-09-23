@@ -90,11 +90,11 @@ function toggleAll(): void {
           class="rounded-field hover:bg-base-300/40 flex cursor-pointer items-center gap-2 px-1 py-1 transition-colors"
         >
           <input v-model="selected" type="checkbox" :value="agent.id" class="checkbox checkbox-xs" />
-          <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))">
+          <span class="relative shrink-0" :title="agentStateLabel(agent.state, agentStore.workOf(agent.id))">
             <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
             <span
               class="ring-base-100 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-              :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+              :class="agentDot(agent.state, agentStore.workOf(agent.id))"
             ></span>
           </span>
           <!--

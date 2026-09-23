@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Pause,
   Play,
+  Pickaxe,
   Power,
   ScrollText,
   Server,
@@ -55,6 +56,11 @@ const ACTION_ICON: Record<AuditAction, typeof KeyRound> = {
   BUILD_CREATE: MapPin,
   BUILD_UPDATE: MapPin,
   BUILD_DELETE: Trash2,
+  // A region is a box of world rather than a placed design, so it takes the pickaxe and the map
+  // its jobs are drawn with rather than the placement pin.
+  REGION_CREATE: Pickaxe,
+  REGION_UPDATE: Pickaxe,
+  REGION_DELETE: Trash2,
   BUILD_JOB_START: Hammer,
   BUILD_JOB_PAUSE: Pause,
   BUILD_JOB_RESUME: Play,
@@ -97,6 +103,10 @@ const ACTION_BADGE: Record<AuditAction, string> = {
   BUILD_UPDATE: 'badge-ghost',
   // Takes the coordinates and the substitutions with it; making the plan again is not undoing this.
   BUILD_DELETE: 'badge-error badge-soft',
+  REGION_CREATE: 'badge-ghost',
+  REGION_UPDATE: 'badge-ghost',
+  // Takes the corners with it; writing the region again is not undoing this.
+  REGION_DELETE: 'badge-error badge-soft',
   // Putting agents to work is fleet operation, not destruction — and stopping them leaves
   // everything already placed standing, so neither is red.
   BUILD_JOB_START: 'badge-success badge-soft',

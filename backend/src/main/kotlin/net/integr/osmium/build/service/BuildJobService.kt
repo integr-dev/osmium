@@ -10,19 +10,25 @@ import net.integr.osmium.audit.model.AuditAction
 import net.integr.osmium.audit.service.AuditService
 import net.integr.osmium.build.PlacementOrder
 import net.integr.osmium.build.Rotation
+import net.integr.osmium.build.RegionSplit
 import net.integr.osmium.build.dto.AssignSegmentRequest
 import net.integr.osmium.build.dto.BuildJobResponse
+import net.integr.osmium.build.dto.RegionSplitRequest
 import net.integr.osmium.build.dto.StartJobRequest
+import net.integr.osmium.build.dto.StartRegionJobRequest
 import net.integr.osmium.build.dto.toResponse
 import net.integr.osmium.build.model.Build
 import net.integr.osmium.build.model.BuildJob
 import net.integr.osmium.build.model.BuildJobAgent
 import net.integr.osmium.build.model.BuildJobState
 import net.integr.osmium.build.model.BuildJobSubstitution
+import net.integr.osmium.build.model.BuildJobType
 import net.integr.osmium.build.model.BuildSegment
 import net.integr.osmium.build.model.BuildSegmentState
+import net.integr.osmium.build.model.RegionPlan
 import net.integr.osmium.build.repository.BuildRepository
 import net.integr.osmium.build.repository.BuildJobRepository
+import net.integr.osmium.build.repository.RegionPlanRepository
 import net.integr.osmium.hostlink.CommandType
 import net.integr.osmium.hostlink.HostConnections
 import net.integr.osmium.hostlink.HostEnvelope
@@ -30,6 +36,9 @@ import net.integr.osmium.hostlink.MessageKind
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateType
+import net.integr.osmium.schematic.SplitMode
+import net.integr.osmium.schematic.Vec3i
+import net.integr.osmium.schematic.dto.SplitResponse
 import net.integr.osmium.schematic.model.SchematicStatus
 import net.integr.osmium.schematic.service.SchematicService
 import org.slf4j.LoggerFactory
@@ -66,6 +75,7 @@ import java.time.Instant
 class BuildJobService(
     private val jobs: BuildJobRepository,
     private val builds: BuildRepository,
+    private val regions: RegionPlanRepository,
     private val agents: AgentRepository,
     private val schematics: SchematicService,
     private val activityService: ActivityService,
@@ -102,16 +112,22 @@ class BuildJobService(
             "'${schematic.name}' has not been read yet, so it cannot be divided"
         }
 
+        // **The plan says where, and the crew is checked against it.** The server used to be
+        // derived from whoever was ticked, which let a build placed against one world's landscape
+        // go up on another because somebody chose a different agent, with nothing anywhere saying
+        // so. A plan may still be *written* without a server — deciding to build comes before
+        // deciding where — but it cannot be started without one, the rule a region follows.
+        val meant = checkNotNull(build.serverAddress) {
+            "'${build.name}' does not say which server it is for"
+        }
+        val world = checkNotNull(build.dimension) {
+            "'${build.name}' does not say which world it is in"
+        }
+
         val crew = resolveCrew(request.agentIds)
         val server = checkNotNull(crew.first().serverAddress)
-
-        // **A plan that names its server is built there and nowhere else.** The coordinates on it
-        // were read off one world; the same numbers on another server are somewhere nobody looked.
-        // A plan that names none keeps the old rule: the job goes where its crew is.
-        build.serverAddress?.let { meant ->
-            check(server == meant) {
-                "'${build.name}' is planned for $meant, and these agents are on $server"
-            }
+        check(server == meant) {
+            "'${build.name}' is planned for $world on $meant, and these agents are on $server"
         }
 
         // **Per server, not per plan.** The same tower on two servers is the case a job exists to
@@ -164,6 +180,8 @@ class BuildJobService(
         val turns = Rotation.turnsOf(build.rotation)
 
         val job = BuildJob(
+            type = BuildJobType.BUILD,
+            name = build.name,
             build = build,
             schematic = schematic,
             serverAddress = server,
@@ -244,6 +262,182 @@ class BuildJobService(
     }
 
     /**
+     * Freezes a region plan and hands its pieces out: a box emptied, or a footprint charted.
+     *
+     * **The same act as [start], with a different plan behind it.** The checks are in the order an
+     * operator hits them, as there: what is wrong with the plan first, then what is wrong with the
+     * agents, then what is already running.
+     *
+     * The one thing it does not do is derive the server. A build job takes its target from its crew,
+     * because a schematic is a shape that exists wherever you put it; six coordinates are not, and a
+     * box typed against one world's landscape must not be dug in another because somebody ticked a
+     * different agent. So the plan says where, and a crew that is somewhere else is refused.
+     *
+     * An excavation's order defaults to top to bottom, which is the one thing about digging that is
+     * not building spelled backwards by accident: a bot that starts at the floor of a hole is
+     * standing under everything it has left to take out.
+     */
+    @Transactional
+    fun startRegion(regionId: Long, request: StartRegionJobRequest): BuildJobResponse {
+        val region = regions.findById(regionId).orElseThrow {
+            NoSuchElementException("No region $regionId")
+        }
+        val digging = region.type == BuildJobType.EXCAVATE
+
+        // What a plan is allowed to leave open, a job is not. Both are asked here rather than of
+        // the row, because writing a region down before going out to measure it is the point.
+        check(region.placed) {
+            "'${region.name}' has no corners yet, so there is nothing to work"
+        }
+        val meant = checkNotNull(region.serverAddress) {
+            "'${region.name}' does not say which server those coordinates are on"
+        }
+        val world = checkNotNull(region.dimension) {
+            "'${region.name}' does not say which world those coordinates are in"
+        }
+
+        val crew = resolveCrew(request.agentIds)
+        val server = checkNotNull(crew.first().serverAddress)
+        check(server == meant) {
+            "'${region.name}' is in $world on $meant, and these agents are on $server"
+        }
+
+        jobs.findFirstByRegionPlanIdAndServerAddressAndStateIn(regionId, server, UNFINISHED)?.let { existing ->
+            error(
+                "'${region.name}' is already being worked on $server" +
+                    if (existing.state == BuildJobState.PAUSED) ", by a job that is paused" else "",
+            )
+        }
+
+        // Checked before anything is created, for the reason `start` checks it there: a piece is
+        // hours of an agent's work, and a sweep nobody asked for is worse than a job that refused
+        // to start.
+        val order = PlacementOrder.of(request.order ?: if (digging) DIGGING_ORDER else PlacementOrder.DEFAULT)
+            ?: error("'${request.order}' is not a placement order")
+        val perPiece = request.segmentOrders.orEmpty().mapValues { (ordinal, value) ->
+            PlacementOrder.of(value) ?: error("'$value' is not a placement order, for piece $ordinal")
+        }
+
+        // A slab one block thick has no height to cut, so a survey is strips over the ground
+        // whatever was asked for; cutting it into rectangles would only have each agent turning
+        // around more often for nothing.
+        val mode = if (digging) request.mode else SplitMode.COLUMNS
+        val (min, max) = boxOf(region)
+        val split = RegionSplit.of(min, max, mode, request.parts ?: crew.size, topDown = digging)
+        check(split.segments.isNotEmpty()) { "'${region.name}' has no region to divide" }
+
+        val job = BuildJob(
+            type = region.type,
+            name = region.name,
+            regionPlan = region,
+            serverAddress = server,
+            state = BuildJobState.ACTIVE,
+            splitMode = split.mode,
+            requestedParts = split.requested,
+            // Pinned, like a build's anchor: a plan edited mid-job is the next job's plan.
+            placeX = min.x,
+            placeY = min.y,
+            placeZ = min.z,
+            regionMaxX = max.x,
+            regionMaxY = max.y,
+            regionMaxZ = max.z,
+            dimension = region.dimension,
+            totalBlocks = split.blocks,
+            createdBy = currentUsername(),
+            startedAt = Instant.now(),
+        )
+
+        crew.forEach { agent ->
+            job.pool += BuildJobAgent(
+                job = job,
+                agent = agent,
+                agentLabel = agent.label,
+                joinedAt = Instant.now(),
+            )
+        }
+
+        // Already in world coordinates: a region was given in them, so unlike a build there is no
+        // origin to subtract, no anchor to add and no turn to apply.
+        split.segments.forEach { segment ->
+            job.segments += BuildSegment(
+                job = job,
+                ordinal = segment.ordinal,
+                minX = segment.minX,
+                minY = segment.minY,
+                minZ = segment.minZ,
+                maxX = segment.maxX,
+                maxY = segment.maxY,
+                maxZ = segment.maxZ,
+                blocks = segment.blocks,
+                placementOrder = perPiece[segment.ordinal] ?: order,
+            )
+        }
+
+        schedule(job)
+
+        val saved = jobs.save(job)
+
+        auditService.record(
+            action = AuditAction.BUILD_JOB_START,
+            target = region.name,
+            detail = "${region.type.name.lowercase()}: ${split.segments.size} segment(s) on $server, " +
+                "${split.blocks} in ${region.dimension}, ${split.mode.lowercase()}, " +
+                "pool of ${crew.joinToString(", ") { it.label }}",
+        )
+        crew.forEach { agent ->
+            activityService.record(
+                agent = agent,
+                scope = ActivityScope.LIFECYCLE,
+                severity = ActivitySeverity.INFO,
+                text = "Working on '${region.name}'",
+            )
+        }
+        publish(saved)
+        return saved.toResponse()
+    }
+
+    /**
+     * What [startRegion] would cut, without cutting it.
+     *
+     * **The same call the start makes**, rather than arithmetic of its own. A preview computed a
+     * second way is a picture of a division nobody is going to be given, and the first time the two
+     * disagreed the interface would be lying about the thing it exists to show.
+     *
+     * Takes a plan rather than a pair of corners now that there is always a plan: previewing a box
+     * nobody has written down was only ever a step towards one.
+     */
+    fun previewRegion(regionId: Long, request: RegionSplitRequest): SplitResponse {
+        val region = regions.findById(regionId).orElseThrow {
+            NoSuchElementException("No region $regionId")
+        }
+        val digging = region.type == BuildJobType.EXCAVATE
+        val (min, max) = boxOf(region)
+
+        return RegionSplit.of(
+            min,
+            max,
+            if (digging) request.mode else SplitMode.COLUMNS,
+            request.parts,
+            topDown = digging,
+        )
+    }
+
+    /**
+     * A placed region's box, refusing one that has not been measured yet.
+     *
+     * A plan may be written down before anybody has been out to read the coordinates — that is
+     * what makes it a plan — so every path that needs the box asks for it here rather than
+     * trusting six nullable columns.
+     */
+    private fun boxOf(region: RegionPlan): Pair<Vec3i, Vec3i> {
+        val minX = checkNotNull(region.minX) {
+            "'${region.name}' has no corners yet, so there is nothing to divide"
+        }
+        return Vec3i(minX, region.minY!!, region.minZ!!) to
+            Vec3i(region.maxX!!, region.maxY!!, region.maxZ!!)
+    }
+
+    /**
      * Stops a job, keeping everything about it.
      *
      * **Pause rather than cancel.** Cancelling was a dead end: it stopped a job and left nothing to
@@ -266,7 +460,7 @@ class BuildJobService(
 
         auditService.record(
             action = AuditAction.BUILD_JOB_PAUSE,
-            target = job.build.name,
+            target = job.name,
             detail = "${job.blocksPlaced} of ${job.totalBlocks} blocks placed; the crew stays on it",
         )
         publish(job)
@@ -306,7 +500,7 @@ class BuildJobService(
 
         auditService.record(
             action = AuditAction.BUILD_JOB_RESUME,
-            target = job.build.name,
+            target = job.name,
             detail = "${job.segments.count { it.live }} of ${job.segments.size} segment(s) assigned",
         )
         publish(job)
@@ -330,7 +524,7 @@ class BuildJobService(
             "This job is still building; pause it before removing the record"
         }
 
-        val name = job.build.name
+        val name = job.name
         val placed = job.blocksPlaced
         // A deleted job is one nobody is coming back to, so anything still holding a segment is
         // told to stop before the rows saying who go away.
@@ -376,7 +570,7 @@ class BuildJobService(
             agent = agent,
             scope = ActivityScope.LIFECYCLE,
             severity = ActivitySeverity.INFO,
-            text = "Assigned segment ${segment.ordinal} of '${job.build.name}'",
+            text = "Assigned segment ${segment.ordinal} of '${job.name}'",
         )
         publish(job)
         return job.toResponse()
@@ -451,7 +645,7 @@ class BuildJobService(
             agent = agent,
             scope = ActivityScope.LIFECYCLE,
             severity = ActivitySeverity.INFO,
-            text = "Working on '${job.build.name}'",
+            text = "Working on '${job.name}'",
         )
         publish(job)
         return job.toResponse()
@@ -483,7 +677,7 @@ class BuildJobService(
             agent = agent,
             scope = ActivityScope.LIFECYCLE,
             severity = ActivitySeverity.INFO,
-            text = "Taken off '${job.build.name}'",
+            text = "Taken off '${job.name}'",
         )
         publish(job)
         return job.toResponse()
@@ -522,7 +716,7 @@ class BuildJobService(
         val holding = jobs.findAllHoldingAgent(agentId).firstOrNull() ?: return
         val piece = holding.segments.first { it.live && it.agent?.id == agentId }
 
-        error("'${agent.label}' is already building segment ${piece.ordinal} of '${holding.build.name}'")
+        error("'${agent.label}' is already building segment ${piece.ordinal} of '${holding.name}'")
     }
 
     /** Idempotent, so the callers that cannot easily know need not ask. */
@@ -582,7 +776,7 @@ class BuildJobService(
                 severity = ActivitySeverity.WARNING,
                 text = "Left the game holding segment(s) " +
                     released.joinToString(", ") { it.ordinal.toString() } +
-                    " of '${job.build.name}', which are free again",
+                    " of '${job.name}', which are free again",
             )
             publish(job)
         }
@@ -616,7 +810,7 @@ class BuildJobService(
                 agent = agent,
                 scope = ActivityScope.LIFECYCLE,
                 severity = ActivitySeverity.INFO,
-                text = "Back in game; picked up segment ${picked.ordinal} of '${job.build.name}'",
+                text = "Back in game; picked up segment ${picked.ordinal} of '${job.name}'",
             )
             publish(job)
             return
@@ -702,7 +896,7 @@ class BuildJobService(
                     severity = if (laid) ActivitySeverity.WARNING else ActivitySeverity.ERROR,
                     text = buildString {
                         append(if (laid) "Issues building" else "Could not build")
-                        append(" segment ${segment.ordinal} of '${job.build.name}'")
+                        append(" segment ${segment.ordinal} of '${job.name}'")
                         reason?.let { append(": $it") }
                     },
                 )
@@ -790,9 +984,9 @@ class BuildJobService(
     private fun checkFree(agent: Agent) {
         val holding = jobs.findAllWithAgentInPool(checkNotNull(agent.id)).firstOrNull() ?: return
         val where = if (holding.state == BuildJobState.PAUSED) {
-            "a paused job of '${holding.build.name}'"
+            "a paused job of '${holding.name}'"
         } else {
-            "'${holding.build.name}'"
+            "'${holding.name}'"
         }
         error("'${agent.label}' is on $where; take it off that job first, or delete the job")
     }
@@ -864,7 +1058,7 @@ class BuildJobService(
         // work would put a bot to building on a job an operator has stopped, which is the one
         // thing pausing exists to prevent. `resume` sends every held piece out, so the assignment
         // is honoured the moment the job is running again.
-        if (job.state == BuildJobState.ACTIVE) {
+        if (job.state == BuildJobState.ACTIVE && dispatched(job)) {
             send(agent, CommandType.BUILD_SEGMENT) { segment.dispatchPayload(job) }
         }
     }
@@ -877,7 +1071,7 @@ class BuildJobService(
         // Only somebody who might still be building it: a host that reported `failed` stopped when
         // it said so, and telling it to cancel work it has already given up on is a command with
         // nothing to answer. Both other callers filter on `live` before they get here.
-        if (segment.live) {
+        if (segment.live && dispatched(job)) {
             segment.agent?.let { holder ->
                 send(holder, CommandType.CANCEL_SEGMENT) { cancelPayload(job, segment) }
             }
@@ -891,6 +1085,18 @@ class BuildJobService(
         // still says who built it; on a free segment it would read as one that is still held.
         segment.agentLabel = null
     }
+
+    /**
+     * Whether a host is told anything about this job's pieces.
+     *
+     * **Only builds, for now.** A host knows how to be handed a box of blocks to place and nothing
+     * else, so an excavation or a mapping job is divided, crewed, scheduled and shown exactly like
+     * a build - and then nothing is sent. Every piece an agent is given simply sits `ASSIGNED`.
+     *
+     * Said as one predicate rather than as a condition at each of the three call sites, because it
+     * is one fact about the host protocol and it will stop being true in one commit.
+     */
+    private fun dispatched(job: BuildJob): Boolean = job.type == BuildJobType.BUILD
 
     private fun load(id: Long): BuildJob =
         jobs.findById(id).orElseThrow { NoSuchElementException("No job $id") }
@@ -908,6 +1114,7 @@ class BuildJobService(
      * rows with it either way. This is only the half that reaches out to the world.
      */
     private fun callOff(job: BuildJob) {
+        if (!dispatched(job)) return
         job.segments.filter { it.live }.forEach { segment ->
             segment.agent?.let { holder ->
                 send(holder, CommandType.CANCEL_SEGMENT) { cancelPayload(job, segment) }
@@ -1021,6 +1228,15 @@ class BuildJobService(
 
     private companion object {
         const val TICKET_BYTES = 16
+
+        /**
+         * Top to bottom, north to south, west to east. What an excavation gets when nobody says.
+         *
+         * The mirror of [PlacementOrder.DEFAULT] on the one axis where digging is not building in
+         * reverse by coincidence: a bot that starts at the floor of a hole is standing underneath
+         * everything it has left to take out.
+         */
+        const val DIGGING_ORDER = "y-z+x+"
 
         /** Written for whoever reads host logs, and truncated to what the column holds. */
         const val FAILURE_REASON_MAX = 256

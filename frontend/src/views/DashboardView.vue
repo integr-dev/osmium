@@ -175,7 +175,7 @@ const jobs = computed(() => agentStore.jobsOn(server.value))
 const build = computed(() => jobFigures(jobs.value))
 
 /** The builds under way here, named. Empty when the fleet is idle, which it usually is. */
-const buildingNames = computed(() => [...new Set(jobs.value.map((job) => job.buildName))].join(', '))
+const buildingNames = computed(() => [...new Set(jobs.value.map((job) => job.name))].join(', '))
 
 const segments = computed(() => jobs.value.flatMap((job) => job.segments))
 const segmentsDone = computed(() => segments.value.filter((segment) => segment.state === 'DONE').length)

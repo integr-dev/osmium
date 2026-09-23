@@ -116,6 +116,16 @@ enum class LiveUpdateType(val eventName: String, val node: String) {
     BUILD_REMOVED("build-removed", Nodes.SCHEMATIC_READ),
 
     /**
+     * A region plan: a box of world to be dug out or charted.
+     *
+     * Gated on `agent.read` rather than the schematic node, unlike a build plan. A build plan is a
+     * design — it says where a *file* goes — and a region has no file: it is a piece of the world
+     * the fleet is going to work, which is what a job is about and what the map draws it beside.
+     */
+    REGION_CHANGED("region", Nodes.AGENT_READ),
+    REGION_REMOVED("region-removed", Nodes.AGENT_READ),
+
+    /**
      * A build job: a plan frozen and being carried out.
      *
      * Gated on `agent.read` rather than on the schematic node its plan uses, because what a job

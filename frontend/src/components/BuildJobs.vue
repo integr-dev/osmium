@@ -1,27 +1,32 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Boxes, Hammer, Pause, Play, Trash2, Undo2, UserPlus, Users, X } from 'lucide-vue-next'
+import { Boxes, Pause, Play, Trash2, Undo2, UserPlus, Users, X } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
-import type { BuildJob, JobAgent, JobSegment, JobState, SegmentState } from '../api/jobs'
+import type { BuildJob, JobAgent, JobSegment, JobState, JobType, SegmentState } from '../api/jobs'
 import { summarise, type JobSummary } from '../lib/jobs'
 import { atShort } from '../lib/time'
 import { agentBadge, agentStateLabel } from '../lib/agentState'
+import { JOB_ICON, jobBadge, jobProgress, jobStyle, jobUnit } from '../lib/jobKinds'
 import { isOnline, useAgentStore, type FleetAgent } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 import AgentPicker from './AgentPicker.vue'
 import TabBar, { type Tab as Strip } from './TabBar.vue'
 
 /**
- * Build jobs: what the fleet is actually working on.
+ * Jobs: what the fleet is actually working on.
  *
- * A job is a plan frozen — its own copy of the anchor and the rules — so nothing here reads the
- * build it came from. What is shown is what the agents were given, which is the only version that
- * describes the blocks going into the world.
+ * A build job is a plan frozen — its own copy of the anchor and the rules — so nothing here reads
+ * the build it came from. What is shown is what the agents were given, which is the only version
+ * that describes the blocks going into the world.
  *
- * **Nothing is dispatched yet.** A segment is assigned and stays assigned: carrying one to a host
- * needs a wire message that does not exist. That is said on the panel rather than left for an
- * operator to infer from a progress bar that never moves.
+ * **Three kinds on one list.** A job is also a box being emptied or a footprint being charted, and
+ * all three are the same thing to this panel: a crew, a division, and how far along each piece is.
+ * What changes is the colour, the icon and what the count is counting — see `lib/jobKinds.ts`.
+ *
+ * **Only a build is dispatched.** A host knows how to be handed a box of blocks to place and
+ * nothing else, so an excavation's pieces are assigned and stay assigned. The card says so rather
+ * than leaving an operator to infer it from a bar that never moves.
  *
  * The jobs live in the fleet store rather than here. An agent's assignment is a fact about the
  * agent — the fleet list shows it too — and two copies of it would disagree the first time one of
@@ -164,7 +169,7 @@ function candidates(job: BuildJob): FleetAgent[] {
     (agent) =>
       isOnline(agent) &&
       agent.serverAddress === job.serverAddress &&
-      !agentStore.isBuilding(agent.id) &&
+      !agentStore.workOf(agent.id) &&
       (agentStore.jobOf(agent.id)?.jobId ?? job.id) === job.id,
   )
 }
@@ -215,21 +220,17 @@ function roster(job: BuildJob): Member[] {
  * They differ only in whether the host has said it started, which is a second or two apart and not
  * a distinction worth a colour. Green is for finished and red for refused, the two that end a piece.
  */
-const SEGMENT_BADGE: Record<SegmentState, string> = {
-  PENDING: 'badge-ghost',
-  ASSIGNED: 'osmium-badge-building',
-  BUILDING: 'osmium-badge-building',
-  DONE: 'badge-success',
-  FAILED: 'badge-error',
+function segmentBadge(state: SegmentState, type: JobType): string {
+  // Somebody is on it, in the colour of whatever they are doing. The two states differ only in
+  // whether the host has said it started, which is a second or two apart.
+  if (state === 'ASSIGNED' || state === 'BUILDING') return jobBadge(type)
+  return { PENDING: 'badge-ghost', DONE: 'badge-success', FAILED: 'badge-error' }[state]
 }
 
 /** A bar takes the colour of the state it is reporting, so one piece reads the same everywhere. */
-const SEGMENT_PROGRESS: Record<SegmentState, string> = {
-  PENDING: '',
-  ASSIGNED: 'osmium-progress-building',
-  BUILDING: 'osmium-progress-building',
-  DONE: 'progress-success',
-  FAILED: 'progress-error',
+function segmentProgress(state: SegmentState, type: JobType): string {
+  if (state === 'ASSIGNED' || state === 'BUILDING') return jobProgress(type)
+  return { PENDING: '', DONE: 'progress-success', FAILED: 'progress-error' }[state]
 }
 
 /** Never past the end: a host that over-reports must not draw a bar wider than its own piece. */
@@ -238,10 +239,10 @@ function placed(segment: JobSegment): number {
   return Math.min(100, (segment.blocksPlaced / segment.blocks) * 100)
 }
 
-const JOB_BADGE: Record<JobState, string> = {
-  ACTIVE: 'osmium-badge-building',
-  PAUSED: 'badge-warning',
-  DONE: 'badge-success',
+/** Running takes the colour of the work; stopped and finished are about the job, not the kind. */
+function jobStateBadge(state: JobState, type: JobType): string {
+  if (state === 'ACTIVE') return jobBadge(type)
+  return { PAUSED: 'badge-warning', DONE: 'badge-success' }[state]
 }
 
 function box(segment: JobSegment): string {
@@ -271,11 +272,11 @@ async function act(jobId: number, call: () => Promise<unknown>, announce: string
 }
 
 function stop(job: BuildJob) {
-  return act(job.id, () => agentStore.stopJob(job.id), t('jobs.paused', { name: job.buildName }))
+  return act(job.id, () => agentStore.stopJob(job.id), t('jobs.paused', { name: job.name }))
 }
 
 function restart(job: BuildJob) {
-  return act(job.id, () => agentStore.restartJob(job.id), t('jobs.resumed', { name: job.buildName }))
+  return act(job.id, () => agentStore.restartJob(job.id), t('jobs.resumed', { name: job.name }))
 }
 
 /**
@@ -298,7 +299,7 @@ function remove() {
   if (!job) return
 
   removeDialog.value?.close()
-  return act(job.id, () => agentStore.removeJob(job.id), t('jobs.removed', { name: job.buildName }))
+  return act(job.id, () => agentStore.removeJob(job.id), t('jobs.removed', { name: job.name }))
 }
 
 function give(job: BuildJob, segment: JobSegment, event: Event) {
@@ -407,14 +408,30 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
         <header class="flex flex-wrap items-start gap-x-4 gap-y-2">
           <div class="min-w-0 flex-1">
             <h3 class="card-title flex items-center gap-2 text-base">
-              <Hammer class="text-base-content/50 size-4" />
-              {{ job.buildName }}
-              <span class="badge badge-sm" :class="JOB_BADGE[job.state]">
+              <!--
+                The kind of work, twice over: an icon and, beside the state, the word. Colour alone
+                is the one distinction some operators cannot make, and this is the line that says
+                what the boxes on the map and the dots in the sidebar are coloured for.
+              -->
+              <component :is="JOB_ICON[job.type]" class="size-4" :style="jobStyle(job.type)" />
+              {{ job.name }}
+              <span class="badge badge-sm" :class="jobBadge(job.type)">
+                {{ t(`jobType.${job.type}`) }}
+              </span>
+              <span class="badge badge-sm" :class="jobStateBadge(job.state, job.type)">
                 {{ t(`jobs.state.${job.state}`) }}
               </span>
             </h3>
             <p class="mt-0.5 text-xs opacity-60">
-              {{ t('jobs.subtitle', { schematic: job.schematicName, server: job.serverAddress }) }}
+              <!-- A region job has no file behind it, so there is nothing to name but the world. -->
+              {{
+                job.schematicName
+                  ? t('jobs.subtitle', { schematic: job.schematicName, server: job.serverAddress })
+                  : t('jobs.subtitleRegion', {
+                      world: job.dimension ?? 'overworld',
+                      server: job.serverAddress,
+                    })
+              }}
             </p>
             <p class="text-xs opacity-50">
               {{ t('jobs.startedBy', { who: job.createdBy, at: atShort(job.startedAt) }) }}
@@ -468,12 +485,14 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
         <!-- ─── How far along ─────────────────────────────────────────────── -->
         <div class="flex flex-col gap-1">
           <div class="flex items-baseline justify-between text-sm">
+            <!-- What the number counts depends on the work: blocks laid, blocks taken out, or
+                 columns of ground walked over. -->
             <span class="tabular-nums">
-              {{ t('jobs.placed', { placed: n(summary.placed), total: n(summary.total) }) }}
+              {{ t(jobUnit(job.type), { placed: n(summary.placed), total: n(summary.total) }) }}
             </span>
             <span class="tabular-nums opacity-60">{{ summary.percent }}%</span>
           </div>
-          <progress class="progress osmium-progress-building w-full" :value="summary.percent" max="100" />
+          <progress class="progress w-full" :class="jobProgress(job.type)" :value="summary.percent" max="100" />
           <!--
             One line, always. Both of these come and go as a job is paused and resumed, and a line
             that appears where there was none moves the table under it.
@@ -482,7 +501,14 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
             agents, so an operator wondering why a bot will not take other work finds it here.
           -->
           <p class="min-h-4 text-xs">
-            <span v-if="job.state === 'ACTIVE' && summary.waiting.length" class="text-warning">
+            <!--
+              Said first, because it explains a bar that is not going to move: the pieces are cut and
+              handed out, and no host yet knows what to do with one that is not a box of blocks.
+            -->
+            <span v-if="job.type !== 'BUILD' && job.state === 'ACTIVE'" class="opacity-60">
+              {{ t('jobs.notDispatched') }}
+            </span>
+            <span v-else-if="job.state === 'ACTIVE' && summary.waiting.length" class="text-warning">
               {{ t('jobs.waiting', { count: summary.waiting.length }) }}
             </span>
             <span v-else-if="job.state === 'PAUSED'" class="opacity-60">
@@ -562,7 +588,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
                 >
                   <td class="tabular-nums opacity-70">{{ segment.ordinal }}</td>
                   <td>
-                    <span class="badge badge-sm max-w-full" :class="SEGMENT_BADGE[segment.state]">
+                    <span class="badge badge-sm max-w-full" :class="segmentBadge(segment.state, job.type)">
                       {{ t(`jobs.segmentState.${segment.state}`) }}
                     </span>
                   </td>
@@ -580,7 +606,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
                     </div>
                     <progress
                       class="progress mt-1 w-full"
-                      :class="SEGMENT_PROGRESS[segment.state]"
+                      :class="segmentProgress(segment.state, job.type)"
                       :value="placed(segment)"
                       max="100"
                     ></progress>
@@ -691,9 +717,9 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
                     <span
                       v-if="row.agent"
                       class="badge badge-sm"
-                      :class="agentBadge(row.agent.state, row.holding !== null)"
+                      :class="agentBadge(row.agent.state, row.holding ? job.type : null)"
                     >
-                      {{ agentStateLabel(row.agent.state, row.holding !== null) }}
+                      {{ agentStateLabel(row.agent.state, row.holding ? job.type : null) }}
                     </span>
                     <span v-else class="badge badge-sm badge-ghost">{{ t('jobs.poolGone') }}</span>
                   </td>
@@ -760,7 +786,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
     -->
     <ModalShell
       ref="removeDialog"
-      :title="t('jobs.removeTitle', { name: removing?.buildName })"
+      :title="t('jobs.removeTitle', { name: removing?.name })"
       :icon="Trash2"
       tone="error"
       @close="removing = null"
@@ -783,7 +809,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
 
     <ModalShell ref="dialogEl" :title="t('jobs.addAgent')" @close="pickingId = null">
       <p v-if="picking" class="mt-1 text-sm opacity-60">
-        {{ t('jobs.addHint', { name: picking.buildName, server: picking.serverAddress }) }}
+        {{ t('jobs.addHint', { name: picking.name, server: picking.serverAddress }) }}
       </p>
 
       <div v-if="picking" class="mt-4">

@@ -22,8 +22,17 @@ import {
   resumeJob,
   startJob,
   type BuildJob,
+  type JobType,
   type SplitMode,
 } from '../api/jobs'
+import {
+  createRegion,
+  deleteRegion,
+  listRegions,
+  startRegionJob,
+  updateRegion,
+  type Region,
+} from '../api/regions'
 import { listBuilds, type BuildResponse } from '../api/builds'
 import { useAuthStore } from './auth'
 import { useToastStore } from './toasts'
@@ -86,14 +95,16 @@ export type NearbyPlayer = AgentTelemetry['nearby'][number]
 export type FleetAgent = AgentResponse
 
 /**
- * What an agent is building, when it is building something.
+ * What an agent is working on, when it is working on something.
  *
  * Carries the counts as well as the names, because the agent page shows how far along its own
- * segment is — which used to be an invented number on the agent itself.
+ * segment is — which used to be an invented number on the agent itself. And the job's kind, which
+ * is what every dot, badge and bar drawn from this is coloured by.
  */
 export interface Assignment {
   jobId: number
-  buildName: string
+  type: JobType
+  name: string
   ordinal: number
   blocksPlaced: number
   blocks: number
@@ -135,6 +146,12 @@ export const useAgentStore = defineStore('agents', () => {
    * map that is already open.
    */
   const plans = ref<BuildResponse[]>([])
+  /**
+   * Every region plan, for the same reasons the build plans are here: the map and the 3D view both
+   * draw them, neither owns them, and one written by somebody else should appear on a map that is
+   * already open.
+   */
+  const regions = ref<Region[]>([])
   const loading = ref(false)
   const loaded = ref(false)
   const error = ref<string | null>(null)
@@ -153,7 +170,14 @@ export const useAgentStore = defineStore('agents', () => {
     loading.value = true
     error.value = null
     try {
-      await Promise.all([loadHosts(), loadAgents(), loadJobs(), loadPaths(), loadPlans()])
+      await Promise.all([
+        loadHosts(),
+        loadAgents(),
+        loadJobs(),
+        loadPaths(),
+        loadPlans(),
+        loadRegions(),
+      ])
     } finally {
       loading.value = false
       loaded.value = true
@@ -208,6 +232,22 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   /**
+   * The region plans, for their boxes and for the Excavate and Map tabs.
+   *
+   * Gated on reading agents rather than on reading schematics, which is where a region parts
+   * company with a build plan: it has no file behind it, and what it describes is a piece of the
+   * world the fleet is going to work.
+   */
+  async function loadRegions(): Promise<void> {
+    if (!useAuthStore().can('agent.read')) return
+    try {
+      regions.value = await listRegions()
+    } catch {
+      regions.value = []
+    }
+  }
+
+  /**
    * Which agent is on which piece, for the agents that are on one.
    *
    * Only live assignments: a finished or released segment is not something an agent is doing, and
@@ -222,7 +262,8 @@ export const useAgentStore = defineStore('agents', () => {
         if (segment.state !== 'ASSIGNED' && segment.state !== 'BUILDING') continue
         held.set(segment.agentId, {
           jobId: job.id,
-          buildName: job.buildName,
+          type: job.type,
+          name: job.name,
           ordinal: segment.ordinal,
           blocksPlaced: segment.blocksPlaced,
           blocks: segment.blocks,
@@ -245,11 +286,11 @@ export const useAgentStore = defineStore('agents', () => {
    * second job the backend then refused.
    */
   const memberships = computed(() => {
-    const on = new Map<number, { jobId: number; buildName: string }>()
+    const on = new Map<number, { jobId: number; type: JobType; name: string }>()
     for (const job of unfinished.value) {
       for (const member of job.pool) {
         if (member.agentId === null) continue
-        on.set(member.agentId, { jobId: job.id, buildName: job.buildName })
+        on.set(member.agentId, { jobId: job.id, type: job.type, name: job.name })
       }
     }
     return on
@@ -260,14 +301,15 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   /**
-   * Whether this agent is on a build right now.
+   * What kind of work this agent is doing right now, or null when it is doing none.
    *
-   * The badge and the sidebar dot ask only this, and asking it here keeps `lib/agentState` free of
-   * the store — those helpers are imported by the store itself, and the cycle that would make has
-   * already bitten this project once.
+   * **The kind rather than a yes or no**, since a job stopped always being a build: the badge, the
+   * sidebar dot and the map's markers are all coloured by it, and a boolean could only ever say
+   * violet. Asking it here keeps `lib/agentState` free of the store — those helpers are imported by
+   * the store itself, and the cycle that would make has already bitten this project once.
    */
-  function isBuilding(agentId: number): boolean {
-    return assignments.value.has(agentId)
+  function workOf(agentId: number): JobType | null {
+    return assignments.value.get(agentId)?.type ?? null
   }
 
   // ---- live updates --------------------------------------------------------------------------
@@ -442,6 +484,17 @@ export const useAgentStore = defineStore('agents', () => {
       case 'build-removed':
         plans.value = plans.value.filter((plan) => plan.id !== (data as { id: number }).id)
         break
+      // A region was written, moved or renamed. Kept for the same reason a plan is.
+      case 'region': {
+        const region = data as Region
+        const index = regions.value.findIndex((existing) => existing.id === region.id)
+        if (index === -1) regions.value = [region, ...regions.value]
+        else regions.value[index] = region
+        break
+      }
+      case 'region-removed':
+        regions.value = regions.value.filter((region) => region.id !== (data as { id: number }).id)
+        break
       // 'ready' and anything this build does not know about are ignored, so a newer backend
       // sending a new event type never breaks an older tab.
     }
@@ -478,7 +531,7 @@ export const useAgentStore = defineStore('agents', () => {
     const toasts = useToastStore()
 
     if (previous.state !== 'DONE' && incoming.state === 'DONE') {
-      toasts.notify('success', 'toast.jobDone', { params: { name: incoming.buildName }, to: JOBS_PAGE })
+      toasts.notify('success', 'toast.jobDone', { params: { name: incoming.name }, to: JOBS_PAGE })
     }
 
     // Per piece that has *become* failed, so a job carrying a failure does not re-announce it every
@@ -494,7 +547,7 @@ export const useAgentStore = defineStore('agents', () => {
     // twice is one card counting two. A host that cannot build one box usually cannot build the
     // next either, and twenty lines saying so is a worse account of it than one saying twenty.
     for (let remaining = failed.length; remaining > 0; remaining -= 1) {
-      toasts.notify('warning', 'toast.segmentFailed', { params: { name: incoming.buildName }, to: JOBS_PAGE })
+      toasts.notify('warning', 'toast.segmentFailed', { params: { name: incoming.name }, to: JOBS_PAGE })
     }
   }
 
@@ -920,6 +973,60 @@ export const useAgentStore = defineStore('agents', () => {
     return job
   }
 
+  /**
+   * A job of a region plan: a box emptied, or a footprint charted.
+   *
+   * Beside {@link beginJob} rather than in the panel that starts it, for the reason every other job
+   * action is here: the list of jobs is a fact about the fleet, and a card has to appear on the
+   * Jobs tab the moment one starts — including for the operator who started it from another tab.
+   */
+  async function beginRegionJob(
+    regionId: number,
+    body: {
+      mode: SplitMode
+      agentIds: number[]
+      parts?: number
+      order?: string
+      segmentOrders?: Record<number, string>
+    },
+  ): Promise<BuildJob> {
+    const job = await startRegionJob(regionId, body)
+    upsertJob(job)
+    return job
+  }
+
+  /**
+   * Writing a region down, moving it, and throwing it away.
+   *
+   * Held here beside the jobs of them, and applied locally as well as arriving on the stream: the
+   * panel that made the change should not wait a round trip on the socket to show it.
+   */
+  async function saveRegion(body: Parameters<typeof createRegion>[0]): Promise<Region> {
+    const region = await createRegion(body)
+    upsertRegion(region)
+    return region
+  }
+
+  async function editRegion(
+    id: number,
+    body: Parameters<typeof updateRegion>[1],
+  ): Promise<Region> {
+    const region = await updateRegion(id, body)
+    upsertRegion(region)
+    return region
+  }
+
+  async function removeRegion(id: number): Promise<void> {
+    await deleteRegion(id)
+    regions.value = regions.value.filter((region) => region.id !== id)
+  }
+
+  function upsertRegion(region: Region): void {
+    const index = regions.value.findIndex((existing) => existing.id === region.id)
+    if (index === -1) regions.value = [region, ...regions.value]
+    else regions.value[index] = region
+  }
+
   async function stopJob(id: number): Promise<BuildJob> {
     const job = await pauseJob(id)
     upsertJob(job)
@@ -1062,9 +1169,15 @@ export const useAgentStore = defineStore('agents', () => {
     assignments,
     assignmentOf,
     jobOf,
-    isBuilding,
+    workOf,
     loadJobs,
     beginJob,
+    beginRegionJob,
+    regions,
+    loadRegions,
+    saveRegion,
+    editRegion,
+    removeRegion,
     stopJob,
     restartJob,
     giveSegment,

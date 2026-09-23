@@ -118,10 +118,19 @@ class BuildJobControllerTest : AbstractRestTest() {
         return schematic
     }
 
+    /**
+     * A plan ready to be started: placed, and saying which world those coordinates are in.
+     *
+     * The server is part of the fixture because a job takes it from the plan rather than from
+     * whoever is ticked — a build placed against one world's landscape must not go up on another
+     * because somebody chose a different agent.
+     */
     private fun placedBuild(
         schematic: Schematic = readySchematic(),
         name: String = "north tower",
         substitutions: List<Pair<String, String?>> = listOf("diamond_block" to "stone"),
+        server: String? = "mc.example.com",
+        dimension: String? = "overworld",
     ): Build {
         val build = Build(
             schematic = schematic,
@@ -129,6 +138,8 @@ class BuildJobControllerTest : AbstractRestTest() {
             placeX = 100,
             placeY = 64,
             placeZ = -30,
+            serverAddress = server,
+            dimension = dimension,
             createdBy = "root",
         )
         substitutions.forEach { (from, to) ->
@@ -210,7 +221,8 @@ class BuildJobControllerTest : AbstractRestTest() {
         start(build.id!!, listOf(one.id!!, two.id!!)).andExpect {
             status { isCreated() }
             jsonPath("$.state") { value("ACTIVE") }
-            jsonPath("$.buildName") { value("north tower") }
+            jsonPath("$.name") { value("north tower") }
+            jsonPath("$.type") { value("BUILD") }
             jsonPath("$.serverAddress") { value("mc.example.com") }
             jsonPath("$.totalBlocks") { value(40) }
             jsonPath("$.blocksPlaced") { value(0) }
@@ -310,7 +322,7 @@ class BuildJobControllerTest : AbstractRestTest() {
 
         start(build.id!!, listOf(elsewhere.id!!)).andExpect {
             status { isConflict() }
-            jsonPath("$.message") { value("'north tower' is planned for mc.example.com, and these agents are on other.example.com") }
+            jsonPath("$.message") { value("'north tower' is planned for overworld on mc.example.com, and these agents are on other.example.com") }
         }
         start(build.id!!, listOf(here.id!!)).andExpect {
             status { isCreated() }
@@ -365,21 +377,54 @@ class BuildJobControllerTest : AbstractRestTest() {
     }
 
     @Test
-    fun `one build is built once per server, and not twice on one`() {
+    fun `one schematic is built on two servers by two plans, and each of them once`() {
         val host = reachableHost()
-        val build = placedBuild()
+        val schematic = readySchematic()
+        val build = placedBuild(schematic = schematic)
+        val abroad = placedBuild(schematic = schematic, name = "north tower abroad", server = "other.example.com")
+
         val here = onlineAgent("Mason_01", host, server = "mc.example.com")
         val alsoHere = onlineAgent("Mason_02", host, server = "mc.example.com")
         val elsewhere = onlineAgent("Mason_03", host, server = "other.example.com")
 
         start(build.id!!, listOf(here.id!!)).andExpect { status { isCreated() } }
 
-        // The same tower on two servers is the case a job exists to allow — it is the reason a
-        // build is its own row rather than columns on the schematic.
-        start(build.id!!, listOf(elsewhere.id!!)).andExpect { status { isCreated() } }
+        // The same tower on two servers is the case a plan exists to allow — it is the reason a
+        // build is its own row rather than columns on the schematic. It is **two plans** now that a
+        // plan names its server, which is the honest shape: the coordinates were read off one world.
+        start(abroad.id!!, listOf(elsewhere.id!!)).andExpect { status { isCreated() } }
 
         // Twice on one server is two sets of agents placing the same blocks in the same place.
         start(build.id!!, listOf(alsoHere.id!!)).andExpect { status { isConflict() } }
+    }
+
+    /**
+     * What a plan may be saved without, a job may not be started without.
+     *
+     * A build is written down before anybody has decided where it goes — that is what makes it a
+     * plan — and the server is no longer taken from whoever is ticked, because that let a build
+     * placed against one world's landscape go up on another with nothing saying so.
+     */
+    @Test
+    fun `a plan that names no server or world cannot be started`() {
+        val host = reachableHost()
+        val here = onlineAgent("Mason_01", host)
+
+        val nowhere = placedBuild(name = "unsited tower", server = null, dimension = null)
+        start(nowhere.id!!, listOf(here.id!!)).andExpect {
+            status { isConflict() }
+            jsonPath("$.message") { value("'unsited tower' does not say which server it is for") }
+        }
+
+        val worldless = placedBuild(
+            schematic = readySchematic("chapel"),
+            name = "worldless tower",
+            dimension = null,
+        )
+        start(worldless.id!!, listOf(here.id!!)).andExpect {
+            status { isConflict() }
+            jsonPath("$.message") { value("'worldless tower' does not say which world it is in") }
+        }
     }
 
     /**

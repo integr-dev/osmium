@@ -30,6 +30,7 @@ import {
 } from '../lib/placement'
 import type { Vec3 } from '../lib/box3d'
 import { dimensionLabel } from '../lib/vitals'
+import { JOB_ICON, jobStyle } from '../lib/jobKinds'
 import { useAgentStore } from '../stores/agents'
 import { useAuthStore } from '../stores/auth'
 
@@ -362,7 +363,15 @@ async function removePlan() {
   <div class="grid gap-6 lg:grid-cols-[26rem_1fr]">
     <div class="card border-base-300 bg-base-200 h-fit border">
       <div class="card-body gap-4">
-        <h2 class="card-title text-base">{{ t('builds.title') }}</h2>
+        <!--
+          The kind of work, in its own colour, the way the Excavate and Map tabs title their plan
+          cards. Three tabs asking the same question should look like one application asking it
+          three times, and the colour is what says which of the three you are on.
+        -->
+        <h2 class="card-title flex items-center gap-2 text-base">
+          <component :is="JOB_ICON.BUILD" class="size-4" :style="jobStyle('BUILD')" />
+          {{ t('builds.title') }}
+        </h2>
 
         <!--
           Several plans for one schematic is the reason a plan is its own thing: the same building

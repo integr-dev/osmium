@@ -39,6 +39,16 @@ interface BuildJobRepository : JpaRepository<BuildJob, Long> {
         states: Collection<BuildJobState>,
     ): BuildJob?
 
+    /** The same question about a region plan, and the guard on deleting one. */
+    fun existsByRegionPlanIdAndState(regionPlanId: Long, state: BuildJobState): Boolean
+
+    /** And the same question per server: one live job per region per server, as for a build. */
+    fun findFirstByRegionPlanIdAndServerAddressAndStateIn(
+        regionPlanId: Long,
+        serverAddress: String,
+        states: Collection<BuildJobState>,
+    ): BuildJob?
+
     /**
      * The same question about a schematic, which is why a job pins one.
      *

@@ -650,6 +650,96 @@ export const en = {
   },
 
   /**
+   * What kind of work a job is, as a word beside its colour.
+   *
+   * Said as well as coloured: colour alone is the one distinction some operators cannot make, and
+   * this is the badge the map's boxes and the sidebar's dots are keyed to.
+   */
+  jobType: {
+    BUILD: 'Build',
+    EXCAVATE: 'Excavation',
+    MAP: 'Survey',
+  },
+
+  /**
+   * Starting a job over a box of world: digging one out, or flying over one and charting it.
+   *
+   * **The vocabulary is a job's, not a plan's.** There is nothing here to name, save and come back
+   * to — two corners read off the world are the whole description — so this is written as an act
+   * rather than as a document: corners, a crew, and a button that starts it.
+   */
+  region: {
+    /**
+     * The steps, in the order they have to be answered. The labels never carry their own number —
+     * the marker on the line is where that lives.
+     *
+     * Charting has no order step: what an order picks is the way a piece is swept, and a flight
+     * over a rectangle has one sensible sweep.
+     */
+    step_region: 'Region',
+
+    name: 'Name',
+    /** The same heading a plan's placement carries: this card asks a plan's question. */
+    placement: 'Placement',
+    from: 'From',
+    to: 'To',
+    /** Where the agents fly while charting, which is not a side of the box. */
+    height: 'Flying height',
+    dimension: 'World',
+    strips: 'Strips',
+    summary: 'What will be started',
+    sizeLabel: 'Box',
+    serverLabel: 'Server',
+    unplaced: 'No corners yet. Save it and come back when you have them.',
+
+    /** The plan itself: saved, edited and thrown away, as a build plan is. */
+    newOption: 'New region',
+    new: 'Write a new one',
+    rename: 'Rename this region',
+    renameTitle: 'Rename region',
+    renameHint: 'Only a label. Where it is and what is done there are unchanged.',
+    planName: 'Region name',
+    remove: 'Delete',
+    removePlan: 'Delete region',
+    removeTitle: 'Delete {name}?',
+    removeWarning: 'The plan goes. What has already been dug or charted stays where it is, and the jobs of it stay in the audit trail.',
+    removed: "Deleted '{name}'.",
+    saveNew: 'Save region',
+    saveChanges: 'Save changes',
+    saved: "Saved '{name}'.",
+    cannotWork: 'These cannot be sent: not in game, already on a job, or on another server.',
+    starting: 'Starting…',
+
+    /** Why the button is off, said rather than left to be worked out from a dead control. */
+    needName: 'Give it a name.',
+    needCorners: 'Give it two corners.',
+    needSaved: 'Save the region first.',
+    needBox: 'Those corners describe nothing.',
+    tooBig: 'That region is past the limit of {max} blocks.',
+    needPermission: 'You may not dispatch the fleet.',
+
+    EXCAVATE: {
+      title: 'Excavate a region',
+      which: 'Which excavation',
+      untitled: 'Excavation',
+      measured: '{x} x {y} x {z} — {blocks} blocks',
+      volume: 'Blocks',
+      start: 'Start digging',
+      started: "Digging '{name}' in {count} piece(s).",
+    },
+
+    MAP: {
+      title: 'Map a region',
+      which: 'Which survey',
+      untitled: 'Survey',
+      measured: '{x} x {z} — {blocks} columns of ground',
+      volume: 'Columns',
+      start: 'Start charting',
+      started: "Charting '{name}' in {count} strip(s).",
+    },
+  },
+
+  /**
    * Build jobs: a plan frozen and being carried out.
    *
    * The vocabulary is deliberately different from the plan's. A plan is *placed* and *substituted*;
@@ -658,11 +748,28 @@ export const en = {
    * away. Deleting one is a separate act, and the only one that is final.
    */
   jobs: {
-    empty: 'Nothing has been built yet. Start a job from the Schematics tab.',
+    empty: 'Nothing is running. Start one from the Schematics, Excavate or Map tab.',
     subtitle: '{schematic} on {server}',
+    /** A job with no file behind it: the world it is in is the only thing left to name. */
+    subtitleRegion: '{world} on {server}',
     startedBy: 'Started by {who}, {at}',
     anchor: 'Anchored at {x}, {y}, {z}',
     placed: '{placed} of {total} blocks',
+
+    /**
+     * What a job's count counts, by kind.
+     *
+     * The same arithmetic with three different words behind it. "Blocks placed" on a survey is
+     * simply wrong, and a number whose unit is wrong is worse than no number.
+     */
+    unit: {
+      BUILD: '{placed} of {total} blocks placed',
+      EXCAVATE: '{placed} of {total} blocks cleared',
+      MAP: '{placed} of {total} columns charted',
+    },
+
+    /** Said on the card, where somebody is watching a bar that will not move. */
+    notDispatched: 'Divided and crewed. Nothing is sent to the agents yet — no host can carry this kind of work.',
     waiting: '{count} segment(s) waiting for somebody to build them',
     started: "Building '{name}' in {count} segment(s).",
     pause: 'Pause',
@@ -729,6 +836,8 @@ export const en = {
     needNode: 'You may design a build but not dispatch the fleet.',
     needPlan: 'Save a plan first — a build needs somewhere to stand.',
     needPlacement: 'Place the plan before building it.',
+    /** The server is the plan's to say, never the crew's: the same numbers are a different spot on every server. */
+    needWorld: 'Say which server and world these coordinates are in.',
     state: {
       ACTIVE: 'Building',
       PAUSED: 'Paused',
@@ -752,8 +861,13 @@ export const en = {
     empty: 'Nothing here yet.',
     agents: 'Agents',
 
-    /** The three things this screen does, as tabs. Nouns: they are places, not commands. */
+    /**
+     * What this screen does, as tabs. Nouns where they are places; the two new ones are verbs
+     * because that is what they are — there is no library behind either, only the act.
+     */
     tabSchematics: 'Schematics',
+    tabExcavate: 'Excavate',
+    tabMap: 'Map',
     tabJobs: 'Jobs',
     tabFleet: 'Servers & connections',
 
@@ -1387,10 +1501,14 @@ export const en = {
     CONNECT_FAILED: 'Connection failed',
     STALE: 'Unknown',
     /**
-     * Not a state the backend has. Shown in place of ONLINE for an agent holding a piece of a run,
-     * because building already says in game and the more specific fact is the useful one.
+     * Not states the backend has. Shown in place of ONLINE for an agent holding a piece of a job,
+     * because doing the work already says in game and the more specific fact is the useful one.
+     *
+     * Keyed by the job's kind, so the word matches the colour beside it.
      */
-    BUILDING: 'Building',
+    BUILD: 'Building',
+    EXCAVATE: 'Digging',
+    MAP: 'Charting',
   },
 
   auditAction: {
@@ -1423,6 +1541,9 @@ export const en = {
     BUILD_CREATE: 'Build planned',
     BUILD_UPDATE: 'Build plan changed',
     BUILD_DELETE: 'Build plan deleted',
+    REGION_CREATE: 'Region planned',
+    REGION_UPDATE: 'Region changed',
+    REGION_DELETE: 'Region deleted',
     BUILD_JOB_START: 'Build started',
     BUILD_JOB_PAUSE: 'Build paused',
     BUILD_JOB_RESUME: 'Build resumed',
@@ -1477,13 +1598,13 @@ export const en = {
     removeTitle: 'Delete {name}?',
     removeWarning: 'The placement and every substitution in it go with it. The schematic itself is untouched, and any other plan for it carries on.',
     placement: 'Placement',
-    placementHint: 'Where the schematic’s lowest corner lands. Leave these empty to decide later.',
+    placementHint: 'Leave these empty to decide later.',
     unplaced: 'Not placed yet.',
     server: 'Server',
     anyServer: 'Not said yet',
     dimension: 'World',
     anyDimension: 'Not said yet',
-    serverHint: 'Coordinates are only a place once they say which world they are in. With a server set, only agents on it can be given a job of this plan, and its box is drawn on that map.',
+    serverHint: 'With a server set, only agents on it can be given a job of this plan, and its box is drawn on that map.',
     rotation: 'Turn',
     rotationHint: 'Clockwise, seen from above. The build turns inside its own box, so the placement stays on its corner, and every block turns with it.',
     offsetBy: 'Everything shifts by {x}, {y}, {z}.',

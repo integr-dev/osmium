@@ -60,7 +60,9 @@ const world = ref<string | null>(null)
 
 /** Where builds stand and will stand in the world on screen: jobs solid, plans dashed. */
 const builds = computed<BuildBox[]>(() =>
-  server.value && world.value ? buildBoxes(agentStore.plans, agentStore.jobs, server.value, world.value) : [],
+  server.value && world.value
+    ? buildBoxes(agentStore.plans, agentStore.jobs, server.value, world.value, agentStore.regions)
+    : [],
 )
 const map = ref<InstanceType<typeof WorldMap> | null>(null)
 
@@ -303,7 +305,7 @@ const live = computed(() => [
     face: agent.mcUuid ?? agent.mcUsername ?? null,
     avatar: faceOf(agent.mcUuid ?? agent.mcUsername),
     // The same dot the sidebar puts on the same head, so one agent looks like one thing.
-    dot: agentDot(agent.state, agentStore.isBuilding(agent.id)),
+    dot: agentDot(agent.state, agentStore.workOf(agent.id)),
     trail: trails.value.get(agent.id) ?? [],
   })),
   ...strangers.value.map((player) => ({
@@ -995,12 +997,12 @@ const worldName = dimensionLabel
           >
             <span
               class="relative shrink-0"
-              :title="agentStateLabel(agent.state, agentStore.isBuilding(agent.id))"
+              :title="agentStateLabel(agent.state, agentStore.workOf(agent.id))"
             >
               <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
               <span
                 class="ring-base-200 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+                :class="agentDot(agent.state, agentStore.workOf(agent.id))"
               />
             </span>
             <span class="min-w-0 flex-1 text-left">

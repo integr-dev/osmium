@@ -30,7 +30,7 @@ const props = defineProps<{
   online: boolean
 }>()
 
-const building = computed(() => agentStore.isBuilding(props.agentId))
+const building = computed(() => agentStore.workOf(props.agentId))
 
 const agentStore = useAgentStore()
 const auth = useAuthStore()

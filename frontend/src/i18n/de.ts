@@ -526,9 +526,84 @@ export const de: Copy = {
     stranded: 'soll über „{name}“ laufen, was dieser Host nicht anbietet. Er verbindet sich lieber gar nicht, als direkt zu gehen.',
   },
 
+  jobType: {
+    BUILD: 'Bau',
+    EXCAVATE: 'Aushub',
+    MAP: 'Vermessung',
+  },
+
+  region: {
+    step_region: 'Region',
+
+    name: 'Name',
+    placement: 'Platzierung',
+    from: 'Von',
+    to: 'Bis',
+    height: 'Flughöhe',
+    dimension: 'Welt',
+    strips: 'Streifen',
+    summary: 'Was gestartet wird',
+    sizeLabel: 'Quader',
+    serverLabel: 'Server',
+    unplaced: 'Noch keine Ecken. Speichere sie und komm wieder, wenn du sie hast.',
+
+    newOption: 'Neue Region',
+    new: 'Neue anlegen',
+    rename: 'Diese Region umbenennen',
+    renameTitle: 'Region umbenennen',
+    renameHint: 'Nur ein Etikett. Wo sie liegt und was dort getan wird, bleibt gleich.',
+    planName: 'Regionsname',
+    remove: 'Löschen',
+    removePlan: 'Region löschen',
+    removeTitle: '{name} löschen?',
+    removeWarning: 'Der Plan geht. Was bereits ausgehoben oder kartiert wurde, bleibt, und die Aufträge dazu bleiben im Prüfprotokoll.',
+    removed: "'{name}' gelöscht.",
+    saveNew: 'Region speichern',
+    saveChanges: 'Änderungen speichern',
+    saved: "'{name}' gespeichert.",
+    cannotWork: 'Diese können nicht geschickt werden: nicht im Spiel, schon auf einem Auftrag oder auf einem anderen Server.',
+    starting: 'Wird gestartet…',
+
+    needName: 'Gib ihm einen Namen.',
+    needCorners: 'Gib ihr zwei Ecken.',
+    needSaved: 'Speichere die Region zuerst.',
+    needBox: 'Diese Ecken beschreiben nichts.',
+    tooBig: 'Diese Region liegt über dem Limit von {max} Blöcken.',
+    needPermission: 'Du darfst die Flotte nicht einsetzen.',
+
+    EXCAVATE: {
+      title: 'Region ausheben',
+      which: 'Welcher Aushub',
+      untitled: 'Aushub',
+      measured: '{x} x {y} x {z} — {blocks} Blöcke',
+      volume: 'Blöcke',
+      start: 'Graben starten',
+      started: "'{name}' wird in {count} Teil(en) ausgehoben.",
+    },
+
+    MAP: {
+      title: 'Region kartieren',
+      which: 'Welche Vermessung',
+      untitled: 'Vermessung',
+      measured: '{x} x {z} — {blocks} Bodensäulen',
+      volume: 'Säulen',
+      start: 'Kartierung starten',
+      started: "'{name}' wird in {count} Streifen kartiert.",
+    },
+  },
+
   jobs: {
-    empty: 'Noch nichts gebaut. Starte einen Auftrag im Tab Baupläne.',
+    empty: 'Nichts läuft. Starte etwas in den Tabs Baupläne, Ausheben oder Kartieren.',
     subtitle: '{schematic} auf {server}',
+    subtitleRegion: '{world} auf {server}',
+
+    unit: {
+      BUILD: '{placed} von {total} Blöcken gesetzt',
+      EXCAVATE: '{placed} von {total} Blöcken abgebaut',
+      MAP: '{placed} von {total} Säulen kartiert',
+    },
+
+    notDispatched: 'Aufgeteilt und besetzt. An die Agenten geht noch nichts — kein Host kann diese Art von Arbeit ausführen.',
     startedBy: 'Gestartet von {who}, {at}',
     anchor: 'Verankert bei {x}, {y}, {z}',
     placed: '{placed} von {total} Blöcken',
@@ -583,6 +658,7 @@ export const de: Copy = {
     needNode: 'Du darfst Bauten entwerfen, aber die Flotte nicht beauftragen.',
     needPlan: 'Speichere zuerst einen Plan — ein Bau braucht einen Standort.',
     needPlacement: 'Platziere den Plan, bevor er gebaut wird.',
+    needWorld: 'Sag, auf welchem Server und in welcher Welt diese Koordinaten liegen.',
     state: {
       ACTIVE: 'Baut',
       PAUSED: 'Pausiert',
@@ -602,6 +678,8 @@ export const de: Copy = {
     agents: 'Agenten',
 
     tabSchematics: 'Baupläne',
+    tabExcavate: 'Ausheben',
+    tabMap: 'Kartieren',
     tabJobs: 'Aufträge',
     tabFleet: 'Server & Verbindungen',
 
@@ -1153,7 +1231,9 @@ export const de: Copy = {
     NEEDS_RELINK: 'Anmeldung erforderlich',
     CONNECT_FAILED: 'Verbindung fehlgeschlagen',
     STALE: 'Unbekannt',
-    BUILDING: 'Baut',
+    BUILD: 'Baut',
+    EXCAVATE: 'Gräbt',
+    MAP: 'Kartiert',
   },
 
   auditAction: {
@@ -1186,6 +1266,9 @@ export const de: Copy = {
     BUILD_CREATE: 'Bau geplant',
     BUILD_UPDATE: 'Bauplanung geändert',
     BUILD_DELETE: 'Bauplanung gelöscht',
+    REGION_CREATE: 'Region geplant',
+    REGION_UPDATE: 'Region geändert',
+    REGION_DELETE: 'Region gelöscht',
     BUILD_JOB_START: 'Bau gestartet',
     BUILD_JOB_PAUSE: 'Bau pausiert',
     BUILD_JOB_RESUME: 'Bau fortgesetzt',

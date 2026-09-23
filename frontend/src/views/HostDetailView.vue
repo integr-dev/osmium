@@ -160,9 +160,9 @@ function afterRemove(removed: HostResponse) {
                   </span>
                   <span
                     class="badge badge-sm shrink-0"
-                    :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
+                    :class="agentBadge(agent.state, agentStore.workOf(agent.id))"
                   >
-                    {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
+                    {{ agentStateLabel(agent.state, agentStore.workOf(agent.id)) }}
                   </span>
                 </RouterLink>
               </li>

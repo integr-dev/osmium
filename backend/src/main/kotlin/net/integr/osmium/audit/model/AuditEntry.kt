@@ -113,6 +113,17 @@ enum class AuditAction {
     BUILD_DELETE,
 
     /**
+     * A region plan: a box of world to be dug out or charted.
+     *
+     * Its own three actions rather than the build ones. The target reads as a name in the trail,
+     * and "north quarry removed" should say which kind of thing went — a plan for a building and a
+     * plan for a hole in the ground are not interchangeable to anybody reading back.
+     */
+    REGION_CREATE,
+    REGION_UPDATE,
+    REGION_DELETE,
+
+    /**
      * A plan put to work, and taken off it again.
      *
      * These and not the assignments underneath them. A job is started once and paused a handful of

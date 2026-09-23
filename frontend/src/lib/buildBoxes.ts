@@ -1,14 +1,15 @@
 import type { BuildResponse } from '../api/builds'
-import type { BuildJob } from '../api/jobs'
+import type { BuildJob, JobType } from '../api/jobs'
+import type { Region } from '../api/regions'
 import { footprintOf, worldId } from './placement'
 
 /**
- * Where builds stand in one world, for the map and the 3D view.
+ * Where the fleet's work stands in one world, for the map and the 3D view.
  *
  * **Two kinds, drawn two ways.** A plan's box is where somebody has said a build will go; a job's is
- * where one is going up. The map dashes the first and draws the second solid, in the building
- * colour — and the 3D view does the same — so both read this one list rather than working out twice
- * which plans belong in which world.
+ * where work is happening. The map dashes the first and draws the second solid, in the colour of
+ * whatever kind of work it is — and the 3D view does the same — so both read this one list rather
+ * than working out twice which plans belong in which world.
  */
 export interface PlacedBox {
   /** Stable across updates, and distinct between a plan and a job of it. */
@@ -17,6 +18,8 @@ export interface PlacedBox {
   /** Inclusive at both ends. */
   box: Cuboid
   planned: boolean
+  /** What is being done inside it, which is what it is drawn in the colour of. */
+  type: JobType
   /**
    * The pieces a job was divided into, drawn inside its box. None for a plan: a plan is not divided
    * until a job of it starts, and the division is the job's.
@@ -57,23 +60,43 @@ export function buildBoxes(
   jobs: readonly BuildJob[],
   server: string,
   dimension: string,
+  regions: readonly Region[] = [],
 ): PlacedBox[] {
   const boxes: PlacedBox[] = []
   const here = worldId(dimension)
-  // A plan being built here is drawn as its job. Both would be the same box twice, the dashed one
-  // under the solid one, saying nothing the solid one does not.
+  // A plan being worked here is drawn as its job. Both would be the same box twice, the dashed one
+  // under the solid one, saying nothing the solid one does not. Kept apart by kind, because a
+  // build plan and a region plan number themselves separately.
   const underway = new Set<number>()
+  const working = new Set<number>()
 
   for (const job of jobs) {
     if (!STANDING.has(job.state) || job.serverAddress !== server) continue
-    if (worldId(job.dimension ?? DEFAULT_WORLD) !== here || !job.size) continue
+    if (worldId(job.dimension ?? DEFAULT_WORLD) !== here) continue
 
-    underway.add(job.buildId)
+    // A build's box is the footprint of a file that was turned; a region job *is* its box, given in
+    // world coordinates and half-open. One of the two is always there, and which one says which
+    // kind of job this is — but only for a build is the schematic's size the right answer.
+    const box = job.regionMax
+      ? {
+          west: job.placement.x,
+          east: job.regionMax.x - 1,
+          north: job.placement.z,
+          south: job.regionMax.z - 1,
+          low: job.placement.y,
+          high: job.regionMax.y - 1,
+        }
+      : job.size && footprintOf(job.placement, job.size, job.rotation)
+    if (!box) continue
+
+    if (job.buildId !== null) underway.add(job.buildId)
+    if (job.regionId !== null) working.add(job.regionId)
     boxes.push({
       id: `job-${job.id}`,
-      label: job.buildName,
-      box: footprintOf(job.placement, job.size, job.rotation),
+      label: job.name,
+      box,
       planned: false,
+      type: job.type,
       // Already in world coordinates and already turned — the backend worked both out when it cut
       // them — and half-open, as the host is told them: the last block is one short of the maximum.
       sections: job.segments.map((segment) => ({
@@ -101,6 +124,35 @@ export function buildBoxes(
       label: plan.name,
       box: footprintOf(plan.placement, plan.size, plan.rotation),
       planned: true,
+      type: 'BUILD',
+      sections: [],
+    })
+  }
+
+  /**
+   * A region plan is its box, so there is nothing to work out — and nothing optional about where
+   * it is: a region always names its server and its world, where a build plan may name neither.
+   */
+  for (const region of regions) {
+    // Unplaced, or not yet told which world it is in: a plan somebody has named and not been out
+    // to measure is on no map, the same way an unplaced build plan is.
+    if (working.has(region.id) || !region.placement || !region.regionMax) continue
+    if (region.serverAddress !== server || !region.dimension) continue
+    if (worldId(region.dimension) !== here) continue
+
+    boxes.push({
+      id: `region-${region.id}`,
+      label: region.name,
+      box: {
+        west: region.placement.x,
+        east: region.regionMax.x - 1,
+        north: region.placement.z,
+        south: region.regionMax.z - 1,
+        low: region.placement.y,
+        high: region.regionMax.y - 1,
+      },
+      planned: true,
+      type: region.type,
       sections: [],
     })
   }

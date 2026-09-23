@@ -81,7 +81,7 @@ const addOpen = ref(false)
                     <PlayerHead :id="agent.mcUuid ?? agent.mcUsername" :name="agent.label" size="sm" />
                     <span
                       class="ring-base-100 absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2"
-                      :class="agentDot(agent.state, agentStore.isBuilding(agent.id))"
+                      :class="agentDot(agent.state, agentStore.workOf(agent.id))"
                     ></span>
                   </span>
                   <span class="link-hover font-medium">{{ agent.label }}</span>
@@ -96,17 +96,17 @@ const addOpen = ref(false)
               <td>
                 <span
                   class="badge badge-sm"
-                  :class="agentBadge(agent.state, agentStore.isBuilding(agent.id))"
+                  :class="agentBadge(agent.state, agentStore.workOf(agent.id))"
                   :title="
                     agentStore.assignmentOf(agent.id)
                       ? t('agents.buildingOn', {
-                          build: agentStore.assignmentOf(agent.id)?.buildName,
+                          build: agentStore.assignmentOf(agent.id)?.name,
                           ordinal: agentStore.assignmentOf(agent.id)?.ordinal,
                         })
                       : undefined
                   "
                 >
-                  {{ agentStateLabel(agent.state, agentStore.isBuilding(agent.id)) }}
+                  {{ agentStateLabel(agent.state, agentStore.workOf(agent.id)) }}
                 </span>
               </td>
               <!--

@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  ArrowRightLeft,
   Box,
   Hammer,
   Scissors,
@@ -17,17 +16,10 @@ import AlertNote from './AlertNote.vue'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
 import TabBar, { type Tab } from './TabBar.vue'
+import OrderPicker from './OrderPicker.vue'
 import OrderPreview from './OrderPreview.vue'
 import StepBar, { type Step as Bead } from './StepBar.vue'
-import {
-  AXES,
-  DEFAULT_ORDER,
-  formatOrder,
-  reorder,
-  reverse,
-  type Axis,
-  type PlacementOrder,
-} from '../lib/placementOrder'
+import { DEFAULT_ORDER, formatOrder, type PlacementOrder } from '../lib/placementOrder'
 import SwapBox from './SwapBox.vue'
 import { useSlide } from '../lib/motion'
 import BuildPlanner from './BuildPlanner.vue'
@@ -299,27 +291,21 @@ const boxes = computed<Box3d[]>(() => {
 /**
  * Who builds it, and therefore where.
  *
- * **One server.** A build happens on one Minecraft server, so agents on two of them cannot share
- * one — they would be placing blocks into different worlds that happen to have the same
- * coordinates. The first pick decides which server this is, and the rest of the fleet becomes
- * unavailable rather than disappearing: an operator hunting for an agent that is right there has
- * learned nothing, while one told why it cannot be chosen has.
+ * **One server, and the plan says which.** A build happens on one Minecraft server, so agents on
+ * two of them cannot share one — they would be placing blocks into different worlds that happen to
+ * have the same coordinates. It used to be the first pick that decided, which let a build placed
+ * against one world's landscape go up on another because somebody chose a different agent; the
+ * plan's own server decides it now, and the backend refuses a crew from anywhere else.
+ *
+ * The rest of the fleet becomes unavailable rather than disappearing: an operator hunting for an
+ * agent that is right there has learned nothing, while one told why it cannot be chosen has.
  *
  * The count is the selection. Asking for a number of agents *and* which agents is asking the same
  * question twice, and lets the two disagree.
  */
 const builders = ref<number[]>([])
 
-const buildServer = computed(() => {
-  // **A plan that names its server decides it.** The coordinates on it were read off that world, so
-  // an agent anywhere else is building somewhere nobody looked — the backend refuses the job, and
-  // offering the agent here would only be a way to be refused. A plan that names none leaves it to
-  // the first pick, as before.
-  if (plan.value?.serverAddress) return plan.value.serverAddress
-
-  const first = agentStore.agents.find((agent) => agent.id === builders.value[0])
-  return first?.serverAddress ?? null
-})
+const buildServer = computed(() => plan.value?.serverAddress ?? null)
 
 /**
  * Who can actually be given a piece of this, which is the same three questions the backend asks.
@@ -343,7 +329,7 @@ const eligibleBuilders = computed(() =>
       isOnline(agent) &&
       agentStore.jobOf(agent.id) === null &&
       agent.serverAddress !== null &&
-      (buildServer.value === null || agent.serverAddress === buildServer.value),
+      agent.serverAddress === buildServer.value,
   ),
 )
 
@@ -450,11 +436,31 @@ function inWorld(min: Vec3, max: Vec3): { min: Vec3; max: Vec3 } {
     * stop an operator dividing a build they have not sited yet. Dispatch is where it becomes
     * mandatory, and dispatch does not exist.
     */
+/**
+ * What the plan is still missing, or nothing.
+ *
+ * **The step is gated on it now.** It used to wave everybody through on the reasoning that a plan
+ * usually exists before anybody has stood in the world and read a coordinate off the screen — true
+ * of *writing* one, and the wrong rule for a wizard whose remaining steps are about carrying it
+ * out. Every step after this reads the plan's server: the agent picker narrows to it, and the
+ * backend refuses a job without it. Walking past with none left an operator picking a crew from
+ * the whole fleet and being told at the last button.
+ *
+ * Saving an unsited plan and coming back is still perfectly possible — that is what the planner is
+ * for. It is only the road to a *job* that asks for the rest.
+ */
+const planFault = computed<string | null>(() => {
+  if (!plan.value) return t('jobs.needPlan')
+  if (!plan.value.placement) return t('jobs.needPlacement')
+  if (!plan.value.serverAddress || !plan.value.dimension) return t('jobs.needWorld')
+  return null
+})
+
 const canAdvance = computed(() =>
   step.value === 'schematic'
     ? ready.value
     : step.value === 'plan'
-      ? true
+      ? planFault.value === null
       : step.value === 'agents'
         ? parts.value > 0
         : step.value === 'split'
@@ -571,8 +577,8 @@ const starting = ref(false)
  */
 const blocking = computed<string | null>(() => {
   if (!auth.can('agent.run')) return t('jobs.needNode')
-  if (!plan.value) return t('jobs.needPlan')
-  if (!plan.value.placement) return t('jobs.needPlacement')
+  // Everything the plan itself is missing, in the order the wizard asks for it.
+  if (planFault.value) return planFault.value
   if (!builders.value.length) return t('schematics.needBuilders')
   return null
 })
@@ -616,34 +622,6 @@ function sameEverywhere(): void {
   editing.value = 'all'
 }
 
-/** The three sweeps as rows: which axis is outermost, then the next, then the innermost. */
-const sweepRows = computed(() =>
-  edited.value.sweeps.map((sweep, place) => ({
-    place,
-    axis: sweep.axis,
-    towards: sweep.towards,
-    direction: `order.axis.${sweep.axis}${sweep.towards === 1 ? 'up' : 'down'}`,
-  })),
-)
-
-function chooseAxis(place: number, axis: Axis): void {
-  setOrder(reorder(edited.value, axis, place))
-}
-
-function turnAround(axis: Axis): void {
-  setOrder(reverse(edited.value, axis))
-}
-
-function snake(on: boolean): void {
-  // Snaking the layers only means anything while the rows snake, so turning the rows off takes it
-  // with them rather than leaving a token nobody chose to be stored.
-  setOrder({ ...edited.value, serpentine: on, snakeLayers: on && edited.value.snakeLayers })
-}
-
-function snakeLayers(on: boolean): void {
-  setOrder({ ...edited.value, snakeLayers: on })
-}
-
 // A division is what the orders are about: pieces that no longer exist cannot keep their own.
 watch(split, () => {
   orderOverrides.value = {}
@@ -662,7 +640,7 @@ async function startBuilding() {
         Object.entries(orderOverrides.value).map(([ordinal, order]) => [Number(ordinal), formatOrder(order)]),
       ),
     })
-    emit('done', t('jobs.started', { name: job.buildName, count: job.segments.length }))
+    emit('done', t('jobs.started', { name: job.name, count: job.segments.length }))
     emit('started')
   } catch (failure) {
     emit('failed', failure instanceof Error ? failure.message : t('errors.generic'))
@@ -1269,71 +1247,8 @@ function progressOf(schematic: SchematicResponse): string | null {
         <div class="card-body gap-4">
           <h2 class="card-title text-base">{{ t('schematics.orderTitle') }}</h2>
 
-          <!--
-            Three sweeps rather than a list of named orders. The names multiply — bottom-up,
-            north-to-south, snaking — and the operator still cannot say the one the fourth name
-            would have been. Six controls say all of them.
-          -->
-          <ol class="flex flex-col gap-2">
-            <li v-for="row in sweepRows" :key="row.place" class="flex items-center gap-2">
-              <span class="w-4 shrink-0 text-xs tabular-nums opacity-50">{{ row.place + 1 }}</span>
-              <select
-                class="select select-sm w-16 shrink-0"
-                :value="row.axis"
-                :aria-label="t('order.sweepAxis', { place: row.place + 1 })"
-                @change="chooseAxis(row.place, ($event.target as HTMLSelectElement).value as Axis)"
-              >
-                <option v-for="axis in AXES" :key="axis" :value="axis">
-                  {{ t(`order.axisShort.${axis}`) }}
-                </option>
-              </select>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm min-w-0 flex-1 justify-start font-normal"
-                :title="t('order.turnAround')"
-                @click="turnAround(row.axis)"
-              >
-                <ArrowRightLeft class="size-3.5 shrink-0 opacity-50" />
-                <span class="truncate">{{ t(row.direction) }}</span>
-              </button>
-            </li>
-          </ol>
-
-          <label class="flex cursor-pointer items-start gap-3">
-            <input
-              type="checkbox"
-              class="toggle toggle-sm"
-              :checked="edited.serpentine"
-              @change="snake(($event.target as HTMLInputElement).checked)"
-            />
-            <span class="flex flex-col gap-0.5">
-              <span class="text-sm">{{ t('order.snake') }}</span>
-              <span class="text-xs opacity-60">{{ t('order.snakeHint') }}</span>
-            </span>
-          </label>
-
-          <!--
-            Snaking the layers is the same idea one axis out, and it is only a choice once the rows
-            snake: a layer that reverses while its rows restart at the same end saves nothing and
-            reads as a mistake in the preview. So it follows the toggle above rather than standing
-            beside it.
-          -->
-          <label
-            class="flex items-start gap-3 pl-6"
-            :class="edited.serpentine ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
-          >
-            <input
-              type="checkbox"
-              class="toggle toggle-sm"
-              :checked="edited.snakeLayers"
-              :disabled="!edited.serpentine"
-              @change="snakeLayers(($event.target as HTMLInputElement).checked)"
-            />
-            <span class="flex flex-col gap-0.5">
-              <span class="text-sm">{{ t('order.snakeLayers') }}</span>
-              <span class="text-xs opacity-60">{{ t('order.snakeLayersHint') }}</span>
-            </span>
-          </label>
+          <!-- The six controls themselves, shared with the Excavate tab: `OrderPicker.vue`. -->
+          <OrderPicker :model-value="edited" @update:model-value="setOrder" />
 
           <!--
             Which pieces this is about. One order for the build is the ordinary case; a piece that
@@ -1422,9 +1337,11 @@ function progressOf(schematic: SchematicResponse): string | null {
         {{
           step === 'schematic'
             ? t('schematics.needSchematic')
-            : step === 'split'
-              ? t('schematics.needSplit')
-              : t('schematics.needBuilders')
+            : step === 'plan'
+              ? planFault
+              : step === 'split'
+                ? t('schematics.needSplit')
+                : t('schematics.needBuilders')
         }}
       </span>
 

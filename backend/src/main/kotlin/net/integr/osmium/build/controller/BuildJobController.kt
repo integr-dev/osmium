@@ -6,8 +6,11 @@ import jakarta.validation.Valid
 import net.integr.osmium.build.dto.AddJobAgentRequest
 import net.integr.osmium.build.dto.AssignSegmentRequest
 import net.integr.osmium.build.dto.BuildJobResponse
+import net.integr.osmium.build.dto.RegionSplitRequest
 import net.integr.osmium.build.dto.StartJobRequest
+import net.integr.osmium.build.dto.StartRegionJobRequest
 import net.integr.osmium.build.service.BuildJobService
+import net.integr.osmium.schematic.dto.SplitResponse
 import org.springframework.http.HttpStatus
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -66,6 +69,47 @@ class BuildJobController(private val service: BuildJobService) {
         @PathVariable buildId: Long,
         @Valid @RequestBody request: StartJobRequest,
     ): BuildJobResponse = service.start(buildId, request)
+
+    /**
+     * Divides a region plan and hands back the pieces, without starting anything.
+     *
+     * Read-only, and gated on reading rather than on dispatching: looking at how a box would be cut
+     * up decides nothing, the same way previewing a schematic's split decides nothing.
+     */
+    @PostMapping("/regions/{regionId}/split")
+    @PreAuthorize("hasAuthority('agent.read')")
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Divided."),
+        ApiResponse(responseCode = "404", description = "No such region."),
+    )
+    fun previewRegion(
+        @PathVariable regionId: Long,
+        @Valid @RequestBody request: RegionSplitRequest,
+    ): SplitResponse = service.previewRegion(regionId, request)
+
+    /**
+     * Freezes a region plan and hands its pieces out: a box emptied, or a footprint charted.
+     *
+     * Addressed by its plan, exactly as [start] is. The server is **not** derived from the crew
+     * here: a region says which world its coordinates were read in, and a crew somewhere else is
+     * refused rather than quietly taken as the answer.
+     */
+    @PostMapping("/regions/{regionId}/jobs")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAuthority('agent.run')")
+    @ApiResponses(
+        ApiResponse(responseCode = "201", description = "Started."),
+        ApiResponse(responseCode = "403", description = "Missing node `agent.run`."),
+        ApiResponse(
+            responseCode = "409",
+            description = "The agents are not all online on the region's own server, one of them " +
+                "is on another job, or this region is already being worked there.",
+        ),
+    )
+    fun startRegion(
+        @PathVariable regionId: Long,
+        @Valid @RequestBody request: StartRegionJobRequest,
+    ): BuildJobResponse = service.startRegion(regionId, request)
 
     /**
      * Stops a job, keeping its segments, its crew and its counts. [resume] picks it up again.

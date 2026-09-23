@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BuildResponse } from '../api/builds'
 import type { BuildJob } from '../api/jobs'
+import type { Region } from '../api/regions'
 import { buildBoxes } from './buildBoxes'
 
 const SERVER = 'mc.example.com'
@@ -29,8 +30,10 @@ function plan(overrides: Partial<BuildResponse> = {}): BuildResponse {
 function job(overrides: Partial<BuildJob> = {}): BuildJob {
   return {
     id: 7,
+    type: 'BUILD',
+    name: 'north tower',
     buildId: 1,
-    buildName: 'north tower',
+    regionId: null,
     schematicId: 1,
     schematicName: 'tower',
     serverAddress: SERVER,
@@ -41,6 +44,7 @@ function job(overrides: Partial<BuildJob> = {}): BuildJob {
     rotation: 90,
     dimension: OVERWORLD,
     size: { x: 10, y: 4, z: 3 },
+    regionMax: null,
     totalBlocks: 40,
     blocksPlaced: 0,
     pool: [],
@@ -49,6 +53,26 @@ function job(overrides: Partial<BuildJob> = {}): BuildJob {
     createdBy: 'root',
     startedAt: '2026-01-01T00:00:00Z',
     finishedAt: null,
+    ...overrides,
+  }
+}
+
+function region(overrides: Partial<Region> = {}): Region {
+  return {
+    id: 9,
+    type: 'EXCAVATE',
+    name: 'the pit',
+    serverAddress: SERVER,
+    dimension: OVERWORLD,
+    placed: true,
+    placement: { x: -10, y: 60, z: 5 },
+    regionMax: { x: -2, y: 64, z: 13 },
+    size: { x: 8, y: 4, z: 8 },
+    blocks: 256,
+    height: 60,
+    createdBy: 'root',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
     ...overrides,
   }
 }
@@ -113,6 +137,59 @@ describe('buildBoxes', () => {
   it('puts a job that named no world in the overworld', () => {
     expect(buildBoxes([], [job({ dimension: null })], SERVER, OVERWORLD)).toHaveLength(1)
     expect(buildBoxes([], [job({ dimension: null })], SERVER, 'the_end')).toHaveLength(0)
+  })
+
+  /**
+   * A region job *is* its box, where a build's is the footprint of a turned file. So it is drawn
+   * from the two corners it was started with and the schematic arithmetic never runs.
+   */
+  it('draws a region job from its own corners', () => {
+    const dig = job({
+      id: 9,
+      type: 'EXCAVATE',
+      name: 'the pit',
+      buildId: null,
+      regionId: 9,
+      schematicId: null,
+      schematicName: null,
+      size: null,
+      rotation: 0,
+      placement: { x: -10, y: 60, z: 5 },
+      regionMax: { x: -2, y: 64, z: 13 },
+    })
+
+    const [box] = buildBoxes([], [dig], SERVER, OVERWORLD)
+
+    expect(box).toMatchObject({ id: 'job-9', label: 'the pit', type: 'EXCAVATE', planned: false })
+    // Half-open on the wire, inclusive here, like every block range drawn.
+    expect(box!.box).toEqual({ west: -10, east: -3, north: 5, south: 12, low: 60, high: 63 })
+  })
+
+  /** A job with neither a size nor a region describes no box, and a box is what this returns. */
+  it('leaves out a job it cannot place', () => {
+    expect(buildBoxes([], [job({ size: null })], SERVER, OVERWORLD)).toEqual([])
+  })
+
+  /**
+   * A region plan is dashed like a build plan, in its own kind's colour — and, like one, it is
+   * drawn as its job once there is one, rather than twice.
+   */
+  it('draws a region plan dashed, and drops it once a job of it is running', () => {
+    const quarry = region()
+
+    const [box] = buildBoxes([], [], SERVER, OVERWORLD, [quarry])
+    expect(box).toMatchObject({ id: 'region-9', label: 'the pit', type: 'EXCAVATE', planned: true })
+    expect(box!.box).toEqual({ west: -10, east: -3, north: 5, south: 12, low: 60, high: 63 })
+
+    const working = job({ id: 3, type: 'EXCAVATE', buildId: null, regionId: 9, size: null, regionMax: { x: -2, y: 64, z: 13 }, placement: { x: -10, y: 60, z: 5 } })
+    expect(buildBoxes([], [working], SERVER, OVERWORLD, [quarry]).map((drawn) => drawn.id)).toEqual([
+      'job-3',
+    ])
+  })
+
+  it('leaves out a region for another server or another world', () => {
+    expect(buildBoxes([], [], SERVER, OVERWORLD, [region({ serverAddress: 'other.example.com' })])).toEqual([])
+    expect(buildBoxes([], [], SERVER, OVERWORLD, [region({ dimension: 'the_nether' })])).toEqual([])
   })
 
   /** The map and the agents say `overworld`; plans written earlier say `minecraft:overworld`. One world. */

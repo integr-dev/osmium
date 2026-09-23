@@ -8,6 +8,8 @@ import { EMPTY, TILE, decodeTile, paintTile, tileKey, type DecodedTile, type Pal
 import { useAgentStore } from '../stores/agents'
 import { IDENTITY, panBy, zoomAt, type Limits, type View } from '../lib/panZoom'
 import { afterShiftPress, areaUnderway, type Area, type AreaPicked, type Corner, type ShiftPress } from '../lib/area'
+import { JOB_FALLBACK, jobInk } from '../lib/jobKinds'
+import type { JobType } from '../api/jobs'
 
 /**
  * The world as the fleet has charted it, drawn one pixel per block column.
@@ -42,9 +44,10 @@ const props = defineProps<{
  * A build's footprint, as this map draws it.
  *
  * **Planned or under way, and the line says which.** A plan's box is dashed — it is where somebody
- * has said a build will go, and nothing is there yet — and a job's is solid, in the colour building
- * has everywhere else in the interface. Both are the same footprint arithmetic, `footprintOf` in
- * `lib/placement.ts`, so a plan that becomes a job does not move.
+ * has said a build will go, and nothing is there yet — and a job's is solid, in the colour its kind
+ * of work has everywhere else in the interface: violet for building, amber for digging, cyan for
+ * charting. A build's footprint is `footprintOf` in `lib/placement.ts`, so a plan that becomes a job
+ * does not move; a region job *is* its box, and needs no arithmetic at all.
  */
 export interface BuildBox {
   id: string
@@ -52,6 +55,8 @@ export interface BuildBox {
   /** Inclusive at both ends, like every block range on this map. */
   box: Footprint
   planned: boolean
+  /** What is being done inside it, which is the colour it is drawn in. */
+  type: JobType
   /** The pieces a job was cut into, drawn inside its box; a finished one is washed in. */
   sections: Array<{ box: Footprint; done: boolean }>
 }
@@ -561,8 +566,13 @@ interface Ink {
   ground: string
   /** An area being dragged out: the one mark about the operator's hand rather than the world. */
   accent: string
-  /** What building is drawn in everywhere else — an agent's badge, a job's progress. */
-  building: string
+  /**
+   * What each kind of work is drawn in everywhere else — an agent's badge, a job's progress.
+   *
+   * All three, because a map can have a build, a dig and a survey open on it at once and the
+   * whole point of the colours is that they are told apart without reading the labels.
+   */
+  work: Record<JobType, string>
 }
 
 let inks: Ink | null = null
@@ -581,7 +591,11 @@ function themeInks(): Ink {
     // belongs to the theme in both of them.
     ground: read('--color-base-100', '#ffffff'),
     accent: read('--color-accent', '#38bdf8'),
-    building: read('--osmium-building', '#a78bfa'),
+    work: {
+      BUILD: read(jobInk('BUILD'), JOB_FALLBACK.BUILD),
+      EXCAVATE: read(jobInk('EXCAVATE'), JOB_FALLBACK.EXCAVATE),
+      MAP: read(jobInk('MAP'), JOB_FALLBACK.MAP),
+    },
   }
   return inks
 }
@@ -617,7 +631,7 @@ function drawBuilds(context: CanvasRenderingContext2D): void {
   const builds = props.builds ?? []
   if (!builds.length) return
 
-  const { building, ground } = themeInks()
+  const { work, ground } = themeInks()
 
   // Inclusive at both ends: a block is k pixels wide, and the last one is in the box too.
   const onScreen = (box: Footprint) => ({
@@ -629,6 +643,9 @@ function drawBuilds(context: CanvasRenderingContext2D): void {
 
   for (const build of builds) {
     const { left, top, width, height } = onScreen(build.box)
+    // Violet raises something, amber takes one away, cyan flies over and writes it down. The box,
+    // its pieces, its outline and its name are all the one colour: what is drawn here is one job.
+    const building = work[build.type]
 
     if (!build.planned) {
       context.globalAlpha = BUILD_FILL

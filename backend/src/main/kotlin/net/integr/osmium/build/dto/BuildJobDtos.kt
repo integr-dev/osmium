@@ -1,12 +1,18 @@
 package net.integr.osmium.build.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import jakarta.validation.Valid
 import jakarta.validation.constraints.Min
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
+import jakarta.validation.constraints.Size
 import net.integr.osmium.build.model.BuildJob
 import net.integr.osmium.build.model.BuildSegment
 import net.integr.osmium.schematic.SplitMode
 import java.time.Instant
+
+/** The same width as a plan's name, which is what a build job's name is a copy of. */
+const val JOB_NAME_MAX_LENGTH = BUILD_NAME_MAX_LENGTH
 
 /**
  * Starts a job.
@@ -47,6 +53,35 @@ data class StartJobRequest(
 
     @field:Schema(description = "An order for particular pieces, by ordinal, where it differs from the one above.")
     val segmentOrders: Map<Int, String>? = null,
+)
+
+/**
+ * One corner of a region, as an operator reads it off the world.
+ *
+ * Inclusive, and in either order: `from` and `to` are two opposite corners rather than a minimum
+ * and a maximum. Somebody standing at two ends of a hole has no idea which of the two numbers is
+ * the smaller, and making them find out is a form the interface can fill in itself.
+ */
+@Schema(description = "One corner of a region, inclusive. The two corners may be given either way round.")
+data class CornerRequest(val x: Int, val y: Int, val z: Int)
+
+/**
+ * Divides a region plan without starting anything.
+ *
+ * **The same arithmetic the start would do**, which is the whole point: a preview computed a second
+ * way is a picture of a division nobody is going to get. A schematic is previewed the same way, by
+ * the endpoint that divides it - see `SchematicController.split`.
+ *
+ * The box, the world and which way the pieces are numbered all come from the plan, so what is left
+ * to ask is how it should be cut.
+ */
+@Schema(description = "Divides a region plan and returns the pieces, without starting a job.")
+data class RegionSplitRequest(
+    @field:Schema(description = "How to cut it. A mapping job is always COLUMNS, whatever is sent.")
+    val mode: SplitMode = SplitMode.COLUMNS,
+
+    @field:Min(1)
+    val parts: Int,
 )
 
 @Schema(description = "Puts one agent on a job. Which piece it gets is the scheduler's business.")
@@ -132,10 +167,25 @@ data class JobSubstitutionResponse(val from: String, val to: String?)
 @Schema(description = "One execution of one build, on one server.")
 data class BuildJobResponse(
     val id: Long,
-    val buildId: Long,
-    val buildName: String,
-    val schematicId: Long,
-    val schematicName: String,
+
+    @field:Schema(description = "BUILD, EXCAVATE or MAP. What the pieces are and what is done to them.")
+    val type: String,
+
+    @field:Schema(description = "What this job is called, pinned when it started.")
+    val name: String,
+
+    @field:Schema(description = "The build plan behind it. Null for a job that works a region.")
+    val buildId: Long?,
+
+    @field:Schema(description = "The region plan behind it. Null for a build.")
+    val regionId: Long?,
+
+    @field:Schema(description = "Null for a job with no plan behind it.")
+    val schematicId: Long?,
+
+    @field:Schema(description = "Null for a job with no plan behind it.")
+    val schematicName: String?,
+
     val serverAddress: String,
 
     @field:Schema(description = "ACTIVE, DONE or CANCELLED. There is no failed job.")
@@ -152,11 +202,22 @@ data class BuildJobResponse(
     @field:Schema(description = "The plan's turn when the job started: quarter turns clockwise, in degrees.")
     val rotation: Int,
 
-    @field:Schema(description = "The world the plan named, if it named one.")
+    @field:Schema(description = "The world the plan named, if it named one. Always set for a region job.")
     val dimension: String?,
 
     @field:Schema(description = "The schematic's box before the turn, for drawing where the job stands.")
     val size: SizeResponse?,
+
+    /**
+     * The far corner of a region job's box, exclusive. Null for a build, whose box is [placement]
+     * and [size] under [rotation].
+     *
+     * Two ways of saying where a job stands rather than one, because they are two different facts:
+     * a build occupies the footprint of a file that was turned, and a region *is* the box. Deriving
+     * either from the other would mean one of them lying about what it is.
+     */
+    @field:Schema(description = "The far corner of a region job's box, exclusive. Null for a build.")
+    val regionMax: PlacementRequest?,
 
     val totalBlocks: Long,
 
@@ -200,10 +261,12 @@ fun BuildSegment.toResponse(runTotal: Long, blockedBy: List<Int> = emptyList()):
 
 fun BuildJob.toResponse(): BuildJobResponse = BuildJobResponse(
     id = checkNotNull(id) { "Job has not been persisted yet" },
-    buildId = checkNotNull(build.id) { "Job has no build" },
-    buildName = build.name,
-    schematicId = checkNotNull(schematic.id) { "Job has no schematic" },
-    schematicName = schematic.name,
+    type = type.name,
+    name = name,
+    buildId = build?.id,
+    regionId = regionPlan?.id,
+    schematicId = schematic?.id,
+    schematicName = schematic?.name,
     serverAddress = serverAddress,
     state = state.name,
     splitMode = splitMode,
@@ -211,7 +274,8 @@ fun BuildJob.toResponse(): BuildJobResponse = BuildJobResponse(
     placement = PlacementRequest(placeX, placeY, placeZ),
     rotation = rotation,
     dimension = dimension,
-    size = schematic.sizeOrNull(),
+    size = schematic?.sizeOrNull(),
+    regionMax = regionMaxX?.let { PlacementRequest(it, regionMaxY!!, regionMaxZ!!) },
     totalBlocks = totalBlocks,
     blocksPlaced = blocksPlaced,
     // Sorted so the list read back is the list that will be read back next time; the database has

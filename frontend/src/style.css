@@ -48,6 +48,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(72% 0.16 300);
+  --osmium-excavating: oklch(72% 0.15 70);
+  --osmium-mapping: oklch(72% 0.13 210);
   --osmium-pending: oklch(74% 0.13 248);
   --osmium-scrim: oklch(0% 0 0 / 0.6);
   --osmium-modal-shadow: oklch(0% 0 0 / 0.7);
@@ -86,6 +88,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(50% 0.17 300);
+  --osmium-excavating: oklch(50% 0.16 70);
+  --osmium-mapping: oklch(50% 0.14 210);
   --osmium-pending: oklch(55% 0.13 248);
   --osmium-scrim: oklch(25% 0.02 145 / 0.35);
   --osmium-modal-shadow: oklch(25% 0.02 145 / 0.22);
@@ -124,6 +128,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(72% 0.16 300);
+  --osmium-excavating: oklch(72% 0.15 70);
+  --osmium-mapping: oklch(72% 0.13 210);
   --osmium-pending: oklch(76% 0.12 245);
   --osmium-scrim: oklch(0% 0 0 / 0.6);
   --osmium-modal-shadow: oklch(0% 0 0 / 0.7);
@@ -162,6 +168,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(50% 0.16 305);
+  --osmium-excavating: oklch(50% 0.15 70);
+  --osmium-mapping: oklch(50% 0.13 210);
   --osmium-pending: oklch(55% 0.13 245);
   --osmium-scrim: oklch(27% 0.025 60 / 0.35);
   --osmium-modal-shadow: oklch(27% 0.025 60 / 0.22);
@@ -200,6 +208,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(74% 0.15 320);
+  --osmium-excavating: oklch(74% 0.14 70);
+  --osmium-mapping: oklch(74% 0.12 210);
   --osmium-pending: oklch(78% 0.1 240);
   --osmium-scrim: oklch(8% 0.02 160 / 0.6);
   --osmium-modal-shadow: oklch(0% 0 0 / 0.7);
@@ -238,6 +248,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(80% 0.18 305);
+  --osmium-excavating: oklch(80% 0.17 70);
+  --osmium-mapping: oklch(80% 0.15 210);
   --osmium-pending: oklch(84% 0.12 240);
   --osmium-scrim: oklch(0% 0 0 / 0.72);
   --osmium-modal-shadow: oklch(0% 0 0 / 0.8);
@@ -276,6 +288,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(50% 0.16 305);
+  --osmium-excavating: oklch(50% 0.15 70);
+  --osmium-mapping: oklch(50% 0.13 210);
   --osmium-pending: oklch(55% 0.13 245);
   --osmium-scrim: oklch(26% 0.03 150 / 0.35);
   --osmium-modal-shadow: oklch(26% 0.03 150 / 0.22);
@@ -314,6 +328,8 @@
   --depth: 0;
   --noise: 0;
   --osmium-building: oklch(48% 0.16 305);
+  --osmium-excavating: oklch(48% 0.15 70);
+  --osmium-mapping: oklch(48% 0.13 210);
   --osmium-pending: oklch(52% 0.13 245);
   --osmium-scrim: oklch(22% 0 0 / 0.35);
   --osmium-modal-shadow: oklch(22% 0 0 / 0.22);
@@ -752,6 +768,54 @@ progress::-moz-progress-bar {
 
 .osmium-progress-building::-moz-progress-bar {
   background-color: var(--osmium-building);
+}
+
+/*
+ * The other two kinds of work, in the same three shapes.
+ *
+ * **A colour says what an agent is doing**, which stopped being one thing the moment a job could be
+ * a hole or a survey rather than a building. Violet for raising something, amber for taking one
+ * away, cyan for flying over and writing it down — three hues far enough apart to be told apart at
+ * eight pixels, and none of them borrowed from a state the fleet already spends: green is in game,
+ * blue pings for connecting, red is trouble.
+ *
+ * Neither pulses, for the reason building does not: these are hours of steady work, and a sidebar
+ * of twenty breathing dots is a screen nobody can read past.
+ */
+.osmium-dot-excavating {
+  background-color: var(--osmium-excavating);
+}
+
+.osmium-badge-excavating {
+  background-color: color-mix(in oklab, var(--osmium-excavating) 18%, transparent);
+  border-color: transparent;
+  color: var(--osmium-excavating);
+}
+
+.osmium-progress-excavating::-webkit-progress-value {
+  background-color: var(--osmium-excavating);
+}
+
+.osmium-progress-excavating::-moz-progress-bar {
+  background-color: var(--osmium-excavating);
+}
+
+.osmium-dot-mapping {
+  background-color: var(--osmium-mapping);
+}
+
+.osmium-badge-mapping {
+  background-color: color-mix(in oklab, var(--osmium-mapping) 18%, transparent);
+  border-color: transparent;
+  color: var(--osmium-mapping);
+}
+
+.osmium-progress-mapping::-webkit-progress-value {
+  background-color: var(--osmium-mapping);
+}
+
+.osmium-progress-mapping::-moz-progress-bar {
+  background-color: var(--osmium-mapping);
 }
 
 /*

@@ -190,6 +190,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_2"];
+        put?: never;
+        post: operations["create_2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regions/{regionId}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewRegion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regions/{regionId}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startRegion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{jobId}/segments/{segmentId}/assignment": {
         parameters: {
             query?: never;
@@ -262,7 +310,7 @@ export interface paths {
             cookie?: never;
         };
         /** List hosts. */
-        get: operations["list_2"];
+        get: operations["list_3"];
         put?: never;
         /**
          * Enrol a host.
@@ -302,9 +350,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_3"];
+        get: operations["list_4"];
         put?: never;
-        post: operations["create_2"];
+        post: operations["create_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -455,13 +503,13 @@ export interface paths {
             cookie?: never;
         };
         /** List every agent. */
-        get: operations["list_4"];
+        get: operations["list_5"];
         put?: never;
         /**
          * Create an agent slot.
          * @description Nothing has touched Minecraft at this point; the agent starts UNLINKED.
          */
-        post: operations["create_3"];
+        post: operations["create_4"];
         delete?: never;
         options?: never;
         head?: never;
@@ -715,6 +763,22 @@ export interface paths {
         patch: operations["rename"];
         trace?: never;
     };
+    "/api/regions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["find_1"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_2"];
+        options?: never;
+        head?: never;
+        patch: operations["update_1"];
+        trace?: never;
+    };
     "/api/hosts/{id}": {
         parameters: {
             query?: never;
@@ -729,7 +793,7 @@ export interface paths {
          * Remove a host.
          * @description Cascades to its agents, which cannot run without it. Invalidates the token.
          */
-        delete: operations["delete_2"];
+        delete: operations["delete_3"];
         options?: never;
         head?: never;
         /**
@@ -746,13 +810,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["find_1"];
+        get: operations["find_2"];
         put?: never;
         post?: never;
-        delete: operations["delete_3"];
+        delete: operations["delete_4"];
         options?: never;
         head?: never;
-        patch: operations["update_1"];
+        patch: operations["update_2"];
         trace?: never;
     };
     "/api/agents/{id}": {
@@ -767,14 +831,14 @@ export interface paths {
         put?: never;
         post?: never;
         /** Delete an agent. */
-        delete: operations["delete_4"];
+        delete: operations["delete_5"];
         options?: never;
         head?: never;
         /**
          * Rename an agent.
          * @description Omitted fields are left alone. Where an agent plays is set through `PUT /api/agents/{id}/server`, which has its own preconditions.
          */
-        patch: operations["update_2"];
+        patch: operations["update_3"];
         trace?: never;
     };
     "/api/stream": {
@@ -897,7 +961,7 @@ export interface paths {
             cookie?: never;
         };
         /** List every role with its permission nodes. */
-        get: operations["list_5"];
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1002,7 +1066,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1018,10 +1082,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["find_2"];
+        get: operations["find_3"];
         put?: never;
         post?: never;
-        delete: operations["delete_5"];
+        delete: operations["delete_6"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1091,7 +1155,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: chat arrives while it is being read. Send `nextCursor`
          *                 from the previous response to continue. Kept for 3 days.
          */
-        get: operations["list_7"];
+        get: operations["list_8"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1192,7 +1256,7 @@ export interface paths {
          *
          *                 Entries are kept for 30 days by default and purged daily.
          */
-        get: operations["list_8"];
+        get: operations["list_9"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1286,7 +1350,7 @@ export interface paths {
          *                 Pages by cursor, not by offset: incidents arrive while the feed is being read. Send
          *                 `nextCursor` from the previous response to continue. Kept for 10 days.
          */
-        get: operations["list_9"];
+        get: operations["list_10"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1574,21 +1638,178 @@ export interface components {
             /** Format: int64 */
             sizeBytes?: number;
         };
-        /** @description Hands one segment to one agent. */
-        AssignSegmentRequest: {
+        /** @description One corner of a region, inclusive. The two corners may be given either way round. */
+        CornerRequest: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+        };
+        /** @description Creates a region plan. The corners and the server can be settled later. */
+        CreateRegionRequest: {
+            name: string;
+            /**
+             * @description EXCAVATE or MAP. A build comes from a file and its plan is a build.
+             * @enum {string}
+             */
+            type?: "BUILD" | "EXCAVATE" | "MAP";
+            /** @description One corner, inclusive. Both together or neither. */
+            from?: components["schemas"]["CornerRequest"] | null;
+            to?: components["schemas"]["CornerRequest"] | null;
+            /**
+             * @description The server these corners were read on.
+             * @example play.example.net
+             */
+            serverAddress?: string | null;
+            /**
+             * @description Which world on it.
+             * @example overworld
+             */
+            dimension?: string | null;
+        };
+        /** @description Where the schematic's minimum corner lands in the world. */
+        PlacementRequest: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+        };
+        /** @description A box of world somebody means to dig out or chart. */
+        RegionResponse: {
             /** Format: int64 */
-            agentId?: number;
+            id?: number;
+            /** @description EXCAVATE or MAP. */
+            type?: string;
+            name?: string;
+            /** @description Null until somebody says which server these corners were read on. */
+            serverAddress?: string | null;
+            /** @description Null until somebody says which world. */
+            dimension?: string | null;
+            /** @description Whether it has a box at all. A region without one cannot be worked. */
+            placed?: boolean;
+            /** @description The minimum corner: where the box starts. Null while unplaced. */
+            placement?: components["schemas"]["PlacementRequest"] | null;
+            /** @description The far corner, exclusive — the first block outside the box. */
+            regionMax?: components["schemas"]["PlacementRequest"] | null;
+            /** @description Its three sides in blocks, which is what an operator reads. */
+            size?: components["schemas"]["SizeResponse"] | null;
+            /**
+             * Format: int64
+             * @description Blocks for an excavation, columns of ground for a survey.
+             */
+            blocks?: number | null;
+            /**
+             * Format: int32
+             * @description The height the agents fly, for a survey. The box's floor otherwise.
+             */
+            height?: number | null;
+            createdBy?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        /** @description A box's three sides, in blocks. */
+        SizeResponse: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            /** Format: int32 */
+            z?: number;
+        };
+        /** @description Divides a region plan and returns the pieces, without starting a job. */
+        RegionSplitRequest: {
+            /**
+             * @description How to cut it. A mapping job is always COLUMNS, whatever is sent.
+             * @enum {string}
+             */
+            mode?: "COLUMNS" | "GRID";
+            /** Format: int32 */
+            parts?: number;
+        };
+        SegmentResponse: {
+            /** Format: int32 */
+            ordinal?: number;
+            /** Format: int32 */
+            minX?: number;
+            /** Format: int32 */
+            minY?: number;
+            /** Format: int32 */
+            minZ?: number;
+            /** Format: int32 */
+            maxX?: number;
+            /** Format: int32 */
+            maxY?: number;
+            /** Format: int32 */
+            maxZ?: number;
+            /** Format: int64 */
+            blocks?: number;
+            /** Format: int32 */
+            sharePercent?: number;
+        };
+        SplitResponse: {
+            mode?: string;
+            /** Format: int32 */
+            requested?: number;
+            /** Format: int32 */
+            parts?: number;
+            /** Format: int64 */
+            blocks?: number;
+            segments?: components["schemas"]["SegmentResponse"][];
+        };
+        /** @description Starts working a region plan with a pool of agents. One job, one server. */
+        StartRegionJobRequest: {
+            /**
+             * @description How to divide the box. A mapping job is always COLUMNS.
+             * @enum {string}
+             */
+            mode?: "COLUMNS" | "GRID";
+            agentIds: number[];
+            /**
+             * Format: int32
+             * @description Pieces to divide into. Defaults to the size of the pool.
+             */
+            parts?: number | null;
+            /**
+             * @description The order every piece is worked in: three signed axes, outermost first, optionally ending in 's' or 'ss' for snaking sweeps. An excavation defaults to top to bottom; a mapping job has one sensible sweep and ignores this.
+             * @example y-z+x+
+             */
+            order?: string | null;
+            /** @description An order for particular pieces, by ordinal, where it differs. */
+            segmentOrders?: {
+                [key: string]: string;
+            } | null;
         };
         /** @description One execution of one build, on one server. */
         BuildJobResponse: {
             /** Format: int64 */
             id?: number;
-            /** Format: int64 */
-            buildId?: number;
-            buildName?: string;
-            /** Format: int64 */
-            schematicId?: number;
-            schematicName?: string;
+            /** @description BUILD, EXCAVATE or MAP. What the pieces are and what is done to them. */
+            type?: string;
+            /** @description What this job is called, pinned when it started. */
+            name?: string;
+            /**
+             * Format: int64
+             * @description The build plan behind it. Null for a job that works a region.
+             */
+            buildId?: number | null;
+            /**
+             * Format: int64
+             * @description The region plan behind it. Null for a build.
+             */
+            regionId?: number | null;
+            /**
+             * Format: int64
+             * @description Null for a job with no plan behind it.
+             */
+            schematicId?: number | null;
+            /** @description Null for a job with no plan behind it. */
+            schematicName?: string | null;
             serverAddress?: string;
             /** @description ACTIVE, DONE or CANCELLED. There is no failed job. */
             state?: string;
@@ -1605,10 +1826,12 @@ export interface components {
              * @description The plan's turn when the job started: quarter turns clockwise, in degrees.
              */
             rotation?: number;
-            /** @description The world the plan named, if it named one. */
+            /** @description The world the plan named, if it named one. Always set for a region job. */
             dimension?: string | null;
             /** @description The schematic's box before the turn, for drawing where the job stands. */
             size?: components["schemas"]["SizeResponse"] | null;
+            /** @description The far corner of a region job's box, exclusive. Null for a build. */
+            regionMax?: components["schemas"]["PlacementRequest"] | null;
             /** Format: int64 */
             totalBlocks?: number;
             /**
@@ -1698,23 +1921,10 @@ export interface components {
             from?: string;
             to?: string | null;
         };
-        /** @description Where the schematic's minimum corner lands in the world. */
-        PlacementRequest: {
-            /** Format: int32 */
-            x?: number;
-            /** Format: int32 */
-            y?: number;
-            /** Format: int32 */
-            z?: number;
-        };
-        /** @description A box's three sides, in blocks. */
-        SizeResponse: {
-            /** Format: int32 */
-            x?: number;
-            /** Format: int32 */
-            y?: number;
-            /** Format: int32 */
-            z?: number;
+        /** @description Hands one segment to one agent. */
+        AssignSegmentRequest: {
+            /** Format: int64 */
+            agentId?: number;
         };
         /** @description Puts one agent on a job. Which piece it gets is the scheduler's business. */
         AddJobAgentRequest: {
@@ -1966,6 +2176,16 @@ export interface components {
         RenameSchematicRequest: {
             name: string;
         };
+        /** @description Edits a region plan. Omitted fields are left as they are. */
+        UpdateRegionRequest: {
+            name?: string | null;
+            from?: components["schemas"]["CornerRequest"] | null;
+            to?: components["schemas"]["CornerRequest"] | null;
+            /** @description Takes the corners off, for a region somebody wants to measure again. */
+            unplace?: boolean;
+            serverAddress?: string | null;
+            dimension?: string | null;
+        };
         /** @description Renames a host. Everything else about a host is observed, not configured. */
         UpdateHostRequest: {
             name: string;
@@ -2035,36 +2255,6 @@ export interface components {
              */
             databaseBytes?: number;
             areas?: components["schemas"]["StorageAreaResponse"][];
-        };
-        SegmentResponse: {
-            /** Format: int32 */
-            ordinal?: number;
-            /** Format: int32 */
-            minX?: number;
-            /** Format: int32 */
-            minY?: number;
-            /** Format: int32 */
-            minZ?: number;
-            /** Format: int32 */
-            maxX?: number;
-            /** Format: int32 */
-            maxY?: number;
-            /** Format: int32 */
-            maxZ?: number;
-            /** Format: int64 */
-            blocks?: number;
-            /** Format: int32 */
-            sharePercent?: number;
-        };
-        SplitResponse: {
-            mode?: string;
-            /** Format: int32 */
-            requested?: number;
-            /** Format: int32 */
-            parts?: number;
-            /** Format: int64 */
-            blocks?: number;
-            segments?: components["schemas"]["SegmentResponse"][];
         };
         ShapeResponse: {
             /** Format: int32 */
@@ -2277,7 +2467,7 @@ export interface components {
             at?: string;
             account?: string;
             /** @enum {string} */
-            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "AGENT_INVENTORY" | "AGENT_PATH" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "STORAGE_PURGE" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
+            action?: "AGENT_CREATE" | "AGENT_UPDATE" | "AGENT_DELETE" | "AGENT_SETUP" | "AGENT_SETUP_CANCEL" | "AGENT_CONNECT" | "AGENT_DISCONNECT" | "AGENT_CHAT" | "AGENT_INVENTORY" | "AGENT_PATH" | "HOST_ENROL" | "HOST_RENAME" | "HOST_ROTATE_TOKEN" | "HOST_DELETE" | "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ROLE_CHANGE" | "USER_PASSWORD_CHANGE" | "AUDIT_EXPORT" | "STORAGE_PURGE" | "SESSION_REUSE_DETECTED" | "SESSION_REVOKED_ALL" | "SCHEMATIC_UPLOAD" | "SCHEMATIC_RENAME" | "SCHEMATIC_DELETE" | "BUILD_CREATE" | "BUILD_UPDATE" | "BUILD_DELETE" | "REGION_CREATE" | "REGION_UPDATE" | "REGION_DELETE" | "BUILD_JOB_START" | "BUILD_JOB_PAUSE" | "BUILD_JOB_RESUME" | "BUILD_JOB_DELETE";
             target?: string;
             detail?: string | null;
         };
@@ -2883,6 +3073,147 @@ export interface operations {
             };
         };
     };
+    list_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"][];
+                };
+            };
+        };
+    };
+    create_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRegionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+            /** @description The name is taken, or the region is empty or past the size limit. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+        };
+    };
+    previewRegion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                regionId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegionSplitRequest"];
+            };
+        };
+        responses: {
+            /** @description Divided. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SplitResponse"];
+                };
+            };
+            /** @description No such region. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SplitResponse"];
+                };
+            };
+        };
+    };
+    startRegion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                regionId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRegionJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Started. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+            /** @description The agents are not all online on the region's own server, one of them is on another job, or this region is already being worked there. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BuildJobResponse"];
+                };
+            };
+        };
+    };
     assign: {
         parameters: {
             query?: never;
@@ -3021,7 +3352,7 @@ export interface operations {
             };
         };
     };
-    list_2: {
+    list_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -3141,7 +3472,7 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    list_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -3161,7 +3492,7 @@ export interface operations {
             };
         };
     };
-    create_2: {
+    create_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -3385,7 +3716,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -3414,7 +3745,7 @@ export interface operations {
             };
         };
     };
-    create_3: {
+    create_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -4376,7 +4707,107 @@ export interface operations {
             };
         };
     };
+    find_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+        };
+    };
     delete_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing node `agent.delete`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A job of it is running; pause that first. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRegionRequest"];
+            };
+        };
+        responses: {
+            /** @description Edited. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+            /** @description Missing node `agent.run`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+            /** @description The name is taken, one corner was given without the other, or the region is empty or past the size limit. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionResponse"];
+                };
+            };
+        };
+    };
+    delete_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -4472,7 +4903,7 @@ export interface operations {
             };
         };
     };
-    find_1: {
+    find_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -4494,7 +4925,7 @@ export interface operations {
             };
         };
     };
-    delete_3: {
+    delete_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -4514,7 +4945,7 @@ export interface operations {
             };
         };
     };
-    update_1: {
+    update_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -4580,7 +5011,7 @@ export interface operations {
             };
         };
     };
-    delete_4: {
+    delete_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -4614,7 +5045,7 @@ export interface operations {
             };
         };
     };
-    update_2: {
+    update_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -4836,7 +5267,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_6: {
         parameters: {
             query?: never;
             header?: never;
@@ -4991,7 +5422,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_7: {
         parameters: {
             query?: {
                 buildId?: number;
@@ -5013,7 +5444,7 @@ export interface operations {
             };
         };
     };
-    find_2: {
+    find_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -5035,7 +5466,7 @@ export interface operations {
             };
         };
     };
-    delete_5: {
+    delete_6: {
         parameters: {
             query?: never;
             header?: never;
@@ -5141,7 +5572,7 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    list_8: {
         parameters: {
             query?: {
                 /** @description Conversation to or about this agent. Excludes the server's global chat. */
@@ -5342,7 +5773,7 @@ export interface operations {
             };
         };
     };
-    list_8: {
+    list_9: {
         parameters: {
             query?: {
                 /** @description How many entries to return. Clamped to 1..500. */
@@ -5508,7 +5939,7 @@ export interface operations {
             };
         };
     };
-    list_9: {
+    list_10: {
         parameters: {
             query?: {
                 /** @description Narrow to one agent. Omit for the whole fleet. */

@@ -1,5 +1,7 @@
 import { i18n } from '../i18n'
 import type { AgentResponse } from '../api/client'
+import type { JobType } from '../api/jobs'
+import { jobBadge, jobDot } from './jobKinds'
 
 type AgentState = AgentResponse['state']
 
@@ -65,25 +67,26 @@ export function stateLabel(state: AgentState): string {
  * paint a disconnected agent as busy.
  */
 /**
- * Its own colour rather than the info token, which connecting also used: two blues at the size a
- * dot is drawn are one blue, and "on its way into the game" and "placing blocks" are the two
- * states an operator most needs to tell apart. See `style.css`.
+ * Each kind of work has its own colour, and none of them is the info token that connecting uses:
+ * two blues at the size a dot is drawn are one blue, and "on its way into the game" and "at work"
+ * are the two states an operator most needs to tell apart. See `lib/jobKinds.ts` and `style.css`.
+ *
+ * **What is substituted is the kind of work, not a boolean.** It used to be "is it building", from
+ * back when a job could only be a build; a fleet that also digs and charts needs the badge to say
+ * which, and a yes-or-no can only ever say violet.
  */
-const BUILDING_DOT = 'osmium-dot-building'
-const BUILDING_BADGE = 'osmium-badge-building'
-
-function substituted(state: AgentState, building: boolean): boolean {
-  return building && state === 'ONLINE'
+function substituted(state: AgentState, working: JobType | null): working is JobType {
+  return working !== null && state === 'ONLINE'
 }
 
-export function agentDot(state: AgentState, building = false): string {
-  return substituted(state, building) ? BUILDING_DOT : (STATE_DOT[state] ?? 'osmium-dot-off')
+export function agentDot(state: AgentState, working: JobType | null = null): string {
+  return substituted(state, working) ? jobDot(working) : (STATE_DOT[state] ?? 'osmium-dot-off')
 }
 
-export function agentBadge(state: AgentState, building = false): string {
-  return substituted(state, building) ? BUILDING_BADGE : STATE_BADGE[state]
+export function agentBadge(state: AgentState, working: JobType | null = null): string {
+  return substituted(state, working) ? jobBadge(working) : STATE_BADGE[state]
 }
 
-export function agentStateLabel(state: AgentState, building = false): string {
-  return substituted(state, building) ? i18n.global.t('agentState.BUILDING') : stateLabel(state)
+export function agentStateLabel(state: AgentState, working: JobType | null = null): string {
+  return substituted(state, working) ? i18n.global.t(`agentState.${working}`) : stateLabel(state)
 }
