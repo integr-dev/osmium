@@ -1151,6 +1151,7 @@ src/main/resources/db/migration/
   V34__region_plans.sql            a box of world, saved the way a build plan is
   V35__region_audit.sql            the three REGION actions added to the constraint
   V36__region_plans_placed_later.sql  a region can be written before it is measured
+  V37__region_rising_height.sql    a survey may climb over what is in its way
 ```
 
 Adding one: next version number, a name that says what it does, and a matching entity change. The
@@ -1447,6 +1448,17 @@ box mean the same thing whichever kind made them, and nothing that reads a box n
 flat. `RegionService` sorts the two inclusive corners an operator typed into that shape; the size
 limit is checked when the plan is written rather than only when a job of it starts, so a slipped
 digit is refused by the form that took it.
+
+**`rising` says what that height means.** A flat flight is only flat where the ground is: charting
+a valley at the height of its rim wastes the flight, and charting it at the height of its floor
+flies agents into the hillside. A rising survey treats its height as a **floor** — the crew lifts
+over whatever it would hit and settles back down to it — and the column is one boolean rather than
+a second box, because nothing else about the work changes: same slab, same split, same segments.
+Only `MAP` may carry it; the service drops it on an excavation rather than storing something no
+reader would honour, since a hole is dug out and not flown over.
+
+It is **pinned onto the job** beside the box, for the reason everything else about a job is pinned:
+how a crew already in the air is flying is not something an edit to the plan may change under it.
 
 Gated on the **agent** nodes, not the schematic ones — which is where it parts company with
 `BuildController`. A build plan is a design: it says where a *file* goes. A region has no file. It

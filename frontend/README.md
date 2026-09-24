@@ -278,6 +278,15 @@ drawn here:
 - **A survey is flat.** Its box is one block thick at the height its agents fly, so the corners ask
   for X and Z and the height is a field of its own. That keeps one shape for every box: a piece, a
   blocker and a drawn box mean the same thing whichever tab made them.
+- **And it can climb.** A flat flight is only flat where the ground is: charting a valley at the
+  height of its rim wastes the flight, and charting it at the floor flies agents into the hillside.
+  *Rise over what is in the way* makes the height a **floor** instead — the field relabels itself,
+  the summary reads *Rising, from y −64* rather than *Level, at y 90*, and the job card says which
+  beside the anchor, because the same y is two different instructions. Switching it on fills the
+  height with the world's own floor (`WORLD_FLOOR`: overworld −64, nether and end 0) when nothing
+  has been typed, which is where a flight that follows the terrain up starts. A number somebody
+  typed is theirs and is left alone. The box does not change: still one block thick, still split
+  and drawn exactly as before.
 
 **Nothing is dispatched for either yet.** A host knows how to be handed a box of blocks to place and
 nothing else, so an excavation's pieces are cut, crewed, assigned — and then sit there. The split
@@ -1647,9 +1656,19 @@ the search could get — and the notice links back to the agent. See **Saying wh
 ### Choosing an area, on the map
 
 **Shift and a drag** opens an `ActionMenu` where the drag ended, naming both corners and the size.
-It has nothing in it yet: it is where what can be done to a stretch of the world will go, and it
-opens and closes by the same rules as the panel a click opens, so those actions arrive into
-something that already works.
+It opens and closes by the same rules as the panel a click opens.
+
+**What it offers is *Chart this area***, which is the one place in Osmium where a stretch of the
+world is read off the world rather than typed. It pushes to Operations with the corners, the server
+and the world as query parameters — `areaQuery` in `src/lib/area.ts` writes them, `areaFromQuery`
+reads them, and the survey tab arrives with a new plan already filled in. The URL is the handoff
+rather than a store the two screens share: it can be linked, and nothing is left behind to be
+applied to the next survey somebody opens the tab to write. The tab clears those parameters once it
+has read them, so a reload does not quietly undo whatever was typed after arriving.
+
+**Charting only.** A dig needs the two heights the map cannot give — it is drawn from above — and a
+half-filled excavation form is a shortcut to a form still to be filled in. Without `agent.run` the
+panel says so rather than offering a button that would answer 403.
 
 **A plain drag keeps the job it had**, which is moving the map — done far more often than anybody
 chooses an area, so the rarer gesture is the one that asks for a key.
@@ -2007,6 +2026,15 @@ did.
 
 Every one of them is off under `prefers-reduced-motion`, honoured rather than softened. All of it is
 decorative by construction, so removing it loses nothing that is not also written on the page.
+
+**A panel that slides has to be clipped, and a clip cuts focus rings.** A wizard step arrives from
+1.25rem outside its frame, so `.osmium-slide` clips across — otherwise the page grows a scrollbar
+for the length of the animation. Clipping happens at the padding edge, and a focus ring is drawn
+*outside* the control it belongs to (2px of outline at 2px offset), so the ring on whatever field
+reached the side of a panel came out sliced: most visible in the add-agent dialog, whose fields
+span the panel. The frame carries `--osmium-clip-bleed` of inline padding — exactly that ring —
+so the clip edge sits outside it. Not `overflow-clip-margin`, which the property was made for and
+which is not honoured on a box clipped across one axis only.
 
 ## When the backend is unreachable
 
