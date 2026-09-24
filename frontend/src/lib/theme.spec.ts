@@ -108,8 +108,12 @@ describe('the palettes', () => {
     const used = new Set([...stylesheet.matchAll(/var\((--osmium-[a-z-]+)/g)].map((match) => match[1]!))
     const defined = new Set([...(blocks.get('osmium')?.keys() ?? [])].filter((name) => name.startsWith('--osmium-')))
 
+    // The tokens that are not a theme's to have an opinion about: a curve and a measurement,
+    // both defined once on :root.
+    const shared = ['--osmium-ease', '--osmium-clip-bleed']
+
     for (const token of used) {
-      if (token === '--osmium-ease' || token.startsWith('--osmium-place')) continue
+      if (shared.includes(token) || token.startsWith('--osmium-place')) continue
       expect(defined, token).toContain(token)
     }
   })

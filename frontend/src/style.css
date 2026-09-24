@@ -376,6 +376,15 @@
  */
 :root {
   --osmium-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /*
+   * How far outside itself a clipped frame still draws.
+   *
+   * A focus ring is drawn *outside* the control it belongs to - two pixels of outline, two of
+   * offset - and a panel clipped at its own edge cut the ring off whatever field reached the side.
+   * It is the padding a clipped frame carries so the ring lands inside the clip.
+   */
+  --osmium-clip-bleed: 4px;
 }
 
 /* A row, cell or badge whose value just changed. Applied by `v-flash`. */
@@ -678,6 +687,16 @@ progress::-moz-progress-bar {
   position: relative;
   overflow-x: clip;
   overflow-y: visible;
+
+  /*
+   * Room for a focus ring inside the clip.
+   *
+   * A ring is drawn *outside* the control it belongs to - two pixels of outline, two of offset -
+   * and clipping happens at the padding edge, so a panel clipped at its own content cut the ring
+   * off whatever field reached the side. Padding moves the clip out by exactly that ring rather
+   * than `overflow-clip-margin`, which is not honoured on a box clipped across only.
+   */
+  padding-inline: var(--osmium-clip-bleed);
 }
 
 /*
