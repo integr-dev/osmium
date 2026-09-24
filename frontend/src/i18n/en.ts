@@ -621,6 +621,11 @@ export const en = {
     pickNoGround: 'Nobody has walked here, so the agent is sent to this spot at whatever height the ground is.',
     /** Over the panel an area dragged out on the map opens, above its corners and size. */
     area: 'Area',
+    /** What a dragged area can be handed to. Charting only: the map has no height to give a dig. */
+    chartArea: 'Chart this area',
+    chartAreaHint: 'Opens the Map tab with these corners in a new survey. It flies at a height you give there.',
+    /** Said to somebody who may look at the fleet but not put it to work. */
+    areaNothing: 'Nothing here to act on: charting an area needs permission to run agents.',
     /** Under the map's coordinates while nothing is pointed at: how to drag an area out. */
     selectHint: 'shift-drag or shift-click twice to select',
     sendCount: 'Send {count} | Send 1 agent | Send {count} agents',
@@ -703,6 +708,16 @@ export const en = {
     to: 'To',
     /** Where the agents fly while charting, which is not a side of the box. */
     height: 'Flying height',
+    /**
+     * The same field once the flight climbs: the number is then the floor rather than the altitude.
+     */
+    lowestHeight: 'Lowest flying height',
+    rising: 'Rise over what is in the way',
+    risingHint: 'The crew lifts over anything it would hit and settles back to this height once it is behind them. Off, it holds this height the whole way across.',
+    /** On the summary, where the one thing about a survey that is not its box belongs. */
+    flight: 'Flight',
+    levelAt: 'Level, at y {y}',
+    risingAt: 'Rising, from y {y}',
     dimension: 'World',
     strips: 'Strips',
     summary: 'What will be started',
@@ -818,6 +833,9 @@ export const en = {
     },
 
     /** Said on the card, where somebody is watching a bar that will not move. */
+    /** How a survey is flown, beside its anchor: the same y means two different instructions. */
+    level: 'Level flight',
+    rising: 'Rises over obstacles',
     notDispatched: 'Divided and crewed. Nothing is sent to the agents yet — no host can carry this kind of work.',
     waiting: '{count} piece(s) waiting for somebody to take them',
     started: "Building '{name}' in {count} segment(s).",

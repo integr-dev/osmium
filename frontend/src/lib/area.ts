@@ -147,3 +147,90 @@ export function areaNote(area: Area): string {
 
   return `${area.west}, ${area.north} → ${area.east}, ${area.south} · ${size.width} × ${size.depth}`
 }
+
+/**
+ * An area handed from the map to the Map tab, as query parameters.
+ *
+ * **The URL is the handoff**, rather than a store the two screens share: the tab is reached by a
+ * router push, it can be linked and bookmarked, and nothing is left behind to be applied to the
+ * next survey somebody opens the tab to write.
+ *
+ * The world is carried with the corners because it has to be. A box of coordinates means a
+ * different place in the nether than it does in the overworld, and the tab refuses to start a
+ * survey that does not say where it is - so a handoff that dropped them would hand over a form
+ * that still has to be filled in by hand.
+ */
+export interface AreaHandoff {
+  area: Area
+  server: string
+  dimension: string
+}
+
+export function areaQuery(handoff: AreaHandoff): Record<string, string> {
+  return {
+    west: String(handoff.area.west),
+    north: String(handoff.area.north),
+    east: String(handoff.area.east),
+    south: String(handoff.area.south),
+    server: handoff.server,
+    world: handoff.dimension,
+  }
+}
+
+/**
+ * The handoff a query carries, or null when it carries none.
+ *
+ * All of it or none of it: anything can be typed into an address bar, and half an area is not a
+ * form to prefill. Heights are not carried at all — the map is drawn from above, and what a survey
+ * flies at is the one number it has to be told.
+ */
+export function areaFromQuery(query: Record<string, unknown>): AreaHandoff | null {
+  const server = text(query['server'])
+  const dimension = text(query['world'])
+  if (!server || !dimension) return null
+
+  const west = whole(query['west'])
+  const north = whole(query['north'])
+  const east = whole(query['east'])
+  const south = whole(query['south'])
+  if (west === null || north === null || east === null || south === null) return null
+
+  return {
+    area: {
+      west: Math.min(west, east),
+      east: Math.max(west, east),
+      north: Math.min(north, south),
+      south: Math.max(north, south),
+    },
+    server,
+    dimension,
+  }
+}
+
+/** A repeated parameter arrives as an array, which is not a value. */
+function text(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length > 0 ? raw : null
+}
+
+function whole(raw: unknown): number | null {
+  if (typeof raw !== 'string' || raw.trim() === '') return null
+  const value = Number(raw)
+  return Number.isInteger(value) ? value : null
+}
+
+/** The parameters {@link areaQuery} writes, so the tab that reads them can also clear them. */
+export const AREA_PARAMS = ['west', 'north', 'east', 'south', 'server', 'world'] as const
+
+/**
+ * The query with the handoff taken out.
+ *
+ * Read once and then dropped: the form is the plan from that moment, and a reload that filled the
+ * map's corners back in would quietly undo whatever was typed after arriving.
+ */
+export function withoutArea<T extends Record<string, unknown>>(query: T): Partial<T> {
+  const kept: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(query)) {
+    if (!(AREA_PARAMS as readonly string[]).includes(key)) kept[key] = value
+  }
+  return kept as Partial<T>
+}

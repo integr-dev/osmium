@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 // Aliased: `Map` is a JavaScript built-in, and shadowing it is a trap for whoever needs one here.
 import { Crosshair, Footprints, Map as MapIcon, Navigation } from 'lucide-vue-next'
@@ -8,7 +8,7 @@ import { Crosshair, Footprints, Map as MapIcon, Navigation } from 'lucide-vue-ne
 import PlayerHead from '../components/PlayerHead.vue'
 import WorldMap, { type BuildBox, type Mark, type PathLine, type Picked } from '../components/WorldMap.vue'
 import { buildBoxes } from '../lib/buildBoxes'
-import { areaNote, type AreaPicked } from '../lib/area'
+import { areaNote, areaQuery, type AreaPicked } from '../lib/area'
 import ActionMenu from '../components/ActionMenu.vue'
 import AgentTargets from '../components/AgentTargets.vue'
 import { fetchLastSeen, listMappedServers, type MapExtentResponse } from '../api/map'
@@ -20,6 +20,7 @@ import { parsePlace } from '../lib/mapCoords'
 import { agentDot, agentStateLabel } from '../lib/agentState'
 import { avatarUrl } from '../lib/avatars'
 import { agentDetail, agentVitals, dimensionLabel, playerVitals } from '../lib/vitals'
+import { jobStyle } from '../lib/jobKinds'
 
 /**
  * Where the fleet is working, on the ground it has charted.
@@ -37,6 +38,7 @@ import { agentDetail, agentVitals, dimensionLabel, playerVitals } from '../lib/v
  */
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 const toasts = useToastStore()
@@ -613,6 +615,26 @@ function close(): void {
   sending.value = []
 }
 
+/**
+ * Hands the dragged area to the survey tab, with its corners and its world already filled in.
+ *
+ * **The one place an area can be read off the world rather than typed.** Six numbers copied out of
+ * a game and into a form is where a survey of the wrong valley comes from, and the map is where an
+ * operator is already looking at the stretch they mean.
+ *
+ * Only charting. A dig needs the two heights the map cannot give - it is drawn from above - so
+ * sending a half-filled excavation form would be a shortcut to a form still to be filled in.
+ */
+function chart(): void {
+  const at = area.value
+  if (!at || !server.value || !world.value) return
+
+  void router.push({
+    name: 'operations',
+    query: { tab: 'map', ...areaQuery({ area: at.area, server: server.value, dimension: world.value }) },
+  })
+}
+
 /** The open panel, so a click can be asked whether it landed inside it. */
 const menu = ref<InstanceType<typeof ActionMenu> | null>(null)
 
@@ -880,8 +902,7 @@ const worldName = dimensionLabel
 
     <!--
       An area dragged out with shift held, anchored where the drag ended the way the panel above is
-      anchored where the click landed. Empty for now: what can be done to a stretch of the world goes
-      here.
+      anchored where the click landed.
     -->
     <ActionMenu
       v-if="area"
@@ -891,7 +912,27 @@ const worldName = dimensionLabel
       :y="area.py"
       :title="t('map.area')"
       :note="areaNote(area.area)"
-    />
+    >
+      <!--
+        Soft rather than solid, unlike the panel above: this one does not act in the world, it
+        carries the corners to the tab that does. Tinted like every other survey in the interface.
+      -->
+      <button
+        v-if="auth.can('agent.run')"
+        type="button"
+        class="btn btn-soft btn-sm justify-start gap-2"
+        @click="chart()"
+      >
+        <MapIcon class="size-4" :style="jobStyle('MAP')" />
+        {{ t('map.chartArea') }}
+      </button>
+
+      <template #footer>
+        <span class="text-base-content/50 max-w-64 px-1 text-[0.65rem] leading-tight">
+          {{ auth.can('agent.run') ? t('map.chartAreaHint') : t('map.areaNothing') }}
+        </span>
+      </template>
+    </ActionMenu>
 
     <!--
       One panel, over the map rather than above it, built from the same card the rest of the app
