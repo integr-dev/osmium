@@ -203,6 +203,15 @@ class BuildJob(
     /** The plan's turn when the job started, pinned for the same reason the anchor is. */
     @Column(name = "rotation", nullable = false) var rotation: Int = 0,
 
+    /**
+     * Whether a survey's crew climbs over what is in the way, from the plan when the job started.
+     *
+     * Pinned rather than read through [regionPlan], as everything else about the box is: how the
+     * agents now in the air are flying is not something an edit to the plan may change under them.
+     * Always false for a build or an excavation — see `RegionPlan.rising`.
+     */
+    @Column(name = "rising", nullable = false) var rising: Boolean = false,
+
     /** The world the plan named, if it named one. The server is [serverAddress], from the crew. */
     @Column(name = "dimension", length = 128) var dimension: String? = null,
 

@@ -58,6 +58,19 @@ export function quarterOf(degrees: number | null | undefined): Quarter {
 export const DIMENSIONS = ['overworld', 'the_nether', 'the_end'] as const
 
 /**
+ * The lowest block each world has.
+ *
+ * Where a survey that climbs starts from: it rises over whatever is in its way, so beginning at
+ * the floor is beginning under the terrain and following it up. A survey that holds one height
+ * has no use for this - it is told the height it flies.
+ */
+export const WORLD_FLOOR: Record<(typeof DIMENSIONS)[number], number> = {
+  overworld: -64,
+  the_nether: 0,
+  the_end: 0,
+}
+
+/**
  * A world's name as the map and the agents spell it: no `minecraft:` in front.
  *
  * Compared through this rather than as written, because both spellings reach here — plans written

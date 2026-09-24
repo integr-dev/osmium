@@ -341,6 +341,8 @@ class BuildJobService(
             regionMaxX = max.x,
             regionMaxY = max.y,
             regionMaxZ = max.z,
+            // Pinned with the box: how the crew now in the air is flying is not an edit away.
+            rising = region.rising,
             dimension = region.dimension,
             totalBlocks = split.blocks,
             createdBy = currentUsername(),

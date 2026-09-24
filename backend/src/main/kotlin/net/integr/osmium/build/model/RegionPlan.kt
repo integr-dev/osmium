@@ -75,6 +75,20 @@ class RegionPlan(
     @Column(name = "max_y") var maxY: Int? = null,
     @Column(name = "max_z") var maxZ: Int? = null,
 
+    /**
+     * Whether a survey climbs over what is in its way instead of holding one height.
+     *
+     * **The height becomes a floor rather than an altitude.** A flat flight is only flat where the
+     * ground is: charting a valley at the height of its rim wastes the flight, and charting it at
+     * the height of its floor flies agents into the hillside. Rising, the agents lift over whatever
+     * they would otherwise hit and settle back to [height] once it is behind them.
+     *
+     * Only read for a survey. An excavation's box has two real heights, and a hole is dug out
+     * rather than flown over.
+     */
+    @Column(name = "rising", nullable = false)
+    var rising: Boolean = false,
+
     /** By name rather than by foreign key: the record should outlive the account that made it. */
     @Column(name = "created_by", nullable = false, length = 64)
     var createdBy: String = "",

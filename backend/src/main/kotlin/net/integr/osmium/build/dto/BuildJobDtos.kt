@@ -202,6 +202,12 @@ data class BuildJobResponse(
     @field:Schema(description = "The plan's turn when the job started: quarter turns clockwise, in degrees.")
     val rotation: Int,
 
+    @field:Schema(
+        description = "For a survey: whether the crew climbs over what is in the way rather than " +
+            "holding the height it was given. False for anything else.",
+    )
+    val rising: Boolean,
+
     @field:Schema(description = "The world the plan named, if it named one. Always set for a region job.")
     val dimension: String?,
 
@@ -273,6 +279,7 @@ fun BuildJob.toResponse(): BuildJobResponse = BuildJobResponse(
     requestedParts = requestedParts,
     placement = PlacementRequest(placeX, placeY, placeZ),
     rotation = rotation,
+    rising = rising,
     dimension = dimension,
     size = schematic?.sizeOrNull(),
     regionMax = regionMaxX?.let { PlacementRequest(it, regionMaxY!!, regionMaxZ!!) },

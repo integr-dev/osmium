@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { Check, MapPin, Play, Plus, Save, Scissors, SquarePen, Trash2 } from 'lucide-vue-next'
 import AgentPicker from './AgentPicker.vue'
 import BoxViewer from './BoxViewer.vue'
@@ -12,7 +13,8 @@ import StepBar, { type Step as Bead } from './StepBar.vue'
 import SwapBox from './SwapBox.vue'
 import { useSlide } from '../lib/motion'
 import { DEFAULT_ORDER, formatOrder, type PlacementOrder } from '../lib/placementOrder'
-import { DIMENSIONS } from '../lib/placement'
+import { areaFromQuery, withoutArea } from '../lib/area'
+import { DIMENSIONS, WORLD_FLOOR, worldId } from '../lib/placement'
 import { dimensionLabel } from '../lib/vitals'
 import { JOB_ICON, jobStyle } from '../lib/jobKinds'
 import { previewRegionSplit, type Region, type RegionType } from '../api/regions'
@@ -43,6 +45,8 @@ const props = defineProps<{ kind: RegionType }>()
 const emit = defineEmits<{ done: [string]; failed: [string]; started: [] }>()
 
 const { t, n } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
 
@@ -103,6 +107,27 @@ const to = ref<Corners>({ x: null, y: null, z: null })
 
 /** Where the agents fly while charting. Only ever read in the MAP case. */
 const height = ref<number | null>(null)
+
+/**
+ * Whether the crew climbs over what is in the way instead of holding one height.
+ *
+ * A flat flight is only flat where the ground is: charting a valley at the height of its rim
+ * wastes the flight, and charting it at the height of its floor flies agents into the hillside.
+ * Rising, {@link height} is the lowest they go rather than the only height they fly.
+ */
+const rising = ref(false)
+
+/**
+ * Turning the climb on fills the height in, when nothing has been typed there.
+ *
+ * The floor of the world is the honest default for a flight that rises over what it meets: it
+ * starts under the terrain and follows it up, which is what was asked for. A number somebody has
+ * already typed is theirs and is left alone, and turning the climb off leaves it where it is.
+ */
+watch(rising, (climbing) => {
+  if (!climbing || Number.isFinite(height.value as number)) return
+  height.value = WORLD_FLOOR[dimension.value as keyof typeof WORLD_FLOOR] ?? WORLD_FLOOR.overworld
+})
 
 const saving = ref(false)
 
@@ -218,6 +243,7 @@ const dirty = computed(() => {
     region.name !== name.value.trim() ||
     (region.serverAddress ?? '') !== wantedServer.value ||
     (region.dimension ?? '') !== dimension.value ||
+    region.rising !== rising.value ||
     !placedTheSame
   )
 })
@@ -235,6 +261,7 @@ function choose(id: number | null): void {
     from.value = { x: null, y: null, z: null }
     to.value = { x: null, y: null, z: null }
     height.value = null
+    rising.value = false
     return
   }
 
@@ -249,6 +276,7 @@ function choose(id: number | null): void {
     ? { x: region.regionMax.x - 1, y: region.regionMax.y - 1, z: region.regionMax.z - 1 }
     : { x: null, y: null, z: null }
   height.value = region.placement?.y ?? null
+  rising.value = region.rising
 }
 
 /**
@@ -318,6 +346,8 @@ async function save(): Promise<void> {
       ...corners,
       serverAddress: wantedServer.value,
       dimension: dimension.value,
+      // Only a survey flies, and the backend ignores it on anything else; said once, here.
+      rising: !digging.value && rising.value,
     }
 
     const region = selected.value
@@ -376,11 +406,44 @@ const DIGGING_ORDER: PlacementOrder = {
   ],
 }
 
+/**
+ * An area dragged out on the 2D map, arriving as a new plan with its corners already in it.
+ *
+ * **The map is where the stretch is actually chosen.** Everywhere else these six numbers are read
+ * off a screen and typed in again, which is where a survey of the wrong valley comes from, so the
+ * map hands them over rather than saying them — see `areaQuery`.
+ *
+ * A new plan and not a saved one: arriving with a form filled in is a suggestion, and it is saved
+ * when the operator says so, exactly as a survey typed by hand is. The flying height is the one
+ * thing left blank, because a map drawn from above has no height to give.
+ *
+ * Nothing is taken from the query while digging: an excavation wants two heights the map cannot
+ * supply, and half a box is not a head start.
+ */
+function handedOver(): boolean {
+  if (digging.value) return false
+
+  const handed = areaFromQuery(route.query)
+  if (!handed) return false
+
+  choose(null)
+  wantedServer.value = handed.server
+  // Only a world this form can offer. The map spells them both ways, and a select cannot show a
+  // value it has no option for - which would read as the world having been dropped on the way.
+  const world = worldId(handed.dimension)
+  dimension.value = (DIMENSIONS as readonly string[]).includes(world) ? world : ''
+  from.value = { x: handed.area.west, y: null, z: handed.area.north }
+  to.value = { x: handed.area.east, y: null, z: handed.area.south }
+
+  void router.replace({ query: withoutArea(route.query) })
+  return true
+}
+
 onMounted(async () => {
   if (digging.value) order.value = DIGGING_ORDER
   if (!agentStore.agents.length) await agentStore.refresh()
   else if (!agentStore.regions.length) await agentStore.loadRegions()
-  choose(mine.value[0]?.id ?? null)
+  if (!handedOver()) choose(mine.value[0]?.id ?? null)
 })
 
 const parts = computed(() => wantedParts.value ?? crew.value.length)
@@ -723,7 +786,9 @@ async function start(): Promise<void> {
                   the box. A second Y on the corners would be a number nothing reads.
                 -->
                 <label v-if="!digging" class="form-control">
-                  <span class="label-text text-xs uppercase opacity-50">{{ t('region.height') }}</span>
+                  <span class="label-text text-xs uppercase opacity-50">
+                    {{ rising ? t('region.lowestHeight') : t('region.height') }}
+                  </span>
                   <input
                     v-model.number="height"
                     type="number"
@@ -733,6 +798,22 @@ async function start(): Promise<void> {
                     data-lpignore="true"
                     class="input input-sm w-full tabular-nums"
                   />
+                </label>
+
+                <!--
+                  The height a survey holds is only flyable where the ground allows it, and the
+                  ground is the thing being charted. So it can be made a floor instead: the crew
+                  lifts over whatever stands in the way and settles back down to it.
+
+                  The field above stays, and stays required - a climb has to start somewhere, and
+                  the box is still the one-block slab everything else here already understands.
+                -->
+                <label v-if="!digging" class="mt-3 flex cursor-pointer items-start gap-3">
+                  <input v-model="rising" type="checkbox" class="toggle toggle-sm" />
+                  <span class="flex flex-col gap-0.5">
+                    <span class="text-sm">{{ t('region.rising') }}</span>
+                    <span class="text-xs opacity-60">{{ t('region.risingHint') }}</span>
+                  </span>
                 </label>
 
                 <p v-if="boxFault" class="text-warning mt-2 text-xs">{{ boxFault }}</p>
@@ -845,6 +926,12 @@ async function start(): Promise<void> {
 
                 <dt class="opacity-60">{{ t(`region.${kind}.volume`) }}</dt>
                 <dd class="tabular-nums">{{ n(Math.max(0, volume)) }}</dd>
+
+                <!-- How it is flown, which is the one thing about a survey that is not the box. -->
+                <template v-if="!digging">
+                  <dt class="opacity-60">{{ t('region.flight') }}</dt>
+                  <dd>{{ rising ? t('region.risingAt', { y: height }) : t('region.levelAt', { y: height }) }}</dd>
+                </template>
               </dl>
             </div>
           </div>

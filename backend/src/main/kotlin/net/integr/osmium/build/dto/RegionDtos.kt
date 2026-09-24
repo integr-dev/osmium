@@ -49,6 +49,13 @@ data class CreateRegionRequest(
     @field:Size(max = DIMENSION_MAX_LENGTH)
     @field:Schema(description = "Which world on it.", example = "overworld")
     val dimension: String? = null,
+
+    @field:Schema(
+        description = "For a survey: whether the crew climbs over what is in the way instead of " +
+            "holding one height. The height given then reads as the lowest one. Ignored for an " +
+            "excavation.",
+    )
+    val rising: Boolean = false,
 )
 
 /**
@@ -75,6 +82,9 @@ data class UpdateRegionRequest(
 
     @field:Size(max = DIMENSION_MAX_LENGTH)
     val dimension: String? = null,
+
+    @field:Schema(description = "For a survey: whether the crew climbs over what is in the way.")
+    val rising: Boolean? = null,
 )
 
 /**
@@ -143,6 +153,12 @@ data class RegionResponse(
     @field:Schema(description = "The height the agents fly, for a survey. The box's floor otherwise.")
     val height: Int?,
 
+    @field:Schema(
+        description = "For a survey: whether the crew climbs over what is in the way, in which " +
+            "case the height is the lowest one rather than the only one.",
+    )
+    val rising: Boolean,
+
     val createdBy: String,
     val createdAt: Instant,
     val updatedAt: Instant,
@@ -163,6 +179,7 @@ fun RegionPlan.toResponse(): RegionResponse = RegionResponse(
     size = minX?.let { SizeResponse(maxX!! - it, maxY!! - minY!!, maxZ!! - minZ!!) },
     blocks = blocks,
     height = height,
+    rising = rising,
     createdBy = createdBy,
     createdAt = createdAt,
     updatedAt = updatedAt,

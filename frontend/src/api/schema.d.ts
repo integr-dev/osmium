@@ -1668,6 +1668,8 @@ export interface components {
              * @example overworld
              */
             dimension?: string | null;
+            /** @description For a survey: whether the crew climbs over what is in the way instead of holding one height. The height given then reads as the lowest one. Ignored for an excavation. */
+            rising?: boolean;
         };
         /** @description Where the schematic's minimum corner lands in the world. */
         PlacementRequest: {
@@ -1707,6 +1709,8 @@ export interface components {
              * @description The height the agents fly, for a survey. The box's floor otherwise.
              */
             height?: number | null;
+            /** @description For a survey: whether the crew climbs over what is in the way, in which case the height is the lowest one rather than the only one. */
+            rising?: boolean;
             createdBy?: string;
             /** Format: date-time */
             createdAt?: string;
@@ -1826,6 +1830,8 @@ export interface components {
              * @description The plan's turn when the job started: quarter turns clockwise, in degrees.
              */
             rotation?: number;
+            /** @description For a survey: whether the crew climbs over what is in the way rather than holding the height it was given. False for anything else. */
+            rising?: boolean;
             /** @description The world the plan named, if it named one. Always set for a region job. */
             dimension?: string | null;
             /** @description The schematic's box before the turn, for drawing where the job stands. */
@@ -2185,6 +2191,8 @@ export interface components {
             unplace?: boolean;
             serverAddress?: string | null;
             dimension?: string | null;
+            /** @description For a survey: whether the crew climbs over what is in the way. */
+            rising?: boolean | null;
         };
         /** @description Renames a host. Everything else about a host is observed, not configured. */
         UpdateHostRequest: {

@@ -72,6 +72,7 @@ export async function createRegion(body: {
   to?: Corner
   serverAddress?: string
   dimension?: string
+  rising?: boolean
 }): Promise<Region> {
   const { data, error } = await api.POST('/api/regions', { body })
   if (error) throw new Error(errorMessage(error))
@@ -94,6 +95,7 @@ export async function updateRegion(
     unplace?: boolean
     serverAddress?: string
     dimension?: string
+    rising?: boolean
   },
 ): Promise<Region> {
   const { data, error } = await api.PATCH('/api/regions/{id}', { params: { path: { id } }, body })

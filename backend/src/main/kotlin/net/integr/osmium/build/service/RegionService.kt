@@ -59,6 +59,8 @@ class RegionService(
             name = request.name,
             serverAddress = request.serverAddress?.trim()?.takeIf { it.isNotEmpty() },
             dimension = request.dimension?.trim()?.takeIf { it.isNotEmpty() },
+            // Only a survey flies, so only a survey can be told to climb.
+            rising = request.rising && request.type == BuildJobType.MAP,
             createdBy = currentUsername(),
         )
         // Both corners or neither, which is what the request's own pair says. A region with none is
@@ -124,6 +126,14 @@ class RegionService(
             if (dimension != region.dimension) {
                 changes += dimension?.let { "in $it" } ?: "in no world in particular"
                 region.dimension = dimension
+            }
+        }
+
+        request.rising?.let { asked ->
+            val rising = asked && region.type == BuildJobType.MAP
+            if (rising != region.rising) {
+                changes += if (rising) "climbing over what is in the way" else "holding one height"
+                region.rising = rising
             }
         }
 

@@ -470,6 +470,14 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
               {{ t('jobs.startedBy', { who: job.createdBy, at: atShort(job.startedAt) }) }}
               ·
               {{ t('jobs.anchor', { x: job.placement.x, y: job.placement.y, z: job.placement.z }) }}
+              <!--
+                How a survey is being flown, said where the anchor is: the anchor alone is the
+                height it was given, and that is a different instruction depending on this.
+              -->
+              <template v-if="job.type === 'MAP'">
+                ·
+                {{ job.rising ? t('jobs.rising') : t('jobs.level') }}
+              </template>
             </p>
           </div>
 

@@ -39,6 +39,7 @@ class RegionJobControllerTest : AbstractRestTest() {
         from: Triple<Int, Int, Int> = Triple(0, 60, 0),
         to: Triple<Int, Int, Int> = Triple(7, 63, 7),
         server: String = "mc.example.com",
+        rising: Boolean = false,
         user: String = RoleNames.ORCHESTRATOR,
     ): ResultActionsDsl = mockMvc.post("/api/regions") {
         header(HttpHeaders.AUTHORIZATION, asRole(user))
@@ -46,6 +47,7 @@ class RegionJobControllerTest : AbstractRestTest() {
         content = """{"name":"$name","type":"$type",""" +
             """"from":{"x":${from.first},"y":${from.second},"z":${from.third}},""" +
             """"to":{"x":${to.first},"y":${to.second},"z":${to.third}},""" +
+            """"rising":$rising,""" +
             """"serverAddress":"$server","dimension":"overworld"}"""
     }
 
@@ -56,8 +58,9 @@ class RegionJobControllerTest : AbstractRestTest() {
         from: Triple<Int, Int, Int> = Triple(0, 60, 0),
         to: Triple<Int, Int, Int> = Triple(7, 63, 7),
         server: String = "mc.example.com",
+        rising: Boolean = false,
     ): Int {
-        val body = create(name = name, type = type, from = from, to = to, server = server)
+        val body = create(name = name, type = type, from = from, to = to, server = server, rising = rising)
             .andReturn().response.contentAsString
         return JsonPath.read(body, "$.id")
     }
@@ -113,6 +116,68 @@ class RegionJobControllerTest : AbstractRestTest() {
                 jsonPath("$.height") { value(90) }
                 jsonPath("$.blocks") { value(200 * 200) }
             }
+    }
+
+    /**
+     * A flat flight is only flat where the ground is, so a survey can say that the height it was
+     * given is the lowest one and that the crew lifts over whatever stands in the way.
+     *
+     * The box does not change: it is still the one-block slab every reader of a region already
+     * understands, and the height is still where the flight starts and settles back to.
+     */
+    @Test
+    fun `a survey can be told to climb over what is in the way`() {
+        create(
+            name = "the valley",
+            type = "MAP",
+            from = Triple(-100, 90, -100),
+            to = Triple(99, 90, 99),
+            rising = true,
+        ).andExpect {
+            status { isCreated() }
+            jsonPath("$.rising") { value(true) }
+            jsonPath("$.height") { value(90) }
+            jsonPath("$.regionMax.y") { value(91) }
+        }
+    }
+
+    /** A hole is dug out rather than flown over, so there is nothing for an excavation to climb. */
+    @Test
+    fun `an excavation is never told to climb, whatever it is sent`() {
+        create(rising = true).andExpect {
+            status { isCreated() }
+            jsonPath("$.rising") { value(false) }
+        }
+    }
+
+    /** Pinned with the box: how a crew in the air is flying is not an edit to the plan away. */
+    @Test
+    fun `a job of a climbing survey carries it, and a later edit does not reach the job`() {
+        val host = reachableHost()
+        val scout = onlineAgent("Scout_01", host)
+        val id = region(name = "the valley", type = "MAP", from = Triple(0, 90, 0), to = Triple(31, 90, 31), rising = true)
+
+        val job = start(id, listOf(scout.id!!)).andExpect {
+            status { isCreated() }
+            jsonPath("$.rising") { value(true) }
+        }.andReturn().response.contentAsString
+        val jobId: Int = JsonPath.read(job, "$.id")
+
+        mockMvc.patch("/api/regions/$id") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"rising":false}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.rising") { value(false) }
+        }
+
+        mockMvc.get("/api/jobs/$jobId") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.rising") { value(true) }
+        }
     }
 
     /**
