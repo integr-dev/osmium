@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { TimePoint } from '../lib/dashboard'
 import { niceCeiling, timePath } from '../lib/series'
 import { atTime } from '../lib/time'
@@ -60,8 +60,14 @@ const nowAt = computed(() => {
 
 const pointer = ref<number | null>(null)
 
+/** Both measured rather than guessed, because where the readout can sit depends on how wide it is. */
+const tip = ref<HTMLElement | null>(null)
+const tipWidth = ref(0)
+const plotWidth = ref(0)
+
 function track(event: PointerEvent): void {
   const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  plotWidth.value = box.width
   pointer.value = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width))
 }
 
@@ -77,6 +83,29 @@ const readout = computed(() => {
     .filter((row) => row !== null)
   if (!rows.length) return null
   return { left: pointer.value * 100, time: atTime(rows[0]!.at), rows }
+})
+
+/**
+ * Where the readout sits, in pixels from the left of the plot.
+ *
+ * Beside the pointer on whichever side it fits, and never past either edge. It has to be arithmetic
+ * rather than a class that flips halfway: a box wider than the space left beside the pointer hangs
+ * out of the card, and nothing clips it — the page grows a horizontal scrollbar while the pointer
+ * is over the chart.
+ */
+const GAP = 8
+
+const tipLeft = computed(() => {
+  if (!readout.value) return 0
+  const at = (readout.value.left / 100) * plotWidth.value
+  const beside = at + GAP + tipWidth.value <= plotWidth.value ? at + GAP : at - GAP - tipWidth.value
+  return Math.min(Math.max(beside, 0), Math.max(0, plotWidth.value - tipWidth.value))
+})
+
+// The rows follow the pointer, and a longer number is a wider box, so it is measured as it changes.
+watch(readout, async () => {
+  await nextTick()
+  tipWidth.value = tip.value?.offsetWidth ?? 0
 })
 
 function nearestTo(points: TimePoint[], at: number): TimePoint | undefined {
@@ -142,9 +171,9 @@ function nearestTo(points: TimePoint[], at: number): TimePoint | undefined {
         <template v-if="readout">
           <div class="bg-base-content/30 pointer-events-none absolute inset-y-0 w-px" :style="{ left: `${readout.left}%` }"></div>
           <div
-            class="bg-base-100 border-base-300 rounded-box pointer-events-none absolute top-1 z-10 flex flex-col gap-0.5 border px-2 py-1 text-xs shadow"
-            :class="readout.left > 60 ? '-translate-x-full -ml-2' : 'ml-2'"
-            :style="{ left: `${readout.left}%` }"
+            ref="tip"
+            class="bg-base-100 border-base-300 rounded-box pointer-events-none absolute top-1 z-10 flex max-w-full flex-col gap-0.5 overflow-hidden border px-2 py-1 text-xs shadow"
+            :style="{ left: `${tipLeft}px` }"
           >
             <span class="opacity-50">{{ readout.time }}</span>
             <span v-for="row in readout.rows" :key="row.key" class="flex items-center gap-2 whitespace-nowrap">
