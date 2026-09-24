@@ -236,59 +236,6 @@ function afterRemove(removed: HostResponse) {
         </div>
       </header>
 
-      <!--
-        What this machine is doing, over time: the two charts the dashboard draws for the fleet,
-        narrowed to one host. Same components, same legend, same range strip — a host's page and
-        the dashboard should read as one application looking at two scopes.
-      -->
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-sm font-medium">{{ t('hosts.overTime') }}</h2>
-        <TabBar v-model="range" :tabs="rangeTabs" variant="box" size="sm" />
-      </div>
-
-      <div class="grid gap-6 lg:grid-cols-2">
-        <div class="card border-base-300 bg-base-200 border">
-          <div class="card-body gap-3">
-            <h3 class="card-title flex items-center gap-2 text-base">
-              <Gauge class="text-base-content/50 size-4" />
-              {{ t('hosts.loadTitle') }}
-              <span v-if="machineMemory" class="text-xs font-normal opacity-50">
-                {{ t('hosts.ofMemory', { total: machineMemory }) }}
-              </span>
-            </h3>
-
-            <SeriesChart
-              :lines="loadLines"
-              :from="from"
-              :to="now"
-              :format="formatPercent"
-              :label="t('hosts.loadTitle')"
-              :empty="t('hosts.noLoad')"
-            />
-          </div>
-        </div>
-
-        <div class="card border-base-300 bg-base-200 border">
-          <div class="card-body gap-3">
-            <h3 class="card-title flex items-center gap-2 text-base">
-              <ArrowDownUp class="text-base-content/50 size-4" />
-              {{ t('dashboard.traffic') }}
-              <span class="text-xs font-normal opacity-50">{{ t('hosts.trafficHint') }}</span>
-            </h3>
-
-            <SeriesChart
-              :lines="trafficLines"
-              :from="from"
-              :to="now"
-              :format="formatRate"
-              :label="t('dashboard.traffic')"
-              :empty="t('dashboard.noHistory')"
-              :note="entries.length && !gameReported ? t('dashboard.gameUnreported') : undefined"
-            />
-          </div>
-        </div>
-      </div>
-
       <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
         <div class="flex min-w-0 flex-col gap-4">
           <!--
@@ -381,6 +328,59 @@ function afterRemove(removed: HostResponse) {
                 </span>
               </li>
             </ul>
+          </div>
+        </div>
+      </div>
+
+      <!--
+        What this machine is doing, over time: the two charts the dashboard draws for the fleet,
+        narrowed to one host. Same components, same legend, same range strip — a host's page and
+        the dashboard should read as one application looking at two scopes.
+      -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-sm font-medium">{{ t('hosts.overTime') }}</h2>
+        <TabBar v-model="range" :tabs="rangeTabs" variant="box" size="sm" />
+      </div>
+
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="card border-base-300 bg-base-200 border">
+          <div class="card-body gap-3">
+            <h3 class="card-title flex items-center gap-2 text-base">
+              <Gauge class="text-base-content/50 size-4" />
+              {{ t('hosts.loadTitle') }}
+              <span v-if="machineMemory" class="text-xs font-normal opacity-50">
+                {{ t('hosts.ofMemory', { total: machineMemory }) }}
+              </span>
+            </h3>
+
+            <SeriesChart
+              :lines="loadLines"
+              :from="from"
+              :to="now"
+              :format="formatPercent"
+              :label="t('hosts.loadTitle')"
+              :empty="t('hosts.noLoad')"
+            />
+          </div>
+        </div>
+
+        <div class="card border-base-300 bg-base-200 border">
+          <div class="card-body gap-3">
+            <h3 class="card-title flex items-center gap-2 text-base">
+              <ArrowDownUp class="text-base-content/50 size-4" />
+              {{ t('dashboard.traffic') }}
+              <span class="text-xs font-normal opacity-50">{{ t('hosts.trafficHint') }}</span>
+            </h3>
+
+            <SeriesChart
+              :lines="trafficLines"
+              :from="from"
+              :to="now"
+              :format="formatRate"
+              :label="t('dashboard.traffic')"
+              :empty="t('dashboard.noHistory')"
+              :note="entries.length && !gameReported ? t('dashboard.gameUnreported') : undefined"
+            />
           </div>
         </div>
       </div>
