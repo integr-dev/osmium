@@ -59,11 +59,35 @@ function show(job: BuildJob, which: 'pieces' | 'pool') {
   tabs.value[job.id] = which
 }
 
+/**
+ * The words that change with the kind of work: a crew of diggers is not a crew of builders, and a
+ * column counting cleared blocks is not headed *Built*.
+ *
+ * Only the ones that name the verb. Everything else on the card is the same act whichever tab made
+ * the job — a crew, a division, how far along each piece is — and saying those three ways would be
+ * three strings to keep in step for no gain.
+ */
+function word(job: BuildJob, which: 'crew' | 'member' | 'doing' | 'done' | 'unit'): string {
+  return t(`jobs.words.${job.type}.${which}`)
+}
+
+/**
+ * What a piece's state is called on this job.
+ *
+ * `BUILDING` and `DONE` are the two that name the work; the other three are about the piece and
+ * read the same whoever is holding it.
+ */
+function segmentStateLabel(state: SegmentState, job: BuildJob): string {
+  if (state === 'BUILDING') return word(job, 'doing')
+  if (state === 'DONE') return word(job, 'done')
+  return t(`jobs.segmentState.${state}`)
+}
+
 /** Per card, since both counts are that job's. */
 function strip(job: BuildJob): Strip<'pieces' | 'pool'>[] {
   return [
     { id: 'pieces', label: t('jobs.tabPieces'), icon: Boxes, count: job.segments.length },
-    { id: 'pool', label: t('jobs.pool'), icon: Users, count: job.pool.length },
+    { id: 'pool', label: word(job, 'crew'), icon: Users, count: job.pool.length },
   ]
 }
 
@@ -90,7 +114,8 @@ const CHIPS: Array<{ id: Exclude<Filter, 'all'>; label: string }> = [
   { id: 'working', label: 'jobs.filterWorking' },
   { id: 'free', label: 'jobs.filterFree' },
   { id: 'failed', label: 'jobs.filterFailed' },
-  { id: 'built', label: 'jobs.filterBuilt' },
+  // Named per kind in `filterStrip`; the label here is never read.
+  { id: 'built', label: 'jobs.filterAll' },
 ]
 
 const filters = ref<Record<number, Filter>>({})
@@ -122,7 +147,9 @@ function filterStrip(job: BuildJob): Strip<Filter>[] {
     { id: 'all', label: t('jobs.filterAll'), count: job.segments.length },
     ...CHIPS.map((chip) => ({
       id: chip.id as Filter,
-      label: t(chip.label),
+      // The finished chip names the work — *Built*, *Cleared*, *Charted* — where the other three
+      // are about the piece and read the same whatever is being done to it.
+      label: chip.id === 'built' ? word(job, 'done') : t(chip.label),
       count: counted(job, chip.id),
     })),
   ]
@@ -419,7 +446,13 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
                 {{ t(`jobType.${job.type}`) }}
               </span>
               <span class="badge badge-sm" :class="jobStateBadge(job.state, job.type)">
-                {{ t(`jobs.state.${job.state}`) }}
+                {{
+                  job.state === 'ACTIVE'
+                    ? word(job, 'doing')
+                    : job.state === 'DONE'
+                      ? word(job, 'done')
+                      : t('jobs.state.PAUSED')
+                }}
               </span>
             </h3>
             <p class="mt-0.5 text-xs opacity-60">
@@ -567,11 +600,17 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
             <table class="table-pin-rows table table-fixed">
               <thead>
                 <tr>
-                  <th class="w-20 truncate">{{ t('jobs.segment') }}</th>
+                  <!--
+                    Wide enough for its own heading, not for its content. The cell holds an ordinal
+                    and needs almost nothing; the word above it is *Segment*, and at `w-20` the
+                    cell's own padding left about three characters of room — so the column that
+                    says what the table is read as `Seg...`.
+                  -->
+                  <th class="w-28 truncate">{{ t('jobs.segment') }}</th>
                   <th class="w-28 truncate">{{ t('common.status') }}</th>
                   <th class="truncate">{{ t('jobs.box') }}</th>
-                  <th class="w-56 truncate">{{ t('jobs.blocks') }}</th>
-                  <th class="w-52 truncate">{{ t('jobs.assignee') }}</th>
+                  <th class="w-56 truncate">{{ word(job, 'unit') }}</th>
+                  <th class="w-52 truncate">{{ word(job, 'member') }}</th>
                   <th class="w-28"></th>
                 </tr>
               </thead>
@@ -589,7 +628,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
                   <td class="tabular-nums opacity-70">{{ segment.ordinal }}</td>
                   <td>
                     <span class="badge badge-sm max-w-full" :class="segmentBadge(segment.state, job.type)">
-                      {{ t(`jobs.segmentState.${segment.state}`) }}
+                      {{ segmentStateLabel(segment.state, job) }}
                     </span>
                   </td>
                   <td class="truncate font-mono text-xs opacity-70">{{ box(segment) }}</td>
@@ -696,7 +735,7 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
                   <th>{{ t('jobs.poolAgent') }}</th>
                   <th>{{ t('common.status') }}</th>
                   <th>{{ t('jobs.poolHolding') }}</th>
-                  <th class="text-right">{{ t('jobs.poolBuilt') }}</th>
+                  <th class="text-right">{{ word(job, 'done') }}</th>
                   <th>{{ t('jobs.poolSince') }}</th>
                   <th></th>
                 </tr>
