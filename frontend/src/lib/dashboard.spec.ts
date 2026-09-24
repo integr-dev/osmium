@@ -7,6 +7,8 @@ import {
   formatRate,
   activitySeries,
   groupAttention,
+  fleetLoad,
+  hostLoad,
   projection,
   readingOf,
   since,
@@ -24,6 +26,11 @@ function host(overrides: Partial<HostTraffic> = {}): HostTraffic {
     linkReceived: 0,
     gameSent: null,
     gameReceived: null,
+    cpu: null,
+    memory: null,
+    systemCpu: null,
+    systemMemory: null,
+    systemMemoryTotal: null,
     ...overrides,
   }
 }
@@ -200,5 +207,83 @@ describe('activity over time', () => {
     const series = activitySeries([{ at: at(noon - 10 * MIN), severity: 'ERROR' }], noon, noon + MIN, MIN, 0)
 
     expect(series.ERROR.every((point) => point.value === 0)).toBe(true)
+  })
+})
+
+/**
+ * What the hosts are costing their machines.
+ *
+ * A reading is all five numbers or none, which is what lets a chart leave a gap for a host that
+ * has not said rather than drawing an idle machine.
+ */
+describe('host load', () => {
+  const loaded = (overrides: Partial<HostTraffic> = {}) =>
+    host({
+      cpu: 40,
+      memory: 500_000_000,
+      systemCpu: 25,
+      systemMemory: 4_000_000_000,
+      systemMemoryTotal: 16_000_000_000,
+      ...overrides,
+    })
+
+  it('reads one host, and nothing for one that has not reported', () => {
+    const point = sample('2026-09-16T12:00:00Z', [loaded(), host({ hostId: 2, name: 'quiet' })])
+
+    expect(hostLoad(point, 1)).toEqual({
+      cpu: 40,
+      systemCpu: 25,
+      memory: 500_000_000,
+      systemMemory: 4_000_000_000,
+      systemMemoryTotal: 16_000_000_000,
+    })
+    expect(hostLoad(point, 2)).toBeNull()
+    expect(hostLoad(point, 99)).toBeNull()
+  })
+
+  /**
+   * Bytes are bytes: Osmium holding memory on three machines is holding the sum of it, and
+   * processor *time* adds the same way.
+   */
+  it('adds every host together', () => {
+    const point = sample('2026-09-16T12:00:00Z', [
+      loaded({ hostId: 1, cpu: 30, memory: 1_000_000_000, systemMemory: 4_000_000_000 }),
+      loaded({ hostId: 2, cpu: 50, memory: 2_000_000_000, systemMemory: 8_000_000_000 }),
+    ])
+
+    const fleet = fleetLoad(point)
+
+    expect(fleet?.cpu.percent).toBe(80)
+    expect(fleet?.memory.bytes).toBe(3_000_000_000)
+    expect(fleet?.systemMemory.bytes).toBe(12_000_000_000)
+    // 12 of the fleet's 32 GB, which is the same arithmetic one host does against its own.
+    expect(fleet?.systemMemory.percent).toBeCloseTo(37.5)
+  })
+
+  /**
+   * The one exception. A percentage of one machine cannot be added to a percentage of another:
+   * three machines at 50% are not one machine at 150%, they are a fleet running at half.
+   */
+  it('averages the machines own processor figure rather than adding it', () => {
+    const point = sample('2026-09-16T12:00:00Z', [
+      loaded({ hostId: 1, systemCpu: 90 }),
+      loaded({ hostId: 2, systemCpu: 10 }),
+    ])
+
+    expect(fleetLoad(point)?.systemCpu.percent).toBe(50)
+  })
+
+  /** A host that has not reported is left out rather than counted as an idle machine. */
+  it('ignores hosts that have said nothing', () => {
+    const point = sample('2026-09-16T12:00:00Z', [
+      loaded({ hostId: 1, cpu: 30 }),
+      host({ hostId: 2, name: 'quiet' }),
+    ])
+
+    expect(fleetLoad(point)?.cpu.percent).toBe(30)
+  })
+
+  it('is nothing at all while no host reports', () => {
+    expect(fleetLoad(sample('2026-09-16T12:00:00Z', [host()]))).toBeNull()
   })
 })

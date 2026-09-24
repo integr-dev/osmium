@@ -49,6 +49,18 @@ function event(body: Event): Json {
     case 'heartbeat': {
       const payload: Json = { hostVersion: body.version }
       if (body.traffic) put(payload, 'traffic', { sent: body.traffic.sent, received: body.traffic.received })
+      // Spelled out field by field rather than handed the object: what crosses the wire is the
+      // protocol, and an extra key appearing there because someone added one to `Usage` is how a
+      // wire format stops being a decision anybody made.
+      if (body.usage) {
+        put(payload, 'usage', {
+          cpu: body.usage.cpu,
+          memory: body.usage.memory,
+          systemCpu: body.usage.systemCpu,
+          systemMemory: body.usage.systemMemory,
+          systemMemoryTotal: body.usage.systemMemoryTotal,
+        })
+      }
       return { kind: 'event', type: 'heartbeat', payload }
     }
 

@@ -17,8 +17,8 @@ import {
 import AlertNote from '../components/AlertNote.vue'
 import FilterChip from '../components/FilterChip.vue'
 import ActivityRow from '../components/ActivityRow.vue'
-import HostsCard from '../components/HostsCard.vue'
 import TabBar, { type Tab } from '../components/TabBar.vue'
+import SeriesChart, { type LegendLine } from '../components/SeriesChart.vue'
 import TimeChart, { type ChartSeries } from '../components/TimeChart.vue'
 import TrendLine from '../components/TrendLine.vue'
 import RollingNumber from '../components/RollingNumber.vue'
@@ -29,8 +29,12 @@ import { jobFigures } from '../lib/jobs'
 import {
   ACTIVITY_BUCKET_MS,
   activitySeries,
+  fleetLoad,
+  LOAD_MEASURES,
+  type LoadKey,
   fleetTraffic,
   formatCount,
+  formatPercent,
   formatRate,
   groupAttention,
   projection,
@@ -47,6 +51,7 @@ import { isOnline, useAgentStore } from '../stores/agents'
 import { nodeLabel } from '../lib/nodeLabel'
 import { useHistoryStore } from '../stores/history'
 import { atTime } from '../lib/time'
+import { bytes } from '../lib/bytes'
 
 const { t, n } = useI18n()
 const route = useRoute()
@@ -260,47 +265,79 @@ const TRAFFIC_LINES = [
   { key: 'gameReceived', tone: 'text-accent' },
 ] as const
 
-type TrafficKey = (typeof TRAFFIC_LINES)[number]['key']
-
-const hiddenTraffic = ref(new Set<TrafficKey>())
-
-function toggleTraffic(key: TrafficKey): void {
-  const next = new Set(hiddenTraffic.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  hiddenTraffic.value = next
-}
-
 const trafficSamples = computed(() => windowed.value.map((sample) => ({ at: sample.at, traffic: fleetTraffic(sample) })))
 
 const gameReported = computed(() => trafficSamples.value.some((sample) => sample.traffic.gameSent !== null))
 
-const trafficLegend = computed(() =>
+/**
+ * The four traffic lines, ready for the legend to draw and switch off.
+ *
+ * A line whose value is null at a point is left out of that point rather than drawn at zero: a
+ * host too old to report its game traffic has not reported nothing, and a line along the floor
+ * says the agents are idle.
+ */
+const trafficLines = computed<LegendLine[]>(() =>
   TRAFFIC_LINES.filter((line) => gameReported.value || !line.key.startsWith('game')).map((line) => ({
-    ...line,
+    key: line.key,
     label: t(`dashboard.${line.key}`),
-    hidden: hiddenTraffic.value.has(line.key),
-    latest: trafficSamples.value.at(-1)?.traffic[line.key] ?? null,
+    tone: line.tone,
+    points: thin(
+      trafficSamples.value
+        .filter((sample) => sample.traffic[line.key] !== null)
+        .map((sample) => ({ at: Date.parse(sample.at), value: sample.traffic[line.key] ?? 0 })),
+      MAX_POINTS,
+    ),
+    latest: latestOf(trafficSamples.value.at(-1)?.traffic[line.key] ?? null, formatRate),
   })),
 )
 
-const traffic = computed<ChartSeries[]>(() =>
-  trafficLegend.value
-    .filter((line) => !line.hidden)
-    .map((line) => ({
-      key: line.key,
-      label: line.label,
-      tone: line.tone,
-      points: thin(
-        trafficSamples.value
-          .filter((sample) => sample.traffic[line.key] !== null)
-          .map((sample) => ({ at: Date.parse(sample.at), value: sample.traffic[line.key] ?? 0 })),
-        MAX_POINTS,
-      ),
-    })),
+// ---- host load -------------------------------------------------------------------------------
+
+/**
+ * What the fleet's machines are costing, moment by moment.
+ *
+ * **The same four lines a host's own page draws**, so the fleet view and one machine's view are
+ * the same picture at two scopes and a chip means the same thing on both. What differs is the
+ * scope: every reporting host added together — see `fleetLoad`, which also says which of the four
+ * cannot honestly be added and is averaged instead.
+ *
+ * All four as percentages so they share one axis; the chips carry what memory actually is in
+ * bytes, since a percentage of machines nobody can see is not a number anybody can act on.
+ */
+const loadSamples = computed(() =>
+  windowed.value.map((sample) => ({ at: sample.at, load: fleetLoad(sample) })),
 )
 
-const latestHosts = computed(() => history.samples.at(-1)?.hosts ?? [])
+const latestLoad = computed(() => loadSamples.value.at(-1)?.load ?? null)
+
+const loadLines = computed<LegendLine[]>(() =>
+  LOAD_MEASURES.map((measure) => ({
+    key: measure.key,
+    // The host is part of the label rather than a note under it: four lines can be four machines.
+    label: t(`hosts.load.${measure.key}`),
+    tone: measure.tone,
+    points: thin(
+      loadSamples.value
+        .filter((sample) => sample.load !== null)
+        .map((sample) => ({ at: Date.parse(sample.at), value: sample.load![measure.key].percent })),
+      MAX_POINTS,
+    ),
+    latest: readingOfLoad(measure.key),
+  })),
+)
+
+/** Percent for the processor, bytes for memory: each read the way it is measured. */
+function readingOfLoad(key: LoadKey): string | null {
+  const worst = latestLoad.value?.[key]
+  if (!worst) return null
+  return key === 'cpu' || key === 'systemCpu' ? formatPercent(worst.percent) : bytes(worst.bytes)
+}
+
+
+/** A reading for a chip: formatted when there is one, and absent rather than zero when there is not. */
+function latestOf(value: number | null, format: (value: number) => string): string | null {
+  return value === null ? null : format(value)
+}
 
 // ---- attention -------------------------------------------------------------------------------
 
@@ -574,36 +611,18 @@ function wholeNumber(value: number): string {
             <span class="text-xs font-normal opacity-50">{{ t('dashboard.trafficHint') }}</span>
           </h2>
 
-          <TimeChart
-            v-if="history.samples.length"
-            :series="traffic"
+          <SeriesChart
+            :lines="trafficLines"
             :from="from"
             :to="now"
             :format="formatRate"
             :label="t('dashboard.traffic')"
+            :empty="t('dashboard.noHistory')"
+            :note="history.samples.length && !gameReported ? t('dashboard.gameUnreported') : undefined"
           />
-          <p v-else class="flex h-40 items-center justify-center text-sm opacity-50">
-            {{ t('dashboard.noHistory') }}
-          </p>
-
-          <!-- The legend is also the switch: a quiet line can be hidden to see the others' scale. -->
-          <div class="flex flex-wrap items-center gap-1.5 text-xs">
-            <FilterChip
-              v-for="line in trafficLegend"
-              :key="line.key"
-              :label="line.label"
-              :active="!line.hidden"
-              :tone="line.tone"
-              :value="line.latest === null ? null : formatRate(line.latest)"
-              @toggle="toggleTraffic(line.key)"
-            />
-            <span v-if="history.samples.length && !gameReported" class="opacity-50">
-              {{ t('dashboard.gameUnreported') }}
-            </span>
-          </div>
         </div>
       </div>
-    </div>
+</div>
 
     <!--
       One card: what is wrong now, and what has happened. They were two, and an operator reads them
@@ -734,7 +753,29 @@ function wholeNumber(value: number): string {
         </div>
       </div>
 
-      <HostsCard :traffic="latestHosts" class="lg:h-full" />
+      <!--
+        What the fleet is costing the machines under it: every reporting host added together, the
+        way the traffic card beside it adds their bytes. The one figure that is averaged instead is
+        a machine's own processor use — three machines at half are not one machine at 150%.
+      -->
+      <div class="card border-base-300 bg-base-200 border lg:h-full">
+        <div class="card-body gap-3">
+          <h2 class="card-title flex items-center gap-2 text-base">
+            <Gauge class="text-base-content/50 size-4" />
+            {{ t('dashboard.load') }}
+            <span class="text-xs font-normal opacity-50">{{ t('dashboard.loadHint') }}</span>
+          </h2>
+
+          <SeriesChart
+            :lines="loadLines"
+            :from="from"
+            :to="now"
+            :format="formatPercent"
+            :label="t('dashboard.load')"
+            :empty="history.samples.length ? t('dashboard.noLoad') : t('dashboard.noHistory')"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>

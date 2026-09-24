@@ -2411,6 +2411,31 @@ export interface components {
              * @description Servers to this host's agents. Null when the host has not reported it recently.
              */
             gameReceived?: number | null;
+            /**
+             * Format: double
+             * @description The host process, as a percentage of one core. Two busy cores is 200.
+             */
+            cpu?: number | null;
+            /**
+             * Format: int64
+             * @description Resident bytes held for the host process.
+             */
+            memory?: number | null;
+            /**
+             * Format: double
+             * @description The whole machine, as a percentage of all its cores together.
+             */
+            systemCpu?: number | null;
+            /**
+             * Format: int64
+             * @description Bytes in use across the machine.
+             */
+            systemMemory?: number | null;
+            /**
+             * Format: int64
+             * @description Bytes the machine has in total.
+             */
+            systemMemoryTotal?: number | null;
         };
         /** @description One line of Minecraft chat, as the agent that observed it reported it. */
         ChatMessageResponse: {

@@ -70,6 +70,7 @@ class HostLinkTest {
     @Autowired private lateinit var passwordEncoder: PasswordEncoder
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var traffic: HostTraffic
+    @Autowired private lateinit var usage: HostUsage
 
     private lateinit var host: Host
     private lateinit var agent: Agent
@@ -147,6 +148,56 @@ class HostLinkTest {
 
         awaitUntil { traffic.gameRates().containsKey(host.id!!) }
         assertTrue(traffic.linkTotals().getValue(host.id!!).second > 0)
+
+        socket.close()
+    }
+
+    /**
+     * The other half of a heartbeat: what the host is costing the machine it runs on.
+     *
+     * All five or nothing, so a host too old to report any of them is charted as one that did not
+     * say rather than as a machine sitting idle.
+     */
+    @Test
+    fun `a heartbeat's processor and memory reading is kept, and a partial one is ignored`() {
+        val socket = connect(token())
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.HEARTBEAT,
+                payload = objectMapper.valueToTree(
+                    mapOf(
+                        "hostVersion" to "0.9.9-probe",
+                        "usage" to mapOf(
+                            "cpu" to 12.5,
+                            "memory" to 300_000_000,
+                            "systemCpu" to 44.0,
+                            "systemMemory" to 8_000_000_000,
+                            "systemMemoryTotal" to 16_000_000_000,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        awaitUntil { usage.latest().containsKey(host.id!!) }
+        assertEquals(12.5, usage.latest().getValue(host.id!!).cpu)
+        assertEquals(16_000_000_000, usage.latest().getValue(host.id!!).systemMemoryTotal)
+
+        // Half a reading is no reading: this one leaves what was already there alone rather than
+        // overwriting it with zeroes for the fields it did not carry.
+        socket.send(
+            HostEnvelope(
+                kind = MessageKind.EVENT,
+                type = EventType.HEARTBEAT,
+                payload = objectMapper.valueToTree(
+                    mapOf("hostVersion" to "0.9.9-probe", "usage" to mapOf("cpu" to 99.0)),
+                ),
+            ),
+        )
+
+        awaitUntil { usage.latest().containsKey(host.id!!) }
+        assertEquals(12.5, usage.latest().getValue(host.id!!).cpu)
 
         socket.close()
     }

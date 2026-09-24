@@ -4,6 +4,7 @@ import type { MapTile } from '../agent/map.ts'
 import type { LoginMethod } from '../token/login.ts'
 import type { AdvertisedProxy } from '../agent/proxy.ts'
 import type { PlacementOrder } from '../agent/order.ts'
+import type { Usage } from '../usage.ts'
 import type { Bytes } from '../agent/traffic.ts'
 import type { PathNode, PathState, PathWork, Waypoint } from '../agent/path/navigator.ts'
 import type { ActivityScope, BlockPos, BuildState, ChatScope, LoginState, Player, Severity, Vec3 } from './wire.ts'
@@ -149,8 +150,12 @@ export type Event =
       /** The proxies this host holds, by name. Addresses, never credentials - see `proxy.ts`. */
       proxies: AdvertisedProxy[]
     }
-  /** Every ten seconds. `traffic` is running totals for every agent's server connection. */
-  | { type: 'heartbeat'; version: string; traffic?: Bytes }
+  /**
+   * Every ten seconds. `traffic` is running totals for every agent's server connection, and
+   * `usage` is what this host is costing its machine at that moment — see `usage.ts` for why one
+   * of the two is a total and the other cannot be.
+   */
+  | { type: 'heartbeat'; version: string; traffic?: Bytes; usage?: Usage }
   | {
       type: 'agent_status'
       agentId: number

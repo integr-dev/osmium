@@ -6,6 +6,7 @@ import { Proxies, proxiesPath } from './agent/proxy.ts'
 import { accountsPath, cachePath } from './token/paths.ts'
 import { AccountStore } from './token/store.ts'
 import { httpBase } from './agent/build/segment.ts'
+import { Profiler } from './usage.ts'
 import { VERSION } from './version.ts'
 
 async function main(): Promise<void> {
@@ -27,10 +28,15 @@ async function main(): Promise<void> {
   // discovered before the backend is told the host is up, not while an agent is trying to connect.
   const proxies = await Proxies.open(proxiesPath())
 
+  // Started before the socket so its first reading has something to measure against: a profiler
+  // asked for processor use the instant it is made can only answer zero.
+  const profiler = new Profiler()
+
   const socket = new HostSocket(url, token, VERSION, {
     connected: () => dispatcher.announce(),
     command: (command) => dispatcher.command(command),
     traffic: () => dispatcher.traffic(),
+    usage: () => profiler.read(),
   })
 
   const dispatcher = new Dispatcher(

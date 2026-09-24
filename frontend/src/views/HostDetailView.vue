@@ -4,13 +4,17 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Bot as Agent,
+  ArrowDownUp,
   ChevronLeft,
+  Gauge,
   KeyRound,
   Server,
   SquarePen,
   Trash2,
 } from 'lucide-vue-next'
 import AlertNote from '../components/AlertNote.vue'
+import SeriesChart, { type LegendLine } from '../components/SeriesChart.vue'
+import TabBar, { type Tab } from '../components/TabBar.vue'
 import HostActions from '../components/HostActions.vue'
 import type { HostResponse } from '../api/client'
 import PlayerHead from '../components/PlayerHead.vue'
@@ -20,6 +24,20 @@ import { useAgentStore } from '../stores/agents'
 import { atShort } from '../lib/time'
 import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toasts'
+import { useHistoryStore } from '../stores/history'
+import { bytes } from '../lib/bytes'
+import {
+  formatPercent,
+  formatRate,
+  hostLoad,
+  LOAD_MEASURES,
+  loadReading,
+  RANGES,
+  rangeMs,
+  since,
+  thin,
+  type RangeKey,
+} from '../lib/dashboard'
 
 /**
  * One machine: whether it is answering, what it is running, and what it can log in with.
@@ -46,6 +64,109 @@ const agents = computed(() => agentStore.agentsOnHost(Number(route.params.id)))
 onMounted(() => {
   if (!agentStore.loaded) void agentStore.refresh()
 })
+
+// ---- what this machine is doing ----------------------------------------------------------------
+
+/**
+ * The same history the dashboard draws, narrowed to this host.
+ *
+ * Read from the store rather than fetched: it is already loaded, already kept current from the
+ * stream, and a second request for the same six hours would only be a second answer to disagree
+ * with the first.
+ */
+const history = useHistoryStore()
+
+const hostId = computed(() => Number(route.params.id))
+
+const range = ref<RangeKey>('1h')
+const rangeTabs = computed<Tab<RangeKey>[]>(() =>
+  RANGES.map((option) => ({ id: option.key, label: t(`dashboard.ranges.${option.key}`) })),
+)
+
+/** Recomputed every ten seconds by the sample arriving, which is what moves the right-hand edge. */
+const now = computed(() => Date.parse(history.samples.at(-1)?.at ?? '') || Date.now())
+const from = computed(() => now.value - rangeMs(range.value))
+
+const windowed = computed(() => since(history.samples, from.value))
+
+/** This host's entry in each sample, and its load reading when it has reported one. */
+const entries = computed(() =>
+  windowed.value.map((sample) => ({
+    at: Date.parse(sample.at),
+    traffic: sample.hosts.find((entry) => entry.hostId === hostId.value) ?? null,
+    load: hostLoad(sample, hostId.value),
+  })),
+)
+
+const gameReported = computed(() => entries.value.some((entry) => entry.traffic?.gameSent != null))
+
+/** The four traffic lines the dashboard draws, for this host alone. */
+const TRAFFIC_LINES = [
+  { key: 'linkSent', tone: 'text-primary' },
+  { key: 'linkReceived', tone: 'text-info' },
+  { key: 'gameSent', tone: 'text-secondary' },
+  { key: 'gameReceived', tone: 'text-accent' },
+] as const
+
+const trafficLines = computed<LegendLine[]>(() =>
+  TRAFFIC_LINES.filter((line) => gameReported.value || !line.key.startsWith('game')).map((line) => ({
+    key: line.key,
+    label: t(`dashboard.${line.key}`),
+    tone: line.tone,
+    points: thin(
+      entries.value
+        .filter((entry) => entry.traffic?.[line.key] != null)
+        .map((entry) => ({ at: entry.at, value: entry.traffic![line.key] ?? 0 })),
+      MAX_POINTS,
+    ),
+    latest: latestTraffic(line.key),
+  })),
+)
+
+function latestTraffic(key: (typeof TRAFFIC_LINES)[number]['key']): string | null {
+  const value = entries.value.at(-1)?.traffic?.[key]
+  return value == null ? null : formatRate(value)
+}
+
+/**
+ * Processor and memory, all four as percentages so they share one axis.
+ *
+ * **Two scales would need two charts.** The process is measured against a single core and the
+ * machine against all of them, and memory is bytes — putting bytes and percent on one axis means
+ * the scale is for one of them and lying about the other. So the lines are drawn as percentages
+ * and the chips carry what each one actually is, which is the number an operator acts on.
+ */
+
+const latestLoad = computed(() => entries.value.at(-1)?.load ?? null)
+
+const loadLines = computed<LegendLine[]>(() =>
+  LOAD_MEASURES.map((line) => ({
+    key: line.key,
+    label: t(`hosts.load.${line.key}`),
+    tone: line.tone,
+    points: thin(
+      entries.value
+        .filter((entry) => entry.load !== null)
+        .map((entry) => ({ at: entry.at, value: loadReading(entry.load!, line.key).percent })),
+      MAX_POINTS,
+    ),
+    // Percent for the processor, bytes for memory: each read the way it is measured.
+    latest:
+      latestLoad.value === null
+        ? null
+        : line.key === 'cpu' || line.key === 'systemCpu'
+          ? formatPercent(latestLoad.value[line.key])
+          : bytes(latestLoad.value[line.key]),
+  })),
+)
+
+/** What the machine has in total, said once under the chart rather than on every line. */
+const machineMemory = computed(() =>
+  latestLoad.value ? bytes(latestLoad.value.systemMemoryTotal) : null,
+)
+
+/** The same ceiling the dashboard thins to: more points than the card has pixels buys nothing. */
+const MAX_POINTS = 240
 
 /**
  * Its page cannot outlive it. The list is where there is still something to look at.
@@ -114,6 +235,59 @@ function afterRemove(removed: HostResponse) {
           </button>
         </div>
       </header>
+
+      <!--
+        What this machine is doing, over time: the two charts the dashboard draws for the fleet,
+        narrowed to one host. Same components, same legend, same range strip — a host's page and
+        the dashboard should read as one application looking at two scopes.
+      -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-sm font-medium">{{ t('hosts.overTime') }}</h2>
+        <TabBar v-model="range" :tabs="rangeTabs" variant="box" size="sm" />
+      </div>
+
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="card border-base-300 bg-base-200 border">
+          <div class="card-body gap-3">
+            <h3 class="card-title flex items-center gap-2 text-base">
+              <Gauge class="text-base-content/50 size-4" />
+              {{ t('hosts.loadTitle') }}
+              <span v-if="machineMemory" class="text-xs font-normal opacity-50">
+                {{ t('hosts.ofMemory', { total: machineMemory }) }}
+              </span>
+            </h3>
+
+            <SeriesChart
+              :lines="loadLines"
+              :from="from"
+              :to="now"
+              :format="formatPercent"
+              :label="t('hosts.loadTitle')"
+              :empty="t('hosts.noLoad')"
+            />
+          </div>
+        </div>
+
+        <div class="card border-base-300 bg-base-200 border">
+          <div class="card-body gap-3">
+            <h3 class="card-title flex items-center gap-2 text-base">
+              <ArrowDownUp class="text-base-content/50 size-4" />
+              {{ t('dashboard.traffic') }}
+              <span class="text-xs font-normal opacity-50">{{ t('hosts.trafficHint') }}</span>
+            </h3>
+
+            <SeriesChart
+              :lines="trafficLines"
+              :from="from"
+              :to="now"
+              :format="formatRate"
+              :label="t('dashboard.traffic')"
+              :empty="t('dashboard.noHistory')"
+              :note="entries.length && !gameReported ? t('dashboard.gameUnreported') : undefined"
+            />
+          </div>
+        </div>
+      </div>
 
       <div class="grid gap-4 lg:grid-cols-[1fr_18rem]">
         <div class="flex min-w-0 flex-col gap-4">

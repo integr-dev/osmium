@@ -24,6 +24,18 @@ export interface HostTraffic {
   linkReceived: number
   gameSent: number | null
   gameReceived: number | null
+
+  /**
+   * What the host is costing the machine it runs on, as of its last heartbeat.
+   *
+   * All five together or all five null: a host older than this backend reports none of them, and
+   * a partial reading would chart a machine doing nothing rather than one that did not say.
+   */
+  cpu: number | null
+  memory: number | null
+  systemCpu: number | null
+  systemMemory: number | null
+  systemMemoryTotal: number | null
 }
 
 export interface DashboardSample {

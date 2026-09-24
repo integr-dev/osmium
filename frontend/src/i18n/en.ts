@@ -268,11 +268,16 @@ export const en = {
     gameReceived: 'Servers → agents',
     gameUnreported: 'No host reports game traffic yet.',
     noHistory: 'No history yet. The first point arrives within ten seconds.',
-    hosts: 'Hosts',
-    hostAgents: '{online}/{total} online',
-    noHosts: 'No hosts enrolled.',
-    link: 'Backend link',
-    game: 'Game servers',
+    /**
+     * What the fleet is costing the machines under it, every host added together.
+     */
+    load: 'Host load',
+    loadHint: 'All hosts together.',
+    loadCpu: 'Processor',
+    loadMemory: 'Memory',
+    noLoad: 'No host reports its load yet.',
+    /** Every line switched off is not the same as nothing to draw, and says so. */
+    allHidden: 'Every line is hidden. Turn one back on below.',
     sentReceived: 'sent ↑ / received ↓',
     severity: { INFO: 'Info', WARNING: 'Warnings', ERROR: 'Errors' },
     perBucket: 'Incidents per {minutes} min',
@@ -351,6 +356,19 @@ export const en = {
     noAgentsHere: 'This host runs no agents yet.',
     loginMethods: 'Login methods',
     noMethodsAdvertised: 'This host has not said what it can log in with. It reports that when it connects.',
+    /** The two charts a host's own page draws: the same pictures the dashboard draws for the fleet. */
+    overTime: 'Over time',
+    loadTitle: 'Load',
+    ofMemory: 'of {total}',
+    noLoad: 'This host does not report its load. It may be older than this backend.',
+    trafficHint: 'This host, per second.',
+    load: {
+      /** The process against one core; the machine against all of them. Two scales, said plainly. */
+      cpu: 'Osmium · processor',
+      systemCpu: 'Machine · processor',
+      memory: 'Osmium · memory',
+      systemMemory: 'Machine · memory',
+    },
   },
 
   /** What this deployment is made of, as opposed to what is being done with it. */
@@ -754,7 +772,6 @@ export const en = {
     subtitleRegion: '{world} on {server}',
     startedBy: 'Started by {who}, {at}',
     anchor: 'Anchored at {x}, {y}, {z}',
-    placed: '{placed} of {total} blocks',
 
     /**
      * What a job's count counts, by kind.
@@ -762,6 +779,38 @@ export const en = {
      * The same arithmetic with three different words behind it. "Blocks placed" on a survey is
      * simply wrong, and a number whose unit is wrong is worse than no number.
      */
+    /**
+     * The handful of words that change with the kind of work.
+     *
+     * A card is a crew, a division and how far along each piece is whichever tab made it — but
+     * 'Builders' over a list of diggers, and 'Built' over a column counting cleared blocks, are
+     * the interface describing the wrong job. Only the words that name the *verb* are here;
+     * everything else stays neutral rather than being said three ways for no gain.
+     */
+    words: {
+      BUILD: {
+        crew: 'Builders',
+        member: 'Builder',
+        doing: 'Building',
+        done: 'Built',
+        unit: 'Blocks',
+      },
+      EXCAVATE: {
+        crew: 'Diggers',
+        member: 'Digger',
+        doing: 'Digging',
+        done: 'Cleared',
+        unit: 'Blocks',
+      },
+      MAP: {
+        crew: 'Scouts',
+        member: 'Scout',
+        doing: 'Charting',
+        done: 'Charted',
+        unit: 'Columns',
+      },
+    },
+
     unit: {
       BUILD: '{placed} of {total} blocks placed',
       EXCAVATE: '{placed} of {total} blocks cleared',
@@ -770,23 +819,21 @@ export const en = {
 
     /** Said on the card, where somebody is watching a bar that will not move. */
     notDispatched: 'Divided and crewed. Nothing is sent to the agents yet — no host can carry this kind of work.',
-    waiting: '{count} segment(s) waiting for somebody to build them',
+    waiting: '{count} piece(s) waiting for somebody to take them',
     started: "Building '{name}' in {count} segment(s).",
     pause: 'Pause',
     resume: 'Resume',
-    paused: "Paused '{name}'. Its builders stay on it.",
+    paused: "Paused '{name}'. Its crew stays on it.",
     resumed: "Resumed '{name}'.",
     /** Said on the card, because this is where somebody looks when a bot will not take other work. */
-    pausedNote: 'Stopped, and still holding its builders. Resume it, or take them off one at a time.',
+    pausedNote: 'Stopped, and still holding its crew. Resume it, or take them off one at a time.',
     remove: 'Delete',
     removed: "Deleted '{name}'. What it did is still in the audit trail.",
     removeTitle: "Delete '{name}'?",
     /** Said plainly: the counts are the part nothing else keeps. */
-    removeWarning: 'The job and every one of its pieces go, along with what each of them reported placing. What the fleet did stays in the audit trail; how far it got does not.',
+    removeWarning: 'The job and every one of its pieces go, along with what each of them reported doing. What the fleet did stays in the audit trail; how far it got does not.',
     segment: 'Segment',
     box: 'From → to',
-    blocks: 'Blocks',
-    assignee: 'Builder',
     assignTo: 'Assign to…',
     nobodyAvailable: 'Nobody free on this server',
     /** Not the fleet's fault: the piece has nothing under it to stand on yet. */
@@ -800,11 +847,9 @@ export const en = {
      * nothing, waiting for the floor under its next piece.
      */
     tabPieces: 'Pieces',
-    pool: 'Builders',
     poolEmpty: 'Nobody on it yet.',
     poolAgent: 'Agent',
     poolHolding: 'Holding',
-    poolBuilt: 'Built',
     poolSince: 'On it since',
     poolSegment: 'Segment {ordinal}',
     /** Idle is ordinary on a job cut on height, so it is worded as waiting rather than as nothing. */
@@ -812,20 +857,19 @@ export const en = {
     /** An agent deleted mid-job keeps its label on what it built. */
     poolGone: 'Deleted',
     poolRemove: 'Take off',
-    addAgent: 'Add builders',
+    addAgent: 'Add agents',
     addHint: 'They are given pieces of {name} as those come free. Only agents in game on {server} can be put on it.',
-    addSelected: 'Add builders | Add {count} builder | Add {count} builders',
+    addSelected: 'Add agents | Add {count} agent | Add {count} agents',
     /** Said of the agents the picker greys out, so "why not that one" is answered in the dialog. */
     pickerUnavailable: 'Not in game, or already on another job.',
     takeOff: 'Take off this job',
-    joined: '{count} builder is on the job. | {count} builders are on the job.',
+    joined: '{count} agent is on the job. | {count} agents are on the job.',
 
     /** Narrowing a long pieces table. Every question asked of it is a state. */
     filterAll: 'All',
     filterWorking: 'Working',
     filterFree: 'Free',
     filterFailed: 'Failed',
-    filterBuilt: 'Built',
     left: '{label} is off the job, and what it held is free again.',
     /** Why a piece nobody holds is not a piece anybody can take. */
     blockedBy: 'Waiting on {ordinals}',
@@ -839,9 +883,7 @@ export const en = {
     /** The server is the plan's to say, never the crew's: the same numbers are a different spot on every server. */
     needWorld: 'Say which server and world these coordinates are in.',
     state: {
-      ACTIVE: 'Building',
       PAUSED: 'Paused',
-      DONE: 'Built',
     },
     /**
      * Per segment. 'Assigned' and 'Building' are separate words even though nothing dispatches yet:
@@ -851,8 +893,6 @@ export const en = {
     segmentState: {
       PENDING: 'Free',
       ASSIGNED: 'Assigned',
-      BUILDING: 'Building',
-      DONE: 'Built',
       FAILED: 'Failed',
     },
   },

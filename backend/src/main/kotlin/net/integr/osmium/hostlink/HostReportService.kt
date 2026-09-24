@@ -68,6 +68,7 @@ class HostReportService(
     private val mapService: MapService,
     private val registry: HostConnections,
     private val traffic: HostTraffic,
+    private val usage: HostUsage,
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -96,6 +97,7 @@ class HostReportService(
                     address = null,
                 )
                 recordTraffic(hostId, envelope.payload?.get("traffic"))
+                recordUsage(hostId, envelope.payload?.get("usage"))
             }
 
             EventType.HANDSHAKE -> handshake(hostId, envelope)
@@ -130,6 +132,23 @@ class HostReportService(
         val sent = node?.get("sent")?.takeIf { it.isNumber }?.asLong() ?: return
         val received = node.get("received")?.takeIf { it.isNumber }?.asLong() ?: return
         traffic.reported(hostId, sent, received)
+    }
+
+    /**
+     * What the host says it is costing its machine. Optional, like the traffic beside it: a host
+     * older than this backend reports none, and its load is then simply not charted.
+     *
+     * All five or nothing. A partial reading would draw a host at zero processor use beside a real
+     * memory figure, which reads as a machine doing nothing rather than one that did not say.
+     */
+    private fun recordUsage(hostId: Long, node: JsonNode?) {
+        val cpu = node?.get("cpu")?.takeIf { it.isNumber }?.asDouble() ?: return
+        val memory = node.get("memory")?.takeIf { it.isNumber }?.asLong() ?: return
+        val systemCpu = node.get("systemCpu")?.takeIf { it.isNumber }?.asDouble() ?: return
+        val systemMemory = node.get("systemMemory")?.takeIf { it.isNumber }?.asLong() ?: return
+        val total = node.get("systemMemoryTotal")?.takeIf { it.isNumber }?.asLong() ?: return
+
+        usage.reported(hostId, cpu, memory, systemCpu, systemMemory, total)
     }
 
     private fun onResult(hostId: Long, envelope: HostEnvelope) {

@@ -16,6 +16,8 @@ import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateType
 import net.integr.osmium.hostlink.HostConnections
+import net.integr.osmium.hostlink.HostTraffic
+import net.integr.osmium.hostlink.HostUsage
 import net.integr.osmium.hostlink.LoginMethod
 import net.integr.osmium.hostlink.HostProxy
 import org.slf4j.LoggerFactory
@@ -35,6 +37,8 @@ class HostService(
     private val agentRepository: AgentRepository,
     private val passwordEncoder: PasswordEncoder,
     private val registry: HostConnections,
+    private val traffic: HostTraffic,
+    private val usage: HostUsage,
     private val auditService: AuditService,
     private val broker: LiveUpdateBroker,
 ) {
@@ -208,6 +212,12 @@ class HostService(
             )
         }
         broker.publish(LiveUpdateEvent(type = LiveUpdateType.HOST_REMOVED, data = mapOf("id" to id)))
+
+        // What was measured about a host that no longer exists. Both are keyed by id, and the
+        // identity column hands ids out again, so leaving them behind lets the next host enrolled
+        // inherit a predecessor's byte totals and a reading of a machine it has never run on.
+        traffic.forget(id)
+        usage.forget(id)
     }
 
     /**

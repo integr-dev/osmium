@@ -3,6 +3,7 @@ import { WebSocket } from 'ws'
 import { log, reason } from '../log.ts'
 import { deserialize } from '../protocol/deserialize.ts'
 import type { Bytes } from '../agent/traffic.ts'
+import type { Usage } from '../usage.ts'
 import type { Command, Outbound } from '../protocol/message.ts'
 import { serialize } from '../protocol/serialize.ts'
 
@@ -27,6 +28,8 @@ export interface SocketHandlers {
   command(command: Command): void
   /** What every agent has moved so far, for the heartbeat. */
   traffic(): Bytes
+  /** What this host is costing its machine, for the same heartbeat. */
+  usage(): Usage
 }
 
 /**
@@ -96,7 +99,12 @@ export class HostSocket {
         () =>
           this.send({
             kind: 'event',
-            body: { type: 'heartbeat', version: this.version, traffic: this.handlers.traffic() },
+            body: {
+              type: 'heartbeat',
+              version: this.version,
+              traffic: this.handlers.traffic(),
+              usage: this.handlers.usage(),
+            },
           }),
         HEARTBEAT,
       )

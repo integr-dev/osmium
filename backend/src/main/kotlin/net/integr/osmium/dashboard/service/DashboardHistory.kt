@@ -11,6 +11,7 @@ import net.integr.osmium.dashboard.dto.DashboardSampleResponse
 import net.integr.osmium.dashboard.dto.HostTrafficResponse
 import net.integr.osmium.host.repository.HostRepository
 import net.integr.osmium.hostlink.HostTraffic
+import net.integr.osmium.hostlink.HostUsage
 import net.integr.osmium.liveupdates.LiveUpdateBroker
 import net.integr.osmium.liveupdates.LiveUpdateEvent
 import net.integr.osmium.liveupdates.LiveUpdateType
@@ -38,6 +39,7 @@ class DashboardHistory(
     private val jobRepository: BuildJobRepository,
     private val hostRepository: HostRepository,
     private val traffic: HostTraffic,
+    private val usage: HostUsage,
     private val broker: LiveUpdateBroker,
     private val clock: Clock = Clock.systemUTC(),
 ) {
@@ -81,6 +83,7 @@ class DashboardHistory(
     private fun hosts(now: Instant): List<HostTrafficResponse> {
         val totals = traffic.linkTotals()
         val games = traffic.gameRates()
+        val loads = usage.latest()
         val links = linkRates(lastTotals, totals, lastAt?.let { Duration.between(it, now) })
         lastTotals = totals
         lastAt = now
@@ -89,6 +92,7 @@ class DashboardHistory(
             val id = host.id!!
             val link = links[id] ?: (0L to 0L)
             val game = games[id]
+            val load = loads[id]
             HostTrafficResponse(
                 hostId = id,
                 name = host.name,
@@ -97,6 +101,11 @@ class DashboardHistory(
                 linkReceived = link.second,
                 gameSent = game?.first,
                 gameReceived = game?.second,
+                cpu = load?.cpu,
+                memory = load?.memory,
+                systemCpu = load?.systemCpu,
+                systemMemory = load?.systemMemory,
+                systemMemoryTotal = load?.systemMemoryTotal,
             )
         }
     }

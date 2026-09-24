@@ -41,4 +41,21 @@ data class HostTrafficResponse(
     val gameSent: Long?,
     @field:Schema(description = "Servers to this host's agents. Null when the host has not reported it recently.")
     val gameReceived: Long?,
+
+    /**
+     * What the host is costing the machine it runs on, as of its last heartbeat.
+     *
+     * All five null together: a host older than this backend reports none of them, and a partial
+     * reading would draw a machine doing nothing rather than one that did not say.
+     */
+    @field:Schema(description = "The host process, as a percentage of one core. Two busy cores is 200.")
+    val cpu: Double?,
+    @field:Schema(description = "Resident bytes held for the host process.")
+    val memory: Long?,
+    @field:Schema(description = "The whole machine, as a percentage of all its cores together.")
+    val systemCpu: Double?,
+    @field:Schema(description = "Bytes in use across the machine.")
+    val systemMemory: Long?,
+    @field:Schema(description = "Bytes the machine has in total.")
+    val systemMemoryTotal: Long?,
 )

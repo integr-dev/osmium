@@ -75,6 +75,112 @@ function sum(values: number[]): number {
 }
 
 /**
+ * What one host is costing its machine, at one moment. Null until the host reports it.
+ *
+ * A reading is all five numbers or none — see `HostTrafficResponse` — so this is either the whole
+ * thing or nothing, and a chart can leave a gap rather than drawing an idle machine.
+ */
+export interface HostLoad {
+  /** The host process, as a percentage of one core. Two busy cores is 200. */
+  cpu: number
+  /** The whole machine, as a percentage of all its cores together. */
+  systemCpu: number
+  /** Resident bytes for the process, and bytes in use across the machine. */
+  memory: number
+  systemMemory: number
+  systemMemoryTotal: number
+}
+
+export function hostLoad(sample: DashboardSample, hostId: number): HostLoad | null {
+  const host = sample.hosts.find((entry) => entry.hostId === hostId)
+  if (!host || host.cpu === null || host.systemMemoryTotal === null) return null
+
+  return {
+    cpu: host.cpu,
+    systemCpu: host.systemCpu ?? 0,
+    memory: host.memory ?? 0,
+    systemMemory: host.systemMemory ?? 0,
+    systemMemoryTotal: host.systemMemoryTotal,
+  }
+}
+
+/**
+ * The four things a load chart draws, in the order they are drawn.
+ *
+ * One table, because a host's own page and the dashboard draw the same four and a chip has to mean
+ * the same thing on both: the process against a single core, the machine against all of them, and
+ * the two memory figures against what the machine has.
+ */
+export const LOAD_MEASURES = [
+  { key: 'cpu', tone: 'text-warning' },
+  { key: 'systemCpu', tone: 'text-error' },
+  { key: 'memory', tone: 'text-secondary' },
+  { key: 'systemMemory', tone: 'text-accent' },
+] as const
+
+export type LoadKey = (typeof LOAD_MEASURES)[number]['key']
+
+/**
+ * One measure as a load chart wants it: the number it is drawn at, and the number it is read as.
+ *
+ * Memory is plotted as a share of the machine's own total so it can share an axis with the
+ * processor — a chart mixing bytes and percent has to pick which of the two its scale is for, and
+ * is then lying about the other — and read as bytes, which is what an operator acts on.
+ */
+export interface LoadReading {
+  percent: number
+  bytes: number
+}
+
+export function loadReading(load: HostLoad, key: LoadKey): LoadReading {
+  if (key === 'cpu' || key === 'systemCpu') return { percent: load[key], bytes: 0 }
+  const total = load.systemMemoryTotal
+  return { percent: total ? (load[key] / total) * 100 : 0, bytes: load[key] }
+}
+
+/**
+ * Every reporting host added together, at one moment.
+ *
+ * **Added, not averaged — except where adding would be nonsense.** Bytes are bytes: Osmium holding
+ * 400 MB on each of three machines is holding 1.2 GB, and that is the number an operator wants.
+ * Processor *time* adds up the same way, so the process line is the fleet's cores-worth of work.
+ *
+ * A machine's own processor figure is the exception. It is already a percentage of that machine,
+ * and three machines at 50% are not one machine at 150% — they are a fleet running at half. So
+ * that one line is the mean, and it is the only one.
+ *
+ * The percentages the chart is drawn at come from the fleet's totals: bytes held against bytes the
+ * fleet has, which is the same arithmetic one host does against its own.
+ */
+export type FleetLoad = Record<LoadKey, LoadReading>
+
+export function fleetLoad(sample: DashboardSample): FleetLoad | null {
+  const loads = sample.hosts
+    .map((host) => hostLoad(sample, host.hostId))
+    .filter((load): load is HostLoad => load !== null)
+  if (!loads.length) return null
+
+  const total = sum(loads.map((load) => load.systemMemoryTotal))
+  const share = (bytes: number) => (total ? (bytes / total) * 100 : 0)
+
+  const memory = sum(loads.map((load) => load.memory))
+  const systemMemory = sum(loads.map((load) => load.systemMemory))
+
+  return {
+    cpu: { percent: sum(loads.map((load) => load.cpu)), bytes: 0 },
+    // The mean: a percentage of a machine cannot be added to a percentage of another one.
+    systemCpu: { percent: sum(loads.map((load) => load.systemCpu)) / loads.length, bytes: 0 },
+    memory: { percent: share(memory), bytes: memory },
+    systemMemory: { percent: share(systemMemory), bytes: systemMemory },
+  }
+}
+
+/** A percentage a person can read: 0%, 12.5%, 100%. */
+export function formatPercent(value: number): string {
+  return `${Math.round(value * 10) / 10}%`
+}
+
+/**
  * At most [max] points, keeping the shape and always the newest.
  *
  * Six hours is 2160 points, several times wider than any card is in pixels. Each bucket keeps its
