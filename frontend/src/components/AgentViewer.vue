@@ -2358,8 +2358,19 @@ async function mount(world: { version: string; minY?: number; height?: number },
   const element = canvas.value
   if (!element) return
 
+  /*
+   * Smoothed by drawing more pixels than the screen has, not by multisampling.
+   *
+   * Every block face upstream draws goes through one blended material - `transparent: true` for
+   * stone as much as for water - so under MSAA a face's edge fragments blend their partial coverage
+   * against whatever is behind them. That is a see-through hairline along every block edge, and it
+   * cannot be fixed from here without making water opaque. Supersampling smooths the same edges by
+   * resolving them from a bigger picture, and leaves what blends with what alone.
+   *
+   * Capped at two: it is four times the fragments on a 1x screen, and a 2x screen was already there.
+   */
   const renderer = new THREE.WebGLRenderer({ canvas: element })
-  renderer.setPixelRatio(window.devicePixelRatio || 1)
+  renderer.setPixelRatio(Math.min((window.devicePixelRatio || 1) * 2, 2))
   renderer.setSize(element.clientWidth, element.clientHeight, false)
 
   const native = window.Worker
