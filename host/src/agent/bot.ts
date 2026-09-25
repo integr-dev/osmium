@@ -62,6 +62,7 @@ import {
 import { AgentMap, worldOf } from './map.ts'
 import { Surveyor } from './survey/surveyor.ts'
 import { shortly, unitOf, Work } from './work.ts'
+import { ATTEMPTS, candidates, nextVersion, VersionMemory } from './versions.ts'
 import {
   AgentUtilities,
   antiHungerFrom,
@@ -331,6 +332,17 @@ export class Agent {
    * agent between pieces rather than the last piece it finished, said again an hour later.
    */
   private work: Work | undefined
+
+  /**
+   * Versions this connect has already tried and failed on.
+   *
+   * Per operator-initiated connect rather than per session: an agent that rejoins a server it has
+   * played on starts again from what is known, and only a search still in progress carries a list.
+   */
+  private tried: string[] = []
+
+  /** The versions worth trying, newest protocol first. Read once: the table does not change. */
+  private readonly candidates = candidates()
   /** How this agent builds, as the operator set it. Read per pass by the printer. */
   private building: BuildSettings = buildSettingsFrom({})
   /** Where the printer last asked to be, so the same request twice does not re-plan a route. */
@@ -388,6 +400,8 @@ export class Agent {
     private readonly credential: Credential,
     private readonly store: AccountStore,
     private readonly cacheDirectory: string,
+    /** What each server turned out to speak. Host-wide: see `versions.ts`. */
+    private readonly versions: VersionMemory,
     /** Every proxy this host holds. Which one this agent uses is a setting - see `configure`. */
     private readonly proxies: Proxies,
     private readonly hooks: AgentHooks,
@@ -630,11 +644,87 @@ export class Agent {
 
     if (this.family !== 'auto' && !route) log.debug(`Agent ${this.id}: dialling ${address} over ${this.family}`)
 
-    const version =
-      this.version ?? (await negotiate(endpoint, this.id, route, this.family, () => this.cancelling))
+    const version = this.version ?? (await this.choose(address, endpoint, route))
     if (this.abandoned()) return
+    if (!version) {
+      this.activity(
+        ActivityScope.System,
+        Severity.Error,
+        `Could not find a version ${address} speaks; pin one in this agent's configuration`,
+      )
+      this.report({ state: LoginState.FailedConnection })
+      return
+    }
 
     this.open(address, endpoint, version, route)
+  }
+
+  /**
+   * Which version to speak, when nobody has pinned one.
+   *
+   * **What worked here before comes first, and skips the ping entirely.** A server that has been
+   * played on has answered the question already, and asking again is a round trip to be told
+   * `9999` by the sort of server that made this necessary.
+   *
+   * Then what the ping says, which is the honest answer where a server gives one. Then the list,
+   * newest first — this is a search, and {@link ended} runs it by coming back here with the failed
+   * version in {@link tried}.
+   */
+  private async choose(
+    address: string,
+    endpoint: Endpoint,
+    route: ProxyEntry | undefined,
+  ): Promise<string | undefined> {
+    const known = this.versions.recall(address)
+
+    // Only asked when there is nothing better: see above.
+    const hinted =
+      known || this.tried.length
+        ? undefined
+        : await negotiate(endpoint, this.id, route, this.family, () => this.cancelling)
+
+    const version = nextVersion({ known, hinted, tried: this.tried, list: this.candidates })
+    if (version && known && !this.tried.includes(known)) {
+      log.debug(`Agent ${this.id}: ${address} spoke ${known} last time`)
+    }
+
+    return version
+  }
+
+  /**
+   * Whether to try another version rather than report a failure.
+   *
+   * **Only a guessed version is searched from.** A pinned one is an operator's decision and a
+   * failure on it is theirs to see; quietly joining on something else would be the host overruling
+   * the one control that exists for this.
+   *
+   * Only before the agent ever got in, because a session that reached play had the right version by
+   * definition — what ended it is something else, and rejoining on a different one would be a
+   * guess where there is already an answer.
+   */
+  private retrying(address: string, failed: string, joined: boolean): boolean {
+    if (joined || this.version || this.leaving || this.done) return false
+    if (this.tried.length >= ATTEMPTS) return false
+
+    // The version comes from the caller because `ended` has already cleared the session by the time
+    // this runs - reading it from the field here is how the search silently never started.
+    this.tried.push(failed)
+    // The memory was wrong, which is what a server that updated looks like. Dropped rather than
+    // kept, or every later join would start from it again.
+    if (this.versions.recall(address) === failed) this.versions.forget(address)
+
+    const next = nextVersion({ tried: this.tried, list: this.candidates })
+    if (!next) return false
+
+    this.activity(
+      ActivityScope.System,
+      Severity.Info,
+      `${failed} is not what ${address} speaks; trying ${next}`,
+    )
+    log.info(`Agent ${this.id}: ${address} did not answer ${failed}, trying ${next}`)
+
+    this.handle({ type: 'connect', address })
+    return true
   }
 
   /**
@@ -767,6 +857,12 @@ export class Agent {
         if (this.joined) return
         this.joined = true
         if (this.session) this.session.joinedAt = Date.now()
+
+        // It got in, so the version was right. Remembered against the server rather than the agent:
+        // the next agent to join this one should not repeat the search. The list of what failed
+        // goes with it, since the search is over.
+        if (this.session) this.versions.remember(this.session.address, this.session.version)
+        this.tried = []
 
         // Everything an operator would otherwise have to go and look up: which server, under which
         // account, speaking what, and where it came out. The version is worth stating because it may
@@ -996,6 +1092,10 @@ export class Agent {
       this.report({ state: LoginState.LinkedCredentials })
       return
     }
+
+    // Never got in on a version nobody pinned: the guess may simply be wrong, and the next one is
+    // tried before anybody is told anything. See `retrying`.
+    if (session && this.retrying(session.address, session.version, joined)) return
 
     // Never got in. That refuses us as surely as a kick would, and reads the same way to an
     // operator. Naming the version matters here more than anywhere: an attempt that fails on a

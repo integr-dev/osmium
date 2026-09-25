@@ -1,4 +1,5 @@
 import { Agent, type Credential } from '../agent/bot.ts'
+import { VersionMemory } from '../agent/versions.ts'
 import { fetchSegment } from '../agent/build/segment.ts'
 import { log } from '../log.ts'
 import type { AgentSnapshot, Command, Event, Outbound, SetupResult } from '../protocol/message.ts'
@@ -24,6 +25,14 @@ interface Running {
  */
 export class Dispatcher {
   private readonly agents = new Map<number, Running>()
+
+  /**
+   * What each server turned out to speak, shared by every agent on this host.
+   *
+   * One memory, because the question is about the server rather than the agent: the second agent to
+   * join somewhere should not repeat the first one's search. See `agent/versions.ts`.
+   */
+  private readonly versions: VersionMemory
   /** What agents that are gone moved, so the host's total never goes backwards when one is deleted. */
   private departed: Bytes = NO_BYTES
 
@@ -42,7 +51,8 @@ export class Dispatcher {
     /** World updates. They ride the same socket as a binary frame, and are relayed rather than
      * read - nothing between here and the browser has any use for what is in them. */
     private readonly stream: (frame: Buffer) => void,
-  ) {}
+  ) {
+    this.versions = new VersionMemory(cacheDirectory)}
 
   /**
    * Everything this host was already running, rebuilt from the store.
@@ -167,7 +177,7 @@ export class Dispatcher {
     // runs.
     let running: Running
 
-    const agent = new Agent(agentId, credential, this.store, this.cacheDirectory, this.proxies, {
+    const agent = new Agent(agentId, credential, this.store, this.cacheDirectory, this.versions, this.proxies, {
       event: (event) => this.forward(agentId, event),
       viewer: (frame) => this.stream(frame),
       blocks: (jobId, segmentId, ticket) => fetchSegment(this.base, jobId, segmentId, ticket),
