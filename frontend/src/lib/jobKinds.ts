@@ -96,3 +96,17 @@ export const JOB_ICON: Record<JobType, Component> = {
 export function jobUnit(type: JobType): string {
   return `jobs.unit.${type}`
 }
+
+/**
+ * The one kind a set of jobs is, or null where they are not all the same.
+ *
+ * **The dashboard sums across jobs, and the words have to survive that.** A fleet building a tower
+ * while another crew charts a valley has a total that is blocks *and* columns, and "Blocks placed"
+ * over it is simply wrong — so a mixed fleet is said in neutral words rather than in the words of
+ * whichever job happened to be first in the list.
+ */
+export function oneKind(types: readonly JobType[]): JobType | null {
+  const first = types[0]
+  if (first === undefined) return null
+  return types.every((type) => type === first) ? first : null
+}

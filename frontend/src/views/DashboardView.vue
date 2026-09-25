@@ -25,6 +25,7 @@ import RollingNumber from '../components/RollingNumber.vue'
 import type { ActivityEntryResponse } from '../api/client'
 import { fetchActivityPage } from '../api/feeds'
 import { useFeed, useInfiniteScroll } from '../lib/feed'
+import { JOB_ICON, jobBadge, jobStyle, oneKind } from '../lib/jobKinds'
 import { jobFigures } from '../lib/jobs'
 import {
   ACTIVITY_BUCKET_MS,
@@ -179,8 +180,21 @@ const jobs = computed(() => agentStore.jobsOn(server.value))
 
 const build = computed(() => jobFigures(jobs.value))
 
-/** The builds under way here, named. Empty when the fleet is idle, which it usually is. */
+/** The jobs under way here, named. Empty when the fleet is idle, which it usually is. */
 const buildingNames = computed(() => [...new Set(jobs.value.map((job) => job.name))].join(', '))
+
+/**
+ * What kind of work the fleet is doing, when it is all one kind.
+ *
+ * **Null is not an absence of jobs, it is a mix of them** — a crew raising a tower while another
+ * charts a valley. Every figure on this page is a sum across jobs, so in that case the total is
+ * blocks *and* columns and only neutral words are true of it. See `oneKind`.
+ */
+const kind = computed(() => oneKind(jobs.value.map((job) => job.type)))
+
+/** The words for that kind, or the neutral ones. One lookup, used by every caption here. */
+const word = (which: 'count' | 'doing' | 'doingName' | 'unit' | 'left' | 'pieces') =>
+  `dashboard.work.${kind.value ?? 'MIXED'}.${which}`
 
 const segments = computed(() => jobs.value.flatMap((job) => job.segments))
 const segmentsDone = computed(() => segments.value.filter((segment) => segment.state === 'DONE').length)
@@ -469,7 +483,7 @@ function wholeNumber(value: number): string {
         <!-- Component interpolation: the name sits mid-sentence, and word order is not universal. -->
         <i18n-t
           v-if="buildingNames"
-          keypath="dashboard.buildingName"
+          :keypath="word('doingName')"
           tag="p"
           class="text-sm opacity-60"
           scope="global"
@@ -506,9 +520,9 @@ function wholeNumber(value: number): string {
 
         <span
           class="badge badge-sm gap-1"
-          :class="build.perMinute > 0 ? 'osmium-badge-building' : 'badge-error badge-soft'"
+          :class="build.perMinute > 0 ? jobBadge(kind ?? 'BUILD') : 'badge-error badge-soft'"
         >
-          {{ build.perMinute > 0 ? t('dashboard.building') : t('dashboard.stalled') }}
+          {{ build.perMinute > 0 ? t(word('doing')) : t('dashboard.stalled') }}
         </span>
       </div>
     </header>
@@ -535,8 +549,10 @@ function wholeNumber(value: number): string {
         </div>
       </div>
       <div class="stat">
-        <div class="stat-figure text-primary"><Hammer class="size-7" /></div>
-        <div class="stat-title">{{ t('dashboard.blocksPlaced') }}</div>
+        <div class="stat-figure" :style="kind ? jobStyle(kind) : undefined">
+          <component :is="kind ? JOB_ICON[kind] : Hammer" class="size-7" :class="kind ? '' : 'text-primary'" />
+        </div>
+        <div class="stat-title">{{ t(word('count')) }}</div>
         <div v-if="!agentStore.loaded" class="skeleton my-1.5 h-8 w-28"></div>
         <div v-else class="stat-value text-3xl"><RollingNumber :value="build.placed" /></div>
         <div class="stat-desc">
@@ -551,7 +567,7 @@ function wholeNumber(value: number): string {
         <div v-else class="stat-value text-3xl"><RollingNumber :value="build.perMinute" /></div>
         <div class="stat-desc mt-1 flex flex-col gap-0.5">
           <TrendLine :values="throughputSeries" :label="t('dashboard.throughput')" />
-          <span>{{ t('dashboard.perMinute') }}</span>
+          <span>{{ t(word('unit')) }}</span>
         </div>
       </div>
       <div class="stat">
@@ -574,10 +590,10 @@ function wholeNumber(value: number): string {
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h2 class="card-title flex items-center gap-2 text-base">
               <Layers class="text-base-content/50 size-4" />
-              {{ t('dashboard.progress') }}
+              {{ t(word('left')) }}
             </h2>
             <span class="text-sm tabular-nums opacity-60">
-              {{ t('dashboard.blocksRemaining', { count: n(blocksRemaining) }, blocksRemaining) }}
+              {{ t(word('pieces'), { count: n(blocksRemaining) }, blocksRemaining) }}
             </span>
           </div>
 

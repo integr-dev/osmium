@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { JobType } from '../api/jobs'
 import { agentBadge, agentDot } from './agentState'
-import { JOB_FALLBACK, JOB_ICON, JOB_TINT, JOB_TYPES, jobBadge, jobDot, jobInk } from './jobKinds'
+import { JOB_FALLBACK, JOB_ICON, JOB_TINT, JOB_TYPES, jobBadge, jobDot, jobInk , oneKind } from './jobKinds'
 
 /**
  * The colours are the point, and the thing that can silently go wrong with them is two kinds
@@ -56,5 +56,21 @@ describe('an agent at work', () => {
 
   it('is just online when it is on nothing', () => {
     expect(agentDot('ONLINE', null)).toBe(agentDot('ONLINE'))
+  })
+})
+
+/**
+ * The dashboard sums across jobs, so the words have to survive the sum: a fleet raising a tower
+ * while another crew charts a valley has a total that is blocks *and* columns.
+ */
+describe('one kind, or several', () => {
+  it('is the kind when every job is that kind', () => {
+    expect(oneKind(['MAP', 'MAP'])).toBe('MAP')
+    expect(oneKind(['BUILD'])).toBe('BUILD')
+  })
+
+  it('is nothing at all for a mix, and for no jobs', () => {
+    expect(oneKind(['BUILD', 'MAP'])).toBeNull()
+    expect(oneKind([])).toBeNull()
   })
 })
