@@ -14,7 +14,7 @@ import SwapBox from './SwapBox.vue'
 import { useSlide } from '../lib/motion'
 import { DEFAULT_ORDER, formatOrder, type PlacementOrder } from '../lib/placementOrder'
 import { areaFromQuery, withoutArea } from '../lib/area'
-import { DIMENSIONS, WORLD_FLOOR, worldId } from '../lib/placement'
+import { WORLD_FLOOR, worldChoices, worldId } from '../lib/placement'
 import { dimensionLabel } from '../lib/vitals'
 import { JOB_ICON, jobStyle } from '../lib/jobKinds'
 import { previewRegionSplit, type Region, type RegionType } from '../api/regions'
@@ -204,6 +204,17 @@ const servers = computed(() => {
   if (wantedServer.value) known.add(wantedServer.value)
   return [...known].sort()
 })
+
+/**
+ * The worlds worth offering for the chosen server, by the same rule the map picks its own: the
+ * three every server has, plus whatever the fleet is standing in, plus the plan's own.
+ *
+ * A server running Multiverse has as many worlds as its operators made, and a box typed against
+ * one of them belongs to that world and no other.
+ */
+const dimensions = computed(() =>
+  worldChoices(agentStore.worldsOn(wantedServer.value), dimension.value),
+)
 
 /**
  * What is wrong with the corners, or nothing.
@@ -428,10 +439,9 @@ function handedOver(): boolean {
 
   choose(null)
   wantedServer.value = handed.server
-  // Only a world this form can offer. The map spells them both ways, and a select cannot show a
-  // value it has no option for - which would read as the world having been dropped on the way.
-  const world = worldId(handed.dimension)
-  dimension.value = (DIMENSIONS as readonly string[]).includes(world) ? world : ''
+  // As agents spell it, which is what the picker offers: the map carries both spellings, and two
+  // names for one world is how a box ends up drawn on no map at all.
+  dimension.value = worldId(handed.dimension)
   from.value = { x: handed.area.west, y: null, z: handed.area.north }
   to.value = { x: handed.area.east, y: null, z: handed.area.south }
 
@@ -853,7 +863,7 @@ async function start(): Promise<void> {
                     <span class="label-text text-xs opacity-50">{{ t('builds.dimension') }}</span>
                     <select v-model="dimension" class="select select-sm w-full">
                       <option value="">{{ t('builds.anyDimension') }}</option>
-                      <option v-for="world in DIMENSIONS" :key="world" :value="world">
+                      <option v-for="world in dimensions" :key="world" :value="world">
                         {{ dimensionLabel(world) }}
                       </option>
                     </select>
@@ -1027,9 +1037,10 @@ async function start(): Promise<void> {
                 </ul>
               </template>
 
-              <!-- Said before anybody presses rather than after: nothing is sent to a host for
-                   this kind of work yet. -->
-              <p class="text-xs opacity-60">{{ t('jobs.notDispatched') }}</p>
+              <!-- Said before anybody presses rather than after, and only where it is true:
+                   a survey is flown, and nothing yet digs. -->
+              <p v-if="digging" class="text-xs opacity-60">{{ t('jobs.notDispatched') }}</p>
+              <p v-else class="text-xs opacity-60">{{ t('region.flownBy', { count: crew.length }) }}</p>
             </div>
           </div>
 

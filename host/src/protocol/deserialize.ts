@@ -100,6 +100,9 @@ function body(name: string, payload: Json): CommandBody {
         type: 'build_segment',
         jobId: num(payload, 'jobId', 'payload.jobId'),
         segmentId: num(payload, 'segmentId', 'payload.segmentId'),
+        // A backend older than the chat commands sends none, which is an agent that cannot name
+        // its job rather than a command it must refuse.
+        ...(typeof payload['name'] === 'string' ? { name: payload['name'] } : {}),
         ticket: str(payload, 'ticket', 'payload.ticket'),
         min: blockPos(payload['min'], 'payload.min'),
         max: blockPos(payload['max'], 'payload.max'),
@@ -108,6 +111,21 @@ function body(name: string, payload: Json): CommandBody {
         // same case: the piece is built in the order everything was built in before it was a
         // choice, rather than the command being refused and the piece going to nobody.
         order: orderFrom(payload['order']),
+      }
+
+    case 'chart_segment':
+      return {
+        type: 'chart_segment',
+        jobId: num(payload, 'jobId', 'payload.jobId'),
+        segmentId: num(payload, 'segmentId', 'payload.segmentId'),
+        ...(typeof payload['name'] === 'string' ? { name: payload['name'] } : {}),
+        min: blockPos(payload['min'], 'payload.min'),
+        max: blockPos(payload['max'], 'payload.max'),
+        columns: num(payload, 'columns', 'payload.columns'),
+        // A survey planned before the flight could climb holds one height, which is what it was
+        // planned as - so an absent flag is level rather than a refused command.
+        rising: payload['rising'] === true,
+        ...(typeof payload['dimension'] === 'string' ? { dimension: payload['dimension'] } : {}),
       }
 
     // Slot numbers are validated where they are acted on rather than here: which squares an

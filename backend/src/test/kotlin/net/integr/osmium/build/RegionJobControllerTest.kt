@@ -181,6 +181,42 @@ class RegionJobControllerTest : AbstractRestTest() {
     }
 
     /**
+     * The website's chat is the other door into the same act.
+     *
+     * A line beginning with a slash is run by the server, so `/tp` takes an agent off the piece it
+     * is holding exactly as sending it somewhere would — and that is refused. Typed in game the
+     * agent refuses it itself; typed in the panel it used to go straight through, which is one rule
+     * with two answers depending on which door it came in by.
+     *
+     * Talking is still talking: the 503 is the absent host connection, which is as far as a message
+     * that passed the guard can get in this test.
+     */
+    @Test
+    fun `a slash command in the website chat is refused while the agent holds a piece`() {
+        val host = reachableHost()
+        val scout = onlineAgent("Scout_01", host)
+        val id = region(name = "the valley", type = "MAP", from = Triple(0, 90, 0), to = Triple(31, 90, 31))
+
+        start(id, listOf(scout.id!!)).andExpect { status { isCreated() } }
+
+        mockMvc.post("/api/agents/${scout.id}/chat") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"/tp 0 100 0"}"""
+        }.andExpect {
+            status { isConflict() }
+        }
+
+        mockMvc.post("/api/agents/${scout.id}/chat") {
+            header(HttpHeaders.AUTHORIZATION, asRole(RoleNames.ORCHESTRATOR))
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"message":"back shortly"}"""
+        }.andExpect {
+            status { isServiceUnavailable() }
+        }
+    }
+
+    /**
      * A plan can be written before anybody has been out to measure it, exactly as a build plan can
      * be saved unplaced. What that costs is the ability to start it, which is checked at the start.
      */

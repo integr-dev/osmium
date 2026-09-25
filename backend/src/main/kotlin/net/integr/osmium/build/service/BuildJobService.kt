@@ -1061,7 +1061,11 @@ class BuildJobService(
         // thing pausing exists to prevent. `resume` sends every held piece out, so the assignment
         // is honoured the moment the job is running again.
         if (job.state == BuildJobState.ACTIVE && dispatched(job)) {
-            send(agent, CommandType.BUILD_SEGMENT) { segment.dispatchPayload(job) }
+            if (job.type == BuildJobType.MAP) {
+                send(agent, CommandType.CHART_SEGMENT) { segment.chartPayload(job) }
+            } else {
+                send(agent, CommandType.BUILD_SEGMENT) { segment.dispatchPayload(job) }
+            }
         }
     }
 
@@ -1091,14 +1095,16 @@ class BuildJobService(
     /**
      * Whether a host is told anything about this job's pieces.
      *
-     * **Only builds, for now.** A host knows how to be handed a box of blocks to place and nothing
-     * else, so an excavation or a mapping job is divided, crewed, scheduled and shown exactly like
-     * a build - and then nothing is sent. Every piece an agent is given simply sits `ASSIGNED`.
+     * **Everything but digging.** A host knows how to be handed a box of blocks to place and how to
+     * fly a footprint until it has been charted; it does not know how to take a hole out of the
+     * world. So an excavation is divided, crewed, scheduled and shown exactly like the other two -
+     * and then nothing is sent, and every piece an agent is given sits `ASSIGNED`.
      *
      * Said as one predicate rather than as a condition at each of the three call sites, because it
-     * is one fact about the host protocol and it will stop being true in one commit.
+     * is one fact about the host protocol and it stops being true one kind at a time.
      */
-    private fun dispatched(job: BuildJob): Boolean = job.type == BuildJobType.BUILD
+    private fun dispatched(job: BuildJob): Boolean =
+        job.type == BuildJobType.BUILD || job.type == BuildJobType.MAP
 
     private fun load(id: Long): BuildJob =
         jobs.findById(id).orElseThrow { NoSuchElementException("No job $id") }
@@ -1206,11 +1212,36 @@ class BuildJobService(
     private fun BuildSegment.dispatchPayload(job: BuildJob): Map<String, Any?> = mapOf(
         "jobId" to job.id,
         "segmentId" to id,
+        // For the agent to say what it is working on when somebody in game asks. See the chat
+        // commands in the host: an agent knows its piece, and this is the only word for the job.
+        "name" to job.name,
         "ticket" to fetchTicket,
         "min" to mapOf("x" to minX, "y" to minY, "z" to minZ),
         "max" to mapOf("x" to maxX, "y" to maxY, "z" to maxZ),
         "blocks" to blocks,
         "order" to placementOrder,
+    )
+
+    /**
+     * What a host needs to chart a piece, which is the box and how to fly it.
+     *
+     * **No ticket.** A survey has nothing to fetch: its whole description is these six numbers, so
+     * unlike a build there is no window in which the piece can be taken back while its body is in
+     * flight. The count travels for the same reason a build's does - so progress has a total.
+     */
+    private fun BuildSegment.chartPayload(job: BuildJob): Map<String, Any?> = mapOf(
+        "jobId" to job.id,
+        "segmentId" to id,
+        // For the agent to say what it is working on when somebody in game asks. See the chat
+        // commands in the host: an agent knows its piece, and this is the only word for the job.
+        "name" to job.name,
+        "min" to mapOf("x" to minX, "y" to minY, "z" to minZ),
+        "max" to mapOf("x" to maxX, "y" to maxY, "z" to maxZ),
+        "columns" to blocks,
+        "rising" to job.rising,
+        // The dimensions share one grid, so a survey that did not say which world it is in could be
+        // finished by an agent that went through a portal.
+        "dimension" to job.dimension,
     )
 
     /**

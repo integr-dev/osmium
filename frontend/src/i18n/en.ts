@@ -184,7 +184,7 @@ export const en = {
     /** How a journey ended. `{goal}` is whole-block coordinates, two of them for a column. */
     path: {
       arrived: '{name} arrived at {goal}.',
-      closest: '{name} found no path to {goal}, so it is walking as close as it can get.',
+      closest: '{name} found no path to {goal}, so it is going as close as it can get.',
       none: '{name} found no path to {goal}.',
       timedOut: '{name} found no path to {goal} before the search ran out of time.',
       noBlocks: '{name} found no path to {goal}: it has no blocks left to build with.',
@@ -229,6 +229,47 @@ export const en = {
     buildingName: 'Building {name}',
     stalled: 'Stalled',
     agentsOnline: 'Agents online',
+    /**
+     * The captions that change with what the fleet is doing.
+     *
+     * **Every figure on this page is a sum across jobs**, so when a crew is raising a tower while
+     * another charts a valley the total is blocks *and* columns, and only `MIXED` is true of it.
+     * One kind of work gets its own words; several get neutral ones. See `oneKind`.
+     */
+    work: {
+      BUILD: {
+        doing: 'Building',
+        doingName: 'Building {name}',
+        count: 'Blocks placed',
+        unit: 'blocks / minute',
+        left: 'Blocks remaining',
+        pieces: '{count} block remaining | {count} blocks remaining',
+      },
+      EXCAVATE: {
+        doing: 'Digging',
+        doingName: 'Digging {name}',
+        count: 'Blocks cleared',
+        unit: 'blocks / minute',
+        left: 'Blocks remaining',
+        pieces: '{count} block remaining | {count} blocks remaining',
+      },
+      MAP: {
+        doing: 'Charting',
+        doingName: 'Charting {name}',
+        count: 'Columns charted',
+        unit: 'columns / minute',
+        left: 'Columns remaining',
+        pieces: '{count} column remaining | {count} columns remaining',
+      },
+      MIXED: {
+        doing: 'Working',
+        doingName: 'Working on {name}',
+        count: 'Work done',
+        unit: 'per minute',
+        left: 'Work remaining',
+        pieces: '{count} left | {count} left',
+      },
+    },
     blocksPlaced: 'Blocks placed',
     throughput: 'Throughput',
     perMinute: 'blocks / minute',
@@ -496,7 +537,7 @@ export const en = {
     walkPlanning: 'Finding a route to {goal}…',
     /** The node count rather than a percentage: a re-plan changes the length, and a percentage
      * that went backwards would read as the agent losing ground it had already walked. */
-    walkMoving: 'Walking to {goal} — {at} of {of}',
+    walkMoving: 'Moving to {goal} — {at} of {of}',
     /** When a host reported a journey without saying where it ends, which an older one may. */
     walkSomewhere: 'somewhere',
     /** A destination that names a column rather than a point. */
@@ -717,6 +758,8 @@ export const en = {
     /** On the summary, where the one thing about a survey that is not its box belongs. */
     flight: 'Flight',
     levelAt: 'Level, at y {y}',
+    /** Where a dig says nothing is sent to a host: a survey is flown for real. */
+    flownBy: 'Flown by {count} agent(s), spaced on what the server sends them.',
     risingAt: 'Rising, from y {y}',
     dimension: 'World',
     strips: 'Strips',
@@ -1147,6 +1190,8 @@ export const en = {
         health: 'Reports its health',
         food: 'Reports its hunger',
         uptime: 'Reports how long it has been connected',
+        job: 'Says what it is working on: the job, the piece it holds, and how far through it is',
+        eta: 'Says how much of its piece is left and roughly how long that will take',
         '8ball': 'Answers a yes-or-no question like a Magic 8-Ball',
         cf: 'Flips a coin',
         roll: 'Rolls a die, six-sided or with as many sides as asked',

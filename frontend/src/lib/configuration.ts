@@ -391,6 +391,8 @@ export const COMMANDS = {
   health: TRUST.chat,
   food: TRUST.chat,
   uptime: TRUST.chat,
+  job: TRUST.chat,
+  eta: TRUST.chat,
   help: TRUST.chat,
   '8ball': TRUST.chat,
   cf: TRUST.chat,

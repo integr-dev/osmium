@@ -275,6 +275,64 @@ describe('what gets charted next', () => {
   })
 })
 
+/**
+ * What a watcher is told, which is not what the backend is sent.
+ *
+ * A tile whose surface has not changed since it was last charted is dropped on the way out — the
+ * backend has it. A survey counting only what went out therefore counted ground it had already read
+ * as missing, flew back for it, read it, dropped it again, and never finished. This is that
+ * distinction, held in a test so it cannot be tidied away.
+ */
+describe('a watcher on the mapper', () => {
+  function mapping(): { seen: MapTile[]; sent: MapTile[]; load: () => void; stop: () => void } {
+    const seen: MapTile[] = []
+    const sent: MapTile[] = []
+    const handlers = new Map<string, (...args: unknown[]) => void>()
+    const columns = new Map<string, Column>([['0,0', flat(64)]])
+
+    const bot = {
+      on: (name: string, handler: (...args: unknown[]) => void) => handlers.set(name, handler),
+      removeListener: () => {},
+      world: {
+        getColumn: (x: number, z: number) => columns.get(`${x},${z}`),
+        getColumnAt: async () => columns.get('0,0') ?? null,
+        unloadColumn: (x: number, z: number) => void columns.delete(`${x},${z}`),
+      },
+      game: { minY: 0, height: 256 },
+      registry: { blocksByStateId: { [STONE]: { name: 'stone' } } },
+      entity: { position: { x: 0, z: 0 } },
+      version: '1.21.4',
+    }
+
+    const mapper = new AgentMap(1, bot as unknown as Bot, (tile) => sent.push(tile), () => 'minecraft:overworld')
+    mapper.watch((tile) => seen.push(tile))
+    mapper.start()
+
+    return {
+      seen,
+      sent,
+      // Loaded and taken away again, which is how a chunk is read without waiting on the queue.
+      load: () => {
+        handlers.get('chunkColumnLoad')?.({ x: 0, z: 0 })
+        bot.world.unloadColumn(0, 0)
+        columns.set('0,0', flat(64))
+      },
+      stop: () => mapper.stop(),
+    }
+  }
+
+  it('is told about a chunk that is read but not worth sending again', () => {
+    const run = mapping()
+
+    run.load()
+    run.load()
+    run.stop()
+
+    expect(run.sent).toHaveLength(1)
+    expect(run.seen).toHaveLength(2)
+  })
+})
+
 describe('worldOf', () => {
   it('drops the namespace, which is not what anything else calls a dimension', () => {
     expect(worldOf({ game: { dimension: 'minecraft:the_nether' } })).toBe('the_nether')

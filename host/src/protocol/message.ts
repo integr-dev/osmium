@@ -56,6 +56,13 @@ export type CommandBody =
       type: 'build_segment'
       jobId: number
       segmentId: number
+      /**
+       * What the job is called, for the agent to say when somebody in game asks what it is doing.
+       *
+       * Optional because a backend older than the chat commands sends none, and an agent that
+       * cannot name its job still builds it — it simply answers without the name.
+       */
+      name?: string
       /** Minted by the act of sending this, and valid from the moment it arrives. */
       ticket: string
       min: BlockPos
@@ -69,7 +76,35 @@ export type CommandBody =
        */
       order?: PlacementOrder
     }
-  /** Stop building that box. Not an error for one already finished or never started: it asks us to
+  /**
+   * Chart this footprint from the air. Fire and forget, answered with `build_progress`.
+   *
+   * **No ticket and nothing to fetch**, unlike `build_segment`: a survey's whole description is
+   * its box, where a build's is a few hundred kilobytes of block states that have to be asked for.
+   */
+  | {
+      type: 'chart_segment'
+      jobId: number
+      segmentId: number
+      /** What the job is called. Optional for the reason a build's is. */
+      name?: string
+      /** The slab, half-open at [max] as every box here is. One block thick: see `RegionPlan`. */
+      min: BlockPos
+      max: BlockPos
+      /** Columns of ground in it, so progress has a total to be read against. */
+      columns: number
+      /** Whether the flight climbs over what is in the way, taking [min]'s height as its floor. */
+      rising: boolean
+      /**
+       * The world the coordinates were read in, as agents spell it.
+       *
+       * Optional, for a backend that predates it. What it buys is a survey that cannot be finished
+       * by an agent that went through a portal: the dimensions share one grid, so the nether would
+       * otherwise chart straight into an overworld footprint.
+       */
+      dimension?: string
+    }
+  /** Stop building or charting that box. Not an error for one already finished or never started: it asks us to
    * stop, which having stopped satisfies. */
   | { type: 'cancel_segment'; jobId: number; segmentId: number }
   /** Move what is in one slot onto another, as a click on each would.

@@ -103,6 +103,10 @@ export function grantLabel(grant: Grant | undefined): string {
  * the session under it. The rest only read, or talk — `say` included, which needs `commands` but
  * does not disrupt: talking does not take a builder off its box.
  *
+ * `job` and `eta` read the piece this agent is holding and nothing else — an agent knows its own
+ * segment and has never been told how many others there are, so they are readings about a box the
+ * way `health` is a reading about a bot.
+ *
  * Ordered by tier, because `help` is rendered in this order and a reader should not have to check
  * each name against the list of what they are allowed.
  *
@@ -114,6 +118,8 @@ export const COMMANDS = {
   health: { args: '', needs: 'chat', disrupts: false },
   food: { args: '', needs: 'chat', disrupts: false },
   uptime: { args: '', needs: 'chat', disrupts: false },
+  job: { args: '', needs: 'chat', disrupts: false },
+  eta: { args: '', needs: 'chat', disrupts: false },
   help: { args: '', needs: 'chat', disrupts: false },
   '8ball': { args: '<question>', needs: 'chat', disrupts: false },
   cf: { args: '', needs: 'chat', disrupts: false },

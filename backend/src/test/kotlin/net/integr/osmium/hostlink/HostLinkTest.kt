@@ -28,6 +28,8 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.web.client.RestClient
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.TextMessage
+import net.integr.osmium.build.repository.BuildJobRepository
+import net.integr.osmium.build.repository.RegionPlanRepository
 import org.springframework.web.socket.WebSocketHttpHeaders
 import org.springframework.web.socket.WebSocketSession
 import org.springframework.web.socket.client.standard.StandardWebSocketClient
@@ -71,6 +73,8 @@ class HostLinkTest {
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var traffic: HostTraffic
     @Autowired private lateinit var usage: HostUsage
+    @Autowired private lateinit var buildJobRepository: BuildJobRepository
+    @Autowired private lateinit var regionRepository: RegionPlanRepository
 
     private lateinit var host: Host
     private lateinit var agent: Agent
@@ -104,6 +108,9 @@ class HostLinkTest {
 
     @AfterEach
     fun cleanUp() {
+        // Before the agents: a job holds its crew, so an agent cannot go while one is still on it.
+        buildJobRepository.deleteAll()
+        regionRepository.deleteAll()
         agentRepository.deleteAll()
         hostRepository.deleteAll()
         userRepository.findByUsername("ws-operator")?.let { userRepository.delete(it) }
@@ -592,6 +599,63 @@ class HostLinkTest {
     // ---- helpers ---------------------------------------------------------------------------
 
     private fun token() = "osm_host_${host.id}_$secret"
+
+    /**
+     * A survey reaches the host as a box and how to fly it, and nothing else.
+     *
+     * **No ticket and no body**, unlike a build: a footprint is six numbers, so there is nothing to
+     * fetch and no window in which the piece can be taken back while its blocks are on their way.
+     * What the host does with it is its own business — see `agent/survey/plan.ts` — but that it
+     * arrives at all, with the count and the flight to read it against, is this contract.
+     */
+    @Test
+    fun `a survey's piece reaches the host as a footprint to fly`() {
+        agent.state = AgentState.ONLINE
+        agent.onlineSince = Instant.now()
+        agentRepository.saveAndFlush(agent)
+
+        val socket = connect(token())
+        socket.send(announce(loginMethods = listOf("device_code")))
+        awaitUntil { hostRepository.findById(host.id!!).orElseThrow().isReachable() }
+
+        val region = RestClient.create()
+            .post()
+            .uri("http://localhost:$port/api/regions")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(
+                """{"name":"the valley","type":"MAP","from":{"x":0,"y":90,"z":0},""" +
+                    """"to":{"x":63,"y":90,"z":63},"rising":true,""" +
+                    """"serverAddress":"mc.example.com","dimension":"overworld"}""",
+            )
+            .retrieve()
+            .body(String::class.java)
+        val regionId: Int = com.jayway.jsonpath.JsonPath.read(region, "$.id")
+
+        RestClient.create()
+            .post()
+            .uri("http://localhost:$port/api/regions/$regionId/jobs")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $jwt")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body("""{"mode":"COLUMNS","agentIds":[${agent.id}]}""")
+            .retrieve()
+            .body(String::class.java)
+
+        awaitUntil { socket.received.any { it.type == CommandType.CHART_SEGMENT } }
+
+        val command = socket.received.first { it.type == CommandType.CHART_SEGMENT }
+        val payload = command.payload!!
+        assertEquals(agent.id, command.agentId)
+        // The slab: one block thick at the height it is flown, which is what a survey's box is.
+        assertEquals(90, payload.get("min").get("y").asInt())
+        assertEquals(91, payload.get("max").get("y").asInt())
+        assertEquals(64 * 64, payload.get("columns").asInt())
+        assertTrue(payload.get("rising").asBoolean())
+        // Nothing to fetch, so nothing that would authorise a fetch.
+        assertFalse(payload.has("ticket"))
+
+        socket.close()
+    }
 
     private fun setup(method: String = "device_code") = RestClient.create()
         .post()

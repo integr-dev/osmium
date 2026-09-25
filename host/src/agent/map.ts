@@ -313,6 +313,20 @@ export class AgentMap {
     private readonly level: () => string | undefined = () => undefined,
   ) {}
 
+  /**
+   * Told about every chunk that is read, including the ones not worth sending.
+   *
+   * **Read and unchanged is still read**, which is the distinction {@link send} does not make: a
+   * tile identical to the one already stored is dropped, because the backend has it. A survey
+   * counting only what went out would therefore count ground it has already charted as missing,
+   * fly back for it, read it, drop it again, and never finish. See `survey/surveyor.ts`.
+   */
+  watch(seen: ((tile: MapTile) => void) | undefined): void {
+    this.seen = seen
+  }
+
+  private seen: ((tile: MapTile) => void) | undefined
+
   start(): void {
     if (this.timer) return
 
@@ -484,6 +498,9 @@ export class AgentMap {
     if (!drawn(tile)) {
       this.tally.empty++
       log.debug(`Agent ${this.agentId} read chunk ${key} as empty, so there is nothing to map`)
+      // Read, and there is nothing in it: a survey has seen this chunk and must not fly back for
+      // a hole in the world that will read empty every time.
+      this.seen?.(tile)
       return
     }
 
@@ -495,6 +512,8 @@ export class AgentMap {
       .update(tile.blocks)
       .update(tile.heights)
       .digest('base64')
+    this.seen?.(tile)
+
     if (this.sent.get(key) === shape) {
       this.tally.same++
       return

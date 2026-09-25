@@ -60,6 +60,8 @@ import {
   movable,
 } from './inventory.ts'
 import { AgentMap, worldOf } from './map.ts'
+import { Surveyor } from './survey/surveyor.ts'
+import { shortly, unitOf, Work } from './work.ts'
 import {
   AgentUtilities,
   antiHungerFrom,
@@ -318,6 +320,17 @@ export class Agent {
   private navigator: AgentNavigator | undefined
   /** The piece being placed, while one is. */
   private printer: Printer | undefined
+
+  /** The flight charting a piece, while one is being charted. The mapping half of {@link printer}. */
+  private surveyor: Surveyor | undefined
+
+  /**
+   * The piece this agent is working on, whichever kind it is, for the chat commands that read it.
+   *
+   * Set where the work starts and cleared where it ends, so "nothing" is the honest answer for an
+   * agent between pieces rather than the last piece it finished, said again an hour later.
+   */
+  private work: Work | undefined
   /** How this agent builds, as the operator set it. Read per pass by the printer. */
   private building: BuildSettings = buildSettingsFrom({})
   /** Where the printer last asked to be, so the same request twice does not re-plan a route. */
@@ -509,10 +522,21 @@ export class Agent {
         })
         return
 
+      // Started rather than awaited, for the reason a build is: a survey is a flight of minutes.
+      case 'chart_segment':
+        this.segments.add(command.segmentId)
+        void this.chart(command).catch((err) => {
+          log.warn(`Agent ${this.id} fell over charting segment ${command.segmentId}: ${reason(err)}`)
+        })
+        return
+
       // Not an error for a piece already finished or never started: it asks us to stop, which
       // having stopped satisfies.
       case 'cancel_segment':
-        if (this.segments.has(command.segmentId)) this.printer?.stop()
+        if (this.segments.has(command.segmentId)) {
+          this.printer?.stop()
+          this.surveyor?.stop()
+        }
         this.segments.delete(command.segmentId)
         return
 
@@ -1350,10 +1374,29 @@ export class Agent {
       return
     }
 
-    // Silently, like every other refusal here. Somebody trusted enough to send this is somebody who
-    // will see the agent standing on a half-built wall and work out why; answering would announce
-    // to the room that the account is a bot with work queued.
-    if (disruptsBuilding(command.name) && this.busy(`${command.name} from ${speaker ?? 'chat'}`)) return
+    /*
+     * Said, not swallowed.
+     *
+     * This used to refuse silently, on the reasoning that answering would announce to the room that
+     * the account is a bot with work queued — which an agent that answers `id` and `health` in the
+     * same chat has already announced. What the silence actually produced was a command that looks
+     * broken: somebody with the permission types `run`, nothing happens, nothing is logged where
+     * they can see it, and the natural conclusion is that their access is gone.
+     *
+     * It answers the way the question came, like every other reading, and names the piece — which
+     * is also what `job` would tell them if they asked.
+     */
+    if (disruptsBuilding(command.name) && this.busy(`${command.name} from ${speaker ?? 'chat'}`)) {
+      const work = this.work
+      this.answer(
+        work
+          ? `Agent ${this.id} is on piece ${work.segmentId} and cannot do that until it is finished`
+          : `Agent ${this.id} is on a job and cannot do that until it is finished`,
+        // The same rule the answers below follow, worked out here because this one comes first.
+        direct ? speaker : undefined,
+      )
+      return
+    }
 
     log.info(`Agent ${this.id} was told to ${command.name} by ${speaker}`)
 
@@ -1413,6 +1456,57 @@ export class Agent {
       case 'uptime': {
         const since = this.session?.joinedAt
         this.answer(since ? `Agent ${this.id} in game for ${lasted(since)}` : `Agent ${this.id} has just arrived`, back)
+        return
+      }
+
+      /*
+       * What this agent is working on, which is **its own piece** and not the job.
+       *
+       * An agent is handed one segment and is never told how many others there are or how they are
+       * getting on, so a bot answering for the job would be answering for forty boxes it has never
+       * heard of. The wording says "piece" for that reason, and the name is the job's because that
+       * is the word an operator used and the one they will recognise.
+       */
+      case 'job': {
+        const work = this.work
+        if (!work) {
+          this.answer(`Agent ${this.id} is on nothing right now`, back)
+          return
+        }
+
+        const doing = work.kind === 'build' ? 'building' : 'charting'
+        const named = work.name ? ` '${work.name}'` : ''
+        this.answer(
+          `Agent ${this.id} ${doing}${named}: piece ${work.segmentId}, ` +
+            `${unitOf(work.kind, work.done)} of ${work.total.toLocaleString('en-GB')} (${work.percent}%)`,
+          back,
+        )
+        return
+      }
+
+      /*
+       * What is left of it and how long that looks like taking, measured rather than assumed.
+       *
+       * **No estimate is offered where there is nothing to base one on.** A piece that has just
+       * started, or one that has stopped moving, gets the count and no time — an agent confidently
+       * saying "3 minutes" for the rest of the afternoon is the reading that gets acted on when it
+       * should have been investigated. See `work.ts`.
+       */
+      case 'eta': {
+        const work = this.work
+        if (!work) {
+          this.answer(`Agent ${this.id} is on nothing right now`, back)
+          return
+        }
+
+        const left = `${unitOf(work.kind, work.left)} left on piece ${work.segmentId}`
+        const eta = work.etaMs
+        this.answer(
+          eta === null
+            ? `Agent ${this.id}: ${left}, too early to say how long`
+            : `Agent ${this.id}: ${left}, about ${shortly(eta)}`,
+          back,
+        )
         return
       }
 
@@ -1793,6 +1887,8 @@ export class Agent {
     // Cancelled, or the session ended, while the blocks were on their way.
     if (!this.segments.has(command.segmentId) || this.bot !== bot) return
 
+    this.work = new Work('build', command.name ?? '', command.segmentId, command.blocks)
+
     const order = command.order ?? DEFAULT_ORDER
     this.activity(
       ActivityScope.System,
@@ -1817,6 +1913,7 @@ export class Agent {
       outcome = 'failed' as const
     } finally {
       if (this.printer === printer) this.printer = undefined
+      if (this.work?.segmentId === command.segmentId) this.work = undefined
       // **The journey belongs to the printer, and the printer has finished.** Nothing else ever
       // asked for it: it is the last square the printer steered to, and left standing it has the
       // agent flying on to a block that is not going to be placed, holding a goal an operator can
@@ -1932,10 +2029,106 @@ export class Agent {
   }
 
 
+  /**
+   * Charts a piece: flies its footprint until every chunk of it has been read, and says how far.
+   *
+   * **Reported, never answered**, exactly as a build is, and for the same reason — the command
+   * carries no result channel, so a flight that cannot be made has to say so as progress or nobody
+   * is told at all.
+   *
+   * Nothing is fetched first. A survey's whole description arrives in the command, so unlike a
+   * build there is no window in which the piece can be taken back while its body is on its way.
+   */
+  private async chart(command: Extract<CommandBody, { type: 'chart_segment' }>): Promise<void> {
+    const bot = this.bot
+    if (!bot?.entity) {
+      log.warn(`Agent ${this.id} was given survey ${command.segmentId} while not in a world`)
+      this.segments.delete(command.segmentId)
+      this.progress(command.segmentId, { state: BuildState.Failed, reason: 'not in a world' })
+      return
+    }
+
+    const box = {
+      west: command.min.x,
+      east: command.max.x,
+      north: command.min.z,
+      south: command.max.z,
+    }
+
+    this.activity(
+      ActivityScope.System,
+      Severity.Info,
+      `Charting ${command.columns} columns, ${command.rising ? 'rising over what is in the way' : `level at y ${command.min.y}`}`,
+    )
+    this.progress(command.segmentId, { state: BuildState.Building, blocksPlaced: 0 })
+
+    this.work = new Work('survey', command.name ?? '', command.segmentId, command.columns)
+
+    const surveyor = new Surveyor(this.id, box, command.min.y, command.rising, viewChunks(bot), {
+      steer: (to) => this.headTo(to),
+      progress: (columns) => this.progress(command.segmentId, { blocksPlaced: columns }),
+      tell: (text, bad) => this.activity(ActivityScope.System, bad ? Severity.Error : Severity.Info, text),
+      at: () => this.bot?.entity?.position,
+    }, command.dimension ?? '')
+    this.surveyor = surveyor
+
+    let outcome
+    try {
+      outcome = await surveyor.run()
+    } catch (err) {
+      log.warn(`Agent ${this.id} fell over charting segment ${command.segmentId}: ${reason(err)}`)
+      outcome = 'failed' as const
+    } finally {
+      if (this.surveyor === surveyor) this.surveyor = undefined
+      if (this.work?.segmentId === command.segmentId) this.work = undefined
+      // The journey was the survey's, and the survey has finished: left standing it has the agent
+      // flying on to a line nobody wants read any more.
+      this.heading = undefined
+      this.navigator?.halt()
+    }
+
+    this.segments.delete(command.segmentId)
+    if (outcome === 'stopped') return
+
+    if (outcome === 'done') {
+      this.progress(command.segmentId, { state: BuildState.Done, blocksPlaced: surveyor.columns })
+      this.activity(ActivityScope.System, Severity.Info, `Charted ${command.columns} columns`)
+      return
+    }
+
+    // As a count, for the reason a build says one: the difference between a few columns short and
+    // most of the strip is the difference between looking at it and starting again.
+    const short = command.columns - surveyor.columns
+    this.progress(command.segmentId, {
+      state: BuildState.Failed,
+      blocksPlaced: surveyor.columns,
+      reason: `${short} column(s) unread`,
+    })
+    this.activity(ActivityScope.System, Severity.Error, `Stopped charting with ${short} columns unread`)
+  }
+
+  /** Sends the agent to a point in the air, holding the height the survey asked for. */
+  private headTo(to: { x: number; y: number; z: number }): void {
+    const navigator = this.navigator
+    if (!navigator) return
+
+    const key = `${to.x},${to.y},${to.z}`
+    if (key === this.heading) return
+    this.heading = key
+
+    navigator.goto([{ x: to.x, y: to.y, z: to.z }])
+  }
+
   private progress(
     segmentId: number,
     what: { blocksPlaced?: number; state?: BuildState; reason?: string },
   ): void {
+    // The same count the backend is given, so what an agent says in chat and what the job card
+    // shows cannot come apart. See `work.ts`.
+    if (what.blocksPlaced !== undefined && this.work?.segmentId === segmentId) {
+      this.work.note(what.blocksPlaced)
+    }
+
     this.hooks.event({ type: 'build_progress', agentId: this.id, segmentId, ...what })
   }
 
@@ -2015,6 +2208,10 @@ export class Agent {
       (tile) => this.hooks.event({ type: 'map_tile', agentId: this.id, tile }),
       () => this.level,
     )
+    // Every chunk the mapper *reads*, not every tile it sends: a chunk whose surface has not
+    // changed since it was last charted is dropped on the way out, and a survey that counted only
+    // what went out would fly back for ground it had already read. See `AgentMap.watch`.
+    this.mapper.watch((tile) => this.surveyor?.saw(tile))
     this.mapper.start()
   }
 
@@ -3324,4 +3521,25 @@ export function lasted(since: number): string {
   if (minutes < 120) return `${minutes} minutes`
 
   return `${Math.round(minutes / 60)} hours`
+}
+
+/**
+ * How far this session is sent chunks, in chunks.
+ *
+ * The lesser of what we asked for and what the server allows, because either can be the binding
+ * one: a client asking for 32 on a server that sends 8 is sent 8, and the flight lines of a survey
+ * are spaced on what actually arrives. Mineflayer's own default is `far`, which is 12.
+ */
+export function viewChunks(bot: { settings?: { viewDistance?: number | string }; game?: unknown }): number {
+  const named: Record<string, number> = { far: 12, normal: 10, short: 8, tiny: 6 }
+  const asked = bot.settings?.viewDistance
+  const ours = typeof asked === 'number' ? asked : named[String(asked)] ?? 12
+  // Set from the login packet and not declared, which is why it is read rather than typed: see
+  // `lib/plugins/game.js` in mineflayer. A server that never sends it leaves what we asked for.
+  const theirs = (bot.game as { serverViewDistance?: number } | undefined)?.serverViewDistance
+
+  const seen = typeof theirs === 'number' && theirs > 0 ? Math.min(ours, theirs) : ours
+  // A server can say anything; a survey planned on a silly number flies lines that miss the ground
+  // between them, which is the one failure this arithmetic exists to prevent.
+  return Math.min(32, Math.max(2, Math.floor(seen)))
 }

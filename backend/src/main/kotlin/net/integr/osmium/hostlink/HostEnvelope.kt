@@ -122,7 +122,22 @@ object CommandType {
     const val BUILD_SEGMENT = "build_segment"
 
     /**
-     * Stop building that box: `{ "segmentId": 31 }`.
+     * Chart that footprint from the air:
+     * `{ "jobId": 4, "segmentId": 31, "min": {...}, "max": {...}, "columns": 65536, "rising": true }`.
+     *
+     * **No ticket, and nothing for the host to fetch.** A survey's whole description is its box,
+     * where a build's is the block states this command's ticket buys. What the host does with it
+     * is fly the footprint until the map reader it already runs has read every chunk of it — see
+     * `agent/survey/plan.ts` in the host, where the view distance decides the spacing.
+     *
+     * `rising` says the height is a floor rather than an altitude: the crew climbs over what is in
+     * the way and settles back to it. Fire and forget, answered as `build_progress` with the
+     * columns charted in place of blocks placed.
+     */
+    const val CHART_SEGMENT = "chart_segment"
+
+    /**
+     * Stop building or charting that box: `{ "segmentId": 31 }`.
      *
      * Sent when a segment is taken back and when its job is paused or deleted. Without it a host
      * goes on placing blocks nobody wants - a paused job that keeps building is the one outcome
@@ -201,6 +216,7 @@ object CommandType {
         SET_VIEWER,
         SETTINGS,
         BUILD_SEGMENT,
+        CHART_SEGMENT,
         CANCEL_SEGMENT,
         INVENTORY_MOVE,
         INVENTORY_DROP,

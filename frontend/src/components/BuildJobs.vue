@@ -543,10 +543,11 @@ function dismiss(job: BuildJob, agentId: number, label: string) {
           -->
           <p class="min-h-4 text-xs">
             <!--
-              Said first, because it explains a bar that is not going to move: the pieces are cut and
-              handed out, and no host yet knows what to do with one that is not a box of blocks.
+              Said first, because it explains a bar that is not going to move: a digging job's
+              pieces are cut and handed out, and no host knows how to take a hole out of the world.
+              Building and charting are both flown for real.
             -->
-            <span v-if="job.type !== 'BUILD' && job.state === 'ACTIVE'" class="opacity-60">
+            <span v-if="job.type === 'EXCAVATE' && job.state === 'ACTIVE'" class="opacity-60">
               {{ t('jobs.notDispatched') }}
             </span>
             <span v-else-if="job.state === 'ACTIVE' && summary.waiting.length" class="text-warning">
