@@ -131,6 +131,21 @@ const SETTLE = 400
 const TICK = 200
 
 /**
+ * How long an empty window is given to turn out not to be empty.
+ *
+ * **A window that has not arrived reads exactly like one with nothing in it.** This is rebuilt on
+ * every respawn and every dimension change — the world under the agent is new, so the watchers over
+ * it are — and for a moment after that the client's copy of the inventory is empty while the server
+ * resends it. Reporting in that moment says "carrying nothing", which is then what the screen shows
+ * until something happens to move an item: on a server that bounces an agent between worlds, that
+ * is an inventory that reads empty almost always.
+ *
+ * So an empty first report waits this long for the window. A genuinely empty inventory is reported
+ * when the grace runs out, which costs an agent carrying nothing two seconds of saying nothing.
+ */
+const WINDOW_GRACE = 2000
+
+/**
  * Follows one agent's inventory and reports it when it changes.
  *
  * Deduplicated by digest rather than by trusting the events: `updateSlot` fires on every window
@@ -140,6 +155,12 @@ const TICK = 200
 export class AgentInventory {
   /** When the last slot change came in, or 0 when nothing is waiting to be reported. */
   private touched = 0
+
+  /** When this watcher started, for the grace an empty window is given. See {@link WINDOW_GRACE}. */
+  private since = 0
+
+  /** Whether anything has gone out this session, which is what makes the grace a *first* report. */
+  private spoken = false
 
   /** A digest of what was last sent, so an unchanged inventory is read but not resent. */
   private sent: string | undefined
@@ -166,6 +187,8 @@ export class AgentInventory {
 
     // Reported at once rather than on the first change. An agent that joins with a full inventory
     // and then stands still would otherwise show an empty one for as long as it stands there.
+    this.since = Date.now()
+    this.spoken = false
     this.touched = Date.now() - SETTLE
 
     log.debug(`Agent ${this.agentId} is reporting its inventory`)
@@ -197,9 +220,25 @@ export class AgentInventory {
       return
     }
 
+    // An empty window early in a session is a window that has not arrived yet — see
+    // {@link WINDOW_GRACE}. Asked for again, so the report goes the moment the grace is up.
+    if (!this.spoken && inventory.slots.length === 0 && Date.now() - this.since < WINDOW_GRACE) {
+      this.touched = Date.now() - SETTLE
+      return
+    }
+
     const shape = createHash('sha1').update(JSON.stringify(inventory)).digest('base64')
     if (this.sent === shape) return
     this.sent = shape
+    this.spoken = true
+
+    // What went out, by square. An item an operator can see in game and not on the screen is a
+    // question about which of the two ends dropped it, and this is the only place that can answer.
+    log.debug(
+      `Agent ${this.agentId} inventory: ` +
+        (inventory.slots.map((item) => `${item.slot}=${item.name}x${item.count}`).join(' ') || 'empty') +
+        `, holding ${inventory.held}`,
+    )
 
     this.send(inventory)
   }
