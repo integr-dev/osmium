@@ -9,6 +9,7 @@ import {
   sameSubstitutions,
   quarterOf,
   toWorld,
+  worldChoices,
   type Substitution,
 } from './placement'
 
@@ -312,5 +313,39 @@ describe('placeBox', () => {
       expect(whole.max.x - whole.min.x, `turn ${turn}`).toBe(odd ? 1 : 4)
       expect(whole.max.z - whole.min.z, `turn ${turn}`).toBe(odd ? 4 : 1)
     }
+  })
+})
+
+/**
+ * What a plan's world picker offers.
+ *
+ * The three vanilla worlds are a floor, not the list: a server running Multiverse has as many as
+ * its operators made, and the fleet standing in one is the only evidence Osmium has of it.
+ */
+describe('the worlds a plan may be placed in', () => {
+  it('always offers the three every server has', () => {
+    expect(worldChoices([], '')).toEqual(['overworld', 'the_nether', 'the_end'])
+  })
+
+  it('adds the worlds the fleet is standing in, once each', () => {
+    expect(worldChoices(['skyblock', 'overworld', 'skyblock'], '')).toEqual([
+      'overworld',
+      'the_nether',
+      'the_end',
+      'skyblock',
+    ])
+  })
+
+  /** A saved plan whose world the fleet has since left reads as blank without this. */
+  it("keeps the plan's own world when nobody is in it", () => {
+    expect(worldChoices([], 'resource_2026')).toContain('resource_2026')
+  })
+
+  /** Two spellings of one world are two options: a select matches the value it was given. */
+  it('does not fold a namespaced spelling into the bare one', () => {
+    const choices = worldChoices([], 'minecraft:overworld')
+
+    expect(choices).toContain('minecraft:overworld')
+    expect(choices).toContain('overworld')
   })
 })

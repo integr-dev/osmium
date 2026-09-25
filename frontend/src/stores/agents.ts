@@ -919,6 +919,24 @@ export const useAgentStore = defineStore('agents', () => {
     return agents.value.filter((agent) => agent.hostId === hostId)
   }
 
+  /**
+   * The worlds the fleet is standing in on one server, as agents spell them.
+   *
+   * What a server has is whatever its operators made, so this is the only list of a server's
+   * worlds Osmium can honestly offer without asking the server: a picker built from a constant
+   * knows the vanilla three and cannot name a Multiverse world at all. The map builds its own
+   * list the same way; the plan pickers add the vanilla three on top, because a plan is often
+   * written before anybody has walked anywhere.
+   */
+  function worldsOn(server: string): string[] {
+    if (!server) return []
+    const seen = new Set<string>()
+    for (const agent of agents.value) {
+      if (agent.serverAddress === server && agent.telemetry?.dimension) seen.add(agent.telemetry.dimension)
+    }
+    return [...seen]
+  }
+
   // ---- commands ------------------------------------------------------------------------------
 
   /**
@@ -1205,6 +1223,7 @@ export const useAgentStore = defineStore('agents', () => {
     byId,
     hostById,
     agentsOnHost,
+    worldsOn,
     enrolHost,
     renameHost,
     rotateHostToken,

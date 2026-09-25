@@ -58,6 +58,31 @@ export function quarterOf(degrees: number | null | undefined): Quarter {
 export const DIMENSIONS = ['overworld', 'the_nether', 'the_end'] as const
 
 /**
+ * The worlds a plan may be placed in: the three every server has, whatever the fleet is standing
+ * in, and whatever the plan already says.
+ *
+ * **Three is what vanilla has, not what a server has.** Anything running Multiverse has however
+ * many worlds its operators made, and a picker offering three of them cannot name where a plan
+ * goes — which is the same reason the map builds its own list from what agents report rather than
+ * from a constant. The three stay first because a plan is often written before anybody has walked
+ * anywhere, and a world nobody is in right now is still somewhere to plan for.
+ *
+ * [current] is kept whatever it is. A saved plan naming a world the fleet has since left would
+ * otherwise come back to a picker with no option for it, and reading as blank is how a plan
+ * quietly changes world.
+ *
+ * Deduplicated on the exact spelling, which is how a select matches its value: `overworld` and
+ * `minecraft:overworld` are the same world to {@link worldId} and two different options here,
+ * because one of them is what the row actually holds.
+ */
+export function worldChoices(reported: readonly string[], current: string): string[] {
+  const known = new Set<string>(DIMENSIONS)
+  for (const world of reported) if (world) known.add(world)
+  if (current) known.add(current)
+  return [...known]
+}
+
+/**
  * The lowest block each world has.
  *
  * Where a survey that climbs starts from: it rises over whatever is in its way, so beginning at

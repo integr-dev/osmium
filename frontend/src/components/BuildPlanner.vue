@@ -18,12 +18,12 @@ import { blockColour } from '../lib/blockColours'
 import { blockId, blockName } from '../lib/blockNames'
 import {
   blocksToPlace,
-  DIMENSIONS,
   offsetOf,
   plannedMaterials,
   QUARTERS,
   quarterOf,
   sameSubstitutions,
+  worldChoices,
   worldId,
   type Quarter,
   type Substitution,
@@ -103,12 +103,15 @@ const servers = computed(() => {
   return [...known].sort()
 })
 
-/** The three worlds every server has, and the plan's own if it names another. */
-const dimensions = computed(() => {
-  const known = new Set<string>(DIMENSIONS)
-  if (dimension.value) known.add(dimension.value)
-  return [...known]
-})
+/**
+ * The worlds worth offering: the three every server has, the ones the fleet is standing in on
+ * this server, and the plan's own if it names another — see `worldChoices`.
+ *
+ * Read off the agents rather than from a constant, for the reason the map reads its own list that
+ * way: a server running Multiverse has as many worlds as its operators made, and a picker that
+ * knows three of them cannot say where the plan goes.
+ */
+const dimensions = computed(() => worldChoices(agentStore.worldsOn(server.value), dimension.value))
 
 /**
  * A rule as the fields hold it, where an empty replacement means "place nothing".
