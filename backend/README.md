@@ -1457,6 +1457,13 @@ a second box, because nothing else about the work changes: same slab, same split
 Only `MAP` may carry it; the service drops it on an excavation rather than storing something no
 reader would honour, since a hole is dug out and not flown over.
 
+**A survey is dispatched; a dig is not.** `chart_segment` hands a host the box, the count, the
+world and whether the flight climbs — no ticket and nothing to fetch, because a footprint is six
+numbers where a build's body is a few hundred kilobytes of block states. Progress comes back on the
+same `build_progress` event with columns in place of blocks. An excavation is still divided,
+crewed, scheduled and drawn like the other two and then nothing is sent: no host knows how to take
+a hole out of the world.
+
 It is **pinned onto the job** beside the box, for the reason everything else about a job is pinned:
 how a crew already in the air is flying is not something an edit to the plan may change under it.
 

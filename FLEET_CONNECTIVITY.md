@@ -418,6 +418,14 @@ across the top level**.
                "max": { "x": 160, "y": 96, "z": -308 },
                "blocks": 20431, "order": "y+z+x+s" } }
 
+// a survey: no ticket and nothing to fetch, because a footprint is six numbers rather than a few
+// hundred kilobytes of block states. `rising` makes the height a floor the flight climbs above
+{ "kind": "command", "type": "chart_segment", "agentId": 42,
+  "payload": { "jobId": 9, "segmentId": 44, "name": "the valley", "dimension": "overworld",
+               "min": { "x": 0, "y": 90, "z": 0 },
+               "max": { "x": 512, "y": 91, "z": 512 },
+               "columns": 262144, "rising": true } }
+
 // host-scoped, so no agentId. `traffic` is optional: bytes every agent has sent to and received
 // from its server since the host started. Running totals, so a missed heartbeat loses nothing.
 { "kind": "event", "type": "heartbeat",
@@ -1138,10 +1146,15 @@ The line is **corrupts**, not **interrupts**:
 | Allowed while building | Why |
 |---|---|
 | `disconnect`, `delete_agent` | Stopping cleanly. The segment goes back to the pool and somebody else takes it, and an operator pressing it has decided to stop with the state in front of them. |
-| `chat`, `set_chat_listener`, `set_viewer` | Reading and talking. Neither moves the agent nor touches what it holds — and somebody watching a build is exactly who needs the viewer working. |
+| `chat` (talk), `set_chat_listener`, `set_viewer` | Reading and talking. Neither moves the agent nor touches what it holds — and somebody watching a build is exactly who needs the viewer working. |
 | `settings` | Configuration, applied by the host when it next matters. |
-| `build_segment`, `cancel_segment` | The build system itself. |
+| `build_segment`, `chart_segment`, `cancel_segment` | The work system itself. |
 | `setup_agent`, `connect` | Cannot reach an agent that is already in the game. |
+
+**A slash is not talk.** A message typed into the website's chat that begins with `/` is run by
+the server, so `/tp` takes a builder off its box exactly as `path_to` would — and it is refused on
+the same rule, with the piece named. Talking goes through untouched. Without that, one act had two
+answers depending on which door it came in by: the agent refused it in game and the panel sent it.
 
 **The host enforces it again, and not out of distrust.** Chat commands never pass through the
 backend at all, so for those it is the only guard there is — and a host that assumes the far side

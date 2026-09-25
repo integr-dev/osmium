@@ -275,7 +275,13 @@ drawn here:
   one beneath it; it digs from the top down, so a piece waits for the one *above* it. Same rule,
   read the other way. The order defaults to `y-z+x+` for the same reason — a bot that starts at the
   floor of a hole is standing under everything it has left to take out.
-- **A survey is flat.** Its box is one block thick at the height its agents fly, so the corners ask
+- **The world picker offers what the server has.** Three is what vanilla has, not what a server has:
+anything running Multiverse has as many worlds as its operators made, and a picker built from a
+constant cannot name where a plan goes. `worldChoices` adds the worlds the fleet is standing in on
+the chosen server — the same evidence the map builds its own list from — and always keeps the plan's
+own, so a saved plan whose world the fleet has since left does not come back reading blank.
+
+**A survey is flat.** Its box is one block thick at the height its agents fly, so the corners ask
   for X and Z and the height is a field of its own. That keeps one shape for every box: a piece, a
   blocker and a drawn box mean the same thing whichever tab made them.
 - **And it can climb.** A flat flight is only flat where the ground is: charting a valley at the
@@ -288,10 +294,17 @@ drawn here:
   typed is theirs and is left alone. The box does not change: still one block thick, still split
   and drawn exactly as before.
 
-**Nothing is dispatched for either yet.** A host knows how to be handed a box of blocks to place and
-nothing else, so an excavation's pieces are cut, crewed, assigned — and then sit there. The split
-step and the job card both say so, before the button and after it, rather than leaving somebody
-watching a bar that will not move.
+**A survey is flown; a dig is not dispatched.** A host knows how to be handed a box of blocks to
+place, and how to fly a footprint until it has been charted. It does not know how to take a hole out
+of the world, so an excavation's pieces are cut, crewed, assigned — and then sit there. The split
+step and the job card say so for that kind only, rather than leaving somebody watching a bar that
+will not move.
+
+**The dashboard says what the fleet is actually doing.** Every figure there is a sum across jobs, so
+the captions follow the kind: *Charting the valley*, **Columns charted**, *columns / minute*. A
+fleet doing more than one kind at once gets neutral words rather than one kind's — the total really
+is blocks *and* columns, and "Blocks placed" over it would be false. `oneKind` in
+`lib/jobKinds.ts` is that distinction, and it is null for a mix as well as for nothing at all.
 
 ### What kind of work it is, in colour
 
@@ -760,6 +773,10 @@ Two rules that both exist so a grant is never widened by accident:
 The command table is duplicated from the host, which is the authority — a host is a separate program
 and may be newer. What that costs is a list that can go stale; what it buys is a picker that can
 show names and descriptions at all.
+
+`job` and `eta` are on the chat tier beside `uptime`, because they only read: what the agent is
+working on, and what is left of the piece it holds. A player on an explicit list does not get them
+until somebody ticks them — which is the point of storing the set rather than a tier.
 
 ### The pattern box highlights what it is
 

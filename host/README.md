@@ -1137,6 +1137,29 @@ before anybody opens it. Both come off the same world your agent is already walk
 
 One pixel per block column — vanilla's zoom zero — so a chunk is exactly a 16×16 tile.
 
+**A survey is a flight, not a reader.** Because this runs for the whole session, a `chart_segment`
+job does not read anything itself — it arranges to *be sent* ground, and the reader above does the
+rest. That makes the view distance the whole of the arithmetic (`agent/survey/plan.ts`):
+
+- a stationary agent has already charted a square `2r + 1` chunks across, so lines are flown `2r`
+  apart and the ground between them is covered exactly once;
+- `r` is one chunk short of what the server claims. The outermost ring arrives last and leaves
+  first, and counting on it is how a survey comes back striped;
+- line ends stop `r` short of the edge, because the chunks beyond were sent while the agent was
+  still approaching;
+- lines run along the longer side, since every turn is a stop and a restart, and the sweep snakes so
+  each line begins where the last ended.
+
+**What counts as charted is what the reader read, not what it sent.** A tile whose surface has not
+changed since it was last charted is dropped on the way out — the backend has it — so a survey
+counting only what went out counted ground it had already read as missing, flew back for it, read
+it, dropped it again, and never finished. `AgentMap.watch` reports every chunk read, sent or not.
+
+Whatever the plan still misses — a chunk that came and went while the agent turned — is flown to
+afterwards, nearest first from where the agent actually is, twice per chunk before that chunk is
+given up on. Short after that and the piece fails with the count rather than claiming a map with
+holes in it.
+
 ```jsonc
 { "kind": "event", "type": "map_tile", "agentId": 42,
   "payload": { "x": 24, "z": -7, "dimension": "overworld",
@@ -1395,10 +1418,33 @@ Ordering within a reconnect replay is preserved by row id, so replaying a buffer
 An agent can be told to do things from inside the game:
 
 ```
-!osm [account] id | ping | health | food | uptime | help                   trusted for chat
+!osm [account] id | ping | health | food | uptime | job | eta | help      trusted for chat
 !osm [account] 8ball <question> | cf | roll [sides]                         trusted for chat
 !osm [account] say <message> | run <command> | disconnect | reconnect        trusted for commands
 ```
+
+**`job` and `eta` read the piece this agent is holding**, and are worded that way on purpose. An
+agent is handed one segment and is never told how many others exist or how they are getting on, so
+a bot answering for the job would be answering for forty boxes it has never heard of:
+
+```
+Agent 27 building 'north tower': piece 12, 1,204 blocks of 4,096 (29%)
+Agent 27: 2,892 blocks left on piece 12, about 24m
+```
+
+The estimate is **measured, not assumed** — see `agent/work.ts`. The rate comes from the same
+counts that go to the backend, so what an agent says in chat and what the job card shows cannot
+come apart, and it is the rate over the last two minutes rather than the average since the piece
+started: an agent that spent ten minutes stuck and is now placing steadily has an average that
+describes neither. Two cases give the count and no time — a piece too new to have a rate, and one
+that has stopped moving. "About 3 minutes" for the rest of the afternoon is the answer that gets
+acted on when it should have been investigated.
+
+**A disrupting command while a piece is held is refused out loud.** `run`, `goto`, `disconnect` and
+`reconnect` are refused while the agent holds a segment; that refusal used to be silent, on the
+reasoning that answering would announce the account is a bot — which an agent that answers `id` in
+the same chat has already done. What the silence actually produced was a command that looks broken
+to somebody who has the permission. It now names the piece, the way `job` would.
 
 Naming an account addresses one agent — `@name` works too. Leaving it out addresses every agent that
 heard the line. `help` is generated from the command table and **filtered to the asker's tier**, so a
