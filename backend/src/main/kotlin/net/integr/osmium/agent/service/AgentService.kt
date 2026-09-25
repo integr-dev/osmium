@@ -461,6 +461,9 @@ class AgentService(
     fun chat(id: Long, request: ChatRequest): AgentResponse {
         val agent = require(id)
         check(agent.state == AgentState.ONLINE) { "'${agent.label}' is not online" }
+        // A slash is a server command rather than something to say, so it goes through the guard
+        // that stops an agent being walked off a piece it is holding. Talking is still talking.
+        if (isServerCommand(request.message)) refuseWhileHolding(agent)
         // Before dispatch: a refused message never reaches Minecraft, and because the audit entry
         // is written in the same transaction, it leaves no trace of having been said.
         chatRateLimiter.check(agentId = id, agentLabel = agent.label)
@@ -661,13 +664,32 @@ class AgentService(
      * Holding a segment is the condition, not "the job is running": a job with work left but
      * nothing assigned to this agent is a job this agent is not in the middle of.
      */
+    /**
+     * Whether a line typed at an agent is a command for the server rather than something to say.
+     *
+     * Leading blanks trimmed, because a space before the slash changes nothing about what the
+     * server does with it.
+     */
+    private fun isServerCommand(message: String): Boolean = message.trimStart().startsWith("/")
+
     private fun refuseIfBuilding(agent: Agent, type: String) {
         if (type !in CommandType.DISRUPTS_BUILDING) return
+        refuseWhileHolding(agent)
+    }
 
+    /**
+     * The rule itself: an agent in the middle of a piece does not take orders that move it.
+     *
+     * Separate from [refuseIfBuilding] because one caller is not a command type. A message typed
+     * into the website's chat that begins with a slash is **not talk** - the server runs it, and a
+     * `/tp` takes a builder off its box exactly as `path_to` would. The same rule the agent applies
+     * to `osm run` typed in game, applied to the same act arriving by the other door.
+     */
+    private fun refuseWhileHolding(agent: Agent) {
         val agentId = agent.id ?: return
         val holding = buildJobs.segmentsHeldBy(agentId)
         check(holding.isEmpty()) {
-            "'${agent.label}' is building ${holding.joinToString(", ")} and cannot be interrupted"
+            "'${agent.label}' is working piece ${holding.joinToString(", ")} and cannot be interrupted"
         }
     }
 
