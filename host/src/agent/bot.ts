@@ -62,7 +62,16 @@ import {
 import { AgentMap, worldOf } from './map.ts'
 import { Surveyor } from './survey/surveyor.ts'
 import { shortly, unitOf, Work } from './work.ts'
-import { ATTEMPTS, candidates, nextVersion, VersionMemory } from './versions.ts'
+import {
+  ATTEMPTS,
+  candidates,
+  explainMismatch,
+  mismatched,
+  nextVersion,
+  PROVEN_MS,
+  VersionMemory,
+  whyFellBack,
+} from './versions.ts'
 import {
   AgentUtilities,
   antiHungerFrom,
@@ -340,6 +349,23 @@ export class Agent {
    * played on starts again from what is known, and only a search still in progress carries a list.
    */
   private tried: string[] = []
+
+  /**
+   * Counting down to believing the version this session is speaking. See [PROVEN_MS].
+   *
+   * Cleared with the session, so a session that ends before it fires teaches the memory nothing -
+   * which is the point: what ended it may well have been the version.
+   */
+  private proving: ReturnType<typeof setTimeout> | undefined
+
+  /**
+   * Why the version being spoken is not the one that was asked for first, if it is not.
+   *
+   * Kept because the join line is where an operator reads it, and by then the failure that caused it
+   * is several messages back. Cleared when the search is over, so a session that opened on its first
+   * choice says nothing about falling back. See {@link whyFellBack}.
+   */
+  private fellBack: string | undefined
 
   /** The versions worth trying, newest protocol first. Read once: the table does not change. */
   private readonly candidates = candidates()
@@ -660,15 +686,49 @@ export class Agent {
   }
 
   /**
+   * Starts the clock on believing this session's version, and writes it down when it runs out.
+   *
+   * **A version an operator pinned is never written down.** The memory holds what the *search*
+   * found, and an operator trying a version by hand - which is how a wrong one gets tried at all -
+   * would otherwise overwrite a verified answer with the thing they were testing, for every agent
+   * on that server. That is not a hypothetical: a pinned 26.1 replaced a working 1.21.11 this way,
+   * and the next blank-configured connect went straight back to the broken one.
+   */
+  private prove(): void {
+    this.unprove()
+    if (this.version) return
+
+    const session = this.session
+    if (!session) return
+
+    this.proving = setTimeout(() => {
+      this.proving = undefined
+      this.versions.remember(session.address, session.version)
+      // The search is over, and only now. A session that died before this fired still has its list.
+      this.tried = []
+      this.fellBack = undefined
+      log.debug(`Agent ${this.id}: ${session.address} has held up speaking ${session.version}`)
+    }, PROVEN_MS)
+  }
+
+  private unprove(): void {
+    if (this.proving) clearTimeout(this.proving)
+    this.proving = undefined
+  }
+
+  /**
    * Which version to speak, when nobody has pinned one.
    *
-   * **What worked here before comes first, and skips the ping entirely.** A server that has been
-   * played on has answered the question already, and asking again is a round trip to be told
-   * `9999` by the sort of server that made this necessary.
+   * **What the ping says comes first, where a server answers honestly.** That is the question being
+   * asked and answered, and there is nothing to search when it has been.
    *
-   * Then what the ping says, which is the honest answer where a server gives one. Then the list,
-   * newest first — this is a search, and {@link ended} runs it by coming back here with the failed
-   * version in {@link tried}.
+   * Otherwise the newest protocol this host knows, and then the version this server is remembered
+   * as speaking. That order is deliberate: the memory is the recovery path rather than the opening
+   * one, so an agent asks for the current version every time and falls back to what worked here the
+   * moment it turns out not to be wanted. See {@link nextVersion}.
+   *
+   * Then the rest of the list — this is a search, and {@link ended} runs it by coming back here
+   * with the failed version in {@link tried}.
    */
   private async choose(
     address: string,
@@ -677,15 +737,18 @@ export class Agent {
   ): Promise<string | undefined> {
     const known = this.versions.recall(address)
 
-    // Only asked when there is nothing better: see above.
-    const hinted =
-      known || this.tried.length
-        ? undefined
-        : await negotiate(endpoint, this.id, route, this.family, () => this.cancelling)
+    // Asked unless a search is already under way, where the answer has already been had and found
+    // wanting. A remembered version no longer suppresses it: the ping outranks the memory now, so
+    // skipping it would be throwing away the one answer worth more than a guess.
+    const hinted = this.tried.length
+      ? undefined
+      : await negotiate(endpoint, this.id, route, this.family, () => this.cancelling)
 
     const version = nextVersion({ known, hinted, tried: this.tried, list: this.candidates })
-    if (version && known && !this.tried.includes(known)) {
-      log.debug(`Agent ${this.id}: ${address} spoke ${known} last time`)
+    if (version && known && version !== known) {
+      log.info(`Agent ${this.id}: ${address} spoke ${known} last time; trying ${version} first`)
+    } else if (version && version === known) {
+      log.info(`Agent ${this.id}: falling back to ${known}, which ${address} spoke last time`)
     }
 
     return version
@@ -702,8 +765,18 @@ export class Agent {
    * definition — what ended it is something else, and rejoining on a different one would be a
    * guess where there is already an answer.
    */
-  private retrying(address: string, failed: string, joined: boolean): boolean {
-    if (joined || this.version || this.leaving || this.done) return false
+  private retrying(address: string, failed: string, joined: boolean, cause: string): boolean {
+    if (this.version || this.leaving || this.done) return false
+
+    // **A session that got in is normally the end of the search**, because what ended it is then
+    // something other than the version - a kick, a dropped socket, a server going away - and
+    // rejoining on a different one would be a guess where there is already an answer.
+    //
+    // Except when the ending is itself the answer. A stream being read against the wrong shape dies
+    // of a reader complaining about a field it cannot make sense of, and that is the one ending
+    // where getting in proved nothing: see [mismatched]. This server logs in on 26.1 and dies a
+    // hundred seconds later, on the first item carrying components that crosses the wire.
+    if (joined && !mismatched(cause)) return false
     if (this.tried.length >= ATTEMPTS) return false
 
     // The version comes from the caller because `ended` has already cleared the session by the time
@@ -716,10 +789,15 @@ export class Agent {
     const next = nextVersion({ tried: this.tried, list: this.candidates })
     if (!next) return false
 
+    // Remembered for the join line, which is the next thing an operator reads. See {@link fellBack}.
+    this.fellBack = whyFellBack(failed, mismatched(cause))
+
     this.activity(
       ActivityScope.System,
       Severity.Info,
-      `${failed} is not what ${address} speaks; trying ${next}`,
+      mismatched(cause)
+        ? `${explainMismatch(failed, address)}. Trying ${next}`
+        : `${failed} is not what ${address} speaks; trying ${next}`,
     )
     log.info(`Agent ${this.id}: ${address} did not answer ${failed}, trying ${next}`)
 
@@ -858,11 +936,10 @@ export class Agent {
         this.joined = true
         if (this.session) this.session.joinedAt = Date.now()
 
-        // It got in, so the version was right. Remembered against the server rather than the agent:
-        // the next agent to join this one should not repeat the search. The list of what failed
-        // goes with it, since the search is over.
-        if (this.session) this.versions.remember(this.session.address, this.session.version)
-        this.tried = []
+        // **Not yet believed.** Getting in proves the handshake agreed on a protocol number and
+        // nothing more, and a version guessed wrong is paid for later - see [PROVEN_MS]. So the
+        // memory is armed rather than written, and the list of what failed is kept until it fires.
+        this.prove()
 
         // Everything an operator would otherwise have to go and look up: which server, under which
         // account, speaking what, and where it came out. The version is worth stating because it may
@@ -873,7 +950,10 @@ export class Agent {
           ActivityScope.Lifecycle,
           Severity.Info,
           `Joined ${address} as ${this.identity?.username ?? 'this agent'} on ${bot.version}` +
-            (place ? `, at ${place}` : ''),
+            (place ? `, at ${place}` : '') +
+            // Only when it is not the first choice. A join that went straight through has nothing to
+            // explain, and a clause about falling back on every line would stop being read.
+            (this.fellBack ? ` — ${this.fellBack}` : ''),
         )
         // At the faster rate always, and thinned back down inside `sample` - the alternative is
         // re-arming a timer every time a journey starts or ends, from two places that would both
@@ -1023,6 +1103,9 @@ export class Agent {
     clearTimeout(this.watchdog)
     clearInterval(this.vitals)
     this.watchdog = undefined
+    // Before anything is decided about why this ended: a session that stopped has not proven
+    // anything, and the version it was speaking is a candidate again rather than an answer.
+    this.unprove()
 
     // Every queued job is told, rather than left holding a promise for work on a bot that is gone.
     this.hands.stop()
@@ -1081,13 +1164,28 @@ export class Agent {
     }
 
     if (joined) {
+      // Died of the version rather than of anything the server meant to say. Reported by
+      // `retrying` in terms of what is being tried next, so an operator reads one line about a
+      // search rather than a drop followed by an unexplained reconnect.
+      if (session && !kicked && this.retrying(session.address, session.version, joined, cause)) return
+
       // A session that existed and stopped. `kicked` has already said why when the server bothered
       // to say; this covers the rest - a dropped socket, a server that went away.
       if (!kicked) {
         const held = session?.joinedAt ? ` after ${lasted(session.joinedAt)}` : ''
         const where = session ? ` from ${session.address}` : ''
 
-        this.activity(ActivityScope.System, Severity.Warning, `Dropped${where}${held}: ${cause}`)
+        // The one ending worth translating. Left as it arrives, this is protodef complaining about
+        // an array length, and nothing about it says the version is wrong - see [explainMismatch].
+        if (session && mismatched(cause)) {
+          this.activity(
+            ActivityScope.System,
+            Severity.Error,
+            `Dropped${where}${held}: ${explainMismatch(session.version, session.address)}`,
+          )
+        } else {
+          this.activity(ActivityScope.System, Severity.Warning, `Dropped${where}${held}: ${cause}`)
+        }
       }
       this.report({ state: LoginState.LinkedCredentials })
       return
@@ -1095,7 +1193,7 @@ export class Agent {
 
     // Never got in on a version nobody pinned: the guess may simply be wrong, and the next one is
     // tried before anybody is told anything. See `retrying`.
-    if (session && this.retrying(session.address, session.version, joined)) return
+    if (session && this.retrying(session.address, session.version, joined, cause)) return
 
     // Never got in. That refuses us as surely as a kick would, and reads the same way to an
     // operator. Naming the version matters here more than anywhere: an attempt that fails on a
@@ -1103,8 +1201,9 @@ export class Agent {
     // operator pinned, and the message is the only place the guess is ever visible.
     if (!kicked) {
       const tried = session ? ` ${session.address} speaking ${session.version}` : ''
+      const why = session && mismatched(cause) ? explainMismatch(session.version, session.address) : cause
 
-      this.activity(ActivityScope.System, Severity.Error, `Could not join${tried}: ${cause}`)
+      this.activity(ActivityScope.System, Severity.Error, `Could not join${tried}: ${why}`)
     }
     this.report({ state: LoginState.FailedConnection })
   }

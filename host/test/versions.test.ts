@@ -4,7 +4,15 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { candidates, nextVersion, VersionMemory } from '../src/agent/versions.ts'
+import {
+  candidates,
+  explainMismatch,
+  mismatched,
+  nextVersion,
+  PROVEN_MS,
+  VersionMemory,
+  whyFellBack,
+} from '../src/agent/versions.ts'
 
 /**
  * Finding out what a masked server speaks.
@@ -46,13 +54,33 @@ describe('the versions worth trying', () => {
 describe('choosing the next one', () => {
   const list = ['26.1', '1.21.8', '1.21.4', '1.20.4']
 
-  /** Evidence beats a guess: something actually played on it. */
-  it('takes what worked here before, over what the ping said', () => {
-    expect(nextVersion({ known: '1.21.4', hinted: '26.1', list })).toBe('1.21.4')
+  /** A server answering the question outranks anything guessed from the outside. */
+  it('takes what the ping said, over what worked here before', () => {
+    expect(nextVersion({ known: '1.21.4', hinted: '1.20.4', list })).toBe('1.20.4')
   })
 
   it('takes what the ping said when nothing is known', () => {
     expect(nextVersion({ hinted: '1.20.4', list })).toBe('1.20.4')
+  })
+
+  /**
+   * The newest protocol opens, and the memory catches.
+   *
+   * A server whose proxy has been updated since an agent last played on it should be spoken to in
+   * the version it now prefers, and an operator should not have to empty a cache file to ask for
+   * that. So what worked before is the second thing tried rather than the first.
+   */
+  it('opens with the newest protocol rather than the remembered one', () => {
+    expect(nextVersion({ known: '1.21.4', list })).toBe('26.1')
+  })
+
+  it('falls back to the remembered one as soon as the newest is refused', () => {
+    expect(nextVersion({ known: '1.21.4', tried: ['26.1'], list })).toBe('1.21.4')
+  })
+
+  /** And the rest of the list is behind it, so a wrong memory still ends in a search. */
+  it('carries on down the list once the memory has been tried too', () => {
+    expect(nextVersion({ known: '1.21.4', tried: ['26.1', '1.21.4'], list })).toBe('1.21.8')
   })
 
   it('works down the list, skipping everything already tried', () => {
@@ -62,7 +90,7 @@ describe('choosing the next one', () => {
 
   /** Including the remembered one and the hint: a search that retried them would never move on. */
   it('does not offer a remembered or hinted version twice', () => {
-    expect(nextVersion({ known: '1.21.4', tried: ['1.21.4'], list })).toBe('26.1')
+    expect(nextVersion({ known: '1.21.8', tried: ['26.1', '1.21.8'], list })).toBe('1.21.4')
     expect(nextVersion({ hinted: '26.1', tried: ['26.1'], list })).toBe('1.21.8')
   })
 
@@ -125,5 +153,84 @@ describe('what each server turned out to speak', () => {
     memory.remember('play.example:25565', '1.21.4')
 
     expect(memory.recall('play.example:25565')).toBe('1.21.4')
+  })
+})
+
+/**
+ * Telling "the version is wrong" apart from "the server did not want us".
+ *
+ * The two want opposite things. A kick or a dropped socket is a reason to rejoin exactly as we
+ * were; a stream read against the wrong shape is the only reason to stop believing the version.
+ *
+ * This is the one that made a working memory go bad: a pinned 26.1 logged in fine, died a hundred
+ * seconds later on the first item carrying components, and was written down as good because it had
+ * reached play.
+ */
+describe('a death that means the version was wrong', () => {
+  it('knows the reader complaining about a field it cannot make sense of', () => {
+    expect(
+      mismatched(
+        'Parse error for play.toClient: Read error for undefined : array size is abnormally large, not reading: 90536052',
+      ),
+    ).toBe(true)
+  })
+
+  it('knows the rest of that family', () => {
+    expect(mismatched('PartialReadError: Read error for undefined')).toBe(true)
+    expect(mismatched('Unexpected buffer end while reading packet')).toBe(true)
+    expect(mismatched('Deserialization error in packet map_chunk')).toBe(true)
+  })
+
+  /** Every one of these is a reason to rejoin as we were, and none is a reason to re-search. */
+  it('leaves an ordinary ending alone', () => {
+    expect(mismatched('socket closed')).toBe(false)
+    expect(mismatched('You have been banned from this server')).toBe(false)
+    expect(mismatched('Timed out waiting for chunks')).toBe(false)
+    expect(mismatched('Server is full')).toBe(false)
+    expect(mismatched(undefined)).toBe(false)
+    expect(mismatched('')).toBe(false)
+  })
+
+  /** Observed at 104 seconds, so the mark has to sit well past it. */
+  it('waits longer than the death it exists to catch', () => {
+    expect(PROVEN_MS).toBeGreaterThan(104_000)
+  })
+})
+
+describe('saying what a mismatch was', () => {
+  const said = explainMismatch('26.1', 'play.example.com')
+
+  it('names the version, the server and the thing that disagrees', () => {
+    expect(said).toContain('26.1')
+    expect(said).toContain('play.example.com')
+    expect(said).toContain('component')
+  })
+
+  /** The point of it: an operator should not have to read this as an array-length complaint. */
+  it('says nothing about array sizes', () => {
+    expect(said).not.toContain('array size')
+  })
+})
+
+/**
+ * The clause the join line carries when the version was not the first choice.
+ *
+ * `Joined ... on 1.21.11` reads identically whether that was asked for or arrived at, and the two
+ * mean different things. The failure that caused it is several messages back by then.
+ */
+describe('saying why it fell back', () => {
+  it('names the version it came off, and that items are the reason', () => {
+    const said = whyFellBack('26.1', true)
+
+    expect(said).toContain('26.1')
+    expect(said).toContain('item data')
+  })
+
+  /** A refusal is a different fact from a version that reads items wrong, and reads differently. */
+  it('says something else for a version the server would not have', () => {
+    const said = whyFellBack('26.1', false)
+
+    expect(said).toContain('26.1')
+    expect(said).not.toContain('item data')
   })
 })

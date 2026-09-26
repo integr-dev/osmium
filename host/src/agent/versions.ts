@@ -77,7 +77,26 @@ export function nextVersion(options: {
   list?: readonly string[]
 }): string | undefined {
   const tried = new Set(options.tried ?? [])
-  const order = [options.known, options.hinted, ...(options.list ?? candidates())]
+  const list = options.list ?? candidates()
+
+  /*
+   * **The newest protocol first, then what worked here, then the rest.**
+   *
+   * The memory used to come first, on the reasoning that evidence beats a guess. It does - but it
+   * also pins an agent to the version a server spoke months ago, and a server whose proxy has since
+   * been updated is then never spoken to in the version it now prefers. An operator watching an
+   * agent join on something two releases old, with no way to ask for "whatever is newest" short of
+   * emptying a cache file, is the behaviour this replaces.
+   *
+   * So the newest is tried first and the memory is the **recovery** path rather than the opening
+   * one: when the newest turns out to be wrong - which [explainMismatch] then says plainly - the
+   * next thing tried is the version already known to work here, not a walk down the whole list. One
+   * failed attempt, then straight to the answer.
+   *
+   * A ping that names a version still wins over both. That is a server answering the question
+   * honestly, and there is nothing to search when it has.
+   */
+  const order = [options.hinted, list[0], options.known, ...list]
 
   return order.find((version): version is string => typeof version === 'string' && !tried.has(version))
 }
@@ -151,4 +170,80 @@ export class VersionMemory {
       log.debug(`Could not write what servers speak: ${String(err)}`)
     }
   }
+}
+
+/**
+ * How long a session has to last before the version it is speaking is believed.
+ *
+ * **Reaching play proves the handshake, and nothing else.** Login negotiates a protocol number and
+ * both ends agree on it; what a wrong guess costs is paid later, on the first packet whose shape
+ * moved between the version being spoken and the one being served. An item with components is the
+ * usual one, so the death arrives whenever an item next crosses the wire - observed at 104 seconds
+ * on the server this was written for, and it would be an hour on a server nobody is looking at.
+ *
+ * So "it got in" is the wrong moment to write a version down. Three minutes of play is the proxy
+ * for "real item data has been exchanged and survived", which is the thing actually worth
+ * remembering.
+ */
+export const PROVEN_MS = 180_000
+
+/**
+ * Whether a session died of speaking the wrong version.
+ *
+ * **A protocol mismatch reads nothing like a kick.** The stream is being deserialised against the
+ * wrong shape, so what surfaces is a reader complaining about a field it cannot make sense of -
+ * `array size is abnormally large, not reading: 90536052` being one component count read out of the
+ * middle of something else. A server that does not want us says so in words.
+ *
+ * Told apart because the two want opposite things. A kick, a dropped socket or a server going away
+ * are all reasons to rejoin exactly as we were; this one is the only reason to stop believing the
+ * version and go looking again.
+ */
+export function mismatched(cause: string | undefined): boolean {
+  if (!cause) return false
+
+  return /parse error|partialreaderror|read error|abnormally large|unexpected buffer end|deserializ/i.test(
+    cause,
+  )
+}
+
+/**
+ * What a mismatch death actually means, in words an operator can act on.
+ *
+ * **The error the stream raises names the symptom and nothing else.** A component read against the
+ * wrong table consumes the wrong number of bytes, and what surfaces is whatever field happened to
+ * be read next - usually an array length, which is why it reads as
+ * `array size is abnormally large, not reading: 90536052`. Nothing in that says "wrong version",
+ * and working out that it means one took an afternoon and a protocol diff.
+ *
+ * The component table is the part that moves. Protocol 775 inserted `additional_trade_cost` at 41
+ * and `dye` at 43, shifting every id above them - so a 775 client reading 774's slots calls
+ * `stored_enchantments` an `additional_trade_cost` and misreads its payload. An item carrying
+ * components is the trigger, which is why an agent plays happily until it picks up a shulker box.
+ */
+export function explainMismatch(version: string, address: string): string {
+  return (
+    `${address} is not sending the item data ${version} expects - it speaks an older protocol, and ` +
+    `the two disagree about what each item component id means. An agent can join on ${version} and ` +
+    `will die on the first item that carries components`
+  )
+}
+
+/**
+ * Why an agent is speaking something other than what it asked for first, as one clause.
+ *
+ * **The join line is where this is read.** An operator seeing `Joined ... on 1.21.11` has no way to
+ * know whether that was the first choice or the third, and the difference matters: the first is a
+ * server being spoken to in the current version, the third is a search that ended somewhere. The
+ * failure happened seconds earlier, in its own message, and by the time the agent is in the world
+ * nothing ties the two together.
+ *
+ * Short, because it is appended to a line that already carries the server, the account, the version
+ * and the coordinates. The long form of the same fact is [explainMismatch], which is what the
+ * failure itself reports.
+ */
+export function whyFellBack(failed: string, mismatch: boolean): string {
+  return mismatch
+    ? `fell back from ${failed}, which this server does not send item data for`
+    : `fell back from ${failed}, which this server would not accept`
 }
