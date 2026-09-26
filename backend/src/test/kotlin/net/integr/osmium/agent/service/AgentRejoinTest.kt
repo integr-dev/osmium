@@ -177,6 +177,38 @@ class AgentRejoinTest : AbstractRestTest() {
     }
 
     /**
+     * The same promise, for the disconnect that does not come through the browser.
+     *
+     * `!osm disconnect` in chat is the host's own door, and for a while it only left the game - so
+     * the sweep read the LINKED that followed as a drop and dialled straight back in. From in game
+     * that is a command that does nothing, and the version it leaves behind is a rejoin loop nobody
+     * asked for.
+     *
+     * The host says so with `stand_down`, the same event the flee module uses, and this is the
+     * contract that answers it: the wish is cleared and the sweep leaves the agent alone.
+     */
+    @Test
+    fun `a disconnect from chat keeps the agent out too`() {
+        val host = reachableHost()
+        val socket = listen(host)
+        val agent = fallen(host, state = AgentState.ONLINE, due = Instant.now().minusSeconds(1))
+
+        agentService.standDown(reload(agent), "integr disconnected it from chat")
+
+        // What the host reports once it has left, which on its own is indistinguishable from a kick.
+        val parted = reload(agent).also { it.state = AgentState.LINKED }
+        agentRepository.saveAndFlush(parted)
+
+        agentService.rejoinTheWilling()
+
+        val left = reload(agent)
+        assertFalse(left.wanted)
+        assertNull(left.rejoinAt)
+        assertEquals(0, left.rejoinAttempts)
+        assertTrue(socket.commands(CommandType.CONNECT).isEmpty())
+    }
+
+    /**
      * Cancelling a rejoin has to reach the browser, and it is the one disconnect nothing else does.
      *
      * An agent in the game leaves and its host reports having left, and that report publishes; an

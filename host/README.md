@@ -949,7 +949,7 @@ the guess is ever visible.
 
 ---
 
-### 4.5 `stand_down` — the agent decided to leave
+### 4.5 `stand_down` — the absence is deliberate
 
 ```jsonc
 { "kind": "event", "type": "stand_down", "agentId": 42,
@@ -966,6 +966,13 @@ So this is the host saying *the absence is the point*. The backend answers by cl
 in the game; the agent stays out until an operator reconnects it deliberately. Send the ordinary
 `agent_status` for leaving as well — this says why it will not be coming back on its own, not that it
 has gone.
+
+**Two things send it, and the second is easy to miss.** Fleeing is the obvious one. The other is a
+`disconnect` typed in chat (§5.1): that is an absence somebody asked for, and a host that only quits
+the session leaves the backend with the wish still set — so the sweep reads the `LINKED` that follows
+as a drop and dials straight back in. From in game that is a command that appears to do nothing, and
+what it leaves behind is a rejoin loop. `reconnect` from chat must **not** send this: it wants to come
+back, and clearing the wish is how it would fail to.
 
 Raise an **activity** entry beside it. `reason` here is for the log; what an operator reads is the
 incident, and an agent that left on its own at three in the morning belongs on the dashboard rather

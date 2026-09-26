@@ -1736,6 +1736,23 @@ export class Agent {
       case 'disconnect':
         log.info(`Agent ${this.id} was told to leave by ${speaker}`)
         this.activity(ActivityScope.System, Severity.Warning, `${speaker} disconnected this agent from chat`)
+
+        /*
+         * **`stand_down`, not only a quit.** Leaving the game is all this used to do, and the
+         * backend's rejoin sweep put the agent straight back: `wanted` is the operator's wish and
+         * only the backend's own disconnect clears it, so from over there a session ending in chat
+         * looks exactly like a drop - which is the one thing it must not be read as.
+         *
+         * The same event the flee module sends, for the same reason: the host is the only side that
+         * knows this was asked for rather than suffered, and this is the only channel that says so.
+         * The reason names who asked, which the flee case has nobody to name.
+         */
+        this.hooks.event({
+          type: 'stand_down',
+          agentId: this.id,
+          reason: `${speaker} disconnected it from chat`,
+        })
+
         this.handle({ type: 'disconnect' })
         return
 
